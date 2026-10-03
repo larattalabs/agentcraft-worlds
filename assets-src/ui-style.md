@@ -27,7 +27,7 @@ glass, so text closer to the bezel disappears behind it at oblique views (a desk
 The 2 px walnut bezel and brass lip come from the block model, so do not draw a border in the renderer.
 
 **Header line.** The state dot (`kit/dot_<state>`, 7 px; waiting pulses its halo), the agent name in the
-agent's `text_on_dark` colour (worst case 5.95:1 on the glass), the activity in `muted`
+agent's `text_on_dark` colour (worst case 5.94:1 on the glass), the activity in `muted`
 (`editing auth/session.ts`; on a second line when the screen is narrow), the task id right-aligned. A 1 px
 rule in `#4A423B` underneath.
 
@@ -126,7 +126,7 @@ colours (name tint, scarf, desk accent). The two palettes are disjoint by constr
 
 Agent names: `text_on_dark` / `text_on_light` are derived per agent (gen/cast_check.py) so that the worst case
 over **every** surface the name is drawn on stays >= 4.5:1. Dark surfaces: nameplate over a bright wall `#3E3C3B`, ink (HUD, console) `#1F1E1D`, tooltip `#2B2927`. Light surfaces: cream panel `#F4EFE6`, panel highlight / field `#FFFBF4`, paper inset / done card `#E9E1D3`, panel shade / inactive tab `#E3DACB`, monitor screen (paper) `#EDE5D7`, monitor scanline `#E7DECE`.
-Measured minimum over all agents: 4.54:1 on dark, 4.51:1 on light.
+Measured minimum over all agents: 4.53:1 on dark, 4.51:1 on light.
 
 | agent | identity | name on dark | name on paper |
 |---|---|---|---|
@@ -136,6 +136,9 @@ Measured minimum over all agents: 4.54:1 on dark, 4.51:1 on light.
 | wren | `#E0A2BF` | `#E0A2BF` | `#745864` |
 | rowan | `#802F6E` | `#C29BB9` | `#802F6E` |
 | tove | `#98B2E2` | `#98B2E2` | `#556176` |
+| ines | `#E9E0F2` | `#E9E0F2` | `#625E63` |
+| bram | `#2C0E3F` | `#AFA3B6` | `#2C0E3F` |
+| cass | `#E14CA7` | `#EB85C3` | `#9D3C77` |
 
 Task card stripes: todo = idle, doing = working, review = thinking (brass), done = done (card body dims to paper),
 blocked = error. Waiting-on-user is the only state that pulses (`kit/dot_waiting_halo`, alpha 0 to 110 over
