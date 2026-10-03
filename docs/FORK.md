@@ -22,6 +22,7 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 | 2026-10-03 | Hardcore world moves to MC 26.3 via a **new cloned Prism instance**; the 26.2 instance stays untouched as a fallback until the clone has soaked. |
 | 2026-10-03 | `main` = upstream + every topic branch merged; topic branches stay for upstream PRs. New work: topic branch off `upstream/main`, then merge into `main`. |
 | 2026-10-03 | Build order below. Phase 0 (verification) deferred by choice; Phase 1 starts now. Phase 0 must pass before anything enters the Hardcore world. |
+| 2026-10-03 | Personal setup is relaxed: auto mode (classifier) instead of AgentCraft's ask-everything policy, web tools, subagents (incl. gate-verifier, design-critic), second-opinion skill with `Bash(codex exec:*)` allowed, global CLAUDE.md on, no Haiku. Guardrails kept: policy denies, git internals, writes into registered checkouts / AgentCraft state. Upstream default stays `policy`. |
 | 2026-10-03 | Agent context: repo `CLAUDE.md`/`AGENTS.md` on by default; the user's global `~/.claude/CLAUDE.md` opt-in only (interactive-workflow rules would fight the role prompts); extra files by path. Read by the Foreman and appended, never via `settingSources`. |
 
 ## Branches
@@ -38,6 +39,7 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/rate-limits` | roadmap 3 | yes |
 | `foreman/agent-context` | roadmap 4 (`claude.context`: instructions, skills, MCP) | yes |
 | `foreman/agent-roles` | roadmap 5 (`claude.agents`, `claude.taskModels`, notes across tasks) | yes |
+| `foreman/permissions` | `claude.permissions` (policy/auto mode, guardrail hook, Claude Code rules, web tools) + `claude.subagents` | yes |
 | `foreman/usage-banner` | plan usage windows in `foreman.status.usage` + console (stacked on `foreman/rate-limits`) | yes, after rate-limits |
 
 ## Build sequence
