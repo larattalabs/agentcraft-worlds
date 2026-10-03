@@ -196,7 +196,19 @@ async function launch(opt, summary) {
   let fm = readJson(fmFile);
   let fmPort = opt.port;
   if (!opt['no-foreman']) {
-    const running = owned(fm) && await portOpen(fm.port);
+    let running = owned(fm) && await portOpen(fm.port);
+    if (!running) {
+      // restarted from the hub (foreman.restart): the launcher's pid is gone, and the Foreman's own
+      // run file names the process that took over
+      const ownHome = fm?.home ?? opt.home;
+      const own = readJson(path.join(ownHome, opt.profile, 'foreman.json'));
+      const command = own?.pid ? psTable().find((r) => r.pid === own.pid)?.command : undefined;
+      if (own?.pid && isForemanCommand(command, opt.profile) && await portOpen(own.port)) {
+        fm = { ...(fm ?? {}), pid: own.pid, stamp: processStamp(own.pid), port: own.port, backend: own.backend ?? fm?.backend, home: ownHome };
+        saveJson(fmFile, fm);
+        running = true;
+      }
+    }
     const stale = running ? staleReasons(fm, { root, commit: gitHead() }) : [];
     if (running && stale.length) {
       const text = `Foreman ${fm.pid} on :${fm.port} is running OLD CODE: ${stale.join('; ')}.`;
