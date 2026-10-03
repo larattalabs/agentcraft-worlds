@@ -168,9 +168,29 @@ public final class Protocol {
 		}
 	}
 
+	/**
+	 * The pull request a task landed as (repoSettings land "pr"). {@code status} open|changes|approved|merged|abandoned,
+	 * {@code checks} pending|passing|failing|none, kept as strings (display only).
+	 */
+	public record TaskPr(String url, int id, @Nullable String host, @Nullable String branch, @Nullable String target, String status,
+		@Nullable String checks, @Nullable PrThreads threads, long updatedAt) {
+		public TaskPr {
+			url = url == null ? "" : url;
+			status = status == null ? "open" : status;
+		}
+
+		/** Still on the host (open, changes, approved). */
+		public boolean isOpen() {
+			return !status.equals("merged") && !status.equals("abandoned");
+		}
+	}
+
+	public record PrThreads(int open, @com.google.gson.annotations.SerializedName("new") @Nullable Integer newCount) {
+	}
+
 	public record Task(String id, String title, @Nullable String description, TaskStatus status, @Nullable String assignee, List<String> deps,
 		@Nullable String repoId, @Nullable String goalId, int priority, @Nullable String branch, @Nullable String worktree, CiStatus ci,
-		@Nullable String blockedReason, @Nullable String summary, @Nullable String createdBy, long createdAt, long updatedAt) {
+		@Nullable String blockedReason, @Nullable String summary, @Nullable String createdBy, long createdAt, long updatedAt, @Nullable TaskPr pr) {
 		public Task {
 			title = title == null ? id : title;
 			status = status == null ? TaskStatus.UNKNOWN : status;
@@ -184,7 +204,7 @@ public final class Protocol {
 
 	public record Decision(String id, String agentId, DecisionKind kind, String question, List<String> options, @Nullable String context,
 		DecisionStatus status, @Nullable DecisionAnswer answer, @Nullable String taskId, @Nullable String repoId, @Nullable String worktree,
-		@Nullable String tool, long createdAt) {
+		@Nullable String tool, long createdAt, @Nullable String goalId) {
 		public Decision {
 			kind = kind == null ? DecisionKind.UNKNOWN : kind;
 			question = question == null ? "" : question;
@@ -204,8 +224,33 @@ public final class Protocol {
 		}
 	}
 
+	/** {@code pr} options of a repo's settings (read-only view). */
+	public record RepoPrSettings(@Nullable String remote, @Nullable String branchPrefix, @Nullable Boolean draft, @Nullable Boolean squash) {
+	}
+
+	/** PR review defaults of a repo's settings. */
+	public record RepoPrReview(List<String> autoSeverities, @Nullable Integer maxRounds) {
+		public RepoPrReview {
+			autoSeverities = autoSeverities == null ? List.of() : List.copyOf(autoSeverities);
+		}
+	}
+
+	/**
+	 * Read-only view of a repo's {@code repoSettings} (docs/HUB.md "Repos and Goals tabs"): no secrets, env as
+	 * its keys only. {@code land} merge|pr. Absent on a Foreman from before the Repos tab.
+	 */
+	public record RepoSettingsView(String land, @Nullable String baseBranch, @Nullable String ci, @Nullable String setup, @Nullable RepoPrSettings pr,
+		List<String> protect, java.util.Map<String, String> roles, @Nullable String subagents, @Nullable RepoPrReview prReview, List<String> envKeys) {
+		public RepoSettingsView {
+			land = land == null ? "merge" : land;
+			protect = protect == null ? List.of() : List.copyOf(protect);
+			roles = roles == null ? java.util.Map.of() : java.util.Map.copyOf(roles);
+			envKeys = envKeys == null ? List.of() : List.copyOf(envKeys);
+		}
+	}
+
 	public record Repo(String id, String name, String path, String branch, @Nullable String head, boolean dirty, List<Worktree> worktrees,
-		CiStatus ci) {
+		CiStatus ci, @Nullable RepoSettingsView settings) {
 		public Repo {
 			name = name == null ? id : name;
 			worktrees = worktrees == null ? List.of() : List.copyOf(worktrees);
@@ -221,12 +266,38 @@ public final class Protocol {
 		}
 	}
 
-	/** {@code leadId}: the lead that plans and reviews the goal (absent = marlow). */
+	/** One PR of a goal's tasks ({@code Goal.prs}). */
+	public record GoalPr(@Nullable String taskId, @Nullable String url, int id, @Nullable String status) {
+	}
+
+	/**
+	 * {@code leadId}: the lead that plans and reviews the goal (absent = marlow). Since the Repos/Goals tabs:
+	 * {@code instructions} (standing instructions), {@code planId} (memory id of its plan note), {@code branch}
+	 * ("on &lt;branch&gt;:"), {@code prs} (its tasks' PRs) and {@code repos} (every repo it touches, repoId first);
+	 * all null on an older Foreman.
+	 */
 	public record Goal(String id, String text, double progress, GoalStatus status, @Nullable String repoId, long createdAt, long updatedAt,
-		@Nullable String leadId) {
+		@Nullable String leadId, @Nullable List<String> instructions, @Nullable String planId, @Nullable String branch, @Nullable List<GoalPr> prs,
+		@Nullable List<String> repos) {
 		public Goal {
 			text = text == null ? "" : text;
 			status = status == null ? GoalStatus.UNKNOWN : status;
+			instructions = instructions == null ? null : List.copyOf(instructions);
+			prs = prs == null ? null : List.copyOf(prs);
+			repos = repos == null ? null : List.copyOf(repos);
+		}
+
+		/** Every repo the goal touches: {@code repos} when the Foreman sends it, else just {@code repoId}. */
+		public List<String> allRepos() {
+			if (repos != null && !repos.isEmpty()) {
+				return repos;
+			}
+			return repoId == null ? List.of() : List.of(repoId);
+		}
+
+		/** Whether the goal is still being planned or worked on. */
+		public boolean isOpen() {
+			return status == GoalStatus.PLANNING || status == GoalStatus.ACTIVE;
 		}
 
 		/** The goal's lead: {@code leadId}, else marlow. */
@@ -245,7 +316,8 @@ public final class Protocol {
 		}
 	}
 
-	public record FeedItem(long ts, FeedKind kind, String text, @Nullable String agentId, @Nullable String to) {
+	/** {@code goalId}: set when the item is about a goal (Foreman with the Goals tab). */
+	public record FeedItem(long ts, FeedKind kind, String text, @Nullable String agentId, @Nullable String to, @Nullable String goalId) {
 		public FeedItem {
 			kind = kind == null ? FeedKind.UNKNOWN : kind;
 			text = text == null ? "" : text;
@@ -335,6 +407,31 @@ public final class Protocol {
 			status = status == null ? DesignStatus.UNKNOWN : status;
 			step = step == null ? "" : step;
 			previews = previews == null ? List.of() : List.copyOf(previews);
+		}
+	}
+
+	/**
+	 * One line of a {@code goal.digest} ack. {@code kind} task_done|task_blocked|task_added|decision_waiting|
+	 * decision_answered|merged|pr_opened|pr_merged|pr_comments|message|goal_done (kept as a string).
+	 */
+	public record DigestLine(long ts, String kind, String text, @Nullable String taskId, @Nullable String agentId) {
+		public DigestLine {
+			kind = kind == null ? "message" : kind;
+			text = text == null ? "" : text;
+		}
+	}
+
+	/** A goal's part of a digest. */
+	public record GoalDigest(String goalId, @Nullable String text, @Nullable GoalStatus status, double progress, List<DigestLine> lines) {
+		public GoalDigest {
+			lines = lines == null ? List.of() : List.copyOf(lines);
+		}
+	}
+
+	/** {@code goal.digest} ack result: what happened between {@code since} and {@code until}. */
+	public record Digest(long since, long until, List<GoalDigest> goals) {
+		public Digest {
+			goals = goals == null ? List.of() : List.copyOf(goals);
 		}
 	}
 
