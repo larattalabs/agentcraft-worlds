@@ -2,6 +2,7 @@ package dev.agentcraft.client;
 
 import dev.agentcraft.AgentCraft;
 import dev.agentcraft.client.agents.AgentsFeature;
+import dev.agentcraft.client.building.BuildingWizardFeature;
 import dev.agentcraft.client.console.ConsoleFeature;
 import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.diff.DiffFeature;
@@ -40,6 +41,7 @@ public final class ClientFeatures {
 		DiffFeature.init();
 		LibraryFeature.init();
 		PermissionsFeature.init();
+		BuildingWizardFeature.init(); // /agentcraft build, B: pick repos + blueprint, place a ghost
 		AgentCraft.LOGGER.info("AgentCraft client features initialised");
 	}
 }

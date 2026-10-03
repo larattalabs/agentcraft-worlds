@@ -85,7 +85,7 @@ public final class HudFeature {
 		o.addProperty("terminalKey", Keys.label(Keys.terminal));
 		// what Options > Controls shows for them (proves the lang keys resolve)
 		JsonObject names = new JsonObject();
-		for (var k : new net.minecraft.client.KeyMapping[] {Keys.console, Keys.terminal, Keys.decisions}) {
+		for (var k : new net.minecraft.client.KeyMapping[] {Keys.console, Keys.terminal, Keys.decisions, Keys.build}) {
 			if (k != null) {
 				names.addProperty(k.getName(), net.minecraft.client.resources.language.I18n.get(k.getName()) + " [" + k.getCategory().label().getString() + "]");
 			}
