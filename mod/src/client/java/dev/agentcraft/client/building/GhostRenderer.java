@@ -89,13 +89,18 @@ final class GhostRenderer {
 		float y = (float) (p.y() - cam.y);
 		float top = y + p.height();
 		boolean odd = p.tooSmall() || p.tooLarge();
-		int fill = UiStyle.withAlpha(odd ? 0xFFE0782A : UiStyle.SAGE, single ? 0x70 : 0x48);
-		int edge = UiStyle.withAlpha(odd ? 0xFFE0782A : UiStyle.SAGE, 0xE0);
-		int faint = UiStyle.withAlpha(UiStyle.SAGE, 0x50);
-		int brass = UiStyle.withAlpha(UiStyle.BRASS, 0xF0);
+		// cream and clay read on grass, sand and stone alike (sage vanished on grass)
+		int fill = UiStyle.withAlpha(odd ? 0xFFE0782A : UiStyle.CREAM, single ? 0x70 : 0x50);
+		int edge = UiStyle.withAlpha(odd ? 0xFFE0782A : UiStyle.CLAY, 0xF0);
+		int faint = UiStyle.withAlpha(UiStyle.CREAM, 0x90);
+		int brass = UiStyle.withAlpha(UiStyle.BRASS, 0xFF);
+		// lines keep a few pixels of width from far away: thickness grows with the distance to the plot
+		double nx = Math.max(p.minX(), Math.min(p.minX() + p.dx(), cam.x));
+		double nz = Math.max(p.minZ(), Math.min(p.minZ() + p.dz(), cam.z));
+		float dist = (float) Math.sqrt((nx - cam.x) * (nx - cam.x) + (p.y() - cam.y) * (p.y() - cam.y) + (nz - cam.z) * (nz - cam.z));
+		float t = Math.max(EDGE * 2, dist * 0.004f);
 		String front = p.front();
 		ctx.submitNodeCollector().submitCustomGeometry(new PoseStack(), RenderTypes.debugFilledBox(), (pose, vc) -> {
-			float t = EDGE;
 			// the ground rectangle: a thin slab just above the surface
 			cube(pose, vc, x0, y + 0.02f, z0, x1, y + 0.06f, z1, fill, 0x3, false);
 			// outline at ground level
