@@ -9,6 +9,8 @@ import dev.agentcraft.block.entity.DecisionPodiumBlockEntity;
 import dev.agentcraft.block.entity.MergeStationBlockEntity;
 import dev.agentcraft.block.entity.MonitorBlockEntity;
 import dev.agentcraft.block.entity.StatusLampBlockEntity;
+import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Routing;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
@@ -22,9 +24,11 @@ import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -50,6 +54,10 @@ import org.jspecify.annotations.Nullable;
  *   <li>signal bulbs (copper bulbs within 3 blocks of the {@code decision_podium} anchor or of a
  *       {@code mergestation} slot) lit while that station needs you.</li>
  * </ul>
+ * Every region of the world that belongs to a layout is driven ({@link Buildings#regions()}): the HQ
+ * studio (its bounds) and every building (its box), so a building's lamps, podium and monitors work
+ * like the studio's. {@code ci:#<n>} means the n-th repo only in the studio; in a building it is an
+ * unrewritten wing placeholder (no repo) and shows idle.
  * Only blocks whose state differs are written. The set of wanted states is recomputed on every
  * Foreman change and re-applied every 2 s (so rebuilt or newly placed blocks pick it up). While the
  * Foreman link is down the blocks keep their last state (the view is stale, not wrong).
@@ -63,6 +71,10 @@ public final class HqWorldDriver {
 
 	/** What the world should show, by binding. Immutable once built. */
 	record Wanted(Map<String, LampStatus> lamps, boolean podiumOpen, boolean mergeActive, Map<String, Boolean> monitorLit) {
+	}
+
+	/** One region to drive: its area, whether it is a building, and its stations' signal-bulb centres. */
+	record Area(Anchors.Bounds b, boolean building, List<BlockPos> podiumSignals, List<BlockPos> mergeSignals) {
 	}
 
 	private static @Nullable Wanted last;
@@ -88,25 +100,28 @@ public final class HqWorldDriver {
 			return;
 		}
 		ForemanState st = Foreman.state();
-		Anchors.Layout layout = Anchors.current();
-		if (st == null || !st.hasData() || st.isStale() || layout.isEmpty() || layout.bounds() == null) {
+		List<Routing.Region> regions = Buildings.regions();
+		if (st == null || !st.hasData() || st.isStale() || regions.isEmpty()) {
 			return;
 		}
 		ticks++;
-		boolean changed = st.revision() != lastRevision || layout.revision() != lastLayout;
+		long layoutSig = Buildings.regionsSignature();
+		boolean changed = st.revision() != lastRevision || layoutSig != lastLayout;
 		if (!changed && ticks % RESYNC_TICKS != 0) {
 			return;
 		}
 		Wanted w = changed || last == null ? compute(st) : last;
 		lastRevision = st.revision();
-		lastLayout = layout.revision();
+		lastLayout = layoutSig;
 		boolean differs = !Objects.equals(w, last);
 		last = w;
 		if (differs || ticks % RESYNC_TICKS == 0) {
-			Anchors.Bounds b = layout.bounds();
-			List<BlockPos> podiumSignals = signalCenters(layout, AnchorNames.DECISION_PODIUM);
-			List<BlockPos> mergeSignals = signalCenters(layout, AnchorNames.MERGESTATION);
-			ServerTasks.run(level -> lastChanged = apply(level, w, b, podiumSignals, mergeSignals));
+			List<Area> areas = new ArrayList<>(regions.size());
+			for (Routing.Region r : regions) {
+				areas.add(new Area(r.area(), r.building(), signalCenters(r.layout(), AnchorNames.DECISION_PODIUM),
+					signalCenters(r.layout(), AnchorNames.MERGESTATION)));
+			}
+			ServerTasks.run(level -> lastChanged = apply(level, w, areas));
 		}
 	}
 
@@ -243,10 +258,27 @@ public final class HqWorldDriver {
 		};
 	}
 
-	/** Server thread: set every bound station block in the HQ region to its wanted state. */
-	static int apply(ServerLevel level, Wanted w, Anchors.Bounds b, List<BlockPos> podiumSignals, List<BlockPos> mergeSignals) {
+	/** Server thread: set every bound station block in every HQ / building region to its wanted state. */
+	static int apply(ServerLevel level, Wanted w, List<Area> areas) {
 		List<BlockPos> pos = new ArrayList<>();
 		List<BlockState> to = new ArrayList<>();
+		Set<BlockPos> seen = new HashSet<>();
+		for (Area area : areas) {
+			scan(level, w, area, seen, pos, to);
+		}
+		for (Area area : areas) {
+			signals(level, area.podiumSignals(), w.podiumOpen(), pos, to);
+			signals(level, area.mergeSignals(), w.mergeActive(), pos, to);
+		}
+		for (int i = 0; i < pos.size(); i++) {
+			level.setBlock(pos.get(i), to.get(i), Block.UPDATE_CLIENTS);
+		}
+		return pos.size();
+	}
+
+	/** The station block entities of one region (bounds + {@link #MARGIN}) whose state differs from the wanted one. */
+	private static void scan(ServerLevel level, Wanted w, Area area, Set<BlockPos> seen, List<BlockPos> pos, List<BlockState> to) {
+		Anchors.Bounds b = area.b();
 		int x0 = (b.minX() - MARGIN) >> 4;
 		int x1 = (b.maxX() + MARGIN) >> 4;
 		int z0 = (b.minZ() - MARGIN) >> 4;
@@ -262,8 +294,11 @@ public final class HqWorldDriver {
 					if (p.getX() < b.minX() - MARGIN || p.getX() > b.maxX() + MARGIN || p.getZ() < b.minZ() - MARGIN || p.getZ() > b.maxZ() + MARGIN) {
 						continue;
 					}
+					if (!seen.add(p)) {
+						continue; // regions closer than the margin: the first one decides
+					}
 					BlockState s = be.getBlockState();
-					BlockState want = wantedState(be, s, w);
+					BlockState want = wantedState(be, s, w, area.building());
 					if (want != null && want != s) {
 						pos.add(p);
 						to.add(want);
@@ -271,12 +306,6 @@ public final class HqWorldDriver {
 				}
 			}
 		}
-		signals(level, podiumSignals, w.podiumOpen(), pos, to);
-		signals(level, mergeSignals, w.mergeActive(), pos, to);
-		for (int i = 0; i < pos.size(); i++) {
-			level.setBlock(pos.get(i), to.get(i), Block.UPDATE_CLIENTS);
-		}
-		return pos.size();
 	}
 
 	/** Copper bulbs around the given station anchors follow {@code on} (no redstone involved). */
@@ -304,9 +333,10 @@ public final class HqWorldDriver {
 		}
 	}
 
-	private static @Nullable BlockState wantedState(BlockEntity be, BlockState s, Wanted w) {
+	private static @Nullable BlockState wantedState(BlockEntity be, BlockState s, Wanted w, boolean building) {
 		if (be instanceof StatusLampBlockEntity lamp && s.getBlock() instanceof StatusLampBlock) {
-			LampStatus want = w.lamps().get(lamp.binding());
+			// in a building, ci:#n is a wing that got no repo at placement (only the studio numbers its repos)
+			LampStatus want = building && Routing.isCiPlaceholder(lamp.binding()) ? null : w.lamps().get(lamp.binding());
 			if (want == null) {
 				// bound to something the Foreman does not have: an agent that left goes dark, an unused CI
 				// slot (no second repo yet) shows idle grey rather than a dead lamp

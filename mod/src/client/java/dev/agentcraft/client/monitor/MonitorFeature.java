@@ -13,6 +13,7 @@ import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
+import dev.agentcraft.building.Buildings;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
@@ -170,9 +171,10 @@ public final class MonitorFeature {
 			return binding;
 		}
 		Anchors.Layout layout = Anchors.current();
-		if (layout.revision() != resolvedLayoutRevision || !layout.name().equals(resolvedLayoutName)) {
+		long revision = Buildings.regionsSignature() * 31 + layout.revision();
+		if (revision != resolvedLayoutRevision || !layout.name().equals(resolvedLayoutName)) {
 			RESOLVED.clear();
-			resolvedLayoutRevision = layout.revision();
+			resolvedLayoutRevision = revision;
 			resolvedLayoutName = layout.name();
 		}
 		BlockPos origin = be.getBlockPos();
@@ -182,17 +184,21 @@ public final class MonitorFeature {
 		}
 		String found = "feed";
 		Direction right = facing.getCounterClockWise();
-		for (Map.Entry<String, Anchor> e : layout.anchors().entrySet()) {
-			if (!e.getKey().startsWith(AnchorNames.MONITOR_PREFIX)) {
-				continue;
-			}
-			Anchor a = e.getValue();
-			// surface-centre anchors may sit on the block boundary: also try a point nudged into the panel
-			BlockPos p = BlockPos.containing(a.x(), a.y(), a.z());
-			BlockPos q = BlockPos.containing(a.x() - facing.getStepX() * 0.3, a.y(), a.z() - facing.getStepZ() * 0.3);
-			if (onPanel(origin, right, w, h, p) || onPanel(origin, right, w, h, q)) {
-				found = e.getKey().substring(AnchorNames.MONITOR_PREFIX.length());
-				break;
+		// every building's monitor_<id> anchors (the HQ studio / home first): an anchor names one panel
+		search:
+		for (Anchors.Layout l : Buildings.layouts()) {
+			for (Map.Entry<String, Anchor> e : l.anchors().entrySet()) {
+				if (!e.getKey().startsWith(AnchorNames.MONITOR_PREFIX)) {
+					continue;
+				}
+				Anchor a = e.getValue();
+				// surface-centre anchors may sit on the block boundary: also try a point nudged into the panel
+				BlockPos p = BlockPos.containing(a.x(), a.y(), a.z());
+				BlockPos q = BlockPos.containing(a.x() - facing.getStepX() * 0.3, a.y(), a.z() - facing.getStepZ() * 0.3);
+				if (onPanel(origin, right, w, h, p) || onPanel(origin, right, w, h, q)) {
+					found = e.getKey().substring(AnchorNames.MONITOR_PREFIX.length());
+					break search;
+				}
 			}
 		}
 		RESOLVED.put(origin.immutable(), found);
