@@ -408,7 +408,9 @@ decisions, and with config.set loosen its own permissions). From now on:
 - **foreman.restart**: acked with `{}`; about 150 ms later the server closes and a new process
   starts (same node, flags, script, arguments, environment and cwd, minus `--reset`, `--goal`,
   `--autostart`), on the same port with a **new token**: re-read the run file before reconnecting.
-  The run file names the new pid at once; `tokenFile` reappears when the new process has claimed it.
+  The run file names the new pid (and the same `tokenFile` path) at once; the new process writes its
+  token there before it listens. Verified on macOS (`tools/mac.mjs stop` and `launch` follow it);
+  Windows `tools\stop.ps1` still looks only at the pid launch.ps1 recorded.
   Refused (`ok:false`) when the Foreman was not started by `main` (tests).
 
 ### Team tab (mod)

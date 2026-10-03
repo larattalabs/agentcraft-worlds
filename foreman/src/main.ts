@@ -117,9 +117,10 @@ export async function main(argv: string[]): Promise<void> {
       await stopAll();
       try {
         const pid = spawnRestart(currentRestartCommand(cfg.argv));
-        // the run file names the new process until it claims it itself (launchers find it there)
-        const { tokenFile: _old, ...rest } = runInfo;
-        writeJsonAtomic(profileRunFile(cfg.dataDir), { ...rest, pid, startedAt: new Date().toISOString() });
+        // the run file names the new process until it claims it itself (launchers find it there).
+        // tokenFile stays: the path is the same every start, and the new process writes its token
+        // there before it listens, so whoever reads this file once the port answers gets the new one
+        writeJsonAtomic(profileRunFile(cfg.dataDir), { ...runInfo, pid, startedAt: new Date().toISOString() });
         log.info(`restarted as pid ${pid}`);
       } catch (e) {
         log.error(`restart failed: ${(e as Error).message}; start the Foreman again by hand`);
