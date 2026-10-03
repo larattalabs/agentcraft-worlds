@@ -209,10 +209,27 @@ public final class Protocol {
 		}
 	}
 
-	public record Goal(String id, String text, double progress, GoalStatus status, @Nullable String repoId, long createdAt, long updatedAt) {
+	/** {@code leadId}: the lead that plans and reviews the goal (absent = marlow). */
+	public record Goal(String id, String text, double progress, GoalStatus status, @Nullable String repoId, long createdAt, long updatedAt,
+		@Nullable String leadId) {
 		public Goal {
 			text = text == null ? "" : text;
 			status = status == null ? GoalStatus.UNKNOWN : status;
+		}
+
+		/** The goal's lead: {@code leadId}, else marlow. */
+		public String lead() {
+			return leadId == null || leadId.isBlank() ? "marlow" : leadId;
+		}
+	}
+
+	/**
+	 * Which lead leads which building (docs/PRWATCH.md "A lead per building"). {@code building} is the mod's
+	 * key {@code "<worldId>/<buildingId>"}; marlow is listed without one.
+	 */
+	public record LeadAssignment(String leadId, @Nullable String building, List<String> repos) {
+		public LeadAssignment {
+			repos = repos == null ? List.of() : List.copyOf(repos);
 		}
 	}
 
@@ -312,7 +329,9 @@ public final class Protocol {
 	// ------------------------------------------------------------------ Foreman -> mod messages
 
 	public record Snapshot(ForemanStatus foreman, List<Agent> agents, List<Task> tasks, List<Decision> decisions, List<Repo> repos,
-		List<MemoryEntry> memory, @Nullable Goal goal, List<Goal> goals, List<FeedItem> feed, List<AgentLogs> logs, List<Design> designs) {
+		List<MemoryEntry> memory, @Nullable Goal goal, List<Goal> goals, List<FeedItem> feed, List<AgentLogs> logs, List<Design> designs,
+		@Nullable List<LeadAssignment> leads) {
+		/** {@code leads} stays null when the Foreman does not send it (a Foreman from before leads per building). */
 		public Snapshot {
 			designs = designs == null ? List.of() : List.copyOf(designs);
 			agents = agents == null ? List.of() : List.copyOf(agents);
@@ -360,6 +379,13 @@ public final class Protocol {
 	}
 
 	public record DesignUpsert(Design design) {
+	}
+
+	/** {@code leads.update}: the full list of lead assignments. */
+	public record LeadsUpdate(List<LeadAssignment> leads) {
+		public LeadsUpdate {
+			leads = leads == null ? List.of() : List.copyOf(leads);
+		}
 	}
 
 	public record Diff(String requestId, String repoId, String worktree, @Nullable String base, @Nullable String branch, List<DiffFile> files,
