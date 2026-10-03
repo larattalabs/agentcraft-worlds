@@ -411,6 +411,24 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   rotation `none|clockwise_90|clockwise_180|counterclockwise_90` or `cw|ccw|90|180|270`, default:
   entrance facing the player; ground row at the feet, near edge 2 blocks ahead, centred),
   `/agentcraft remove <id> [forget]`, `/agentcraft home <id>`.
+- Wizard (client, `dev.agentcraft.client.building`, contract in docs/BUILDINGS.md "Wizard"):
+  `BuildingWizardFeature` (key `B`, `/agentcraft build` via `BuildingCommands.wizardOpener`),
+  `RepoPickScreen` -> `BlueprintPickScreen` -> `BuildPlacement` (state, raycast, conflict scan on the
+  client level, confirm through `getSingleplayerServer().execute` in the player's dimension),
+  `GhostRenderer` (`LevelRenderEvents.COLLECT_SUBMITS`, one `submitCustomGeometry` with
+  `RenderTypes.debugFilledBox()`: POSITION_COLOR quads, blended, no depth write, no culling; set only
+  `addVertex` + `setColor`; cubes inflated 0.005 against z-fighting; camera-relative on a fresh
+  PoseStack), `PlacementHud`, `KeyboardHandlerMixin` (placement keys before vanilla, so Esc does not
+  pause). The pure parts are `building.GhostModel` (rotated cells, checked against vanilla
+  `StructureTemplate.transform`; exposed faces; conflict classes; `place`'s refusals), tested in
+  `GhostModelTest`. Template cells come from `StructureTemplate.save` (palettes are private), cached
+  per `Blueprints.Entry`. Render cost: the workshop (27x10x21, 2583 visible cells) draws 3750 faces
+  (15k vertices) per frame; `dev.build.state` reports `render.lastFrameMicros` / `maxFrameMicros`.
+  DevBridge: `dev.build.open {step: repos|blueprints, repos?, blueprint?}`, `dev.build.start
+  {blueprint, repos, origin?: [x,y,z] (rotated box minimum, locks there), turns?}`, `dev.build.state`,
+  `dev.build.rotate {turns?}`, `dev.build.nudge {forward?, right?, up?}`, `dev.build.lock {on?}`,
+  `dev.build.confirm {force?}` (replies with the server's result), `dev.build.cancel`; screens
+  `build_repos`, `build_blueprints` for `dev.screen`.
 - Trying it without a bundled blueprint: save a structure with a structure block (it lands in
   `<world>/generated/<ns>/structure/<name>.nbt`), copy it to `run/agentcraft/blueprints/<id>.nbt`,
   write `<id>.blueprint.json` next to it (size = the structure block's size), then

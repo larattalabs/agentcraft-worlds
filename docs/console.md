@@ -11,6 +11,7 @@ Shots: `tools/scenes/console.json` (showcase busy state).
 | `` ` `` (Backtick) | open the console (again with an empty input: close it) |
 | `Enter` while looking at a console terminal | open the console (a right-click on the terminal does too) |
 | `J` | open the decision queue (a right-click on the Decision Podium does too) |
+| `B` | open the building wizard (docs/BUILDINGS.md "Wizard") |
 
 Neither screen pauses the game: agents keep walking and working behind it.
 

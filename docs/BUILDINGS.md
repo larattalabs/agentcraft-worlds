@@ -106,7 +106,7 @@ A placed blueprint is a building:
   building layout, else `Anchors.current()`), `place(level, blueprint, origin, rotation, repos,
   force) -> Building`, `remove(level, id)`, `forget(server, id)`, `setHome(server, id)`, persistence,
   change listeners. Errors are `Buildings.BuildingException` with a player-facing message.
-- Commands (gamemaster): `/agentcraft blueprints [reload]`, `/agentcraft buildings`,
+- Commands (gamemaster): `/agentcraft blueprints [reload]`, `/agentcraft buildings`, `/agentcraft build` (the wizard),
   `/agentcraft place <blueprint> <repo>[,<repo>...] [rotation] [force]` (in front of the player,
   ground at the player's feet), `/agentcraft remove <buildingId> [forget]`, `/agentcraft home <buildingId>`.
 - `Anchors.current()` keeps working: in the AgentCraft HQ world it is the studio as today; in any
@@ -124,11 +124,34 @@ A placed blueprint is a building:
 
 ## Wizard (client)
 
-`/agentcraft build` or a key opens: pick a repo (or several, for a group), pick a blueprint (list
-with name, size, kind), then a translucent ghost of the template follows the player's look (ground
-at the targeted surface), cells that would replace non-air blocks tinted red, block entities that
-would block placement in strong red; keys rotate / nudge / raise / lower; confirm places it through
-the server API (singleplayer: `ServerTasks`).
+`/agentcraft build` (a server subcommand: the client installs `BuildingCommands.wizardOpener`, so the
+server tree stays the only `agentcraft` root; a dedicated server answers with the `place` usage) or
+the key `B` (Options > Controls > AgentCraft, rebindable) opens it. Singleplayer only. The key is not
+gated on the gamemaster level the commands need: the world is the player's own and placing is
+explicit and reversible.
+
+1. Repos: one (single building) or several (group building, wing n = the n-th repo picked) from the
+   Foreman's repos; repos that already have a building are shown disabled with its id. With the
+   Foreman offline (or Tab) the ids are typed, comma separated.
+2. Blueprint: single blueprints for one repo, group blueprints with `wings >= n` for n repos; name,
+   kind, size, description and a top-down preview (each column's highest block in its map colour,
+   entrance at the bottom). Confirm closes the screen and starts placement.
+3. Placement (no screen): a translucent ghost follows the look. The entrance faces the player, the
+   near edge sits on the targeted block (ray up to 64 blocks; a wall hit drops to the ground below)
+   and the ground row on its surface; looking at nothing places it like `/agentcraft place` (feet,
+   2 blocks ahead). Drawn: the template's exposed faces in each block's map colour (~35 %), cells at
+   or above the ground row that would replace a solid block in orange (advisory: placing replaces
+   them; floor/foundation rows replacing terrain are not flagged), block entities the mod did not
+   place in strong red, the box edges (red when `place` would refuse) and a brass bar on the entrance
+   side. The HUD shows the blueprint, repos, rotation, the verdict (`place`'s refusals, computed on
+   the client: repo already built, too many repos, build height, overlap, block entities) and counts.
+   Keys (consumed before vanilla): `R` rotate (Shift+R back), arrows nudge (relative to the view),
+   PgUp/PgDn raise/lower, `L` lock (the ghost stays when looking away; L's advancements screen is
+   not opened while placing), Enter place, Esc/Backspace cancel. A refusal over block entities arms
+   Shift+Enter (force) as a second, deliberate confirm.
+4. Confirm runs `Buildings.place(level, bp, origin, rotation, repos, force=false)` on the integrated
+   server in the player's dimension; the building id (or the refusal) comes back as a toast and HUD
+   line. A refusal keeps placement mode.
 
 ## Verify loop (tools)
 
