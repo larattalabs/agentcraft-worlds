@@ -120,7 +120,11 @@ A placed blueprint is a building:
   lead: its goal's repo; anyone else, or a repo without a building: home.
 - Station targets, desks, seats, monitors and the pathfinder use that building's layout; moving
   between buildings teleports (for now).
-- Task walls bound `repo:<repoId>` show only that repo's tasks; unbound show all (as today).
+- Task walls bound `repo:<repoId>` show only that repo's tasks, titled with the repo's name; unbound show
+  all (as today).
+- Off-shift agents idle in the home building. A building without the agent's desk, its station or a
+  lounge sends it home. Lamps, podiums, monitors and particles work in every building (its box), not
+  only the home one; `ci:#n` means the n-th repo only in the HQ studio.
 
 ## Wizard (client)
 
