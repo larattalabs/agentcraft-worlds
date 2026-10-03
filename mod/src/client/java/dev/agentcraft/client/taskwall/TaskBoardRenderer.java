@@ -239,7 +239,7 @@ public class TaskBoardRenderer extends StationRenderer<TaskBoardBlockEntity, Tas
 	/** No tasks yet: a paper note pinned in the middle that says how to start, with the console key as a keycap. */
 	private static void drawEmpty(PoseStack ps, SubmitNodeCollector c, TaskBoard b, int light) {
 		Font font = Minecraft.getInstance().font;
-		String l1 = b.repoFilter != null ? "No tasks for " + b.title + " yet" : "No tasks yet";
+		String l1 = b.repoFilter != null ? "No tasks for " + b.title.split(" · lead ")[0] + " yet" : "No tasks yet";
 		String key = TaskWallFeature.startKey();
 		String pre = key.isEmpty() ? "Open the console, type a goal" : "Press ";
 		String post = key.isEmpty() ? "" : " and type a goal";

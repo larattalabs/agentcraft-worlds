@@ -3,6 +3,7 @@ package dev.agentcraft.client.taskwall;
 import dev.agentcraft.AgentCraft;
 import dev.agentcraft.building.Routing;
 import dev.agentcraft.client.foreman.ForemanState;
+import dev.agentcraft.client.leads.Leads;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.CiStatus;
 import dev.agentcraft.client.foreman.Protocol.Repo;
@@ -403,13 +404,20 @@ final class TaskBoard {
 		return shown(t) && Routing.boardShows(repoFilter, t.repoId());
 	}
 
-	/** The title of a wall filtered to {@code repo}: the Foreman repo's name, else the id ("" = unfiltered). */
+	/**
+	 * The title of a wall filtered to {@code repo}: the Foreman repo's name, else the id ("" = unfiltered),
+	 * and the repo's lead ("· lead Ines"; Marlow for a repo without a lead) when the Foreman publishes leads.
+	 */
 	static String titleFor(@Nullable ForemanState s, @Nullable String repo) {
 		if (repo == null) {
 			return "";
 		}
 		Repo r = s == null ? null : s.repo(repo);
-		return r != null ? r.name() : repo;
+		String name = r != null ? r.name() : repo;
+		if (s == null || !s.leadsKnown()) {
+			return name;
+		}
+		return name + " · lead " + Leads.name(Leads.view().leadForRepo(repo));
 	}
 
 	/** Title text as shown on the wall (markdown backticks dropped). */

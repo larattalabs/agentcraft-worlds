@@ -329,6 +329,10 @@ public final class HubFeature {
 			Anchors.Bounds box = b.box();
 			j.addProperty("box", box.minX() + "," + box.minY() + "," + box.minZ() + " .. " + box.maxX() + "," + box.maxY() + "," + box.maxZ());
 			j.addProperty("hasEntrance", b.anchors().containsKey("entrance"));
+			String world = Buildings.worldId();
+			j.addProperty("leadKey", world == null ? null : dev.agentcraft.building.LeadRouting.key(world, b.id()));
+			j.addProperty("lead", dev.agentcraft.client.leads.Leads.view().leadOf(b.id()));
+			j.addProperty("leadLabel", dev.agentcraft.client.leads.LeadsFeature.leadLabel(b));
 			bs.add(j);
 		}
 		o.add("buildings", bs);
