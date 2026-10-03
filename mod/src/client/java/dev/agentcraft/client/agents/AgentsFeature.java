@@ -309,6 +309,8 @@ public final class AgentsFeature {
 						j.addProperty("yaw", round(e.getYRot()));
 						j.addProperty("station", v.station);
 						j.addProperty("anchor", v.anchor);
+						j.addProperty("layout", v.layout.name());
+						j.addProperty("repo", v.repo);
 						var t = e.motion().target();
 						if (t != null) {
 							JsonObject tj = new JsonObject();
