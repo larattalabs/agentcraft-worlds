@@ -33,6 +33,7 @@
 - <a id="designfeature"></a>**DesignFeature**: `porch`, `skylights`, `courtyard`, `big_windows`, `garden`
 - <a id="prstatus"></a>**PrStatus**: `open`, `changes`, `approved`, `merged`, `abandoned` - open: waiting for reviews; changes: a reviewer asked for changes (vote -5/-10, GitHub CHANGES_REQUESTED); approved: approved and nobody objects; merged / abandoned: closed on the host
 - <a id="prchecks"></a>**PrChecks**: `pending`, `passing`, `failing`, `none` - build / status checks on the PR (Azure DevOps build policies, GitHub status checks); none = the PR has no checks
+- <a id="digestlinekind"></a>**DigestLineKind**: `task_done`, `task_blocked`, `task_added`, `decision_waiting`, `decision_answered`, `merged`, `pr_opened`, `pr_merged`, `pr_comments`, `message`, `goal_done`
 
 Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; permission decisions use `Allow once`, `Always allow for this agent`, `Deny`. Question decisions use agent-supplied options (may be empty: free text).
 
@@ -119,6 +120,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `repoId` | string | no | merge decisions: repo to request the diff from |
 | `worktree` | string | no | merge decisions: worktree to request the diff for |
 | `tool` | string | no | permission decisions: tool name, e.g. "Bash" |
+| `goalId` | string | no | the goal this decision is about (its task's goal, or the goal of the lead turn that asked); absent on older decisions and ones not tied to a goal |
 | `createdAt` | integer | yes | epoch milliseconds |
 
 ### <a id="decisionanswer"></a>DecisionAnswer
@@ -141,6 +143,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `dirty` | boolean | yes | user checkout has uncommitted tracked changes (merges are refused while dirty) |
 | `worktrees` | [Worktree](#worktree)[] | yes |  |
 | `ci` | `unknown` \| `running` \| `pass` \| `fail` | yes | latest CI/test result across this repo |
+| `settings` | [RepoSettingsView](#reposettingsview) | no | read-only view of the repository's config.json repoSettings (no secrets: env shows its keys only) |
 
 ### <a id="worktree"></a>Worktree
 
@@ -179,8 +182,65 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `status` | `planning` \| `active` \| `done` \| `failed` \| `cancelled` | yes | planning (lead is planning) -> active -> done (every non-cancelled task merged/done); cancelled: every task was cancelled or rejected (back to active if the lead adds a task); failed: planning failed |
 | `repoId` | string | no |  |
 | `leadId` | string | no | the lead running this goal (set at submit from the goal's repository: the lead of the building that has it). Absent = "marlow". Fixed for the goal's life, except when its lead is released (lead.release / lead.sync): then marlow takes the goal over |
+| `repos` | string[] | no | every repository the goal touches: repoId first, then each task's repository in order of first appearance (kept up to date) |
+| `instructions` | string[] | no | standing instructions (goal.instructions): in the lead's prompts, appended to new task descriptions, and a section of every worker prompt for its tasks |
+| `planId` | string | no | memory entry id of the goal's plan note, once it exists |
+| `branch` | string | no | the user's branch the goal continues ("on <branch>:" prefix or goal.submit branch) |
+| `prs` | [GoalPr](#goalpr)[] | no | its tasks' pull requests (tasks with Task.pr), in task order |
 | `createdAt` | integer | yes | epoch milliseconds |
 | `updatedAt` | integer | yes | epoch milliseconds |
+
+### <a id="goalpr"></a>GoalPr
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `taskId` | string | yes |  |
+| `url` | string | yes |  |
+| `id` | integer | yes | PR number on its host |
+| `status` | [PrStatus](#prstatus) | yes | open: waiting for reviews; changes: a reviewer asked for changes (vote -5/-10, GitHub CHANGES_REQUESTED); approved: approved and nobody objects; merged / abandoned: closed on the host |
+
+### <a id="reposettingsview"></a>RepoSettingsView
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `land` | `merge` \| `pr` | yes | how approved work lands (repoSettings.land, default "merge") |
+| `baseBranch` | string | no | configured base branch (repoSettings.baseBranch) |
+| `ci` | string | no | configured test command (repoSettings.ci); absent = --ci or detected |
+| `setup` | string | no | worktree setup command (repoSettings.setup) |
+| `pr` | { remote?: string, branchPrefix?: string, draft?: boolean, squash?: boolean } | no | pull request options (repoSettings.pr) |
+| `protect` | string[] | yes | paths never committed (repoSettings.protect) |
+| `roles` | map<string, string> | yes | agent id -> the repository agent file that is its role here |
+| `subagents` | string | no | "repo": the repository's .claude/agents files are usable as subagents |
+| `prReview` | { autoSeverities: string[], maxRounds: integer } | no | PR review triage (configured values, else the defaults) |
+| `envKeys` | string[] | no | names of the repoSettings.env variables (values are never sent) |
+
+### <a id="digest"></a>Digest
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `since` | integer | yes | epoch milliseconds |
+| `until` | integer | yes | epoch milliseconds |
+| `goals` | [GoalDigest](#goaldigest)[] | yes | with goalId: that goal; without: every goal with something in the window |
+
+### <a id="goaldigest"></a>GoalDigest
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `goalId` | string | yes |  |
+| `text` | string | yes | the goal's text |
+| `status` | [GoalStatus](#goalstatus) | yes |  |
+| `progress` | number | yes |  |
+| `lines` | [DigestLine](#digestline)[] | yes | at most 30, oldest first (newest last); routine progress left out |
+
+### <a id="digestline"></a>DigestLine
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `ts` | integer | yes | epoch milliseconds |
+| `kind` | [DigestLineKind](#digestlinekind) | yes |  |
+| `text` | string | yes |  |
+| `taskId` | string | no |  |
+| `agentId` | string | no |  |
 
 ### <a id="leadassignment"></a>LeadAssignment
 
@@ -199,6 +259,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `text` | string | yes |  |
 | `agentId` | string | no | who it is about / from |
 | `to` | string | no | message recipient: agent id, "user" or "all" |
+| `goalId` | string | no | the goal the item is about (its tasks, its lead's turns for it, its PRs, goal messages); absent on older items and ones not tied to a goal |
 
 ### <a id="foremanstatus"></a>ForemanStatus
 
@@ -374,6 +435,7 @@ Full state. Sent in reply to every `hello`; the mod rebuilds its view from it.
       "taskId": "t2",
       "repoId": "demo-app",
       "worktree": "kit-t2",
+      "goalId": "g1",
       "createdAt": 1790850120000
     }
   ],
@@ -386,6 +448,34 @@ Full state. Sent in reply to every `hello`; the mod rebuilds its view from it.
       "head": "a6cbf49",
       "dirty": false,
       "ci": "pass",
+      "settings": {
+        "land": "pr",
+        "baseBranch": "dev",
+        "ci": "npm test",
+        "setup": "npm ci",
+        "pr": {
+          "remote": "origin",
+          "branchPrefix": "feat/",
+          "draft": true
+        },
+        "protect": [
+          ".env",
+          "secrets/"
+        ],
+        "roles": {
+          "kit": "backend-dev"
+        },
+        "prReview": {
+          "autoSeverities": [
+            "critical",
+            "important"
+          ],
+          "maxRounds": 2
+        },
+        "envKeys": [
+          "NODE_OPTIONS"
+        ]
+      },
       "worktrees": [
         {
           "id": "kit-t2",
@@ -675,6 +765,7 @@ Decision opened, answered or cancelled. Replace by `decision.id`.
     "taskId": "t2",
     "repoId": "demo-app",
     "worktree": "kit-t2",
+    "goalId": "g1",
     "createdAt": 1790850120000
   }
 }
@@ -701,6 +792,34 @@ Repo added or changed (worktrees, CI, head, dirty). Replace by `repo.id`.
     "head": "a6cbf49",
     "dirty": false,
     "ci": "pass",
+    "settings": {
+      "land": "pr",
+      "baseBranch": "dev",
+      "ci": "npm test",
+      "setup": "npm ci",
+      "pr": {
+        "remote": "origin",
+        "branchPrefix": "feat/",
+        "draft": true
+      },
+      "protect": [
+        ".env",
+        "secrets/"
+      ],
+      "roles": {
+        "kit": "backend-dev"
+      },
+      "prReview": {
+        "autoSeverities": [
+          "critical",
+          "important"
+        ],
+        "maxRounds": 2
+      },
+      "envKeys": [
+        "NODE_OPTIONS"
+      ]
+    },
     "worktrees": [
       {
         "id": "kit-t2",
@@ -764,6 +883,24 @@ Goal created or progress/status changed. Replace by `goal.id`; latest goal is cu
     "status": "active",
     "repoId": "demo-app",
     "leadId": "ines",
+    "repos": [
+      "demo-app",
+      "notes-api"
+    ],
+    "instructions": [
+      "No new dependencies",
+      "Keep the CLI output under 80 columns"
+    ],
+    "planId": "shared/plan-tags-for-pocket-notes",
+    "branch": "feature/tags",
+    "prs": [
+      {
+        "taskId": "t4",
+        "url": "https://dev.azure.com/acme/Notes/_git/pocket-notes/pullrequest/612",
+        "id": 612,
+        "status": "open"
+      }
+    ],
     "createdAt": 1790850000000,
     "updatedAt": 1790850200000
   }
@@ -787,7 +924,8 @@ Append to the activity feed.
     "ts": 1790850210000,
     "kind": "merge",
     "text": "Merged agentcraft/kit/t2-tag-parser-module into main (7cf1999, 2 files)",
-    "agentId": "marlow"
+    "agentId": "marlow",
+    "goalId": "g1"
   }
 }
 ```
@@ -1099,13 +1237,16 @@ First message after connecting. The Foreman replies with `snapshot`, then stream
 
 ### `goal.submit`
 
-New goal for the lead (console: plain text).
+New goal for the lead (console: plain text). Acked with `{goalId}`.
 
 | field | type | required | notes |
 | --- | --- | --- | --- |
 | `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
 | `text` | string | yes |  |
-| `repoId` | string | no | defaults to the only/most recently added repo |
+| `repoId` | string | no | defaults to repos[0], else the only/most recently added repo |
+| `repos` | string[] | no | the repositories the goal is for (e.g. a group building's); the first becomes repoId when repoId is absent. The goal's lead is the lead of repoId |
+| `branch` | string (#RRGGBB) | no | continue this branch of the user's (same as an "on <branch>:" prefix; wins over it) |
+| `instructions` | string[] | no | standing instructions from the start (see goal.instructions) |
 
 ```json
 {
@@ -1113,6 +1254,132 @@ New goal for the lead (console: plain text).
   "type": "goal.submit",
   "id": "c12",
   "text": "Add a --version flag to the CLI",
+  "repoId": "demo-app",
+  "repos": [
+    "demo-app",
+    "notes-api"
+  ],
+  "branch": "feature/version-flag",
+  "instructions": [
+    "No new dependencies"
+  ]
+}
+```
+
+### `goal.message`
+
+A message to the goal's lead about that goal. It runs as a turn of the lead's session for the goal (queued behind its other work; also for done/cancelled goals). The user's message and the lead's replies arrive as `feed.add` items with kind `message` and `goalId`. Acked with `{goalId, leadId}`.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `goalId` | string | yes |  |
+| `text` | string | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "goal.message",
+  "id": "c25",
+  "goalId": "g1",
+  "text": "Is the tag parser case-insensitive?"
+}
+```
+
+### `goal.instructions`
+
+Replace the goal's standing instructions (`Goal.instructions`). A change is sent to the lead as a goal message. Acked with `{goalId, changed}`.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `goalId` | string | yes |  |
+| `instructions` | string[] | yes | the full list (replace); blank lines are dropped |
+
+```json
+{
+  "v": 1,
+  "type": "goal.instructions",
+  "id": "c26",
+  "goalId": "g1",
+  "instructions": [
+    "No new dependencies",
+    "Keep the CLI output under 80 columns"
+  ]
+}
+```
+
+### `goal.plan`
+
+Write the goal's plan note as the user (creates it when missing; `memory.upsert`, `Goal.planId`), then send the lead a goal message with a unified diff of the change. Acked with `{goalId, planId, changed}`.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `goalId` | string | yes |  |
+| `body` | string | yes | the plan note's new markdown body |
+
+```json
+{
+  "v": 1,
+  "type": "goal.plan",
+  "id": "c27",
+  "goalId": "g1",
+  "body": "# Plan: #tags\n\n- t2 Tag parser module - Kit\n- t3 `list --tag` - Juniper\n- t4 docs - Tove"
+}
+```
+
+### `goal.cancel`
+
+Cancel every open task of the goal (running workers stop, worktrees and branches kept, open decisions withdrawn) and set it `cancelled`. Refused for a done goal. Acked with `{goalId, cancelled: [taskIds]}`.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `goalId` | string | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "goal.cancel",
+  "id": "c28",
+  "goalId": "g1"
+}
+```
+
+### `goal.digest`
+
+What happened since `since` ("since you were away"). Acked with a `Digest` as `result` (`{since, until, goals}`); built from the feed, tasks and decisions, no model call.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `goalId` | string | no | one goal; omitted = every goal with activity in the window |
+| `since` | integer | yes | epoch milliseconds |
+
+```json
+{
+  "v": 1,
+  "type": "goal.digest",
+  "id": "c29",
+  "since": 1790850000000
+}
+```
+
+### `repo.remove`
+
+Unregister a repository. Refused while it has open tasks (not done/cancelled) or a goal that is still planning. Worktrees, branches and lead assignments are left alone; there is no removal broadcast: other clients see it in their next snapshot. Acked with `{repoId}`.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `repoId` | string | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "repo.remove",
+  "id": "c30",
   "repoId": "demo-app"
 }
 ```
