@@ -226,3 +226,16 @@ Client -> Foreman (all ack; errors as `ok:false` with a message):
   `<gameDir>/agentcraft/hub-seen.json`.
 - DevBridge: `dev.hub.open {tab: repos|goals, ...}`, `dev.hub.state` (tab state), actions for every
   button, `dev.goals.*` helpers; screens `hub_repos`, `hub_goals`, `hub_goal_<view>`.
+
+### Multi-repo buildings and cross-repo goals (amendment)
+- A group building's repos share one lead (the lead's `repos` is the building's repo list).
+- `Goal` gains `repos?: string[]`: every repo the goal touches (its `repoId` first, then each task's repo
+  in order of first appearance), maintained by the Foreman.
+- `goal.submit` gains `repos?: string[]` (the first one becomes `repoId`; a goal "for a building" sends
+  the building's repos). The goal's lead is the lead of `repoId`. The lead's planning prompt names the
+  goal's repos ("this goal is for <building/repos>; give each task the one repo it changes").
+- A goal whose tasks reach a repo of another building stays with its own lead; those tasks show on that
+  building's task wall (wing per repo), PR triage stays with the goal's lead.
+- Mod: the new goal form's target is a repo or a building (group buildings list their repos); the
+  Goals list shows all of a goal's repos and can be filtered by building; the Repos tab shows each
+  repo's building with its wing number ("Notes campus · wing 2") and the building's shared lead.
