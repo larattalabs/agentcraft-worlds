@@ -163,7 +163,7 @@ export function leadRepoContext(fm: Foreman, goalRepoId: string | undefined, cwd
 export function goalReposLine(fm: Foreman, goal: Goal): string {
   const repos = goal.repos ?? [];
   if (repos.length < 2) return '';
-  const names = repos.map((id) => `${id}${id === goal.repoId ? ' (main)' : ''}`);
+  const names = repos.map((id) => `${id}${id === goal.repoId ? ' (primary)' : ''}`);
   return `\nThis goal is for the repositories ${names.join(', ')}: give each task the one repository it changes (create_task repo), with deps across repositories for order.\n`;
 }
 
