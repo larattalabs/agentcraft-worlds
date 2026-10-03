@@ -11,6 +11,7 @@ import dev.agentcraft.client.foreman.ForemanFeature;
 import dev.agentcraft.client.hq.HqClientFeature;
 import dev.agentcraft.client.hub.HubFeature;
 import dev.agentcraft.client.hud.HudFeature;
+import dev.agentcraft.client.leads.LeadsFeature;
 import dev.agentcraft.client.library.LibraryFeature;
 import dev.agentcraft.client.monitor.MonitorFeature;
 import dev.agentcraft.client.permissions.PermissionsFeature;
@@ -45,6 +46,7 @@ public final class ClientFeatures {
 		PermissionsFeature.init();
 		BuildingWizardFeature.init(); // /agentcraft build, B: pick repos + blueprint, place a ghost
 		HubFeature.init();       // H, /hub: buildings, blueprints, status (docs/HUB.md)
+		LeadsFeature.init();     // a lead per building: lead.assign/release/sync, dev.leads.state
 		DesignFeature.init();    // the hub's Design new…, /hub design, plot marking, design progress
 		AgentCraft.LOGGER.info("AgentCraft client features initialised");
 	}
