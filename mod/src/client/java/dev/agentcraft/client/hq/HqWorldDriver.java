@@ -374,13 +374,26 @@ public final class HqWorldDriver {
 		}
 	}
 
+	/**
+	 * Whether the podium / {@code decisions} lamp at {@code p} opens: judged by the building whose box holds
+	 * it exactly (as the podium's bubble does), so two buildings closer than the scan margin cannot disagree;
+	 * outside every box, by the scanned area.
+	 */
+	private static boolean podiumOpenAt(Wanted w, BlockPos p, Area area) {
+		Routing.Site site = Routing.siteAt(Buildings.sites(), p.getX(), p.getY(), p.getZ(), 0);
+		if (site == null) {
+			return w.podiumOpen(area);
+		}
+		return w.podiumOpen(new Area(site.box(), true, site.buildingId(), site.home(), List.of(), List.of()));
+	}
+
 	private static @Nullable BlockState wantedState(BlockEntity be, BlockState s, Wanted w, Area area) {
 		if (be instanceof StatusLampBlockEntity lamp && s.getBlock() instanceof StatusLampBlock) {
 			// in a building, ci:#n is a wing that got no repo at placement (only the studio numbers its repos)
 			LampStatus want = area.building() && Routing.isCiPlaceholder(lamp.binding()) ? null : w.lamps().get(lamp.binding());
 			if (lamp.binding().equals("decisions")) {
 				// like the podium: this building's lead's decisions (home: marlow's and everyone else's)
-				want = w.podiumOpen(area) ? LampStatus.WAITING : LampStatus.OFF;
+				want = podiumOpenAt(w, be.getBlockPos(), area) ? LampStatus.WAITING : LampStatus.OFF;
 			}
 			if (want == null) {
 				// bound to something the Foreman does not have: an agent that left goes dark, an unused CI
@@ -390,7 +403,7 @@ public final class HqWorldDriver {
 			return want == null ? null : s.setValue(StatusLampBlock.STATUS, want);
 		}
 		if (be instanceof DecisionPodiumBlockEntity && s.getBlock() instanceof DecisionPodiumBlock) {
-			return s.setValue(DecisionPodiumBlock.OPEN, w.podiumOpen(area));
+			return s.setValue(DecisionPodiumBlock.OPEN, podiumOpenAt(w, be.getBlockPos(), area));
 		}
 		if (be instanceof MergeStationBlockEntity && s.getBlock() instanceof MergeStationBlock) {
 			return s.setValue(MergeStationBlock.ACTIVE, w.mergeActive());

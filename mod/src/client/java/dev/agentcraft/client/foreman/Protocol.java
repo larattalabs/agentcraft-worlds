@@ -130,13 +130,25 @@ public final class Protocol {
 		AgentState state, String activity, Station station, @Nullable String taskId, @Nullable String repoId, @Nullable String worktree,
 		@Nullable Boolean paused, @Nullable Boolean active) {
 		public Agent {
-			name = name == null ? id : name;
+			name = displayName(id, name);
 			role = role == null ? AgentRole.UNKNOWN : role;
 			color = color == null ? "#9C9488" : color;
 			skin = skin == null ? id : skin;
 			state = state == null ? AgentState.UNKNOWN : state;
 			activity = activity == null ? "" : activity;
 			station = station == null ? Station.UNKNOWN : station;
+		}
+
+		/**
+		 * The name to show: the Foreman's, unless it is missing or just the id (a new lead without a cast
+		 * entry yet): then the cast's name, else the id capitalised ("ines" -> "Ines").
+		 */
+		static @Nullable String displayName(@Nullable String id, @Nullable String name) {
+			if (id == null || id.isEmpty() || name != null && !name.isBlank() && !name.equals(id)) {
+				return name == null ? id : name;
+			}
+			dev.agentcraft.Cast.Member m = dev.agentcraft.Cast.get(id);
+			return m != null ? m.name() : Character.toUpperCase(id.charAt(0)) + id.substring(1);
 		}
 
 		/** false = off shift (render idle in the lounge). Missing = true. */

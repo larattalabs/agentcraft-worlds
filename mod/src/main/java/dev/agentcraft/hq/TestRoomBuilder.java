@@ -129,7 +129,7 @@ public final class TestRoomBuilder implements HqBuilder {
 		for (int x = -6; x <= 6; x++) {
 			set(level, x, FEET, -7, slab);
 		}
-		List<String> ids = Cast.ids();
+		List<String> ids = Cast.deskIds();
 		for (int i = 0; i < 6; i++) {
 			int mx = -5 + 2 * i;
 			String id = i < ids.size() ? ids.get(i) : "agent" + i;
@@ -223,7 +223,7 @@ public final class TestRoomBuilder implements HqBuilder {
 		a.put(AnchorNames.slot(AnchorNames.USER, 3), 0.5, FEET, 9.4, 180, 0);
 		a.cameraLookAt("podium", 0.5, FEET + 1.62, 4.4, 0.5, FEET + 1.0, 7.5);
 		// test bench: one status lamp per agent, agents stand behind them facing north
-		List<String> ids = Cast.ids();
+		List<String> ids = Cast.deskIds();
 		for (int i = 0; i < 6; i++) {
 			BlockPos p = new BlockPos(3 + i, FEET, 7);
 			set(level, p, ModBlocks.STATUS_LAMP.defaultBlockState().setValue(StatusLampBlock.STATUS, LampStatus.IDLE));

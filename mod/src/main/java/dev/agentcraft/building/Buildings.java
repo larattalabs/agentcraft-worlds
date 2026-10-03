@@ -112,6 +112,11 @@ public final class Buildings {
 		return worldId;
 	}
 
+	/** Whether the world's buildings file exists but could not be read (no buildings are loaded, placing is refused). */
+	public static boolean loadFailed() {
+		return loadFailed;
+	}
+
 	// ------------------------------------------------------------------ reads
 
 	/** All buildings in placement order. */

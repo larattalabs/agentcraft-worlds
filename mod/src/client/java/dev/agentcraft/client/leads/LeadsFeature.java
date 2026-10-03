@@ -43,6 +43,8 @@ public final class LeadsFeature {
 	private static @Nullable String world;
 	private static Map<String, List<String>> known = Map.of();
 	private static boolean wasSynced;
+	/** This world's buildings file could not be read: nothing is sent for it (see {@link #onBuildings}). */
+	private static boolean blocked;
 	private static final Deque<JsonObject> SENT = new ArrayDeque<>();
 	private static final Set<String> LOGGED_REFUSALS = new HashSet<>();
 
@@ -53,8 +55,9 @@ public final class LeadsFeature {
 		Buildings.addListener(list -> {
 			// on the thread that changed them (integrated server): capture the world with the list, then hand over
 			String w = Buildings.worldId();
+			boolean unreadable = Buildings.loadFailed();
 			Map<String, List<String>> now = repos(list);
-			Minecraft.getInstance().execute(() -> onBuildings(w, now));
+			Minecraft.getInstance().execute(() -> onBuildings(w, unreadable, now));
 		});
 		Foreman.addListener(new ForemanListener() {
 			@Override
@@ -78,16 +81,22 @@ public final class LeadsFeature {
 	}
 
 	/** Client thread: the world's buildings changed (or a world started / stopped). */
-	static void onBuildings(@Nullable String w, Map<String, List<String>> now) {
+	static void onBuildings(@Nullable String w, boolean unreadable, Map<String, List<String>> now) {
 		if (w == null) {
 			world = null;
 			known = Map.of();
+			blocked = false;
 			return;
 		}
 		if (!w.equals(world)) {
 			world = w;
 			known = now;
+			// an unreadable buildings file loads as "no buildings": syncing that would release every lead of the world
+			blocked = unreadable;
 			sync("world");
+			return;
+		}
+		if (blocked) {
 			return;
 		}
 		LeadRouting.Diff d = LeadRouting.diff(known, now);
@@ -109,6 +118,9 @@ public final class LeadsFeature {
 	static String sync(String why) {
 		if (world == null) {
 			return "no singleplayer world";
+		}
+		if (blocked) {
+			return "not syncing: " + Buildings.FILE + " could not be read (it would release every lead of this world)";
 		}
 		if (!Foreman.connected()) {
 			return "Foreman not connected (synced on connect)";
@@ -204,6 +216,7 @@ public final class LeadsFeature {
 		ForemanState st = Foreman.state();
 		JsonObject o = summaryJson();
 		o.addProperty("syncedWorld", world);
+		o.addProperty("blocked", blocked);
 		o.addProperty("homeBuilding", v.homeBuilding());
 		JsonArray raw = new JsonArray();
 		for (LeadRouting.Lead l : v.leads()) {

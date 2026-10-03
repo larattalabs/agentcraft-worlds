@@ -43,6 +43,20 @@ public final class Cast {
 		return List.copyOf(members().keySet());
 	}
 
+	/**
+	 * The ids that get a desk, monitor and test-bench lamp (cast order): every worker plus Marlow. The other
+	 * leads (role {@code lead}: one per building, docs/PRWATCH.md) work at a building's meeting table.
+	 */
+	public static List<String> deskIds() {
+		List<String> out = new ArrayList<>();
+		for (Member m : members().values()) {
+			if (!"lead".equals(m.role()) || "marlow".equals(m.id())) {
+				out.add(m.id());
+			}
+		}
+		return List.copyOf(out);
+	}
+
 	public static @Nullable Member get(String id) {
 		return members().get(id);
 	}

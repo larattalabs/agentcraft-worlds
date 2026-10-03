@@ -479,7 +479,13 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
   `Buildings.place`, every removal in `forget`): world loaded -> `lead.sync {world, buildings:[{building,
   repos}]}`; new building -> `lead.assign {building, repos}`; building gone -> `lead.release {building}`;
   link (re)connected -> `lead.sync` (the reconciler for anything done offline); world stopped -> nothing.
-  Nothing is sent without a singleplayer world. A refused ack (older Foreman) is logged once per type.
+  Nothing is sent without a singleplayer world, nor for a world whose `agentcraft-buildings.json` could not
+  be read (it loads as "no buildings"; a sync would release every lead of the world; `dev.leads.state`
+  `blocked`). A refused ack (an older Foreman acks unknown types `ok:false`) is logged once per type.
+- Cast: `Cast.deskIds()` (workers + Marlow) owns the studio's / test room's desks, monitors and test-bench
+  lamps, so lead entries (`ines`, `bram`, `cass`, role `lead`) added to cast.json get none. An agent
+  whose Foreman name is missing or just its id shows the cast name, else the id capitalised
+  (`Protocol.Agent.displayName`).
 - `ForemanState.leads()` from `snapshot.leads` / `leads.update`; `leadsKnown()` is false until the Foreman
   sends either (an older Foreman never does). `Leads.view()` resolves the assignments against this world's
   buildings once per Foreman revision / buildings change (client thread): `assignedHere` (lead -> building
