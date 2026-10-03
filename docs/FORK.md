@@ -20,6 +20,9 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 |---|---|
 | 2026-10-03 | Public fork, so generic fixes can go upstream as PRs. |
 | 2026-10-03 | Hardcore world moves to MC 26.3 via a **new cloned Prism instance**; the 26.2 instance stays untouched as a fallback until the clone has soaked. |
+| 2026-10-03 | `main` = upstream + every topic branch merged; topic branches stay for upstream PRs. New work: topic branch off `upstream/main`, then merge into `main`. |
+| 2026-10-03 | Build order below. Phase 0 (verification) deferred by choice; Phase 1 starts now. Phase 0 must pass before anything enters the Hardcore world. |
+| 2026-10-03 | Agent context: repo `CLAUDE.md`/`AGENTS.md` on by default; the user's global `~/.claude/CLAUDE.md` opt-in only (interactive-workflow rules would fight the role prompts); extra files by path. Read by the Foreman and appended, never via `settingSources`. |
 
 ## Branches
 
@@ -33,6 +36,32 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/plan-per-goal` | roadmap 1 | yes |
 | `foreman/repo-settings` | roadmap 2 | yes |
 | `foreman/rate-limits` | roadmap 3 | yes |
+
+## Build sequence
+
+Items refer to the roadmap below. Each phase ends at a gate; don't start the next phase until it passes.
+
+**Phase 0: verify what exists** *(deferred 2026-10-03; required before any Hardcore use)*
+1. Mod jar in a throwaway 26.3 instance + new Hardcore world: no HQ world created, volume untouched,
+   pause-on-lost-focus intact, nothing on :7879, `/agentcraft hq` refused.
+2. Soak the new 26.3 Hardcore instance without AgentCraft (first launch, one-way world upgrade, Sodium alpha + DH).
+3. Real Foreman run from `main` (`--use-claude-login`, 2 workers, one non-critical repo with
+   `repoSettings`): worktree setup, CI, usage-limit handling.
+
+**Phase 1: Foreman features**
+4. Roadmap 4: agent context (instructions, skills, MCP).
+5. Roadmap 5: roles (per-agent role prompt, model, effort; cheap-task routing; per-agent memory notes).
+6. Usage banner: `getUsage()` 5-hour/7-day windows in `foreman.status` (finishes roadmap 3).
+- *Gate:* about a week of real work on Phase 1.
+
+**Phase 2: mod, for the Hardcore office** (independent of Phase 1; can swap order)
+7. Roadmap 9 + DevBridge token. 8. Roadmap 10. 9. Roadmap 11.
+10. Build the office in a copy of the Hardcore world first; soak; then the real one (fresh backup each time).
+
+**Phase 3: as needed after real use**
+11. Roadmap 12 (display upgrades). 12. Roadmap 6 (coordination extras, as a separate MCP server).
+
+**Throughout:** open upstream PRs early, merge `upstream/main` weekly, topic branch per item.
 
 ## Roadmap (ordered)
 
