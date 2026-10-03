@@ -158,15 +158,12 @@ describe('GitHub adapter', () => {
           comments: [{ id: 'IC_x', url: 'https://github.com/o/r/pull/9#issuecomment-555', author: { login: 'dana' }, body: 'Also the docs' }],
           statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' }, { __typename: 'StatusContext', context: 'lint', state: 'SUCCESS' }],
         };
-      return [
-        { id: 100, path: 'src/a.ts', line: 3, body: 'off by one', user: { login: 'dana' } },
-        { id: 101, in_reply_to_id: 100, path: 'src/a.ts', line: 3, body: 'agreed', user: { login: 'eli' } },
-      ];
+      return [[{ id: 100, path: 'src/a.ts', line: 3, body: 'off by one', user: { login: 'dana' } }], [{ id: 101, in_reply_to_id: 100, path: 'src/a.ts', line: 3, body: 'agreed', user: { login: 'eli' } }]];
     }, calls);
     const pr = await readPr(GH, run);
     expect(calls.map((c) => [c.cmd, ...c.args])).toEqual([
       ['gh', 'pr', 'view', 'https://github.com/o/r/pull/9', '--json', 'state,isDraft,reviewDecision,reviews,comments,statusCheckRollup,mergedAt,headRefOid,mergeStateStatus'],
-      ['gh', 'api', '--paginate', 'repos/o/r/pulls/9/comments'],
+      ['gh', 'api', '--paginate', '--slurp', 'repos/o/r/pulls/9/comments'],
     ]);
     expect(pr).toMatchObject({ status: 'changes', checks: 'failing', failing: ['test'], headSha: 'def456' });
     expect(pr.threads.map((t) => [t.id, t.file, t.comments.length])).toEqual([

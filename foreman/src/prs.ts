@@ -274,7 +274,9 @@ export async function readPr(ref: PrRef, runFn: RunFn = run, cwd?: string): Prom
   }
   const url = `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.id}`;
   const pr = await runJson<GhPr>(runFn, 'gh', ['pr', 'view', url, '--json', 'state,isDraft,reviewDecision,reviews,comments,statusCheckRollup,mergedAt,headRefOid,mergeStateStatus'], cwd);
-  const rcs = await runJson<GhReviewComment[]>(runFn, 'gh', ['api', '--paginate', `repos/${ref.owner}/${ref.repo}/pulls/${ref.id}/comments`], cwd);
+  // --slurp: every page as one array of pages (without it, pages are concatenated arrays)
+  const pages = await runJson<GhReviewComment[][]>(runFn, 'gh', ['api', '--paginate', '--slurp', `repos/${ref.owner}/${ref.repo}/pulls/${ref.id}/comments`], cwd);
+  const rcs = pages.flat();
   const threads: HostThread[] = [];
   const roots = new Map<number, HostThread>();
   for (const c of [...rcs].sort((a, b) => a.id - b.id)) {

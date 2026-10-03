@@ -95,7 +95,7 @@ landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-f
   merged/abandoned tasks, runs the lead's triage turns, but posts nothing, opens no decision and
   starts no fold-in; the verdicts go to the feed and to the shared memory note
   `PR triage <task> #<id> (observe)`. `on` does everything below. `off` = the old behaviour (a PR
-  finishes its task). Status `pr` is only used when a backend watches PRs (claude, not `off`) and the
+  finishes its task; started with `off`, tasks still in `pr` are marked done). Status `pr` is only used when a backend watches PRs (claude, not `off`) and the
   host gave a PR URL; otherwise landing still means `done`.
 - **Tool name**: one call `triage(items: [{ref, verdict, note}])` instead of `triage_thread` per thread.
   Refs carry the task id (one goal session can triage several PRs): `t3/thread-<threadId>`,
@@ -113,7 +113,7 @@ landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-f
     (`{"content", "parentCommentId": 1, "commentType": 1}`); status `... --resource pullRequestThreads
     ... threadId=T --http-method PATCH --in-file <tmp.json>` (`{"status": "fixed" | "closed"}`).
   - GitHub read: `gh pr view <url> --json state,isDraft,reviewDecision,reviews,comments,
-    statusCheckRollup,mergedAt,headRefOid,mergeStateStatus` + `gh api --paginate
+    statusCheckRollup,mergedAt,headRefOid,mergeStateStatus` + `gh api --paginate --slurp
     repos/o/r/pulls/N/comments`. Write: `gh api --method POST repos/o/r/pulls/N/comments/<id>/replies
     -f body=...` (review threads) or `.../issues/N/comments` (others). Resolving GitHub review threads
     is not done (needs GraphQL).
@@ -135,7 +135,11 @@ landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-f
   for squash PRs, a commit by the user whose parent is the pushed commit: 3-way merge with the last
   landed branch tip as base, so newer base commits never leak in), then the task is back in `pr`.
   Rejected or empty fold-ins also go back to `pr`. A second fold-in for the same PR waits for the
-  first. If the PR branch has commits AgentCraft did not push (seen twice), fold-ins are not started.
+  first. If the PR branch has commits AgentCraft did not push (seen twice; ADO: the PR's
+  lastMergeSourceCommit), fold-ins are queued and start on the first poll after that clears.
+  Approved "Addressed in <commit>" replies and `fixed` resolutions belong to the fold-in that
+  carries those fixes (a generation number): posted when exactly that one lands, dropped (with a
+  feed line) when it is rejected or comes back empty.
 - **Decisions** (agent Marlow, kind question, owned by the watcher so they never resume a session):
   "Post N replies and resolve M threads on PR #612?" [Post, Skip]; ask_user items [Fold in, Leave it];
   the loop guard [Fold in, Leave it]. Replies to automated-review findings are combined into one

@@ -73,9 +73,10 @@ interface PostOp {
 interface PrDecision {
   taskId: string;
   kind: 'post' | 'ask' | 'guard';
-  /** post: written now; afterLanding: once the fold-in's push landed */
+  /** post: written now; afterLanding: once the fold-in `gen` (carrying those fixes) landed */
   now?: PostOp[];
   afterLanding?: PostOp[];
+  gen?: number;
   /** ask / guard: what a fold-in would address */
   notes?: string;
   review?: boolean;
@@ -93,12 +94,16 @@ export interface PrWatchState {
   checks?: TaskPr['checks'];
   /** the lead's verdicts are pending for these items */
   triage?: { items: TriageItem[]; at: number; attempts: number; stale?: boolean };
-  /** a fold-in is running (started by the watcher); its notes */
-  foldIn?: { notes: string; review: boolean; at: number };
-  /** fold-in notes that wait for the running fold-in to land */
+  /** a fold-in is running (started by the watcher): its generation and notes */
+  foldIn?: { gen: number; notes: string; review: boolean; at: number };
+  /** fold-ins started so far; queued notes go into generation gen + 1 */
+  gen: number;
+  /** how each fold-in generation ended */
+  outcomes: Record<string, { outcome: 'landed' | 'empty' | 'rejected'; sha?: string }>;
+  /** fold-in notes that wait (another fold-in runs, or the PR branch has foreign commits) */
   queued: string[];
-  /** approved writes that wait for the fold-in's push */
-  pendingResolve: PostOp[];
+  /** approved writes that wait for the push of fold-in `gen` */
+  pendingResolve: Array<{ gen: number; ops: PostOp[] }>;
   /** ADO repository GUID */
   repoId?: string;
   /** the PR branch's tip on the host when it differs from what AgentCraft pushed */
@@ -212,8 +217,10 @@ export class PrWatcher {
   }
 
   state(taskId: string): PrWatchState {
-    const s = (this.data.prs[taskId] ??= { seen: {}, ours: [], reviewRounds: 0, queued: [], pendingResolve: [], failures: 0 });
+    const s = (this.data.prs[taskId] ??= { seen: {}, ours: [], reviewRounds: 0, gen: 0, outcomes: {}, queued: [], pendingResolve: [], failures: 0 });
     s.seen ??= {};
+    s.gen ??= 0;
+    s.outcomes ??= {};
     s.ours ??= [];
     s.queued ??= [];
     s.pendingResolve ??= [];
@@ -228,7 +235,14 @@ export class PrWatcher {
   }
 
   start(): void {
-    if (!this.active) return;
+    if (!this.active) {
+      // nothing watches them any more: as before PR watching, a landed PR finishes its task
+      for (const t of this.fm.tasks.list().filter((x) => x.status === 'pr')) {
+        this.fm.tasks.setStatus(t.id, 'done', { viaMerge: true, force: true });
+        this.fm.bus.feed('merge', `${t.id}: PR #${t.pr?.id ?? '?'} is no longer watched (claude.prWatch "off"): marked done`);
+      }
+      return;
+    }
     // triage turns that were waiting when the Foreman stopped: offered again on the next poll
     for (const [taskId, s] of Object.entries(this.data.prs)) if (s.triage && !this.opts.hooks.triaging?.(taskId)) s.triage.stale = true;
     this.stop();
@@ -322,6 +336,13 @@ export class PrWatcher {
       s.foreignHead = foreign;
       this.fm.bus.feed('merge', `PR #${ref.id} (${t.id}) has commits AgentCraft did not push (${foreign.slice(0, 7)}): review fixes cannot be added on top until you bring them into ${t.branch ?? 'the branch'}`);
     } else s.foreignCandidate = foreign;
+
+    // fold-in notes that could not start (foreign commits, task busy): try again now
+    if (s.queued.length && !s.foldIn && !s.foreignHead) {
+      const next = s.queued.splice(0);
+      this.startFoldIn(cur, next.join('\n'), false);
+      return;
+    }
 
     const c = classify(host, s.seen, new Set(s.ours));
     const reviewNew = !!c.review && c.review.thread.id !== s.review;
@@ -583,10 +604,11 @@ export class PrWatcher {
     }
 
     const did: string[] = [];
+    let gen: number | undefined;
     if (foldIns.length) {
-      const notes = foldIns.join('\n');
-      if (this.startFoldIn(t, notes, reviewFold)) did.push(`fold-in sent to ${this.fm.nameOf(this.fm.tasks.require(t.id).assignee ?? '?')}`);
-      else did.push('fold-in queued');
+      const r = this.startFoldIn(t, foldIns.join('\n'), reviewFold);
+      gen = r.gen;
+      did.push(r.started ? `fold-in sent to ${this.fm.nameOf(this.fm.tasks.require(t.id).assignee ?? '?')}` : 'fold-in queued');
     }
     if (now.length || after.length) {
       const d = this.fm.createDecision({
@@ -597,7 +619,7 @@ export class PrWatcher {
         context: truncate([...now, ...after].map((o) => `- ${o.label}`).join('\n'), 3500),
         taskId: t.id,
       });
-      this.data.decisions[d.id] = { taskId: t.id, kind: 'post', now, afterLanding: after };
+      this.data.decisions[d.id] = { taskId: t.id, kind: 'post', now, afterLanding: after, ...(gen !== undefined ? { gen } : {}) };
       did.push(`decision ${d.id} for ${userName()} (replies/resolutions)`);
     }
     for (const a of asks) {
@@ -635,43 +657,53 @@ export class PrWatcher {
 
   // ---- fold-ins -----------------------------------------------------------------------------
 
-  private startFoldIn(t: Task, notes: string, review: boolean): boolean {
+  /**
+   * Start a fold-in, or queue its notes. `gen` = the fold-in generation that carries these notes
+   * (queued notes go into the next one to start), so approved "fixed" replies wait for exactly it.
+   */
+  private startFoldIn(t: Task, notes: string, review: boolean): { started: boolean; gen: number } {
     const s = this.state(t.id);
-    if (s.foldIn || t.status !== 'pr') {
+    const queue = () => {
       s.queued.push(notes);
       this.fm.store.markDirty();
-      return false;
-    }
+      return { started: false, gen: s.gen + 1 };
+    };
+    if (s.foldIn || t.status !== 'pr') return queue();
     if (s.foreignHead) {
-      this.fm.bus.feed('error', `Not starting review fixes for ${t.id}: PR #${t.pr?.id} has commits AgentCraft did not push (${s.foreignHead.slice(0, 7)}). Bring them into ${t.branch ?? 'the task branch'} or address the comments yourself.`, { agentId: LEAD });
+      this.fm.bus.feed('error', `Not starting review fixes for ${t.id}: PR #${t.pr?.id} has commits AgentCraft did not push (${s.foreignHead.slice(0, 7)}). Bring them into ${t.branch ?? 'the task branch'} (the fixes start once AgentCraft's push is the PR's tip again) or address the comments yourself.`, { agentId: LEAD });
       this.fm.notify('warn', `${t.id}: review fixes not started (someone else pushed to PR #${t.pr?.id})`);
-      s.queued.push(notes);
-      return false;
+      return queue();
     }
-    if (!this.opts.hooks.foldIn(t, notes)) {
-      s.queued.push(notes);
-      this.fm.store.markDirty();
-      return false;
-    }
-    s.foldIn = { notes, review, at: Date.now() };
+    if (!this.opts.hooks.foldIn(t, notes)) return queue();
+    s.gen++;
+    s.foldIn = { gen: s.gen, notes, review, at: Date.now() };
     if (review) s.reviewRounds++;
     this.fm.store.markDirty();
-    return true;
+    return { started: true, gen: s.gen };
   }
 
   /** The fold-in's push landed on the PR (sha), or it ended without landing (rejected, empty). */
   async foldInEnded(taskId: string, outcome: 'landed' | 'empty' | 'rejected', sha?: string): Promise<void> {
     const s = this.state(taskId);
+    const gen = s.foldIn?.gen;
     delete s.foldIn;
-    const ops = s.pendingResolve;
-    s.pendingResolve = [];
+    if (gen === undefined) return;
+    s.outcomes[gen] = { outcome, ...(sha ? { sha } : {}) };
+    const mine = s.pendingResolve.filter((p) => p.gen === gen).flatMap((p) => p.ops);
+    s.pendingResolve = s.pendingResolve.filter((p) => p.gen !== gen);
     this.fm.store.markDirty();
     const t = this.fm.tasks.get(taskId);
     if (!t?.pr) return;
-    if (outcome === 'landed' && ops.length) await this.execute(t, ops, sha);
-    else if (ops.length) this.fm.bus.feed('merge', `${taskId}: the review fixes did not land (${outcome}); ${ops.length} thread update${ops.length === 1 ? '' : 's'} not posted`, { agentId: LEAD });
+    if (mine.length) await this.afterFoldIn(t, gen, mine);
     const next = s.queued.splice(0);
     if (next.length && t.status === 'pr') this.startFoldIn(t, next.join('\n'), false);
+  }
+
+  /** Approved "fixed" replies/resolutions of fold-in `gen`: post them if it landed, else drop them. */
+  private async afterFoldIn(t: Task, gen: number, ops: PostOp[]): Promise<void> {
+    const o = this.state(t.id).outcomes[gen];
+    if (o?.outcome === 'landed') await this.execute(t, ops, o.sha);
+    else this.fm.bus.feed('merge', `${t.id}: the review fixes did not land (${o?.outcome ?? 'not started'}); ${ops.length} thread update${ops.length === 1 ? '' : 's'} not posted`, { agentId: LEAD });
   }
 
   // ---- the user's answers ------------------------------------------------------------------
@@ -692,17 +724,19 @@ export class PrWatcher {
       }
       if (pd.now?.length) await this.execute(t, pd.now);
       if (pd.afterLanding?.length) {
+        // the replies that say "addressed" wait for the fold-in carrying those fixes
         const s = this.state(t.id);
-        if (s.foldIn) s.pendingResolve.push(...pd.afterLanding);
-        else if (t.status === 'pr') await this.execute(t, pd.afterLanding, this.pushedSha(t));
+        if (pd.gen !== undefined && s.outcomes[pd.gen]) await this.afterFoldIn(t, pd.gen, pd.afterLanding);
+        else if (pd.gen !== undefined) s.pendingResolve.push({ gen: pd.gen, ops: pd.afterLanding });
+        else this.fm.bus.feed('merge', `${t.id}: no fold-in carries the fixes; ${pd.afterLanding.length} thread update${pd.afterLanding.length === 1 ? '' : 's'} not posted`, { agentId: LEAD });
         this.fm.store.markDirty();
       }
       return true;
     }
     if (opt === 'Fold in') {
       const extra = d.answer?.text ? `\n${userName()} adds: ${d.answer.text}` : '';
-      const ok = this.startFoldIn(t, `${pd.notes ?? ''}${extra}`, !!pd.review);
-      this.fm.bus.feed('merge', `${userName()}: fold in on PR #${t.pr.id}${ok ? '' : ' (queued until the current fold-in lands)'}`, { agentId: 'user' });
+      const r = this.startFoldIn(t, `${pd.notes ?? ''}${extra}`, !!pd.review);
+      this.fm.bus.feed('merge', `${userName()}: fold in on PR #${t.pr.id}${r.started ? '' : ' (queued)'}`, { agentId: 'user' });
     }
     return true;
   }

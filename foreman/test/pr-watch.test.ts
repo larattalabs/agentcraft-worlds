@@ -354,3 +354,31 @@ describe('PR watching (observe)', () => {
     expect(fm.tasks.get('t1')!.summary).toMatch(/^PR #612 was abandoned on Azure DevOps/);
   });
 });
+
+describe('PR watching (on): review fixes that do not land', () => {
+  const w = world('on', async (opts, prompt) => {
+    const refs = [...prompt.matchAll(/^\[(t1\/[^\]]+)\]/gm)].map((m) => m[1]!);
+    await callTool(opts, 'triage', { items: refs.map((ref) => (ref === 't1/thread-12' ? { ref, verdict: 'fold_in', note: 'Rename it' } : { ref, verdict: 'reply', note: 'Kept on purpose.' })) });
+  });
+
+  it('never claims a fix: the approved "addressed" replies are dropped when the fold-in is rejected', async () => {
+    const fm = w.h.fm;
+    const host = w.host;
+    await landAsPr(w);
+    host.threads.push(
+      { id: 12, status: 'active', threadContext: null, comments: [{ id: 1, content: 'Rename this.', commentType: 'text', author: DANA }] },
+      { id: 13, status: 'active', threadContext: null, comments: [{ id: 1, content: 'Why keep it?', commentType: 'text', author: DANA }] },
+    );
+    await w.backend.prs.poll('t1');
+    await until(() => fm.decisions.open().some((d) => d.kind === 'merge' && d.taskId === 't1') && fm.decisions.open().some((d) => /on PR #612\?$/.test(d.question)), 60_000);
+    const fix = fm.decisions.open().find((d) => d.kind === 'merge' && d.taskId === 't1')!;
+    await fm.answerDecision(fix.id, 'Reject');
+    expect(fm.tasks.get('t1')!.status).toBe('pr'); // the PR stays open and watched
+    const post = fm.decisions.open().find((d) => /on PR #612\?$/.test(d.question))!;
+    expect(post.question).toBe('Post 2 replies and resolve 1 thread on PR #612?');
+    await fm.answerDecision(post.id, 'Post');
+    await until(() => fm.store.data.feed.some((f) => /t1: the review fixes did not land \(rejected\); 1 thread update not posted/.test(f.text)));
+    const writes = host.calls.filter((c) => c.args.includes('POST') || c.args.includes('PATCH'));
+    expect(writes.map((c) => [c.args.find((a) => a.startsWith('threadId=')), c.args[c.args.indexOf('--http-method') + 1], c.body?.content ?? c.body?.status])).toEqual([['threadId=13', 'POST', 'Kept on purpose.']]);
+  });
+});
