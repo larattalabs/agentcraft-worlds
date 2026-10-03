@@ -647,15 +647,23 @@ The contract is docs/HUB.md "Repos and Goals tabs" (+ its multi-repo amendment);
     goalId?}` (no screen needed; reply after the ack), `dev.goals.seen {reset?, tabAgoMs?}` (hub-seen.json for
     this world; `tabAgoMs` fakes "away" for the digest panel).
   - Screens: `hub_repos`, `hub_goals`, `hub_goal_thread|plan|instructions|tasks` (the newest goal in that view).
-- Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`; the sim Foreman of this
-  branch's base does not know the new types, so it shows the "needs a newer Foreman" paths): `dev.goals.submit
-  {text:"Add #tags", repoId:"demo"}` -> `dev.hub.open {tab:"goals", goalId:"<id>", view:"thread"}` + shoot;
-  `dev.hub.action {action:"goal_send", text:"hi"}` (a refused send: "not sent: … needs a newer Foreman");
-  hold the stream (`dev.foreman.hold {on:true}`) and `dev.foreman.inject` a `goal.upsert` with
-  `instructions`/`planId`/`prs`/`repos`, a `memory.upsert` for the plan, `feed.add` items with `goalId` and a
-  `decision.upsert` with `goalId` to see the full views; `dev.goals.seen {tabAgoMs: 900000}` then reopen the hub
-  for the away panel. Shoot each at GUI scale 2, 3 and 4 (`dev.command {cmd:...}` / options) and check
-  `layout.overflow`.
+- Acks (Foreman as merged, docs/HUB.md "As implemented (Foreman)"): `goal.message {goalId, leadId}` -> "Sent to
+  <lead>"; `goal.instructions` / `goal.plan` `{changed}` -> "unchanged: the lead was not told" when false;
+  `goal.cancel {cancelled: [taskIds]}` -> "N tasks stopped" (a done goal is refused); `repo.remove {repoId}` ->
+  the mod drops the repo itself (`ForemanState.forgetRepo`: there is no removal broadcast); `goal.digest` ->
+  the digest. A user's goal message comes back as a feed item `kind:"message"`, `agentId:"user"`, `to:<lead>`,
+  shown as "You → <lead>".
+- Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`; the sim Foreman knows every
+  new type: goal-tagged script, plan id, replies to goal messages, cancel): `dev.goals.submit {text:"Add #tags",
+  repoId:"demo", instructions:["keep the API stable"]}` -> `dev.hub.open {tab:"goals", goalId:"<id>",
+  view:"thread"}` and shoot; `dev.hub.action {action:"goal_send", text:"Use a set"}` (the "sending…" line, then
+  the lead's reply), `{action:"plan_save", body:"# Plan\n- one"}`, `{action:"instr_add", text:"no new deps"}`,
+  `{action:"goal_view", view:"tasks"}`, `{action:"goal_cancel", confirm:true}`; open decisions of the goal show
+  in the thread (`goal_answer {decisionId, option}`); `dev.goals.seen {tabAgoMs: 900000}` then reopen the hub
+  for the away panel (or `dev.goals.digest {since}`). The repos tab: `dev.hub.open {tab:"repos", repoId:"demo"}`,
+  `{action:"repo_add", path:"/abs/path"}`, `{action:"repo_remove", repoId, confirm:true}`. For an older
+  Foreman's paths, inject (`dev.foreman.hold {on:true}` + `dev.foreman.inject`) goals without the new fields.
+  Shoot each at GUI scale 2, 3 and 4 (`dev.review.guiScale {scale}`) and check `layout.overflow`.
 
 ### Generated buildings (design form, plot marking, design progress)
 The contract is docs/HUB.md "Generated buildings"; code in `dev.agentcraft.client.design` plus

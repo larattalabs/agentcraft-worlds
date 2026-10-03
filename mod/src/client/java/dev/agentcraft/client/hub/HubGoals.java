@@ -439,6 +439,9 @@ public final class HubGoals {
 		Pending p = new Pending(goalId, t, System.currentTimeMillis(), false, null);
 		PENDING.computeIfAbsent(goalId, k -> new ArrayList<>()).add(p);
 		return note(Foreman.goalMessage(goalId, t), "Message", "Sent to the lead").thenApply(n -> {
+			if (n.ok() && n.result() != null && n.result().has("leadId")) {
+				n = Note.ok("Sent to " + dev.agentcraft.client.hud.UiBits.agentName(n.result().get("leadId").getAsString()), n.result());
+			}
 			List<Pending> list = PENDING.getOrDefault(goalId, new ArrayList<>());
 			int i = list.indexOf(p);
 			if (n.ok()) {
@@ -466,17 +469,27 @@ public final class HubGoals {
 
 	public static CompletableFuture<Note> instructions(String goalId, List<String> instructions) {
 		CompletableFuture<Note> off = offline("Instructions");
-		return off != null ? off : note(Foreman.goalInstructions(goalId, instructions), "Instructions", "Instructions saved; the lead was told");
+		return off != null ? off : note(Foreman.goalInstructions(goalId, instructions), "Instructions", "Instructions saved; the lead was told")
+			.thenApply(n -> unchanged(n, "Instructions unchanged: the lead was not told"));
 	}
 
 	public static CompletableFuture<Note> plan(String goalId, String body) {
 		CompletableFuture<Note> off = offline("Plan");
-		return off != null ? off : note(Foreman.goalPlan(goalId, body), "The plan", "Plan saved; the lead got the change");
+		return off != null ? off : note(Foreman.goalPlan(goalId, body), "The plan", "Plan saved; the lead got the change")
+			.thenApply(n -> unchanged(n, "Plan unchanged: the lead was not told"));
 	}
 
 	public static CompletableFuture<Note> cancel(String goalId) {
 		CompletableFuture<Note> off = offline("Cancel");
-		return off != null ? off : note(Foreman.goalCancel(goalId), "Cancel", "Cancelled " + goalId + ": its open tasks stop (worktrees kept)");
+		return off != null ? off : note(Foreman.goalCancel(goalId), "Cancel", "Cancelled " + goalId + ": its open tasks stop (worktrees kept)")
+			.thenApply(n -> {
+				if (n.ok() && n.result() != null && n.result().has("cancelled") && n.result().get("cancelled").isJsonArray()) {
+					int k = n.result().getAsJsonArray("cancelled").size();
+					return Note.ok("Cancelled " + goalId + ": " + (k == 0 ? "no open tasks" : k == 1 ? "1 task stopped" : k + " tasks stopped")
+						+ " (worktrees kept)", n.result());
+				}
+				return n;
+			});
 	}
 
 	/** {@code goal.submit} with the form's options; the result carries {@code goalId}. */
@@ -486,6 +499,14 @@ public final class HubGoals {
 		}
 		CompletableFuture<Note> off = offline("Goal");
 		return off != null ? off : note(Foreman.submitGoal(text.strip(), repos, branch, instructions), "Goal", "Goal submitted");
+	}
+
+	/** {@code changed: false} in an ok ack: nothing was sent to the lead. */
+	private static Note unchanged(Note n, String message) {
+		if (n.ok() && n.result() != null && n.result().has("changed") && !n.result().get("changed").getAsBoolean()) {
+			return Note.ok(message, n.result());
+		}
+		return n;
 	}
 
 	public static CompletableFuture<Note> addRepo(String path) {
@@ -498,7 +519,13 @@ public final class HubGoals {
 
 	public static CompletableFuture<Note> removeRepo(String repoId) {
 		CompletableFuture<Note> off = offline("Remove");
-		return off != null ? off : note(Foreman.removeRepo(repoId), "Remove", "Removed " + repoId + " (worktrees and branches stay on disk)");
+		return off != null ? off : note(Foreman.removeRepo(repoId), "Remove", "Removed " + repoId + " (worktrees and branches stay on disk)")
+			.thenApply(n -> {
+				if (n.ok() && Foreman.state() != null) {
+					Foreman.state().forgetRepo(repoId); // no removal broadcast: drop it here (others at their next snapshot)
+				}
+				return n;
+			});
 	}
 
 	public static CompletableFuture<Note> refreshPrs() {

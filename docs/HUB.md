@@ -287,7 +287,8 @@ Details and DevBridge in mod/DEV.md "Hub" -> "Repos and Goals tabs". Notes where
 - Home: `LeadRouting.leadBuildings` leaves the home building out of `lead.assign`/`lead.sync`; a home change
   sends one `lead.sync`; routing, podiums and `leadForRepo` ignore an assignment to the home building.
 - An older Foreman: the new types are acked `ok:false` (schema error on `type`); the mod shows "… needs a newer
-  Foreman" inline (thread send, plan, instructions, cancel, digest, repo.remove). `goal.submit`'s new fields
+  Foreman" inline (thread send, plan, instructions, cancel, digest, repo.remove). Against the merged Foreman: a
+  `repo.remove` ok drops the repo locally (no removal broadcast); `changed:false` acks say "unchanged". `goal.submit`'s new fields
   are silently dropped by an old schema: the form says so when the goal comes back without them. Absent fields
   read "not reported". Decisions without `goalId` are put in a goal's thread through their task's `goalId`.
 - The thread shows what is in the mod's feed tail (200 items, replaced by every snapshot); older history needs

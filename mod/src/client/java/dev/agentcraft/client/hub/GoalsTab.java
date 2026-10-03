@@ -1064,7 +1064,7 @@ final class GoalsTab implements HubPane {
 				FeedItem f = e.feed();
 				boolean user = f.kind() == Protocol.FeedKind.USER || UiBits.isUser(f.agentId());
 				String who = user ? "You" : f.agentId() != null ? UiBits.agentName(f.agentId()) : f.kind().wire();
-				String to = f.to() != null && !user ? "" : f.to() != null ? " → " + UiBits.agentName(f.to()) : "";
+				String to = user && f.to() != null && !UiBits.isUser(f.to()) ? " → " + UiBits.agentName(f.to()) : !user && UiBits.isUser(f.to()) ? " → you" : "";
 				lines.add(who + to + "  ·  " + UiBits.clock(f.ts()) + (f.kind() != Protocol.FeedKind.MESSAGE && f.kind() != Protocol.FeedKind.USER ? "  ·  "
 					+ f.kind().wire() : ""));
 				colors.add(user ? UiStyle.CLAY_DARK : UiBits.nameOnLight(f.agentId()));

@@ -258,6 +258,17 @@ public final class ForemanState {
 		return snapshots;
 	}
 
+	/**
+	 * Drops a repo the Foreman confirmed removing ({@code repo.remove} ack): there is no removal broadcast, so
+	 * the requesting client drops it itself (others at their next snapshot). Client thread.
+	 */
+	public void forgetRepo(String repoId) {
+		if (repos.remove(repoId) != null) {
+			fire(l -> {
+			});
+		}
+	}
+
 	// ------------------------------------------------------------------ listeners
 
 	public void addListener(ForemanListener l) {
