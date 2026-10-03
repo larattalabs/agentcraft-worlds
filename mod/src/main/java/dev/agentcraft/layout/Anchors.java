@@ -30,6 +30,10 @@ import org.jspecify.annotations.Nullable;
  * world starts, so the layout survives restarts without rebuilding. Readers on any thread get an
  * immutable snapshot ({@link #current()}); the client (same JVM in singleplayer) reads it directly.
  * Listeners are told about every new layout (on the thread that published it).
+ *
+ * <p>In any other world, {@code dev.agentcraft.building.Buildings} shows the home building's layout
+ * here ({@link #showDerived}); it is not saved to {@code agentcraft-anchors.json}, the buildings file
+ * is its source.
  */
 public final class Anchors {
 	public static final String FILE = "agentcraft-anchors.json";
@@ -92,6 +96,16 @@ public final class Anchors {
 		set(withRev);
 		save(server, withRev);
 		AgentCraft.LOGGER.info("Published layout '{}' rev {} with {} anchors", withRev.name(), withRev.revision(), withRev.anchors().size());
+	}
+
+	/**
+	 * Make {@code layout} current <b>without</b> saving it: for a layout owned by another store (the home
+	 * building in a world with buildings, see {@code dev.agentcraft.building.Buildings}). The revision is
+	 * bumped like {@link #publish}, so consumers see the change. {@link Layout#EMPTY} clears it.
+	 */
+	public static void showDerived(Layout layout) {
+		set(layout.isEmpty() && layout.bounds() == null ? Layout.EMPTY
+			: new Layout(layout.name(), current.revision() + 1, layout.bounds(), layout.anchors()));
 	}
 
 	private static void set(Layout layout) {

@@ -1,6 +1,9 @@
 package dev.agentcraft;
 
 import dev.agentcraft.block.ModBlocks;
+import dev.agentcraft.building.BuildingCommands;
+import dev.agentcraft.building.Blueprints;
+import dev.agentcraft.building.Buildings;
 import dev.agentcraft.block.ModItems;
 import dev.agentcraft.block.entity.ModBlockEntities;
 import dev.agentcraft.command.AgentCraftCommands;
@@ -15,7 +18,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Common (both sides) entrypoint: registries (blocks, block entities, items + creative tab, the agent
- * entity type), the HQ world rules, the anchor registry and the {@code /agentcraft} command. Client
+ * entity type), the HQ world rules, the anchor registry, blueprints + buildings and the {@code /agentcraft}
+ * command. Client
  * features are wired in {@code dev.agentcraft.client.ClientFeatures}.
  */
 public class AgentCraft implements ModInitializer {
@@ -30,7 +34,11 @@ public class AgentCraft implements ModInitializer {
 		ModEntities.init();
 		HqWorld.init();
 		Anchors.init();
+		// after Anchors: in a world with buildings the home building's layout replaces the (empty) one Anchors loaded
+		Blueprints.init();
+		Buildings.init();
 		AgentCraftCommands.init();
+		BuildingCommands.init();
 		HqFeature.init();
 		LOGGER.info("AgentCraft common init done ({} blocks, cast {})", ModBlocks.all().size(), Cast.ids());
 	}

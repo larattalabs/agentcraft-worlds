@@ -1,0 +1,189 @@
+package dev.agentcraft.building;
+
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.context.CommandContext;
+import dev.agentcraft.AgentCraft;
+import dev.agentcraft.command.AgentCraftCommands;
+import java.util.List;
+import java.util.Locale;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.phys.Vec3;
+
+/**
+ * Commands (gamemaster, under {@code /agentcraft}):
+ * <pre>
+ * blueprints                       list loaded blueprints
+ * blueprints reload                reload bundled + user blueprints
+ * buildings                        list buildings in this world
+ * place &lt;blueprint&gt; &lt;repo&gt;[,&lt;repo&gt;...] [rotation] [force]
+ *                                  place in front of the player (ground row at the feet, entrance
+ *                                  facing the player; rotation overrides the automatic one)
+ * remove &lt;id&gt; [forget]             restore the area (forget: only drop the record)
+ * home &lt;id&gt;                        make a building home
+ * </pre>
+ * The arguments after {@code <blueprint>} are one greedy string parsed here, so repo ids with commas,
+ * dots or slashes need no quotes.
+ */
+public final class BuildingCommands {
+	/** Blocks between the player and the near edge of a building placed in front of them. */
+	public static final int GAP = 2;
+
+	private BuildingCommands() {
+	}
+
+	public static void init() {
+		AgentCraftCommands.sub(root -> root
+			.then(Commands.literal("blueprints")
+				.executes(BuildingCommands::listBlueprints)
+				.then(Commands.literal("reload").executes(ctx -> {
+					Blueprints.reload(ctx.getSource().getServer());
+					List<String> problems = Blueprints.lastProblems();
+					ctx.getSource().sendSuccess(() -> Component.literal("Reloaded " + Blueprints.ids().size() + " blueprint(s) "
+						+ Blueprints.ids() + (problems.isEmpty() ? "" : "; skipped " + problems.size() + ":")), false);
+					for (String p : problems) {
+						ctx.getSource().sendFailure(Component.literal("  " + p));
+					}
+					return Blueprints.ids().size();
+				})))
+			.then(Commands.literal("buildings").executes(BuildingCommands::listBuildings))
+			.then(Commands.literal("place")
+				.then(Commands.argument("blueprint", StringArgumentType.word())
+					.suggests((ctx, b) -> {
+						Blueprints.ids().forEach(b::suggest);
+						return b.buildFuture();
+					})
+					.then(Commands.argument("args", StringArgumentType.greedyString())
+						.executes(BuildingCommands::place))))
+			.then(Commands.literal("remove")
+				.then(Commands.argument("id", StringArgumentType.word())
+					.suggests((ctx, b) -> {
+						Buildings.all().forEach(x -> b.suggest(x.id()));
+						return b.buildFuture();
+					})
+					.executes(ctx -> remove(ctx, false))
+					.then(Commands.literal("forget").executes(ctx -> remove(ctx, true)))))
+			.then(Commands.literal("home")
+				.then(Commands.argument("id", StringArgumentType.word())
+					.suggests((ctx, b) -> {
+						Buildings.all().forEach(x -> b.suggest(x.id()));
+						return b.buildFuture();
+					})
+					.executes(BuildingCommands::home))));
+	}
+
+	private static int listBlueprints(CommandContext<CommandSourceStack> ctx) {
+		var all = Blueprints.all();
+		ctx.getSource().sendSuccess(() -> Component.literal(all.size() + " blueprint(s)" + (all.isEmpty()
+			? " (bundled: data/agentcraft/blueprints; yours: " + Blueprints.userDir() + ")" : ":")), false);
+		for (Blueprint bp : all) {
+			var e = Blueprints.entry(bp.id());
+			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s  \"%s\"  %s%s  %dx%dx%d  front %s  [%s]",
+				bp.id(), bp.name(), bp.kind(), bp.isGroup() ? " (" + bp.wings() + " wings)" : "", bp.sizeX(), bp.sizeY(), bp.sizeZ(), bp.front(),
+				e == null ? "?" : e.source().startsWith("user") ? "user" : "bundled")), false);
+		}
+		return all.size();
+	}
+
+	private static int listBuildings(CommandContext<CommandSourceStack> ctx) {
+		var all = Buildings.all();
+		ctx.getSource().sendSuccess(() -> Component.literal(all.size() + " building(s)" + (all.isEmpty() ? "" : ":")), false);
+		for (Building b : all) {
+			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s%s  %s  repos %s  %s  box %s  %d anchors",
+				b.id(), b.home() ? " (home)" : "", b.blueprint(), String.join(",", b.repos()), b.rotation(), Buildings.str(b.box()),
+				b.anchors().size())), false);
+		}
+		return all.size();
+	}
+
+	private static int place(CommandContext<CommandSourceStack> ctx) {
+		CommandSourceStack src = ctx.getSource();
+		String bpId = StringArgumentType.getString(ctx, "blueprint");
+		Blueprint bp = Blueprints.get(bpId);
+		if (bp == null) {
+			src.sendFailure(Component.literal("Unknown blueprint '" + bpId + "' (known: " + Blueprints.ids() + ")"));
+			return 0;
+		}
+		String[] tokens = StringArgumentType.getString(ctx, "args").trim().split("\\s+");
+		List<String> repos = BlueprintTransform.parseRepos(tokens[0]);
+		int turns = -1;
+		boolean force = false;
+		for (int i = 1; i < tokens.length; i++) {
+			String t = tokens[i];
+			if (t.equalsIgnoreCase("force")) {
+				force = true;
+			} else if (t.equalsIgnoreCase("auto")) {
+				turns = -1;
+			} else if (BlueprintTransform.parseTurns(t) >= 0 && turns < 0) {
+				turns = BlueprintTransform.parseTurns(t);
+			} else {
+				src.sendFailure(Component.literal("Unexpected '" + t + "': use /agentcraft place <blueprint> <repo>[,<repo>...] "
+					+ "[none|clockwise_90|clockwise_180|counterclockwise_90] [force]"));
+				return 0;
+			}
+		}
+		Vec3 pos = src.getPosition();
+		Direction facing = src.getEntity() != null ? src.getEntity().getDirection() : Direction.SOUTH;
+		if (turns < 0) {
+			// the entrance faces the player, i.e. the opposite of where they look
+			turns = BlueprintTransform.turnsToFace(bp.front(), facing.getOpposite().getName());
+		}
+		int rsx = BlueprintTransform.rotatedSizeX(bp.sizeX(), bp.sizeZ(), turns);
+		int rsz = BlueprintTransform.rotatedSizeZ(bp.sizeX(), bp.sizeZ(), turns);
+		BlockPos feet = BlockPos.containing(pos);
+		int[] o = BlueprintTransform.originInFront(feet.getX(), feet.getY(), feet.getZ(), facing.getName(), rsx, rsz, bp.groundY(), GAP);
+		ServerLevel level = src.getLevel();
+		try {
+			Building b = Buildings.place(level, bp, new BlockPos(o[0], o[1], o[2]), Rotation.values()[turns], repos, force);
+			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ") for " + String.join(", ", b.repos()) + ", "
+				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + ". Undo: /agentcraft remove " + b.id()), true);
+			return 1;
+		} catch (Buildings.BuildingException e) {
+			src.sendFailure(Component.literal(e.getMessage()));
+			return 0;
+		} catch (RuntimeException e) {
+			AgentCraft.LOGGER.error("Placing {} failed", bpId, e);
+			src.sendFailure(Component.literal("Placing " + bpId + " failed: " + e));
+			return 0;
+		}
+	}
+
+	private static int remove(CommandContext<CommandSourceStack> ctx, boolean forgetOnly) {
+		CommandSourceStack src = ctx.getSource();
+		String id = StringArgumentType.getString(ctx, "id");
+		try {
+			if (forgetOnly) {
+				Buildings.forget(src.getServer(), id);
+				src.sendSuccess(() -> Component.literal("Forgot " + id + "; its blocks stay in the world"), true);
+			} else {
+				Building b = Buildings.remove(src.getLevel(), id);
+				src.sendSuccess(() -> Component.literal("Removed " + id + " (" + b.blueprint() + "); restored " + Buildings.str(b.box())), true);
+			}
+			return 1;
+		} catch (Buildings.BuildingException e) {
+			src.sendFailure(Component.literal(e.getMessage()));
+			return 0;
+		} catch (RuntimeException e) {
+			AgentCraft.LOGGER.error("Removing {} failed", id, e);
+			src.sendFailure(Component.literal("Removing " + id + " failed: " + e));
+			return 0;
+		}
+	}
+
+	private static int home(CommandContext<CommandSourceStack> ctx) {
+		String id = StringArgumentType.getString(ctx, "id");
+		try {
+			Building b = Buildings.setHome(ctx.getSource().getServer(), id);
+			ctx.getSource().sendSuccess(() -> Component.literal(b.id() + " (" + b.blueprint() + ") is now home"), true);
+			return 1;
+		} catch (Buildings.BuildingException e) {
+			ctx.getSource().sendFailure(Component.literal(e.getMessage()));
+			return 0;
+		}
+	}
+}
