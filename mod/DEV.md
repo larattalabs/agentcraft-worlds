@@ -78,6 +78,7 @@ Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world.
 | Var | Default | Effect |
 |---|---|---|
 | `AGENTCRAFT_DEV_PORT` | 7879 | DevBridge port (always bound to 127.0.0.1) |
+| `AGENTCRAFT_DEV_TOKEN` | random | DevBridge shared secret. Default: 32 random bytes (hex) per start, written owner-only (0600) to `<gameDir>/agentcraft/devbridge.token` (dev run: `mod/run/agentcraft/devbridge.token`) |
 | `AGENTCRAFT_DEV` | 1 | `0` disables the DevBridge |
 | `AGENTCRAFT_MUTE` | 1 | Forces master and music volume to 0 at startup. **Set `0` for real use** (for example in launch.ps1) to keep your own volume |
 | `AGENTCRAFT_FOCUS` | 0 | `0`: the window is shown **without activating it**, so it never steals focus. `1`: normal "come to front" |
@@ -108,6 +109,15 @@ of other windows; it just isn't activated. Window *placement* is untouched.
 A WebSocket server **inside the client**, listening on `ws://127.0.0.1:${AGENTCRAFT_DEV_PORT:-7879}`. It
 starts at `CLIENT_STARTED`, before the world loads, so `dev.ping` works during loading. It stops at
 `CLIENT_STOPPING` and uses daemon threads. If the port is busy it logs an error and the game keeps running.
+
+**Authentication.** Every connection must present a shared secret during the WebSocket handshake, either
+`Authorization: Bearer <token>` or a `token` query parameter (`ws://127.0.0.1:7879/?token=<token>`);
+otherwise the handshake is refused (checked in constant time; browser `Origin` headers are still refused).
+On start the bridge uses `AGENTCRAFT_DEV_TOKEN` (or `-Dagentcraft.dev.token`) if set, else generates 32 random
+bytes (hex), and writes it owner-only to `<gameDir>/agentcraft/devbridge.token`. The log names the file, never
+the token. The dev tools (`tools/lib/devclient.mjs`) take `AGENTCRAFT_DEV_TOKEN` or read `mod/run/agentcraft/devbridge.token`
+(override the game dir with `AGENTCRAFT_GAME_DIR`). For other clients: `curl`-style one-offs can use
+`TOKEN=$(cat mod/run/agentcraft/devbridge.token)`.
 
 **Protocol.** Each frame carries one JSON object (text frames; binary frames holding UTF-8 JSON are
 treated the same, other binary frames get an `ok:false` reply).

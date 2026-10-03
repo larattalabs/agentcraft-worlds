@@ -9,7 +9,28 @@
 //   const h = await dev.health();   // {ok, stalled, msSinceLastFrame}: works even when the game is hung
 //   dev.close();
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * The DevBridge shared secret: AGENTCRAFT_DEV_TOKEN, else the file the mod writes to
+ * <gameDir>/agentcraft/devbridge.token (game dir: AGENTCRAFT_GAME_DIR, default <repo>/mod/run).
+ * Re-read on every connect attempt (the game may start, or restart with a new token, meanwhile).
+ */
+export function readToken() {
+  const env = process.env.AGENTCRAFT_DEV_TOKEN?.trim();
+  if (env) return env;
+  const gameDir = process.env.AGENTCRAFT_GAME_DIR || path.join(repoRoot, 'mod', 'run');
+  try {
+    return fs.readFileSync(path.join(gameDir, 'agentcraft', 'devbridge.token'), 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 export const DEFAULT_PORT = Number(process.env.AGENTCRAFT_DEV_PORT || 7879);
 
@@ -57,13 +78,13 @@ export class DevClient {
     let lastNotice = 0;
     while (true) {
       try {
-        return await DevClient.#tryConnect(`ws://${host}:${port}`);
+        return await DevClient.#tryConnect(`ws://${host}:${port}`, opts.token ?? readToken());
       } catch (err) {
         lastErr = err;
       }
       const elapsed = Date.now() - start;
       if (elapsed >= timeoutMs) {
-        throw new DevError(`DevBridge not reachable on ws://${host}:${port} after ${Math.round(elapsed / 1000)}s (${lastErr?.message ?? lastErr})`);
+        throw new DevError(`DevBridge not reachable on ws://${host}:${port} after ${Math.round(elapsed / 1000)}s (${lastErr?.message ?? lastErr})${readToken() ? '' : '; no DevBridge token found (set AGENTCRAFT_DEV_TOKEN or AGENTCRAFT_GAME_DIR, or start the game so it writes mod/run/agentcraft/devbridge.token)'}`);
       }
       if (opts.onWait && elapsed - lastNotice >= 10_000) {
         lastNotice = elapsed;
@@ -73,9 +94,9 @@ export class DevClient {
     }
   }
 
-  static #tryConnect(url) {
+  static #tryConnect(url, token) {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url, { handshakeTimeout: 3000 });
+      const ws = new WebSocket(url, { handshakeTimeout: 3000, headers: token ? { Authorization: `Bearer ${token}` } : {} });
       let settled = false;
       let timer = null;
       const fail = (err) => {
@@ -86,7 +107,7 @@ export class DevClient {
         reject(err);
       };
       ws.once('error', fail);
-      ws.once('unexpected-response', (_req, res) => fail(new Error(`HTTP ${res.statusCode}`)));
+      ws.once('unexpected-response', (_req, res) => fail(new Error(`HTTP ${res.statusCode}${res.statusCode === 400 || res.statusCode === 401 || res.statusCode === 403 ? ' (DevBridge refused the handshake: missing/wrong token?)' : ''}`)));
       // The server greets with {type:"dev.hello"} right after the handshake.
       ws.once('message', (data) => {
         if (settled) return;

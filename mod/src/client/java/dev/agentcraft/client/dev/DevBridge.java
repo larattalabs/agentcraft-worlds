@@ -7,11 +7,19 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.agentcraft.AgentCraft;
 import dev.agentcraft.client.ClientEnv;
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -26,6 +34,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.ToLongFunction;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import org.java_websocket.WebSocket;
@@ -50,6 +59,11 @@ import org.java_websocket.server.WebSocketServer;
  * <p>Other parts of the mod extend it with {@link #register}, {@link #registerScreen} and
  * {@link #addStateContributor}. Handlers are invoked on the websocket thread and must hop to
  * the client thread with {@link #onClient} for any game access.
+ *
+ * <p>Auth: every connection must present a shared secret (handshake header
+ * {@code Authorization: Bearer <token>} or {@code ?token=<token>} on the URL). The token is random per
+ * start unless AGENTCRAFT_DEV_TOKEN is set, and is written owner-only to
+ * {@code <gameDir>/agentcraft/devbridge.token}; the dev tools read it from there.
  */
 public final class DevBridge extends WebSocketServer {
 	public static final int PROTOCOL = 1;
@@ -74,8 +88,12 @@ public final class DevBridge extends WebSocketServer {
 	private static volatile DevBridge instance;
 	private static volatile String status = "not started";
 
-	private DevBridge(int port) {
+	/** Shared secret every connection must present; see {@link #newToken}. */
+	private final byte[] token;
+
+	private DevBridge(int port, String token) {
 		super(new InetSocketAddress("127.0.0.1", port));
+		this.token = token.getBytes(StandardCharsets.UTF_8);
 		setDaemon(true);
 		setTcpNoDelay(true);
 		setConnectionLostTimeout(0);
@@ -162,10 +180,76 @@ public final class DevBridge extends WebSocketServer {
 		}
 		DevCommands.registerBuiltins();
 		int port = ClientEnv.DEV_PORT;
-		DevBridge server = new DevBridge(port);
+		String token = newToken();
+		Path tokenFile = tokenFile();
+		try {
+			writeTokenFile(tokenFile, token);
+		} catch (IOException | RuntimeException e) {
+			status = "disabled (cannot write token file)";
+			AgentCraft.LOGGER.error("DevBridge not started: cannot write token file {}: {}", tokenFile, e.toString());
+			return;
+		}
+		AgentCraft.LOGGER.info("DevBridge auth token file: {}", tokenFile);
+		DevBridge server = new DevBridge(port, token);
 		instance = server;
 		status = "starting on 127.0.0.1:" + port;
 		server.start();
+	}
+
+	/** Token file the dev tools read: {@code <gameDir>/agentcraft/devbridge.token}. */
+	public static Path tokenFile() {
+		return FabricLoader.getInstance().getGameDir().resolve("agentcraft").resolve("devbridge.token");
+	}
+
+	/** The token from AGENTCRAFT_DEV_TOKEN / -Dagentcraft.dev.token, else 32 random bytes as hex. */
+	private static String newToken() {
+		String given = ClientEnv.raw("AGENTCRAFT_DEV_TOKEN");
+		if (given != null) {
+			return given;
+		}
+		byte[] b = new byte[32];
+		new SecureRandom().nextBytes(b);
+		return HexFormat.of().formatHex(b);
+	}
+
+	/** Writes the token owner-only (0600 where POSIX permissions exist; best effort elsewhere). */
+	private static void writeTokenFile(Path file, String token) throws IOException {
+		Files.createDirectories(file.getParent());
+		Files.deleteIfExists(file);
+		try {
+			Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+		} catch (UnsupportedOperationException e) {
+			Files.createFile(file);
+			java.io.File f = file.toFile();
+			f.setReadable(false, false);
+			f.setWritable(false, false);
+			f.setReadable(true, true);
+			f.setWritable(true, true);
+		}
+		Files.writeString(file, token + "\n", StandardCharsets.UTF_8);
+	}
+
+	/** The presented token from an {@code Authorization: Bearer} header or a {@code token} query parameter, else null. */
+	private static String presentedToken(ClientHandshake request) {
+		String auth = request.getFieldValue("Authorization");
+		if (auth != null && auth.regionMatches(true, 0, "Bearer ", 0, 7)) {
+			return auth.substring(7).trim();
+		}
+		String res = request.getResourceDescriptor();
+		int q = res == null ? -1 : res.indexOf('?');
+		if (q >= 0) {
+			for (String pair : res.substring(q + 1).split("&")) {
+				int eq = pair.indexOf('=');
+				if (eq > 0 && pair.substring(0, eq).equals("token")) {
+					try {
+						return URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+					} catch (IllegalArgumentException e) {
+						return null;
+					}
+				}
+			}
+		}
+		return null;
 	}
 
 	public static synchronized void stopBridge() {
@@ -191,6 +275,13 @@ public final class DevBridge extends WebSocketServer {
 		// origins stops a web page from driving the game through ws://127.0.0.1.
 		if (request.hasFieldValue("Origin") && !ClientEnv.flag("AGENTCRAFT_DEV_ALLOW_ORIGIN", false)) {
 			throw new InvalidDataException(CloseFrame.POLICY_VALIDATION, "DevBridge refuses browser origins");
+		}
+		String presented = presentedToken(request);
+		if (presented == null) {
+			throw new InvalidDataException(CloseFrame.POLICY_VALIDATION, "DevBridge token required (Authorization: Bearer <token> or ?token=; see agentcraft/devbridge.token in the game dir)");
+		}
+		if (!MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8), token)) {
+			throw new InvalidDataException(CloseFrame.POLICY_VALIDATION, "DevBridge token invalid");
 		}
 		return super.onWebsocketHandshakeReceivedAsServer(conn, draft, request);
 	}

@@ -12,6 +12,8 @@ import net.minecraft.client.Minecraft;
  *
  * <pre>
  * AGENTCRAFT_DEV_PORT   DevBridge port (default 7879), 127.0.0.1 only
+ * AGENTCRAFT_DEV_TOKEN DevBridge shared secret (default: random per start, written owner-only to
+ *                       &lt;gameDir&gt;/agentcraft/devbridge.token; every connection must present it)
  * AGENTCRAFT_DEV        1 enables the DevBridge, 0 disables it
  * AGENTCRAFT_MUTE       1 forces master+music volume to 0 at startup; 0 keeps your volume
  * AGENTCRAFT_FOCUS      0 = the window opens WITHOUT taking focus; 1 = normal focus

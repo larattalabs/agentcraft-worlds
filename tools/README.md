@@ -100,7 +100,7 @@ Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.
 | `launch.ps1`, `stop.ps1`, `launch.cmd`, `stop.cmd` | launcher |
 | `lib/procs.ps1` | shared PowerShell helpers (run files, process identity, Ctrl+Break, ports) |
 | `lib/bgrun.mjs` | background runner: owns the log files and the hidden console of a background process |
-| `devcli.mjs`, `lib/devclient.mjs` | DevBridge client |
+| `devcli.mjs`, `lib/devclient.mjs` | DevBridge client (sends the token from `AGENTCRAFT_DEV_TOKEN` or `mod/run/agentcraft/devbridge.token`; `AGENTCRAFT_GAME_DIR` overrides the game dir) |
 | `foremancli.mjs`, `lib/foremanclient.mjs` | Foreman WS client (hello, acks, diff, live state mirror) |
 | `shoot.mjs`, `lib/scene.mjs` | scene runner (anchors, screens, Foreman messages, waits) |
 | `record.mjs`, `shots/*.json` | real-time shot player for screen recording (`dev.play`: camera paths, timed Foreman injections, typing); format in `shots/README.md` |
