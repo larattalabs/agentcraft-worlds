@@ -31,7 +31,7 @@ import { FOREMAN_VERSION } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
 import { withGitSafety } from '../../gitsafety.js';
 import { agentGitIdentity } from '../../util/git.js';
-import { classifyToolUse, describeRuleKey, describeToolCall, type PolicyContext } from '../../policy.js';
+import { classifyToolUse, describeRuleKey, describeToolCall, foremanPrivateVerdict, type PolicyContext } from '../../policy.js';
 import type { Decision, Design, Goal, Task } from '../../protocol.js';
 import { MERGE_OPTIONS, PERMISSION_OPTIONS } from '../../protocol.js';
 import type { TestResult } from '../../repos.js';
@@ -41,7 +41,7 @@ import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type Pr
 import { truncate } from '../../util/text.js';
 import { buildSkillsPlugin, instructionsBlock, workspaceInstructionDirs } from './context.js';
 import { SessionHistory, sessionLine } from '../../history.js';
-import { connectorHook, guardrailHook } from './permissions.js';
+import { connectorHook, foremanGuardHook, guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
 import { type RepoRole, boardSummary, foldInPrompt, leadRepoContext, leadSystemPrompt, planPrompt, planText, RESUME_PROMPT, reviewPrompt, triagePrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { DEFAULT_AUTO_SEVERITIES, DEFAULT_MAX_ROUNDS, PrWatcher, type TriageItem } from '../../prwatch.js';
@@ -449,7 +449,14 @@ export class ClaudeBackend implements Backend {
       ...(this.skillsPlugin ? { skills: this.skillsPlugin.ids } : {}),
       mcpAllow: this.cfg.context.mcpAllow,
       ...(this.subagentsOn(repoId) ? { subagents: true } : {}),
+      foreman: this.foremanPrivate(),
     };
+  }
+
+  /** The Foreman's own home, port and client token: off limits for agents (policy.ts). */
+  private foremanPrivate(): NonNullable<PolicyContext['foreman']> {
+    const e = this.fm.endpoint;
+    return { home: this.fm.config.home, port: e?.port ?? this.fm.config.port, ...(e?.tokenFile ? { tokenFile: e.tokenFile } : {}) };
   }
 
   /** Auto mode's guardrails cover the user's checkouts and AgentCraft's own state. */
@@ -1183,7 +1190,17 @@ export class ClaudeBackend implements Backend {
     const disallowed = ['Bash(git push:*)', ...(sub ? [] : ['Task', 'Agent']), ...(p.webTools ? [] : ['WebSearch', 'WebFetch'])];
     const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : undefined;
     const connectors = this.cfg.context.connectors;
-    const hooks: HookCallbackMatcher[] = [];
+    // the Foreman's own files, token and port: denied before anything else, whatever the rules
+    const hooks: HookCallbackMatcher[] = [
+      {
+        hooks: [
+          foremanGuardHook(
+            (tool, input) => foremanPrivateVerdict(tool, input, { role, cwd, foreman: this.foremanPrivate() }),
+            (tool, reason, subagent) => this.fm.agentLog(agentId, 'error', `blocked${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
+          ),
+        ],
+      },
+    ];
     if (connectors.length) hooks.push({ hooks: [connectorHook(connectors, (tool, server) => this.fm.agentLog(agentId, 'error', `blocked ${tool}: connector "${server}" is not enabled`))] });
     if (p.mode === 'auto') {
       const guard = guardrailHook(

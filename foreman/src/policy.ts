@@ -70,6 +70,17 @@ export interface PolicyContext {
   subagents?: boolean;
   /** repo-relative paths that are never committed (repoSettings.protect; a trailing / is a folder) */
   protectedPaths?: string[];
+  /**
+   * The Foreman itself (foremanPrivateVerdict): its home (AGENTCRAFT_HOME, e.g. ~/.agentcraft, which
+   * holds config.json and every profile's state), the WebSocket port and the client token file.
+   */
+  foreman?: ForemanPrivate;
+}
+
+export interface ForemanPrivate {
+  home: string;
+  port?: number;
+  tokenFile?: string;
 }
 
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']);
@@ -1986,6 +1997,124 @@ export function isReadOnlyCommand(command: string, ctx: PolicyContext): boolean 
   return !j.deny && !j.asks.length && j.readOnly;
 }
 
+// ---- the Foreman's own files and port ----------------------------------------------------------
+//
+// Agents may not read or change the Foreman's state and settings, nor talk to it directly: the
+// client token would let a Bash command answer the agent's own decisions, and config.json holds
+// its permissions. Denied whatever the mode, "Always allow" or the user's allow rules (a PreToolUse
+// hook repeats this check, see agents/claude/permissions.ts):
+//   - Read/Grep/Glob/LS/Edit/Write/... of anything under the Foreman home except the folders agents
+//     work in (<profile>/worktrees, memory, agent-plugin, designs), of a `client.token` file
+//     anywhere, also through a link (the real path is checked too); Grep of a folder that contains
+//     the home
+//   - Bash/PowerShell commands that mention such a path (~, $HOME and relative paths resolved
+//     against the agent's directory), `client.token`, `foremancli`, AGENTCRAFT_HOME/_CLIENT_TOKEN/
+//     _PROFILE, or the Foreman's port together with a loopback host or a ws:// URL
+// Best effort: a command can still reach them in ways no text check sees (a script the agent
+// wrote, `npm test` running its own code, a path assembled at run time). The client token is what
+// actually protects the Foreman's WebSocket; these rules keep agents from reading it.
+
+/** Folders under <home>/<profile>/ that agents work in (their worktrees, memory notes, skills plugin, design scratch). */
+const AGENT_SUBDIRS = new Set(['worktrees', 'memory', 'agent-plugin', 'designs']);
+const TOKEN_NAME = 'client.token';
+
+/** `abs` with its deepest existing ancestor resolved through links. */
+function realish(abs: string): string {
+  let p = abs;
+  const rest: string[] = [];
+  try {
+    while (!fs.existsSync(p)) {
+      const up = path.dirname(p);
+      if (up === p) return abs;
+      rest.unshift(path.basename(p));
+      p = up;
+    }
+    return path.join(fs.realpathSync.native(p), ...rest);
+  } catch {
+    return abs;
+  }
+}
+
+function privateIn(abs: string, home: string): boolean {
+  if (!isInsideOrEqual(abs, home)) return false;
+  const segs = path.relative(home, abs).split(/[\\/]+/).filter(Boolean);
+  return !(segs.length >= 2 && AGENT_SUBDIRS.has(segs[1]!.toLowerCase()));
+}
+
+/** Why `abs` is the Foreman's own (token, settings, state), or undefined. */
+export function foremanPrivatePath(abs: string, f: ForemanPrivate): string | undefined {
+  const real = realish(abs);
+  for (const p of [abs, real]) {
+    if (path.basename(p).toLowerCase() === TOKEN_NAME || (f.tokenFile && isInsideOrEqual(p, f.tokenFile))) return `${abs} is the Foreman's client token`;
+  }
+  if (privateIn(abs, f.home) || privateIn(real, realish(f.home))) return `${abs} is AgentCraft's own settings and state (${f.home})`;
+  return undefined;
+}
+
+const privateDeny = (why: string) => `Not allowed: ${why}. Agents may not read or change the Foreman's files or talk to the Foreman directly; ask the user if a setting needs to change.`;
+
+/** Words of a command that could be paths (split on whitespace, quotes and shell punctuation). */
+function commandWords(command: string): string[] {
+  return command.split(/[\s;|&<>()'"`=,]+/).filter((w) => w && w !== '-' && !/^-+[A-Za-z]/.test(w));
+}
+
+const LOOPBACK_TEXT = /\blocalhost\b|\b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|\[::1\]|(^|[^\w:])::1\b|\b0\.0\.0\.0\b|\bwss?:\/\//i;
+const FOREMAN_VARS = /\$\{?AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)\b|%AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)%|\$env:AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)\b/i;
+
+/** Why a shell command reaches the Foreman's files or port, or undefined (best effort, see above). */
+export function foremanPrivateCommand(command: string, ctx: PolicyContext): string | undefined {
+  const f = ctx.foreman;
+  if (!f) return undefined;
+  if (/client\.token/i.test(command)) return "the command mentions the Foreman's client token";
+  if (/foremancli/i.test(command)) return 'agents may not drive the Foreman (foremancli)';
+  if (FOREMAN_VARS.test(command)) return "the command uses the Foreman's home or token variables";
+  if (f.port && new RegExp(`(^|[^\\d])${f.port}(?!\\d)`).test(command) && LOOPBACK_TEXT.test(command)) return `the command talks to the Foreman's port ${f.port}`;
+  for (const w of commandWords(command)) {
+    if (!/[\\/]|^~|^\.\.?$|^\$|^%/.test(w)) continue;
+    const r = resolveToken(w, ctx.cwd, ctx);
+    if (r.kind !== 'path') continue;
+    const why = foremanPrivatePath(r.abs, f);
+    if (why) return why;
+  }
+  return undefined;
+}
+
+/** A search root that contains the Foreman home (Grep over ~ would read the token's contents). */
+function containsHome(abs: string, f: ForemanPrivate): boolean {
+  return isInsideOrEqual(f.home, abs) || isInsideOrEqual(realish(f.home), realish(abs));
+}
+
+/**
+ * The Foreman-private check for one tool call: a deny verdict, or undefined. Runs first in
+ * classifyToolUse (so no rule or "Always allow" covers it) and in the PreToolUse hook.
+ */
+export function foremanPrivateVerdict(toolName: string, input: Record<string, unknown>, ctx: PolicyContext): Verdict | undefined {
+  const f = ctx.foreman;
+  if (!f) return undefined;
+  const deny = (why: string): Verdict => ({ action: 'deny', reason: privateDeny(why) });
+  if (toolName === 'Bash' || toolName === 'PowerShell') {
+    const why = foremanPrivateCommand(typeof input.command === 'string' ? input.command : '', ctx);
+    return why ? deny(why) : undefined;
+  }
+  if (!READ_TOOLS.has(toolName) && !EDIT_TOOLS.has(toolName)) return undefined;
+  const p = pathArg(input);
+  const base = p ? resolveIn(ctx.cwd, p, ctx) : ctx.cwd;
+  const why = foremanPrivatePath(base, f);
+  if (why) return deny(why);
+  if (toolName === 'Grep' && containsHome(base, f)) return deny(`searching ${base} would read AgentCraft's own files under ${f.home}`);
+  const pattern = toolName === 'Glob' ? input.pattern : toolName === 'Grep' ? input.glob : undefined;
+  if (typeof pattern === 'string' && pattern.trim()) {
+    if (/client\.token/i.test(pattern)) return deny("the pattern names the Foreman's client token");
+    const root = patternRoot(base, pattern.trim(), ctx);
+    if (root && root !== 'unknown') {
+      const w = foremanPrivatePath(root, f);
+      if (w) return deny(w);
+      if (toolName === 'Grep' && containsHome(root, f)) return deny(`searching ${root} would read AgentCraft's own files under ${f.home}`);
+    }
+  }
+  return undefined;
+}
+
 // ---- entry point ---------------------------------------------------------------------------
 
 /**
@@ -2011,6 +2140,8 @@ function askVerdict(reason: string, key: string): Verdict {
 export function classifyToolUse(toolName: string, input: Record<string, unknown>, ctx: PolicyContext): Verdict {
   const server = ctx.mcpServer ?? 'agentcraft';
   if (toolName.startsWith(`mcp__${server}__`)) return { action: 'allow', reason: 'AgentCraft tool' };
+  const priv = foremanPrivateVerdict(toolName, input, ctx);
+  if (priv) return priv;
   if (toolName === 'Skill' && ctx.skills?.length) {
     // loading a skill only adds its instructions; every tool call it leads to is checked as usual
     const name = typeof input.skill === 'string' ? input.skill : typeof input.command === 'string' ? input.command : '';
