@@ -52,6 +52,14 @@ export interface WorktreeMeta {
   prevTip?: string;
 }
 
+/** A building lead's assignment (lead.assign), keyed by lead id in StateData.leads. */
+export interface LeadRecord {
+  /** the mod's building key "<worldId>/<buildingId>" */
+  building: string;
+  repos: string[];
+  assignedAt: number;
+}
+
 export interface StateData {
   version: 1;
   createdAt: number;
@@ -68,6 +76,8 @@ export interface StateData {
   sessions: Record<string, SessionRecord>;
   worktreeMeta: Record<string, WorktreeMeta>; // key: `${repoId}/${worktreeId}`
   permissionRules: Record<string, string[]>; // agentId -> rule keys always allowed
+  /** lead id -> its building (every lead but marlow that leads one); see leads.ts */
+  leads: Record<string, LeadRecord>;
   /** opaque backend-owned state (e.g. sim progress) */
   backend: Record<string, unknown>;
 }
@@ -116,6 +126,7 @@ function emptyState(now: number): StateData {
     sessions: {},
     worktreeMeta: {},
     permissionRules: {},
+    leads: {},
     backend: {},
   };
 }

@@ -178,8 +178,17 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `progress` | number | yes |  |
 | `status` | `planning` \| `active` \| `done` \| `failed` \| `cancelled` | yes | planning (lead is planning) -> active -> done (every non-cancelled task merged/done); cancelled: every task was cancelled or rejected (back to active if the lead adds a task); failed: planning failed |
 | `repoId` | string | no |  |
+| `leadId` | string | no | the lead running this goal (set at submit from the goal's repository: the lead of the building that has it). Absent = "marlow". Fixed for the goal's life, except when its lead is released (lead.release / lead.sync): then marlow takes the goal over |
 | `createdAt` | integer | yes | epoch milliseconds |
 | `updatedAt` | integer | yes | epoch milliseconds |
+
+### <a id="leadassignment"></a>LeadAssignment
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `leadId` | string | yes | a lead agent id, e.g. "ines" |
+| `building` | string (#RRGGBB) | no | the building this lead leads; absent for "marlow" (home, repositories without a building, everything not tied to a repository) |
+| `repos` | string[] | yes | repository ids of the building (a repository is in at most one building); empty for marlow |
 
 ### <a id="feeditem"></a>FeedItem
 
@@ -295,6 +304,7 @@ Full state. Sent in reply to every `hello`; the mod rebuilds its view from it.
 | `feed` | [FeedItem](#feeditem)[] | yes | most recent feed items, oldest first (<= 200) |
 | `logs` | [AgentLogs](#agentlogs)[] | yes | recent log tail per agent (<= 60 entries each) |
 | `designs` | [Design](#design)[] | yes | the most recent building designs (<= 20), oldest first; queued/running ones always included |
+| `leads` | [LeadAssignment](#leadassignment)[] | yes | who leads what: marlow first (no building), then every assigned building lead (same as `leads.update`) |
 
 ```json
 {
@@ -479,6 +489,19 @@ Full state. Sent in reply to every `hello`; the mod rebuilds its view from it.
       ],
       "createdAt": 1790850000000,
       "updatedAt": 1790850480000
+    }
+  ],
+  "leads": [
+    {
+      "leadId": "marlow",
+      "repos": []
+    },
+    {
+      "leadId": "ines",
+      "building": "New World/b3",
+      "repos": [
+        "demo-app"
+      ]
     }
   ]
 }
@@ -740,6 +763,7 @@ Goal created or progress/status changed. Replace by `goal.id`; latest goal is cu
     "progress": 0.56,
     "status": "active",
     "repoId": "demo-app",
+    "leadId": "ines",
     "createdAt": 1790850000000,
     "updatedAt": 1790850200000
   }
@@ -967,6 +991,43 @@ Backend/auth status changed (banner).
     "auth": "failed",
     "message": "Claude login check failed: not logged in. Run `claude` and /login, then restart the Foreman."
   }
+}
+```
+
+### `leads.update`
+
+Lead assignments changed (lead.assign / lead.release / lead.sync, or the Foreman dropped a lead that is no longer configured). Full list; also in `snapshot.leads`. A lead agent (role `lead`) other than marlow is in `snapshot.agents` and gets `agent.upsert` only while it is assigned; a released lead gets one last `agent.upsert` (active=false, lounge) and should walk home and despawn.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `leads` | [LeadAssignment](#leadassignment)[] | yes | the full list (replace): marlow first, then each assigned building lead |
+
+```json
+{
+  "v": 1,
+  "type": "leads.update",
+  "leads": [
+    {
+      "leadId": "marlow",
+      "repos": []
+    },
+    {
+      "leadId": "ines",
+      "building": "New World/b3",
+      "repos": [
+        "demo-app"
+      ]
+    },
+    {
+      "leadId": "bram",
+      "building": "New World/b7",
+      "repos": [
+        "api",
+        "web"
+      ]
+    }
+  ]
 }
 ```
 
@@ -1249,6 +1310,81 @@ Poll the pull request(s) of tasks in status `pr` now instead of at the next inte
   "type": "pr.refresh",
   "id": "c21",
   "taskId": "t4"
+}
+```
+
+### `lead.assign`
+
+A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it. New goals in these repositories go to that lead; goals already running keep theirs.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `building` | string (#RRGGBB) | yes | "<worldId>/<buildingId>" (worldId = the save folder name, so two worlds on one Foreman do not collide) |
+| `repos` | string[] | yes | repository ids the building holds |
+
+```json
+{
+  "v": 1,
+  "type": "lead.assign",
+  "id": "c22",
+  "building": "New World/b7",
+  "repos": [
+    "api",
+    "web"
+  ]
+}
+```
+
+### `lead.release`
+
+The building was removed. Acked with `{}` (also for a building that has no lead). Its lead goes off shift; its open goals move to marlow (feed line; marlow gets the plan note when it takes over).
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `building` | string (#RRGGBB) | yes | "<worldId>/<buildingId>" (worldId = the save folder name, so two worlds on one Foreman do not collide) |
+
+```json
+{
+  "v": 1,
+  "type": "lead.release",
+  "id": "c23",
+  "building": "New World/b7"
+}
+```
+
+### `lead.sync`
+
+Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id).
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `world` | string (#RRGGBB) | yes | the world id (save folder name) |
+| `buildings` | { building: string (#RRGGBB), repos: string[] }[] | yes | every building of that world that holds repositories |
+
+```json
+{
+  "v": 1,
+  "type": "lead.sync",
+  "id": "c24",
+  "world": "New World",
+  "buildings": [
+    {
+      "building": "New World/b3",
+      "repos": [
+        "demo-app"
+      ]
+    },
+    {
+      "building": "New World/b7",
+      "repos": [
+        "api",
+        "web"
+      ]
+    }
+  ]
 }
 ```
 

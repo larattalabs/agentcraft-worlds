@@ -133,6 +133,10 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
     feed: [{ ts: ts + 5_000, kind: 'plan', text: 'Marlow planned the goal into 9 tasks', agentId: 'marlow' }],
     logs: [{ agentId: 'kit', entries: [{ ts: ts + 90_000, kind: 'tool', text: 'Edit src/tags.ts' }] }],
     designs: [design],
+    leads: [
+      { leadId: 'marlow', repos: [] },
+      { leadId: 'ines', building: 'New World/b3', repos: ['demo-app'] },
+    ],
   },
   'agent.upsert': { v: 1, type: 'agent.upsert', agent },
   'agent.log': {
@@ -164,7 +168,7 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
   'decision.upsert': { v: 1, type: 'decision.upsert', decision },
   'repo.upsert': { v: 1, type: 'repo.upsert', repo },
   'memory.upsert': { v: 1, type: 'memory.upsert', entry: memory },
-  'goal.upsert': { v: 1, type: 'goal.upsert', goal: { id: 'g1', text: 'Add #tags to pocket-notes', progress: 0.56, status: 'active', repoId: 'demo-app', createdAt: ts, updatedAt: ts + 200_000 } },
+  'goal.upsert': { v: 1, type: 'goal.upsert', goal: { id: 'g1', text: 'Add #tags to pocket-notes', progress: 0.56, status: 'active', repoId: 'demo-app', leadId: 'ines', createdAt: ts, updatedAt: ts + 200_000 } },
   'feed.add': { v: 1, type: 'feed.add', item: { ts: ts + 210_000, kind: 'merge', text: 'Merged agentcraft/kit/t2-tag-parser-module into main (7cf1999, 2 files)', agentId: 'marlow' } },
   diff: {
     v: 1,
@@ -224,6 +228,15 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
   notify: { v: 1, type: 'notify', level: 'need_user', text: 'Marlow: Merge t2 "Tag parser module" into main?', decisionId: 'd2', ts: ts + 120_000 },
   'design.upsert': { v: 1, type: 'design.upsert', design },
   'foreman.status': { v: 1, type: 'foreman.status', status: { version: '0.1.0', backend: 'claude', auth: 'failed', message: 'Claude login check failed: not logged in. Run `claude` and /login, then restart the Foreman.' } },
+  'leads.update': {
+    v: 1,
+    type: 'leads.update',
+    leads: [
+      { leadId: 'marlow', repos: [] },
+      { leadId: 'ines', building: 'New World/b3', repos: ['demo-app'] },
+      { leadId: 'bram', building: 'New World/b7', repos: ['api', 'web'] },
+    ],
+  },
   ack: { v: 1, type: 'ack', re: 'c12', ok: true, result: { goalId: 'g2' } },
   error: { v: 1, type: 'error', message: 'no agent named "kitt"', re: 'c13' },
 };
@@ -240,4 +253,16 @@ export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
   'design.request': { v: 1, type: 'design.request', id: 'c19', request: designRequest },
   'design.cancel': { v: 1, type: 'design.cancel', id: 'c20', designId: 'd7' },
   'pr.refresh': { v: 1, type: 'pr.refresh', id: 'c21', taskId: 't4' },
+  'lead.assign': { v: 1, type: 'lead.assign', id: 'c22', building: 'New World/b7', repos: ['api', 'web'] },
+  'lead.release': { v: 1, type: 'lead.release', id: 'c23', building: 'New World/b7' },
+  'lead.sync': {
+    v: 1,
+    type: 'lead.sync',
+    id: 'c24',
+    world: 'New World',
+    buildings: [
+      { building: 'New World/b3', repos: ['demo-app'] },
+      { building: 'New World/b7', repos: ['api', 'web'] },
+    ],
+  },
 };

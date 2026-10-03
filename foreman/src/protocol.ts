@@ -234,10 +234,21 @@ export const Goal = z.object({
   progress: z.number().min(0).max(1),
   status: GoalStatus.describe('planning (lead is planning) -> active -> done (every non-cancelled task merged/done); cancelled: every task was cancelled or rejected (back to active if the lead adds a task); failed: planning failed'),
   repoId: Id.optional(),
+  leadId: Id.optional().describe('the lead running this goal (set at submit from the goal\'s repository: the lead of the building that has it). Absent = "marlow". Fixed for the goal\'s life, except when its lead is released (lead.release / lead.sync): then marlow takes the goal over'),
   createdAt: Ts,
   updatedAt: Ts,
 });
 export type Goal = z.infer<typeof Goal>;
+
+/** A building's key: `"<worldId>/<buildingId>"` (worldId = the save folder name). */
+const BuildingKey = z.string().regex(/^[^/]+\/.+$/).describe('"<worldId>/<buildingId>" (worldId = the save folder name, so two worlds on one Foreman do not collide)');
+
+export const LeadAssignment = z.object({
+  leadId: Id.describe('a lead agent id, e.g. "ines"'),
+  building: BuildingKey.optional().describe('the building this lead leads; absent for "marlow" (home, repositories without a building, everything not tied to a repository)'),
+  repos: z.array(Id).describe('repository ids of the building (a repository is in at most one building); empty for marlow'),
+});
+export type LeadAssignment = z.infer<typeof LeadAssignment>;
 
 export const FeedItem = z.object({
   ts: Ts,
@@ -386,6 +397,7 @@ export const SnapshotMsg = z.object({
   feed: z.array(FeedItem).describe('most recent feed items, oldest first (<= 200)'),
   logs: z.array(AgentLogs).describe('recent log tail per agent (<= 60 entries each)'),
   designs: z.array(Design).describe('the most recent building designs (<= 20), oldest first; queued/running ones always included'),
+  leads: z.array(LeadAssignment).describe('who leads what: marlow first (no building), then every assigned building lead (same as `leads.update`)'),
 });
 export const AgentUpsertMsg = z.object({ ...envelope('agent.upsert'), agent: Agent });
 export const AgentLogMsg = z.object({ ...envelope('agent.log'), agentId: Id, entries: z.array(LogEntry) });
@@ -423,6 +435,7 @@ export const NotifyMsg = z.object({
 });
 export const DesignUpsertMsg = z.object({ ...envelope('design.upsert'), design: Design });
 export const ForemanStatusMsg = z.object({ ...envelope('foreman.status'), status: ForemanStatus });
+export const LeadsUpdateMsg = z.object({ ...envelope('leads.update'), leads: z.array(LeadAssignment).describe('the full list (replace): marlow first, then each assigned building lead') });
 export const AckMsg = z.object({
   ...envelope('ack'),
   re: z.string().describe('the `id` of the client message being acknowledged'),
@@ -451,6 +464,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
   NotifyMsg,
   DesignUpsertMsg,
   ForemanStatusMsg,
+  LeadsUpdateMsg,
   AckMsg,
   ErrorMsg,
 ]);
@@ -508,6 +522,17 @@ export const DiffRequestMsg = z.object({
 export const RepoAddMsg = z.object({ ...envelope('repo.add'), path: z.string().min(1) });
 export const DesignRequestMsg = z.object({ ...envelope('design.request'), request: DesignRequest });
 export const DesignCancelMsg = z.object({ ...envelope('design.cancel'), designId: Id });
+export const LeadAssignMsg = z.object({
+  ...envelope('lead.assign'),
+  building: BuildingKey,
+  repos: z.array(Id).describe('repository ids the building holds'),
+});
+export const LeadReleaseMsg = z.object({ ...envelope('lead.release'), building: BuildingKey });
+export const LeadSyncMsg = z.object({
+  ...envelope('lead.sync'),
+  world: z.string().min(1).regex(/^[^/]+$/).describe('the world id (save folder name)'),
+  buildings: z.array(z.object({ building: BuildingKey, repos: z.array(Id) })).describe('every building of that world that holds repositories'),
+});
 export const PrRefreshMsg = z.object({
   ...envelope('pr.refresh'),
   taskId: Id.optional().describe('the task whose PR to poll now; omitted = every task in status `pr`'),
@@ -525,6 +550,9 @@ export const ClientMessage = z.discriminatedUnion('type', [
   DesignRequestMsg,
   DesignCancelMsg,
   PrRefreshMsg,
+  LeadAssignMsg,
+  LeadReleaseMsg,
+  LeadSyncMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -586,6 +614,7 @@ export const SERVER_MESSAGES = {
   notify: { schema: NotifyMsg, doc: 'Toast/banner for the player. `need_user` = a decision is waiting (play a bell).' },
   'design.upsert': { schema: DesignUpsertMsg, doc: 'A building design was requested or progressed (status, step) or finished. Replace by `design.id`. On `done` the blueprint files are already in `request.outDir`: reload blueprints.' },
   'foreman.status': { schema: ForemanStatusMsg, doc: 'Backend/auth status changed (banner).' },
+  'leads.update': { schema: LeadsUpdateMsg, doc: 'Lead assignments changed (lead.assign / lead.release / lead.sync, or the Foreman dropped a lead that is no longer configured). Full list; also in `snapshot.leads`. A lead agent (role `lead`) other than marlow is in `snapshot.agents` and gets `agent.upsert` only while it is assigned; a released lead gets one last `agent.upsert` (active=false, lounge) and should walk home and despawn.' },
   ack: { schema: AckMsg, doc: 'Reply to any client message that carried an `id`.' },
   error: { schema: ErrorMsg, doc: 'A client message was invalid or failed (also sent as ack.ok=false when it had an id).' },
 } as const;
@@ -602,6 +631,9 @@ export const CLIENT_MESSAGES = {
   'design.request': { schema: DesignRequestMsg, doc: 'Design a new building blueprint (hub: Buildings -> Design new). Acked with `{designId}`; progress arrives as `design.upsert`. One design runs at a time; later ones queue.' },
   'design.cancel': { schema: DesignCancelMsg, doc: 'Cancel a queued or running design (the design agent\'s turn is stopped; nothing is written to outDir).' },
   'pr.refresh': { schema: PrRefreshMsg, doc: 'Poll the pull request(s) of tasks in status `pr` now instead of at the next interval (claude backend with PR watching on). Changes arrive as `task.upsert`.' },
+  'lead.assign': { schema: LeadAssignMsg, doc: 'A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it. New goals in these repositories go to that lead; goals already running keep theirs.' },
+  'lead.release': { schema: LeadReleaseMsg, doc: 'The building was removed. Acked with `{}` (also for a building that has no lead). Its lead goes off shift; its open goals move to marlow (feed line; marlow gets the plan note when it takes over).' },
+  'lead.sync': { schema: LeadSyncMsg, doc: 'Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id).' },
 } as const;
 
 export const ENTITY_SCHEMAS = {
@@ -615,6 +647,7 @@ export const ENTITY_SCHEMAS = {
   Worktree,
   MemoryEntry,
   Goal,
+  LeadAssignment,
   FeedItem,
   ForemanStatus,
   AgentLogs,
