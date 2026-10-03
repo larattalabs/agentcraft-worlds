@@ -258,13 +258,13 @@ export function renderIso(scene, opts = {}) {
             cv.quad(p0x, p0y, p1x - p0x, p1y - p0y, p2x - p0x, p2y - p0y, paint('top', m.color), m.alpha, edgeFn('top', m.topFrame));
           }
           // south (+z), drawn to the right
-          if (!(unitCube && cullS) && !(sameGlass && unitCube && sameGlassAt(grid, specs, at, W, D, x, y, z + 1, si))) {
+          if (!(unitCube && cullS) && !(sameGlass && unitCube && sameGlassAt(grid, at, W, D, x, y, z + 1, si))) {
             const [p0x, p0y] = P(X0, Y1, Z1), [p1x, p1y] = P(X1, Y1, Z1), [p2x, p2y] = P(X0, Y0, Z1);
             const fr = bx.panelFacing === 'south' ? bx.frame : bx.panelFacing ? { u0: false, u1: false, v0: false, v1: false } : null;
             cv.quad(p0x, p0y, p1x - p0x, p1y - p0y, p2x - p0x, p2y - p0y, paint('south', m.color), m.alpha, edgeFn('south', fr));
           }
           // west (-x), drawn to the left
-          if (!(unitCube && cullW) && !(sameGlass && unitCube && sameGlassAt(grid, specs, at, W, D, x - 1, y, z, si))) {
+          if (!(unitCube && cullW) && !(sameGlass && unitCube && sameGlassAt(grid, at, W, D, x - 1, y, z, si))) {
             const [p0x, p0y] = P(X0, Y1, Z0), [p1x, p1y] = P(X0, Y1, Z1), [p2x, p2y] = P(X0, Y0, Z0);
             const fr = bx.panelFacing === 'west' ? bx.frame : bx.panelFacing ? { u0: false, u1: false, v0: false, v1: false } : null;
             cv.quad(p0x, p0y, p1x - p0x, p1y - p0y, p2x - p0x, p2y - p0y, paint('west', m.color), m.alpha, edgeFn('west', fr));
