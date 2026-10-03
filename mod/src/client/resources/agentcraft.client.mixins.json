@@ -8,6 +8,7 @@
 		"CameraMixin",
 		"ClientLevelAccessor",
 		"EntityRenderDispatcherMixin",
+		"KeyboardHandlerMixin",
 		"MinecraftMixin",
 		"RenderSystemMixin"
 	],
