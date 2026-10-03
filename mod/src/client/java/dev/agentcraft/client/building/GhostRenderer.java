@@ -116,14 +116,14 @@ final class GhostRenderer {
 		return quads;
 	}
 
-	/** Whole cubes at world cells {@code xyz} (x, y, z triples). */
-	private static int cells(PoseStack.Pose pose, VertexConsumer vc, int[] xyz, int argb, float grow, double cx, double cy, double cz) {
+	/** The exposed faces of world cells given as (x, y, z, face mask) quadruples. */
+	private static int cells(PoseStack.Pose pose, VertexConsumer vc, int[] cells, int argb, float grow, double cx, double cy, double cz) {
 		int n = 0;
-		for (int i = 0; i + 2 < xyz.length && i < BuildPlacement.MAX_DRAWN_CONFLICTS * 3; i += 3) {
-			float x = (float) (xyz[i] - cx);
-			float y = (float) (xyz[i + 1] - cy);
-			float z = (float) (xyz[i + 2] - cz);
-			n += cube(pose, vc, x - grow, y - grow, z - grow, x + 1 + grow, y + 1 + grow, z + 1 + grow, argb, 0x3F, true);
+		for (int i = 0; i + 3 < cells.length; i += 4) {
+			float x = (float) (cells[i] - cx);
+			float y = (float) (cells[i + 1] - cy);
+			float z = (float) (cells[i + 2] - cz);
+			n += cube(pose, vc, x - grow, y - grow, z - grow, x + 1 + grow, y + 1 + grow, z + 1 + grow, argb, cells[i + 3], true);
 		}
 		return n;
 	}

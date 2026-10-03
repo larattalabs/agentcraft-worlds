@@ -56,9 +56,16 @@ public final class BuildPlacement {
 	/** Rescan the world under an unmoved ghost this often (blocks change). */
 	private static final int RESCAN_TICKS = 10;
 
-	/** An immutable view of what the renderer and HUD draw this frame. */
+	/** Refusal added on the client: the player would be built into the walls. */
+	static final String PLAYER_INSIDE = "you are standing in the box (look further away or nudge it)";
+
+	/**
+	 * An immutable view of what the renderer and HUD draw this frame. {@code obstructed} / {@code blocked}
+	 * hold world cells as (x, y, z, exposed-face mask) quadruples, so a buried blob of conflicts draws
+	 * only its outline.
+	 */
 	record View(Blueprint bp, GhostModel model, int ox, int oy, int oz, int turns, String front, int[] obstructed, int obstructedCount,
-		int[] blocked, int blockedCount, List<String> refusals, boolean locked, boolean pending, boolean forceArmed) {
+		int[] blocked, int blockedCount, List<String> refusals, boolean playerInside, boolean locked, boolean pending, boolean forceArmed) {
 		Anchors.Bounds box() {
 			return new Anchors.Bounds(ox, oy, oz, ox + model.sizeX - 1, oy + model.sizeY - 1, oz + model.sizeZ - 1);
 		}
@@ -88,7 +95,8 @@ public final class BuildPlacement {
 	private static int explicitTurns;
 
 	private static @Nullable View view;
-	private static long scanKey = Long.MIN_VALUE;
+	/** The spot of the last scan: x, y, z, turns (compared exactly). */
+	private static int @Nullable [] scanned;
 	private static int ticksSinceScan;
 	private static boolean pending;
 	private static boolean forceArmed;
@@ -162,7 +170,7 @@ public final class BuildPlacement {
 		lockedSpot = null;
 		explicitOrigin = null;
 		view = null;
-		scanKey = Long.MIN_VALUE;
+		scanned = null;
 		pending = false;
 		forceArmed = false;
 	}
@@ -226,6 +234,12 @@ public final class BuildPlacement {
 		if (pending && inFlight != null) {
 			return inFlight;
 		}
+		if (v.playerInside()) {
+			Result r = new Result(false, null, "Not placed: " + PLAYER_INSIDE);
+			lastResult = r;
+			setStatus(r.message(), true);
+			return CompletableFuture.completedFuture(r);
+		}
 		boolean useForce = force && forceArmed;
 		IntegratedServer server = mc.getSingleplayerServer();
 		if (server == null || mc.player == null) {
@@ -260,14 +274,14 @@ public final class BuildPlacement {
 			}
 			Result result = r;
 			mc.execute(() -> {
-				onResult(result, v.blockedCount());
+				onResult(result, v);
 				f.complete(result);
 			});
 		});
 		return f;
 	}
 
-	private static void onResult(Result r, int blockedSeen) {
+	private static void onResult(Result r, View refused) {
 		pending = false;
 		inFlight = null;
 		lastResult = r;
@@ -278,8 +292,18 @@ public final class BuildPlacement {
 			return;
 		}
 		// refused: stay in placement mode; over block entities, a second confirm with Shift may force it
-		boolean beRefusal = blockedSeen > 0 || r.message().contains("block entit");
-		forceArmed = active && beRefusal && !r.message().contains("overlaps") && !r.message().contains("already has");
+		boolean beRefusal = refused.blockedCount() > 0 || r.message().contains("block entit");
+		boolean arm = active && beRefusal && !r.message().contains("overlaps") && !r.message().contains("already has");
+		if (arm) {
+			// pin the ghost to the refused box, so the force confirm means exactly the box the refusal described
+			explicitOrigin = new int[] {refused.ox(), refused.oy(), refused.oz()};
+			explicitTurns = refused.turns();
+			userTurns = 0;
+			nudgeX = nudgeY = nudgeZ = 0;
+			locked = true;
+			update(Minecraft.getInstance(), true);
+		}
+		forceArmed = arm;
 		String msg = r.message() + (forceArmed ? " - Shift+Enter places anyway (they come back on remove)" : "");
 		setStatus(msg, true);
 		Toasts.push(new Notify(NotifyLevel.WARN, "Not placed: " + msg, null, System.currentTimeMillis()));
@@ -383,56 +407,59 @@ public final class BuildPlacement {
 		ox += nudgeX;
 		oy += nudgeY;
 		oz += nudgeZ;
-		long key = (((long) ox * 31 + oy) * 31 + oz) * 4 + turns;
+		int[] spot = {ox, oy, oz, turns};
+		boolean same = java.util.Arrays.equals(spot, scanned);
 		ticksSinceScan++;
-		if (!force && key == scanKey && ticksSinceScan < RESCAN_TICKS && view != null) {
+		if (!force && same && ticksSinceScan < RESCAN_TICKS && view != null) {
 			if (view.pending() != pending || view.forceArmed() != forceArmed || view.locked() != locked) {
 				View v = view;
 				view = new View(v.bp(), v.model(), v.ox(), v.oy(), v.oz(), v.turns(), v.front(), v.obstructed(), v.obstructedCount(), v.blocked(),
-					v.blockedCount(), v.refusals(), locked, pending, forceArmed);
+					v.blockedCount(), v.refusals(), v.playerInside(), locked, pending, forceArmed);
 			}
 			return;
 		}
-		if (key != scanKey) {
+		if (!same) {
 			forceArmed = false;
 		}
-		scanKey = key;
+		scanned = spot;
 		ticksSinceScan = 0;
-		view = scan(mc.level, bp, model(turns), ox, oy, oz, turns);
+		view = scan(mc.level, mc.player, bp, model(turns), ox, oy, oz, turns);
 	}
 
 	/** Classifies the world under the ghost and works out place()'s refusals. */
-	private static View scan(ClientLevel lv, Blueprint b, GhostModel m, int ox, int oy, int oz, int turns) {
+	private static View scan(ClientLevel lv, Player player, Blueprint b, GhostModel m, int ox, int oy, int oz, int turns) {
 		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
-		IntList obstructed = new IntList();
+		int sx = m.sizeX;
+		int sy = m.sizeY;
+		int sz = m.sizeZ;
+		// box-local flags: 1 = obstructed, 2 = foreign block entity
+		byte[] flags = new byte[sx * sy * sz];
 		int obstructedCount = 0;
 		for (int i = 0; i < m.count(); i++) {
 			p.set(ox + m.x(i), oy + m.y(i), oz + m.z(i));
 			BlockState s = lv.getBlockState(p);
-			GhostModel.Conflict c = GhostModel.classify(m.y(i), m.groundY, s.isAir(), s.canBeReplaced(), false);
-			if (c == GhostModel.Conflict.OBSTRUCTED) {
+			if (GhostModel.classify(m.y(i), m.groundY, s.isAir(), s.canBeReplaced(), false) == GhostModel.Conflict.OBSTRUCTED) {
 				obstructedCount++;
-				if (obstructed.size() < MAX_DRAWN_CONFLICTS * 3) {
-					obstructed.add(p.getX(), p.getY(), p.getZ());
-				}
+				flags[(m.y(i) * sz + m.z(i)) * sx + m.x(i)] |= 1;
 			}
 		}
 		// block entities anywhere in the box block placement (place() checks the whole box)
-		IntList blocked = new IntList();
 		int blockedCount = 0;
-		for (int y = oy; y < oy + m.sizeY; y++) {
-			for (int z = oz; z < oz + m.sizeZ; z++) {
-				for (int x = ox; x < ox + m.sizeX; x++) {
-					p.set(x, y, z);
+		for (int y = 0; y < sy; y++) {
+			for (int z = 0; z < sz; z++) {
+				for (int x = 0; x < sx; x++) {
+					p.set(ox + x, oy + y, oz + z);
 					BlockState s = lv.getBlockState(p);
 					if (s.hasBlockEntity() && isForeign(lv, p, s)) {
 						blockedCount++;
-						blocked.add(x, y, z);
+						flags[(y * sz + z) * sx + x] |= 2;
 					}
 				}
 			}
 		}
-		Anchors.Bounds box = new Anchors.Bounds(ox, oy, oz, ox + m.sizeX - 1, oy + m.sizeY - 1, oz + m.sizeZ - 1);
+		int[] obstructed = shell(flags, 1, sx, sy, sz, ox, oy, oz);
+		int[] blocked = shell(flags, 2, sx, sy, sz, ox, oy, oz);
+		Anchors.Bounds box = new Anchors.Bounds(ox, oy, oz, ox + sx - 1, oy + sy - 1, oz + sz - 1);
 		List<String> withBuilding = new ArrayList<>();
 		for (String r : repos) {
 			Building has = Buildings.forRepo(r);
@@ -446,11 +473,49 @@ public final class BuildPlacement {
 				overlaps.add(other.id());
 			}
 		}
-		List<String> refusals = GhostModel.refusals(repos, b.wings(), withBuilding, box.minY(), box.maxY(), lv.getMinY(), lv.getMaxY(), overlaps,
-			blockedCount, false);
+		List<String> refusals = new ArrayList<>(GhostModel.refusals(repos, b.wings(), withBuilding, box.minY(), box.maxY(), lv.getMinY(),
+			lv.getMaxY(), overlaps, blockedCount, false));
+		BlockPos feet = player.blockPosition();
+		boolean inside = box.contains(feet.getX(), feet.getY(), feet.getZ()) || box.contains(feet.getX(), feet.getY() + 1, feet.getZ());
+		if (inside) {
+			refusals.add(0, PLAYER_INSIDE);
+		}
 		String front = BlueprintTransform.rotateDirection(b.front(), turns);
-		return new View(b, m, ox, oy, oz, turns, front, obstructed.toArray(), obstructedCount, blocked.toArray(), blockedCount, List.copyOf(refusals),
-			locked, pending, forceArmed);
+		return new View(b, m, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, List.copyOf(refusals), inside, locked,
+			pending, forceArmed);
+	}
+
+	/**
+	 * The cells carrying {@code bit} as world (x, y, z, exposed-face mask) quadruples: faces towards a
+	 * cell with the same bit are hidden, cells with none exposed are left out (at most
+	 * {@link #MAX_DRAWN_CONFLICTS}).
+	 */
+	private static int[] shell(byte[] flags, int bit, int sx, int sy, int sz, int ox, int oy, int oz) {
+		IntList out = new IntList();
+		for (int y = 0; y < sy && out.size() < MAX_DRAWN_CONFLICTS * 4; y++) {
+			for (int z = 0; z < sz; z++) {
+				for (int x = 0; x < sx; x++) {
+					if ((flags[(y * sz + z) * sx + x] & bit) == 0) {
+						continue;
+					}
+					int mask = 0;
+					mask |= has(flags, bit, x, y - 1, z, sx, sy, sz) ? 0 : 1;
+					mask |= has(flags, bit, x, y + 1, z, sx, sy, sz) ? 0 : 2;
+					mask |= has(flags, bit, x, y, z - 1, sx, sy, sz) ? 0 : 4;
+					mask |= has(flags, bit, x, y, z + 1, sx, sy, sz) ? 0 : 8;
+					mask |= has(flags, bit, x - 1, y, z, sx, sy, sz) ? 0 : 16;
+					mask |= has(flags, bit, x + 1, y, z, sx, sy, sz) ? 0 : 32;
+					if (mask != 0) {
+						out.add(ox + x, oy + y, oz + z, mask);
+					}
+				}
+			}
+		}
+		return out.toArray();
+	}
+
+	private static boolean has(byte[] flags, int bit, int x, int y, int z, int sx, int sy, int sz) {
+		return x >= 0 && y >= 0 && z >= 0 && x < sx && y < sy && z < sz && (flags[(y * sz + z) * sx + x] & bit) != 0;
 	}
 
 	private static boolean isForeign(ClientLevel lv, BlockPos p, BlockState s) {
@@ -526,6 +591,7 @@ public final class BuildPlacement {
 		JsonObject c = new JsonObject();
 		c.addProperty("obstructed", v.obstructedCount());
 		c.addProperty("blockEntities", v.blockedCount());
+		c.addProperty("playerInside", v.playerInside());
 		JsonArray refs = new JsonArray();
 		v.refusals().forEach(refs::add);
 		c.add("refusals", refs);
@@ -535,6 +601,7 @@ public final class BuildPlacement {
 		r.addProperty("cells", v.model().count());
 		r.addProperty("visibleCells", v.model().visibleCount());
 		r.addProperty("faces", v.model().faceCount());
+		r.addProperty("conflictFaces", faces(v.obstructed()) + faces(v.blocked()));
 		r.addProperty("lastFrameQuads", GhostRenderer.lastQuads);
 		r.addProperty("lastFrameMicros", GhostRenderer.lastNanos / 1000);
 		r.addProperty("maxFrameMicros", GhostRenderer.maxNanos / 1000);
@@ -543,18 +610,27 @@ public final class BuildPlacement {
 		return o;
 	}
 
+	private static int faces(int[] quads) {
+		int n = 0;
+		for (int i = 3; i < quads.length; i += 4) {
+			n += Integer.bitCount(quads[i]);
+		}
+		return n;
+	}
+
 	/** A growable int array (no boxing). */
 	static final class IntList {
 		private int[] a = new int[48];
 		private int n;
 
-		void add(int x, int y, int z) {
-			if (n + 3 > a.length) {
+		void add(int x, int y, int z, int w) {
+			if (n + 4 > a.length) {
 				a = java.util.Arrays.copyOf(a, a.length * 2);
 			}
 			a[n++] = x;
 			a[n++] = y;
 			a[n++] = z;
+			a[n++] = w;
 		}
 
 		int size() {

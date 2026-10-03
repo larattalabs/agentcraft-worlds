@@ -423,7 +423,9 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   `StructureTemplate.transform`; exposed faces; conflict classes; `place`'s refusals), tested in
   `GhostModelTest`. Template cells come from `StructureTemplate.save` (palettes are private), cached
   per `Blueprints.Entry`. Render cost: the workshop (27x10x21, 2583 visible cells) draws 3750 faces
-  (15k vertices) per frame; `dev.build.state` reports `render.lastFrameMicros` / `maxFrameMicros`.
+  (15k vertices) per frame; conflict cells draw only the outline of each blob; `dev.build.state`
+  reports `render.faces`, `conflictFaces`, `lastFrameMicros`, `maxFrameMicros`. Placement is refused
+  on the client while the player stands in the box.
   DevBridge: `dev.build.open {step: repos|blueprints, repos?, blueprint?}`, `dev.build.start
   {blueprint, repos, origin?: [x,y,z] (rotated box minimum, locks there), turns?}`, `dev.build.state`,
   `dev.build.rotate {turns?}`, `dev.build.nudge {forward?, right?, up?}`, `dev.build.lock {on?}`,
