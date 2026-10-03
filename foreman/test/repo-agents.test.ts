@@ -119,6 +119,7 @@ describe('repo agents in a running team', () => {
     const kitAppend = (kit.options.systemPrompt as { append: string }).append;
     expect(kitAppend).toContain('## Your role in this repository: dg-architect');
     expect(kitAppend).toContain('You are the architect. Plan before you build.');
+    expect(kitAppend).toMatch(/AgentCraft already made your worktree and branch \(agentcraft\/kit\/t\d+-tune-the-flight-model, from main\)/);
     expect(kit.options.model).toBe('arch-model'); // the role's model beats Kit's profile model
     expect(kit.options.effort).toBe('high');
     expect(task('Rename a helper')!.options.model).toBe('build-model');

@@ -62,7 +62,7 @@ Rules
 export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree, role?: RepoRole): string {
   const s = specialty(fm, agentId);
   const focus = role
-    ? `\n## Your role in this repository: ${role.name}\nThis is how the repository's own agent file describes your role. Follow it, within the AgentCraft rules below (your worktree, no push, hand work back with update_task).\n\n${role.prompt}\n`
+    ? `\n## Your role in this repository: ${role.name}\nThis is how the repository's own agent file describes your role. Follow it, within the AgentCraft rules below. AgentCraft already made your worktree and branch (${wt.branch}, from ${wt.base}): skip any steps in the role, or the docs it points to, about creating a worktree or branch, merging or pushing. Your hand-back is the update_task summary.\n\n${role.prompt}\n`
     : s.title || s.text ? `\nYour specialty${s.title ? `: ${s.title}` : ''}.${s.text ? ` ${s.text}` : ''} Bring that expertise to every task; other kinds of work are fine when you are assigned them.\n` : '';
   return `
 # You are ${fm.nameOf(agentId)}, a worker on an AgentCraft team led by Marlow${focus}
