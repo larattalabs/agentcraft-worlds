@@ -6,14 +6,17 @@ import dev.agentcraft.AgentCraft;
 import dev.agentcraft.command.AgentCraftCommands;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.Vec3;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Commands (gamemaster, under {@code /agentcraft}):
@@ -26,6 +29,7 @@ import net.minecraft.world.phys.Vec3;
  *                                  facing the player; rotation overrides the automatic one)
  * remove &lt;id&gt; [forget]             restore the area (forget: only drop the record)
  * home &lt;id&gt;                        make a building home
+ * build                            open the placement wizard (singleplayer client; see {@link #wizardOpener})
  * </pre>
  * The arguments after {@code <blueprint>} are one greedy string parsed here, so repo ids with commas,
  * dots or slashes need no quotes.
@@ -33,6 +37,13 @@ import net.minecraft.world.phys.Vec3;
 public final class BuildingCommands {
 	/** Blocks between the player and the near edge of a building placed in front of them. */
 	public static final int GAP = 2;
+
+	/**
+	 * Opens the placement wizard for the player who ran {@code /agentcraft build}. The AgentCraft client
+	 * installs it at start (it hops to the client thread itself); it stays null on a dedicated server,
+	 * where the wizard does not exist (no networking) and {@code /agentcraft place} is the way.
+	 */
+	public static volatile @Nullable Consumer<ServerPlayer> wizardOpener;
 
 	private BuildingCommands() {
 	}
@@ -52,6 +63,7 @@ public final class BuildingCommands {
 					return Blueprints.ids().size();
 				})))
 			.then(Commands.literal("buildings").executes(BuildingCommands::listBuildings))
+			.then(Commands.literal("build").executes(BuildingCommands::build))
 			.then(Commands.literal("place")
 				.then(Commands.argument("blueprint", StringArgumentType.word())
 					.suggests((ctx, b) -> {
@@ -88,6 +100,19 @@ public final class BuildingCommands {
 				e == null ? "?" : e.source().startsWith("user") ? "user" : "bundled")), false);
 		}
 		return all.size();
+	}
+
+	private static int build(CommandContext<CommandSourceStack> ctx) {
+		CommandSourceStack src = ctx.getSource();
+		Consumer<ServerPlayer> opener = wizardOpener;
+		ServerPlayer player = src.getPlayer();
+		if (opener == null || player == null || !src.getServer().isSingleplayerOwner(player.nameAndId())) {
+			src.sendFailure(Component.literal("The building wizard runs in the AgentCraft client in singleplayer; here use "
+				+ "/agentcraft place <blueprint> <repo>[,<repo>...] [rotation] [force]"));
+			return 0;
+		}
+		opener.accept(player);
+		return 1;
 	}
 
 	private static int listBuildings(CommandContext<CommandSourceStack> ctx) {
