@@ -108,14 +108,14 @@ export function planText(fm: Foreman, goal?: Goal, planId?: string): string {
  * The lead's view of the repositories for one turn: where it reads each one (a read-only view of
  * the base when there is one, else the user's checkout) and, with several, how to spread a goal.
  */
-export function leadRepoContext(fm: Foreman, goalRepoId: string | undefined, cwd: string): string {
+export function leadRepoContext(fm: Foreman, goalRepoId: string | undefined, cwd: string, goalBranch?: string): string {
   const repos = fm.repos.list();
   const where = (id: string, checkout: string) => fm.repos.viewPath(id) ?? checkout;
   const goalRepo = goalRepoId ? fm.repos.get(goalRepoId) : undefined;
   const parts: string[] = [];
   if (goalRepo && cwd !== goalRepo.path) {
     parts.push(
-      `# Where you read code\nYour working directory ${cwd} is a read-only view of ${goalRepo.name}'s base branch ${goalRepo.branch}${fm.repos.landsAsPr(goalRepo.id) ? ' as it is on the server' : ''}: exactly what workers start from. ${userName()}'s own checkout at ${goalRepo.path} may be on another branch with unrelated work in progress; plan against the view.`,
+      `# Where you read code\nYour working directory ${cwd} is a read-only view of ${goalRepo.name}'s ${goalBranch ? `branch ${goalBranch}` : `base branch ${goalRepo.branch}${fm.repos.landsAsPr(goalRepo.id) ? ' as it is on the server' : ''}`}: exactly what workers start from. ${userName()}'s own checkout at ${goalRepo.path} may be on another branch with unrelated work in progress; plan against the view.`,
     );
   }
   if (repos.length >= 2) {

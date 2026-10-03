@@ -159,6 +159,14 @@ The lead reads code in a read-only view of each repository's base (a detached wo
 `origin/<base>`), so it plans and reviews against what workers start from rather than your checkout,
 which may be on another branch with work in progress.
 
+A goal that starts with `on <branch>:` (e.g. "on feat/tag-filter: finish the animation") continues
+one of your branches, e.g. one you started in Claude Desktop. The branch must exist locally or on the
+remote (then a local branch is made from it). The lead plans against it, its tasks start from it, and
+approving a task adds the work to it (squashed if the repo squashes PRs): in the checkout that has
+it checked out, only when that checkout is clean; then, if the branch is on the remote, it is pushed
+(fast-forward only) so a PR you already opened updates. No new PR is opened. The lead can also put a
+single task on one of your branches (`create_task` `base`).
+
 A goal can span registered repositories: the lead sees all of them (with base and landing mode),
 gives each task its repository (`create_task` `repo`), and orders them with deps; every registered
 repository is readable for agents.

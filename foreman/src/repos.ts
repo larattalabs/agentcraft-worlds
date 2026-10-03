@@ -65,7 +65,7 @@ export interface PrResult {
   updated: boolean;
 }
 
-export type LandResult = ({ kind: 'merge' } & MergeResult) | ({ kind: 'pr' } & PrResult);
+export type LandResult = ({ kind: 'merge'; pushed?: string } & MergeResult) | ({ kind: 'pr' } & PrResult);
 
 export interface TestResult {
   pass: boolean;
@@ -358,8 +358,12 @@ export class RepoManager {
    * Create (or reuse) the worktree for agent+task. New branches start from the repo's base branch.
    * Returns the existing active worktree if one already exists for that task.
    */
-  createWorktree(repoId: string, agentId: string, task: { id: string; title: string }, opts: { startPoint?: string } = {}): Promise<Worktree> {
-    return this.serial(repoId, () => this.doCreateWorktree(repoId, agentId, task, opts.startPoint));
+  /**
+   * `base`: a branch of the user's to build on and land into instead of the repo's base (a goal
+   * that continues the user's branch, see useBranch); it must exist locally.
+   */
+  createWorktree(repoId: string, agentId: string, task: { id: string; title: string }, opts: { startPoint?: string; base?: string } = {}): Promise<Worktree> {
+    return this.serial(repoId, () => this.doCreateWorktree(repoId, agentId, task, opts.startPoint, opts.base));
   }
 
   /**
@@ -367,7 +371,7 @@ export class RepoManager {
    * worker) instead of the base branch. An existing branch of this agent is only moved forward
    * to it (never rewound); if the histories diverged a fresh branch name is used instead.
    */
-  private async doCreateWorktree(repoId: string, agentId: string, task: { id: string; title: string }, startPoint?: string): Promise<Worktree> {
+  private async doCreateWorktree(repoId: string, agentId: string, task: { id: string; title: string }, startPoint?: string, userBase?: string): Promise<Worktree> {
     const r = this.require(repoId);
     const id = `${agentId}-${task.id}`;
     const existing = r.worktrees.find((w) => w.id === id);
@@ -390,8 +394,8 @@ export class RepoManager {
       }
     }
     // PR repos branch from the server's base branch (origin/<base>), fetched just now
-    const pr = this.landsAsPr(r.id);
-    const base = pr ? `${this.remoteOf(r.id)}/${r.branch}` : r.branch;
+    const pr = this.landsAsPr(r.id) && !userBase;
+    const base = userBase ?? (pr ? `${this.remoteOf(r.id)}/${r.branch}` : r.branch);
     if (pr && !fs.existsSync(wtPath)) await this.fetchBase(r);
     if (!fs.existsSync(wtPath)) {
       const exists = async (b: string) => (await git(r.path, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true })).code === 0;
@@ -580,7 +584,7 @@ export class RepoManager {
     const r = this.require(repoId);
     const w = this.requireWorktree(repoId, worktreeId);
     if (w.status !== 'active') return { ok: false, reason: `worktree ${w.id} is ${w.status}`, code: 'refused' };
-    const target = this.landsAsPr(r.id) ? undefined : await this.checkoutOf(r, w.base);
+    const target = this.landsAsPr(r.id) && !this.isUserBase(r.id, w.base) ? undefined : await this.checkoutOf(r, w.base);
     if (target && (await this.isDirty(target))) {
       return { ok: false, reason: `the checkout at ${target} (${w.base}) has uncommitted changes — commit or stash them, then approve again`, code: 'dirty' };
     }
@@ -598,8 +602,31 @@ export class RepoManager {
    * option is "Merge" and that targets this worktree.
    */
   /** `commitMessage` is used if the agent left uncommitted work (e.g. "t1: Add --version flag"). */
+  /**
+   * After work landed on a user's branch: push it to the remote if the branch is there (fast-forward
+   * only, never forced). Returns what happened, for the feed; undefined when it is local-only.
+   */
+  private async pushUserBranch(repoId: string, branch: string): Promise<string | undefined> {
+    const r = this.require(repoId);
+    const remote = this.remoteOf(r.id);
+    const tracked = (await git(r.path, ['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${branch}`], { allowFail: true })).code === 0;
+    if (!tracked) return undefined;
+    const res = await gitRemote(r.path, ['push', '--no-verify', remote, `refs/heads/${branch}:refs/heads/${branch}`], { allowFail: true });
+    if (res.code === 0) return `pushed ${branch} to ${remote}`;
+    this.ctx.log.warn(`push ${branch}: ${(res.stderr || res.stdout).trim()}`);
+    return `not pushed: ${remote}/${branch} has commits that are not on your ${branch} (pull or merge, then push yourself)`;
+  }
+
   /** Land an approved task the repo's way: a local merge, or a pull request (repoSettings.land). */
   async land(decision: Decision, opts: { commitMessage?: string; title?: string; description?: string } = {}): Promise<LandResult> {
+    const w = decision.repoId && decision.worktree ? this.findWorktree(decision.repoId, decision.worktree) : undefined;
+    if (decision.repoId && w && this.isUserBase(decision.repoId, w.base)) {
+      // the user's own branch: add the work to it (squashed if the repo's PRs are squashed), then
+      // fast-forward it on the remote when it is there, so a PR already open from it updates
+      const squash = !!this.settingsFor(decision.repoId).pr?.squash;
+      const res = await this.merge(decision, { ...opts, ...(squash ? { style: 'squash' as const } : {}) });
+      return { kind: 'merge', ...res, pushed: await this.pushUserBranch(decision.repoId, w.base) };
+    }
     if (decision.repoId && this.landsAsPr(decision.repoId)) return { kind: 'pr', ...(await this.openPr(decision, opts)) };
     return { kind: 'merge', ...(await this.merge(decision, opts)) };
   }
@@ -678,11 +705,11 @@ export class RepoManager {
     return { ...(meta.prUrl ? { url: meta.prUrl } : {}), remoteBranch, base: target, branch: w.branch, updated };
   }
 
-  merge(decision: Decision, opts: { commitMessage?: string } = {}): Promise<MergeResult> {
-    return this.serial(decision.repoId ?? '?', () => this.doMerge(decision, opts.commitMessage));
+  merge(decision: Decision, opts: { commitMessage?: string; style?: 'merge' | 'squash' } = {}): Promise<MergeResult> {
+    return this.serial(decision.repoId ?? '?', () => this.doMerge(decision, opts.commitMessage, opts.style));
   }
 
-  private async doMerge(decision: Decision, commitMessage?: string): Promise<MergeResult> {
+  private async doMerge(decision: Decision, commitMessage?: string, style?: 'merge' | 'squash'): Promise<MergeResult> {
     if (decision.kind !== 'merge') throw new RepoError('merge requires a merge decision', 'refused');
     if (decision.status !== 'answered' || decision.answer?.option !== 'Merge') {
       throw new RepoError(`decision ${decision.id} does not approve a merge`, 'refused');
@@ -708,7 +735,7 @@ export class RepoManager {
     const branchSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.branch}`]);
     const tree = (await gitOut(r.path, ['merge-tree', '--write-tree', '--no-messages', w.base, w.branch])).split('\n')[0]!.trim();
     const approved = `Approved in AgentCraft (decision ${decision.id}${w.taskId ? `, task ${w.taskId}` : ''}).`;
-    const squash = this.opts.mergeStyle === 'squash';
+    const squash = (style ?? this.opts.mergeStyle) === 'squash';
     let msg: string;
     if (squash) {
       const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseSha}..${branchSha}`])).split('\n').filter(Boolean))];
@@ -884,12 +911,12 @@ export class RepoManager {
    * call. The lead plans and reviews against what workers start from, not against the user's
    * checkout, which may be on another branch with work in progress. Nothing is ever written there.
    */
-  leadView(repoId: string): Promise<string> {
+  leadView(repoId: string, branch?: string): Promise<string> {
     return this.serial(repoId, async () => {
       const r = this.require(repoId);
-      const pr = this.landsAsPr(r.id);
+      const pr = this.landsAsPr(r.id) && !branch;
       if (pr) await this.fetchBase(r);
-      const sha = await gitOut(r.path, ['rev-parse', '--verify', pr ? `refs/remotes/${this.remoteOf(r.id)}/${r.branch}` : `refs/heads/${r.branch}`]);
+      const sha = await gitOut(r.path, ['rev-parse', '--verify', branch ? `refs/heads/${branch}` : pr ? `refs/remotes/${this.remoteOf(r.id)}/${r.branch}` : `refs/heads/${r.branch}`]);
       const dir = path.join(this.worktreeRoot, r.id, '_lead');
       const lf = ['-c', 'core.autocrlf=false'];
       const known = fs.existsSync(dir) && (await listWorktrees(r.path)).some((e) => samePath(e.path, dir));
@@ -909,6 +936,35 @@ export class RepoManager {
   /** The lead's view of a repository, once leadView made it. */
   viewPath(repoId: string): string | undefined {
     return this.views.get(repoId);
+  }
+
+  /**
+   * A goal that continues one of the user's branches (e.g. one started in Claude Desktop): check the
+   * branch exists, locally or on the remote (fetched; then a local branch is made from it, no other
+   * change), and return where it lives. Throws a RepoError saying why it cannot be used.
+   */
+  useBranch(repoId: string, name: string): Promise<{ branch: string; onRemote: boolean }> {
+    return this.serial(repoId, async () => {
+      const r = this.require(repoId);
+      if (!/^[\w./-]+$/.test(name) || name.startsWith(BRANCH_PREFIX)) throw new RepoError(`"${name}" is not a branch AgentCraft can build on`, 'refused');
+      const remote = this.remoteOf(r.id);
+      const has = async (ref: string) => (await git(r.path, ['rev-parse', '--verify', '--quiet', ref], { allowFail: true })).code === 0;
+      const hasRemote = (await git(r.path, ['remote', 'get-url', remote], { allowFail: true })).code === 0;
+      if (hasRemote) await gitRemote(r.path, ['fetch', '--no-tags', remote, `+refs/heads/${name}:refs/remotes/${remote}/${name}`], { allowFail: true });
+      const onRemote = hasRemote && (await has(`refs/remotes/${remote}/${name}`));
+      if (!(await has(`refs/heads/${name}`))) {
+        if (!onRemote) throw new RepoError(`${r.name} has no branch ${name} (not locally, not on ${remote})`, 'not_found');
+        await git(r.path, ['branch', name, `refs/remotes/${remote}/${name}`]);
+        this.ctx.log.info(`${r.name}: created ${name} from ${remote}/${name}`);
+      }
+      return { branch: name, onRemote };
+    });
+  }
+
+  /** Is this worktree based on a user's branch (useBranch) rather than the repo's base? */
+  isUserBase(repoId: string, base: string): boolean {
+    const r = this.require(repoId);
+    return base !== r.branch && base !== `${this.remoteOf(r.id)}/${r.branch}`;
   }
 
   /** repoSettings.protect for a repo. */

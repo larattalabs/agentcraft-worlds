@@ -84,6 +84,10 @@ interface ClaudeState {
   throttle?: { until: number; type?: string };
   /** task id -> size the lead gave it (picks the worker's model) */
   taskSize: Record<string, 'small' | 'normal' | 'large'>;
+  /** goal id -> the user's branch it continues (`on <branch>: ...`), in the goal's repository */
+  goalBranch: Record<string, { repoId: string; branch: string; onRemote: boolean }>;
+  /** task id -> a branch the lead put this task on (create_task base) */
+  taskBase: Record<string, string>;
 }
 
 interface Running {
@@ -210,6 +214,11 @@ export class ClaudeBackend implements Backend {
         this.st.taskSize[taskId] = size;
         this.fm.store.markDirty();
       },
+      onTaskBase: async (taskId, repoId, branch) => {
+        const b = await this.fm.repos.useBranch(repoId, branch);
+        this.st.taskBase[taskId] = b.branch;
+        this.fm.store.markDirty();
+      },
     };
   }
 
@@ -217,7 +226,7 @@ export class ClaudeBackend implements Backend {
     const b = this.fm.store.data.backend;
     let s = b.claude as ClaudeState | undefined;
     if (!s) {
-      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {}, taskSize: {} };
+      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {}, taskSize: {}, goalBranch: {}, taskBase: {} };
       b.claude = s;
     }
     s.inflight ??= {};
@@ -225,6 +234,8 @@ export class ClaudeBackend implements Backend {
     s.stopped ??= [];
     s.plans ??= {};
     s.taskSize ??= {};
+    s.goalBranch ??= {};
+    s.taskBase ??= {};
     return s;
   }
 
@@ -441,7 +452,7 @@ export class ClaudeBackend implements Backend {
         const repo = g.repoId ? this.fm.repos.get(g.repoId) : undefined;
         if (!repo) continue;
         this.fm.log.info(`recover: re-planning ${g.id}`);
-        this.enqueue({ kind: 'plan', agentId: LEAD, goalId: g.id, sessionKey: `${LEAD}:${g.id}`, fresh: !this.fm.store.data.sessions[`${LEAD}:${g.id}`]?.sessionId, prompt: planPrompt(this.fm, g, repo.path, repo.branch) });
+        this.enqueue({ kind: 'plan', agentId: LEAD, goalId: g.id, sessionKey: `${LEAD}:${g.id}`, fresh: !this.fm.store.data.sessions[`${LEAD}:${g.id}`]?.sessionId, prompt: planPrompt(this.fm, g, repo.path, this.st.goalBranch[g.id]?.branch ?? repo.branch) });
       }
     }
     // doing tasks whose worker is not working on them: back on the board (the session resumes)
@@ -712,7 +723,20 @@ export class ClaudeBackend implements Backend {
     }
     for (const w of [LEAD, ...this.team]) if (!this.isStopped(w)) this.fm.setAgent(w, { active: true });
     this.fm.setAgent(LEAD, { state: 'thinking', station: 'meeting', activity: 'reading the goal', repoId: repo.id });
-    this.enqueue({ kind: 'plan', agentId: LEAD, goalId: goal.id, sessionKey: `${LEAD}:${goal.id}`, fresh: true, prompt: planPrompt(this.fm, goal, repo.path, repo.branch) });
+    // "on <branch>: ..." continues one of the user's branches (e.g. one started in Claude Desktop)
+    const on = /^\s*on\s+([\w./-]+)\s*:\s*/i.exec(goal.text);
+    if (on) {
+      try {
+        const b = await this.fm.repos.useBranch(repo.id, on[1]!);
+        this.st.goalBranch[goal.id] = { repoId: repo.id, ...b };
+        this.fm.store.markDirty();
+        this.fm.bus.feed('goal', `This goal continues your branch ${b.branch} in ${repo.name}: tasks start from it and approved work is added to it${b.onRemote ? ' (and pushed)' : ''}`, { agentId: LEAD });
+      } catch (e) {
+        this.fm.bus.feed('error', `Not building on "${on[1]}": ${(e as Error).message}. Planning it as a normal goal on ${repo.branch}.`, { agentId: LEAD });
+      }
+    }
+    const gb = this.st.goalBranch[goal.id];
+    this.enqueue({ kind: 'plan', agentId: LEAD, goalId: goal.id, sessionKey: `${LEAD}:${goal.id}`, fresh: true, prompt: planPrompt(this.fm, goal, repo.path, gb?.branch ?? repo.branch) });
   }
 
   private promoteGoal(goal: Goal, why: string): void {
@@ -794,7 +818,8 @@ export class ClaudeBackend implements Backend {
         this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} continues ${t.id} from ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId });
       }
     }
-    const wt = await this.fm.repos.createWorktree(t.repoId!, agentId, t, startPoint ? { startPoint } : {});
+    const base = this.baseFor(t);
+    const wt = await this.fm.repos.createWorktree(t.repoId!, agentId, t, { ...(startPoint ? { startPoint } : {}), ...(base ? { base } : {}) });
     this.fm.tasks.update(t.id, { branch: wt.branch, worktree: wt.id });
     this.fm.tasks.setStatus(t.id, 'doing');
     this.fm.setAgent(agentId, { taskId: t.id, repoId: t.repoId!, worktree: wt.id, state: 'thinking', station: 'desk', activity: `starting ${t.id}` });
@@ -843,9 +868,10 @@ export class ClaudeBackend implements Backend {
       const repo = goal?.repoId ? this.fm.repos.get(goal.repoId) : this.fm.repos.defaultRepo();
       if (!repo) throw new Error('no repo for the lead');
       // read-only views of every repository's base: the lead plans against what workers start from
+      const gb = goal ? this.st.goalBranch[goal.id] : undefined;
       const views = await Promise.all(
         this.fm.repos.list().map((r) =>
-          this.fm.repos.leadView(r.id).catch((e) => {
+          this.fm.repos.leadView(r.id, gb && gb.repoId === r.id ? gb.branch : undefined).catch((e) => {
             this.fm.log.warn(`lead view of ${r.id}: ${(e as Error).message}; the lead reads the checkout`);
             return undefined;
           }),
@@ -876,6 +902,14 @@ export class ClaudeBackend implements Backend {
       return undefined;
     }
     return { name: a.name, description: a.description, prompt: a.prompt, ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}) };
+  }
+
+  /** The user's branch a task builds on: its own (create_task base), else its goal's in that repository. */
+  private baseFor(t: Task): string | undefined {
+    const own = this.st.taskBase[t.id];
+    if (own) return own;
+    const gb = t.goalId ? this.st.goalBranch[t.goalId] : undefined;
+    return gb && gb.repoId === t.repoId ? gb.branch : undefined;
   }
 
   /** Subagents are on for this repository: globally, or the repository's own (repoSettings.subagents "repo"). */
@@ -1044,7 +1078,13 @@ export class ClaudeBackend implements Backend {
 
       let systemAppend: string;
       if (role === 'lead') {
-        const where = leadRepoContext(this.fm, repoId, cwd);
+        const gb = job.goalId ? this.st.goalBranch[job.goalId] : undefined;
+        const where = [
+          leadRepoContext(this.fm, repoId, cwd, gb?.branch),
+          gb ? `# This goal continues ${userName()}'s branch ${gb.branch}\nIt is ${userName()}'s own work in progress (maybe started in another Claude session). Tasks in ${gb.repoId} start from it and approved work is added to it${gb.onRemote ? ' and pushed' : ''}; no pull request is opened. Read what is already there before planning, and plan what is left.` : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
         systemAppend = `${leadSystemPrompt(this.fm, this.team, roleOf)}${where ? `\n\n${where}` : ''}`;
       }
       else {
@@ -1341,11 +1381,12 @@ export class ClaudeBackend implements Backend {
 
   private openMergeDecision(t: Task, summary: string): void {
     const wt = this.fm.repos.requireWorktree(t.repoId!, t.worktree!);
-    const pr = this.fm.repos.landsAsPr(t.repoId!);
+    const userBase = this.fm.repos.isUserBase(t.repoId!, wt.base);
+    const pr = this.fm.repos.landsAsPr(t.repoId!) && !userBase;
     this.fm.createDecision({
       agentId: LEAD,
       kind: 'merge',
-      question: pr ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?` : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
+      question: userBase ? `Add ${t.id} "${t.title}" (${wt.branch}) to your branch ${wt.base}?` : pr ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?` : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
       options: [...MERGE_OPTIONS],
       context: `${summary}\n${wt.files} files, +${wt.additions} -${wt.deletions} | tests: ${t.ci}${pr ? `\n"${MERGE_OPTIONS[0]}" pushes the branch and opens the pull request (agents never push).` : ''}`,
       taskId: t.id,
@@ -1446,7 +1487,8 @@ export class ClaudeBackend implements Backend {
       const t = this.fm.tasks.get(d.taskId);
       if (!t) return;
       if (d.answer?.option === 'Merge' && t.status === 'done') {
-        const landed = t.repoId && this.fm.repos.landsAsPr(t.repoId) ? 'PR opened' : 'merged';
+        const wtl = t.repoId && t.worktree ? this.fm.repos.findWorktree(t.repoId, t.worktree) : undefined;
+        const landed = wtl && t.repoId && this.fm.repos.isUserBase(t.repoId, wtl.base) ? `added to ${wtl.base}` : t.repoId && this.fm.repos.landsAsPr(t.repoId) ? 'PR opened' : 'merged';
         if (t.assignee && this.fm.agent(t.assignee)?.taskId === t.id) this.fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} ${landed}`, taskId: null, worktree: null });
         if (!this.isStopped(LEAD)) this.fm.setAgent(LEAD, { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
         const g = t.goalId ? this.fm.goal(t.goalId) : undefined;

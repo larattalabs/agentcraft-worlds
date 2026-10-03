@@ -402,8 +402,8 @@ export class Foreman {
         );
         if (task) this.tasks.setStatus(task.id, 'done', { viaMerge: true, force: task.status !== 'review' });
         if (res.kind === 'merge') {
-          this.bus.feed('merge', `Merged ${res.branch} into ${res.base} (${res.sha}, ${res.files} file${res.files === 1 ? '' : 's'})`, { agentId: d.agentId });
-          this.notify('info', `Merged ${res.branch} into ${res.base}`);
+          this.bus.feed('merge', `Merged ${res.branch} into ${res.base} (${res.sha}, ${res.files} file${res.files === 1 ? '' : 's'})${res.pushed ? `; ${res.pushed}` : ''}`, { agentId: d.agentId });
+          this.notify('info', `Merged ${res.branch} into ${res.base}${res.pushed ? ` (${res.pushed})` : ''}`);
         } else {
           const what = res.url ? `${res.updated ? 'Updated the pull request' : 'Opened a pull request'} ${res.url}` : `Pushed ${res.remoteBranch} (open the pull request yourself)`;
           if (task) this.tasks.update(task.id, { summary: `${what}${task.summary ? `\n${task.summary}` : ''}` });
