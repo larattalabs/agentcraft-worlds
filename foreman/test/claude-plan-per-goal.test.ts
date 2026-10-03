@@ -78,10 +78,21 @@ describe('plan per goal', () => {
     expect(alpha).not.toContain('PLAN-BODY-beta');
   });
 
+  it('files tasks under the goal being planned, not the newest goal', async () => {
+    const fm = h.fm;
+    await fm.agentAction('kit', 'pause');
+    const c = await fm.submitGoal('gamma');
+    const d = await fm.submitGoal('delta'); // submitted while gamma may still be planning
+    await until(() => fm.goal(c.id)!.status === 'active' && fm.goal(d.id)!.status === 'active');
+    expect(fm.tasks.forGoal(c.id).map((t) => t.title)).toEqual(['Task for gamma']);
+    expect(fm.tasks.forGoal(d.id).map((t) => t.title)).toEqual(['Task for delta']);
+    await fm.agentAction('kit', 'resume');
+  });
+
   it('falls back to the newest plan written since the goal was created', () => {
     const fm = h.fm;
     const goal = { id: 'gx', text: 'x', progress: 0, status: 'active' as const, createdAt: Date.now() + 60_000, updatedAt: 0 };
     expect(planText(fm, goal)).toBe('(no plan in memory)');
-    expect(planText(fm)).toContain('PLAN-BODY-beta');
+    expect(planText(fm)).toContain('PLAN-BODY-delta');
   });
 });

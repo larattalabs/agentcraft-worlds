@@ -240,7 +240,8 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
           priority: z.number().int().optional(),
         },
         async ({ title, description, deps, assignee, priority }) => {
-          const goal = fm.currentGoal();
+          // the goal this turn plans (several can be open; the newest is not necessarily this one)
+          const goal = (turn?.goalId ? fm.goal(turn.goalId) : undefined) ?? fm.currentGoal();
           let who: string | undefined;
           if (assignee) {
             who = fm.resolveAgentId(assignee);
