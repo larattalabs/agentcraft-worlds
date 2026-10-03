@@ -73,7 +73,9 @@ abstract class WizardScreen extends Screen {
 			bx -= b.w();
 			Btn placed = new Btn(b.label(), bx, by, b.w(), b.primary(), b.disabled(), b.action());
 			buttons.add(placed);
-			Panels.button(g, font, b.label(), bx, by, b.w(), b.primary(), placed.hit(mouseX, mouseY) && !b.disabled(), b.disabled());
+			UiBits.ButtonState st = b.disabled() ? UiBits.ButtonState.DISABLED : placed.hit(mouseX, mouseY) ? UiBits.ButtonState.HOVER
+				: UiBits.ButtonState.NORMAL;
+			UiBits.button(g, font, b.label(), 0, bx, by, b.w(), b.primary(), st, false);
 			bx -= 6;
 		}
 		if (hints.length > 0 && UiBits.hintsWidth(font, hints) <= bx - cx - 6) {

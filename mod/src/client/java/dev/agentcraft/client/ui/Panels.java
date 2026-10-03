@@ -65,7 +65,8 @@ public final class Panels {
 		boolean disabled) {
 		String state = disabled ? "disabled" : hovered ? "hover" : "normal";
 		sprite(g, Kit.button(primary, state), x, y, w, 20);
-		int color = disabled ? UiStyle.color("paper.disabled") : primary ? UiStyle.color("palette.ui.highlight", 0xFFFFFBF4) : UiStyle.color("paper.text");
+		// primary label: panel_hi (cream) on the clay body; "palette.ui.highlight" IS the clay, so a label drawn in it vanished
+		int color = disabled ? UiStyle.color("paper.disabled") : primary ? UiStyle.color("palette.ui.panel_hi", 0xFFFFFBF4) : UiStyle.color("paper.text");
 		String l = TextUtil.ellipsize(font, label, w - 12);
 		text(g, font, l, x + (w - font.width(l)) / 2, y + 6, color);
 	}
