@@ -48,6 +48,16 @@ function fakeQuery() {
       const s = sid();
       yield msg({ type: 'system', subtype: 'init', session_id: s, model: 'fake-model', cwd: '', tools: [] });
       const goal = /New goal from .*:\n"(.+)"/.exec(p)?.[1];
+      // reviews and triage can be held too: "Review request:t5", "Triage request:t6"
+      const job = /^(Review request|Triage request): (t\d+)/.exec(p);
+      const jobHold = job ? holds.get(`${job[1]}:${job[2]}`) : undefined;
+      if (jobHold) {
+        await Promise.race([jobHold, aborted]);
+        if (opts.abortController!.signal.aborted) {
+          turn.aborted = true;
+          return;
+        }
+      }
       if (goal) {
         const hold = holds.get(goal);
         if (hold) await Promise.race([hold, aborted]);
@@ -232,6 +242,62 @@ describe('claude backend with a lead per building', () => {
     await until(() => fm.goal(g.id)!.status === 'active');
     expect(fm.store.data.sessions[`marlow:${g.id}`]?.sessionId).toBeTruthy();
     expect(fm.agents().some((a) => a.id === 'cass')).toBe(false);
+  });
+
+  it('a moved planning goal is planned by marlow even while marlow waits on a question about something else', async () => {
+    const fm = h.fm;
+    expect(fm.assignLead('w/b4', [C]).leadId).toBe('cass');
+    holds.set('theta', new Promise<void>(() => undefined));
+    const g = await fm.submitGoal('theta', C);
+    await until(() => turns.some((t) => t.who === 'cass' && t.prompt.includes('"theta"')));
+    const q = fm.createDecision({ agentId: 'marlow', kind: 'question', question: 'Unrelated?', options: ['Yes', 'No'] });
+    holds.delete('theta');
+    fm.releaseBuilding('w/b4');
+    await until(() => turns.some((t) => t.who === 'marlow' && t.prompt.includes('"theta"')));
+    expect(turns.find((t) => t.who === 'marlow' && t.prompt.includes('"theta"'))!.prompt).toContain('You take over this goal from Cass');
+    await until(() => fm.goal(g.id)!.status === 'active');
+    fm.decisions.cancel(q.id, 'test');
+  });
+
+  it("hands a released lead's review and pending PR triage to marlow", async () => {
+    const fm = h.fm;
+    const cfg = h.cfg.claude as { leadReview: boolean };
+    cfg.leadReview = true;
+    expect(fm.assignLead('w/b5', [C]).leadId).toBe('cass');
+    planScript.set('iota', async (o) => {
+      await callTool(o, 'create_task', { title: 'iota review', description: 'x', assignee: 'kit' });
+      await callTool(o, 'create_task', { title: 'iota pr', description: 'x', assignee: 'kit' });
+    });
+    const g = await fm.submitGoal('iota', C);
+    await until(() => fm.goal(g.id)!.status === 'active');
+    const [tr, tp] = fm.tasks.forGoal(g.id);
+    // a finished task: CI, then cass's review (held mid-turn)
+    holds.set(`Review request:${tr!.id}`, new Promise<void>(() => undefined));
+    const wt = await fm.repos.createWorktree(C, 'kit', tr!);
+    fm.tasks.update(tr!.id, { worktree: wt.id, branch: wt.branch, assignee: 'kit' });
+    fs.appendFileSync(path.join(wt.path, 'README.md'), '\niota\n');
+    fm.tasks.setStatus(tr!.id, 'review', { force: true });
+    await (backend as unknown as { afterWorkerDone(id: string): Promise<void> }).afterWorkerDone(tr!.id);
+    await until(() => turns.some((t) => t.who === 'cass' && t.prompt.startsWith(`Review request: ${tr!.id}`)));
+    // a PR with new comments: cass's triage waits behind her review
+    fm.tasks.update(tp!.id, { pr: { url: 'https://github.com/o/r/pull/9', id: 9, host: 'github', branch: 'b', target: 'main', status: 'open', checks: 'passing', threads: { open: 1, new: 1 }, updatedAt: Date.now() } });
+    fm.tasks.setStatus(tp!.id, 'pr', { force: true });
+    const prs = (backend as unknown as { prs: { state(id: string): { triage?: unknown } } }).prs;
+    const items = [{ ref: `${tp!.id}/thread-1`, kind: 'thread', threadId: '1', author: 'sam', text: 'rename this' }];
+    prs.state(tp!.id).triage = { items, at: Date.now(), attempts: 1 };
+    await (backend as unknown as { enqueueTriage(id: string, items: unknown[]): Promise<void> }).enqueueTriage(tp!.id, items);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(turns.some((t) => t.prompt.startsWith(`Triage request: ${tp!.id}`))).toBe(false);
+
+    fm.releaseBuilding('w/b5');
+    holds.delete(`Review request:${tr!.id}`); // cass's turn already waits on it; marlow's must not
+    await until(() => turns.some((t) => t.who === 'cass' && t.aborted && t.prompt.startsWith('Review request')));
+    await until(() => turns.some((t) => t.who === 'marlow' && t.prompt.includes(`Review request: ${tr!.id}`)));
+    await until(() => turns.some((t) => t.who === 'marlow' && t.prompt.includes(`Triage request: ${tp!.id}`)));
+    expect(turns.some((t) => t.who === 'cass' && t.prompt.startsWith(`Triage request: ${tp!.id}`))).toBe(false);
+    const first = turns.find((t) => t.who === 'marlow' && (t.prompt.includes(`Review request: ${tr!.id}`) || t.prompt.includes(`Triage request: ${tp!.id}`)))!;
+    expect(first.prompt).toContain('You take over this goal from Cass');
+    cfg.leadReview = false;
   });
 
   it('a usage warning makes leads take turns one at a time', async () => {

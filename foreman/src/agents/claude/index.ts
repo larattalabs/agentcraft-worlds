@@ -1973,6 +1973,16 @@ export class ClaudeBackend implements Backend {
     this.fm.store.markDirty();
     this.withdrawDecisions(leadId, `${this.fm.nameOf(leadId)} no longer leads a building`);
     if (this.stopping || this.authFailed) return;
+    // goals still being planned: their new lead plans them now (reconcile alone would wait while
+    // that lead has an open question about another goal)
+    for (const g of goals) {
+      const goal = this.fm.goal(g.id);
+      if (!goal || goal.status !== 'planning' || this.fm.tasks.forGoal(goal.id).length) continue;
+      const lead = this.fm.leadOf(goal);
+      const repo = goal.repoId ? this.fm.repos.get(goal.repoId) : undefined;
+      if (!repo || this.isStopped(lead) || this.st.inflight[lead]?.goalId === goal.id || this.hasQueued(lead, (j) => j.goalId === goal.id)) continue;
+      this.enqueue({ kind: 'plan', agentId: lead, goalId: goal.id, sessionKey: `${lead}:${goal.id}`, fresh: !this.fm.store.data.sessions[`${lead}:${goal.id}`]?.sessionId, prompt: planPrompt(this.fm, goal, repo.path, this.st.goalBranch[goal.id]?.branch ?? repo.branch) });
+    }
     this.reconcile();
     const moved = new Set(goals.map((g) => g.id));
     for (const t of this.prs.watched()) {
