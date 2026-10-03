@@ -662,6 +662,37 @@ export class ClaudeBackend implements Backend {
     };
   }
 
+  /**
+   * The repo's configured copy/setup for a new worker worktree (once per worktree). Returns a note
+   * for the worker's prompt when setup failed, else ''.
+   */
+  private async prepareWorktree(agentId: string, taskId: string): Promise<string> {
+    const t = this.fm.tasks.get(taskId);
+    if (!t?.repoId || !t.worktree) return '';
+    const s = this.fm.repos.settingsFor(t.repoId);
+    if (!s.setup && !s.copy?.length) return '';
+    const prev = this.fm.agent(agentId);
+    if (s.setup) this.fm.setAgent(agentId, { state: 'running', station: 'desk', activity: 'setting up worktree' });
+    try {
+      const res = await this.fm.repos.prepareWorktree(t.repoId, t.worktree);
+      if (res.copied.length) this.fm.agentLog(agentId, 'tool', `copied into worktree: ${res.copied.join(', ')}`);
+      if (!res.setup) return '';
+      const secs = (res.setup.durationMs / 1000).toFixed(1);
+      if (res.setup.ok) {
+        this.fm.agentLog(agentId, 'result', `worktree setup ok: ${res.setup.command} (${secs}s)`);
+        return '';
+      }
+      this.fm.agentLog(agentId, 'error', `worktree setup FAILED: ${res.setup.command} (${secs}s)\n${res.setup.output.split('\n').slice(-6).join('\n')}`);
+      this.fm.bus.feed('error', `${this.fm.nameOf(agentId)}: worktree setup failed for ${t.id} (${res.setup.command})`, { agentId });
+      return `Note: the worktree setup command \`${res.setup.command}\` failed before you started:\n${res.setup.output}\nLook into it before relying on the dependencies it installs.`;
+    } catch (e) {
+      this.fm.log.warn(`worktree setup for ${t.id}: ${(e as Error).message}`);
+      return '';
+    } finally {
+      if (prev && this.fm.agent(agentId)?.activity === 'setting up worktree') this.fm.setAgent(agentId, { state: prev.state, station: prev.station, activity: prev.activity });
+    }
+  }
+
   private async runJob(job: Job): Promise<void> {
     const agentId = job.agentId;
     const abort = new AbortController();
@@ -723,11 +754,14 @@ export class ClaudeBackend implements Backend {
       this.fm.agentLog(agentId, 'text', `${resume ? 'Resuming' : 'Starting'} ${job.kind}${job.taskId ? ` ${job.taskId}` : ''} (${model})`);
       if (job.kind === 'followup' || job.resumed) this.fm.agentLog(agentId, 'text', truncate(job.prompt, 400));
       const mapper = new StreamMapper(this.fm, agentId, cwd, role);
+      const setupNote = role === 'worker' && job.taskId ? await this.prepareWorktree(agentId, job.taskId) : '';
+      if (abort.signal.aborted) throw new Error('turn stopped during worktree setup');
       const timer = setTimeout(() => this.abortTurn(entry, 'timeout'), TURN_TIMEOUT_MS);
       timer.unref?.();
       // messages that arrived while the agent was not in a turn ride along with this prompt
       const unread = this.fm.bus.inbox(agentId, { markRead: true });
-      const prompt = unread.length ? `${job.prompt}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : job.prompt;
+      const withSetup = setupNote ? `${setupNote}\n\n${job.prompt}` : job.prompt;
+      const prompt = unread.length ? `${withSetup}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : withSetup;
       try {
         const q = this.queryFn({ prompt, options });
         entry.q = q;
@@ -927,8 +961,9 @@ export class ClaudeBackend implements Backend {
     try {
       this.fm.tasks.update(t.id, { ci: 'running' });
       this.fm.repos.setCi(t.repoId, 'running');
-      if (worker) this.fm.agentLog(worker, 'tool', `CI: ${this.cfg.ciCommand ?? this.fm.repos.detectTestCommand(this.fm.repos.requireWorktree(t.repoId, t.worktree).path) ?? '(no tests)'}`);
-      ci = await this.fm.repos.runTests(t.repoId, t.worktree, this.cfg.ciCommand);
+      const ciCommand = this.fm.repos.testCommand(t.repoId, this.fm.repos.requireWorktree(t.repoId, t.worktree).path, this.cfg.ciCommand);
+      if (worker) this.fm.agentLog(worker, 'tool', `CI: ${ciCommand ?? '(no tests)'}`);
+      ci = await this.fm.repos.runTests(t.repoId, t.worktree, ciCommand);
       this.fm.tasks.update(t.id, { ci: ci.pass ? 'pass' : 'fail' });
       this.fm.repos.setCi(t.repoId, ci.pass ? 'pass' : 'fail');
       if (worker) this.fm.agentLog(worker, ci.pass ? 'result' : 'error', `CI ${ci.pass ? 'passed' : 'FAILED'} (${(ci.durationMs / 1000).toFixed(1)}s)\n${ci.output.split('\n').slice(-6).join('\n')}`);

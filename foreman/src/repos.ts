@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { RepoSettings } from './config.js';
 import type { Ctx } from './context.js';
 import { parseUnifiedDiff, type ParsedDiff } from './diff.js';
 import type { CiStatus, Decision, Repo, Worktree } from './protocol.js';
@@ -120,6 +121,15 @@ export interface RepoOptions {
   mergeStyle?: 'merge' | 'squash';
   /** sign the approved merge commit if the repo's git config says commit.gpgsign=true */
   signMerges?: boolean;
+  /** per-repo settings keyed by absolute repo path (config.json repoSettings) */
+  settings?: Record<string, RepoSettings>;
+}
+
+export interface PrepareResult {
+  /** files/directories copied from the main checkout */
+  copied: string[];
+  /** the setup command, when one ran */
+  setup?: { command: string; ok: boolean; output: string; durationMs: number };
 }
 
 /** the user's git identity as their own git sees it in that repo (falls back to AgentCraft). */
@@ -369,6 +379,8 @@ export class RepoManager {
       // agent worktrees hold the repository's bytes as committed (no CRLF conversion), so agents,
       // their edits and the Foreman's diffs all see the same content
       const lf = ['-c', 'core.autocrlf=false'];
+      // a fresh directory needs its copy/setup again (prepareWorktree)
+      delete this.ctx.store.data.worktreeMeta[`${r.id}/${id}`]?.prepared;
       if (branchExists) await git(r.path, [...lf, 'worktree', 'add', wtPath, branch]);
       else await git(r.path, [...lf, 'worktree', 'add', '-b', branch, wtPath, startPoint ?? r.branch]);
     }
@@ -706,11 +718,64 @@ export class RepoManager {
     return res.code === 0 ? Number(res.stdout.trim()) || 0 : 0;
   }
 
+  /** The repo's settings from config.json (matched by path), or {}. */
+  settingsFor(repoId: string): RepoSettings {
+    const r = this.get(repoId);
+    if (!r || !this.opts.settings) return {};
+    for (const [p, s] of Object.entries(this.opts.settings)) if (samePath(p, r.path)) return s;
+    return {};
+  }
+
+  /** The test command for a repo: its configured `ci`, else `fallback` (--ci), else detected in `dir`. */
+  testCommand(repoId: string, dir: string, fallback?: string): string | undefined {
+    return this.settingsFor(repoId).ci ?? fallback ?? this.detectTestCommand(dir);
+  }
+
+  /**
+   * Get a new worker worktree ready, once: copy the configured untracked files (e.g. .env) from the
+   * main checkout, then run the repo's setup command (e.g. installing dependencies) in it. Recorded
+   * in the worktree's meta, so a resumed or handed-over turn does not run it again. A failed setup
+   * is reported, not thrown: the worker can still look at it and work around it.
+   */
+  async prepareWorktree(repoId: string, worktreeId: string): Promise<PrepareResult> {
+    const r = this.require(repoId);
+    const w = this.requireWorktree(repoId, worktreeId);
+    const key = `${r.id}/${w.id}`;
+    const meta = (this.ctx.store.data.worktreeMeta[key] ??= { createdAt: this.ctx.now() });
+    const out: PrepareResult = { copied: [] };
+    if (meta.prepared) return out;
+    const s = this.settingsFor(repoId);
+    for (const rel of s.copy ?? []) {
+      const from = path.resolve(r.path, rel);
+      const to = path.resolve(w.path, rel);
+      // only paths inside the checkout, onto paths inside the worktree, never over existing files
+      if (path.isAbsolute(rel) || !isInsideOrEqual(from, r.path) || from === path.resolve(r.path) || !isInsideOrEqual(to, w.path)) {
+        this.ctx.log.warn(`repoSettings copy: ignoring ${rel} (must be a relative path inside the repository)`);
+        continue;
+      }
+      if (!fs.existsSync(from) || fs.existsSync(to)) continue;
+      ensureDir(path.dirname(to));
+      fs.cpSync(from, to, { recursive: true, errorOnExist: false, force: false });
+      out.copied.push(rel);
+    }
+    if (s.setup) {
+      const t0 = Date.now();
+      const timeoutMs = s.setupTimeoutMs ?? 600_000;
+      // git transports stay disabled (as for agents and CI); package managers may use the network
+      const res = await runShell(s.setup, { cwd: w.path, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }, { ceiling: path.dirname(path.resolve(w.path)) }) });
+      const full = `${res.stdout}\n${res.stderr}${res.timedOut ? `\n(timed out after ${Math.round(timeoutMs / 1000)}s; process tree killed)` : ''}`;
+      out.setup = { command: s.setup, ok: res.code === 0 && !res.timedOut, output: tailLines(full, 30, 2500), durationMs: Date.now() - t0 };
+    }
+    meta.prepared = true;
+    this.ctx.store.markDirty();
+    return out;
+  }
+
   /** Run the repo's test command in a worktree (or the main checkout). */
   async runTests(repoId: string, worktreeId?: string, command?: string, timeoutMs = 300_000): Promise<TestResult> {
     const r = this.require(repoId);
     const cwd = worktreeId ? this.requireWorktree(repoId, worktreeId).path : r.path;
-    const cmd = command ?? this.detectTestCommand(cwd);
+    const cmd = command ?? this.testCommand(repoId, cwd);
     if (!cmd) return { pass: true, code: 0, command: '(none)', output: 'no test command found', durationMs: 0, failures: [] };
     const t0 = Date.now();
     // the worktree's test scripts are agent-editable code: run them with git transports disabled
@@ -726,7 +791,13 @@ export class RepoManager {
     if (fs.existsSync(pkg)) {
       try {
         const j = JSON.parse(fs.readFileSync(pkg, 'utf8')) as { scripts?: Record<string, string> };
-        if (j.scripts?.test && !/no test specified/.test(j.scripts.test)) return 'npm test --silent';
+        if (j.scripts?.test && !/no test specified/.test(j.scripts.test)) {
+          // the package manager the repository uses (its lockfile), so workspaces resolve the same way
+          if (fs.existsSync(path.join(dir, 'pnpm-lock.yaml'))) return 'pnpm -s test';
+          if (fs.existsSync(path.join(dir, 'yarn.lock'))) return 'yarn test';
+          if (fs.existsSync(path.join(dir, 'bun.lock')) || fs.existsSync(path.join(dir, 'bun.lockb'))) return 'bun run test';
+          return 'npm test --silent';
+        }
       } catch {
         /* ignore */
       }

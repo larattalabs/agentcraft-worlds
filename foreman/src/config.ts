@@ -38,6 +38,25 @@ export interface ClaudeConfig {
   useClaudeLogin: boolean;
 }
 
+/**
+ * Per-repo settings, from config.json `repoSettings` keyed by the repository's path:
+ *
+ *   "repoSettings": { "~/code/app": { "ci": "pnpm -r test", "setup": "pnpm install --frozen-lockfile", "copy": [".env"] } }
+ *
+ * They live in the user's config, not in the repository, so an agent cannot change what the
+ * Foreman runs by editing a file in its worktree.
+ */
+export interface RepoSettings {
+  /** test command run after each task (overrides --ci and detection) */
+  ci?: string;
+  /** run once in each new worker worktree before the worker starts (e.g. install dependencies) */
+  setup?: string;
+  /** untracked files or directories copied from the main checkout into each new worktree (e.g. .env) */
+  copy?: string[];
+  /** setup timeout in ms (default 10 minutes) */
+  setupTimeoutMs?: number;
+}
+
 export type ShowcaseCheckpoint = 'showcase' | 'showcase-late';
 
 export interface SimConfig {
@@ -63,6 +82,8 @@ export interface Config {
   host: string;
   port: number;
   repos: string[];
+  /** absolute repo path -> settings */
+  repoSettings: Record<string, RepoSettings>;
   goal?: string;
   autostart: boolean;
   reset: boolean;
@@ -197,6 +218,20 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
         : workersRaw.split(',').map((s) => s.trim()).filter(Boolean)
       : ['juniper', 'kit', 'wren'];
 
+  const repoSettings: Record<string, RepoSettings> = {};
+  if (file.repoSettings && typeof file.repoSettings === 'object') {
+    for (const [k, v] of Object.entries(file.repoSettings as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const o = v as Record<string, unknown>;
+      const s: RepoSettings = {};
+      if (str(o.ci)) s.ci = o.ci as string;
+      if (str(o.setup)) s.setup = o.setup as string;
+      if (Array.isArray(o.copy)) s.copy = o.copy.filter((x): x is string => typeof x === 'string' && x.length > 0);
+      if (typeof o.setupTimeoutMs === 'number' && o.setupTimeoutMs > 0) s.setupTimeoutMs = o.setupTimeoutMs;
+      repoSettings[path.resolve(k.replace(/^~(?=$|[\\/])/, os.homedir()))] = s;
+    }
+  }
+
   const model = str(flags.model);
   const cfg: Config = {
     backend,
@@ -207,6 +242,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
     host: '127.0.0.1',
     port: num(pick('port', 'AGENTCRAFT_PORT'), 7878),
     repos,
+    repoSettings,
     goal: str(flags.goal),
     autostart: bool(flags.autostart, false) || !!str(flags.goal),
     reset: bool(flags.reset, false),
@@ -290,7 +326,8 @@ usage: npm run start -- [options]
   --workers <n|ids>        team size or comma list (default juniper,kit,wren)
   --max-concurrent <n>     workers running at once (default 3)
   --max-budget <usd>       per-turn USD cap
-  --ci "<cmd>"             test command run after each task (default: detected, e.g. npm test)
+  --ci "<cmd>"             test command run after each task (default: detected, e.g. npm test;
+                           per repo: config.json repoSettings.<path>.ci, with setup and copy)
   --no-lead-review         skip the lead's review turn before merge decisions
   --no-resume              do not resume interrupted sessions on start
 `;

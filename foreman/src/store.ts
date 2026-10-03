@@ -41,6 +41,8 @@ export interface WorktreeMeta {
   createdAt: number;
   /** the directory of a finished worktree could not be removed yet (busy); retried later */
   pendingRemoval?: boolean;
+  /** repoSettings copy/setup already ran in this worktree */
+  prepared?: boolean;
 }
 
 export interface StateData {
