@@ -31,7 +31,6 @@ export type Verdict = 'fold_in' | 'reply' | 'ask_user' | 'ignore';
 
 export const DEFAULT_AUTO_SEVERITIES: FindingSeverity[] = ['critical', 'important'];
 export const DEFAULT_MAX_ROUNDS = 2;
-const LEAD = 'marlow';
 const MAX_BACKOFF_MS = 60 * 60_000;
 
 export interface TriageItem {
@@ -416,7 +415,7 @@ export class PrWatcher {
         this.opts.hooks.triage(cur, all);
         return;
       }
-      this.fm.bus.feed('error', `PR #${ref.id} (${t.id}): Marlow did not triage ${s.triage.items.length} item(s) after ${s.triage.attempts} tries; look at the PR yourself`);
+      this.fm.bus.feed('error', `PR #${ref.id} (${t.id}): ${this.fm.nameOf(this.leadOf(t))} did not triage ${s.triage.items.length} item(s) after ${s.triage.attempts} tries; look at the PR yourself`);
       delete s.triage;
     }
     if (!items.length) {
@@ -424,7 +423,7 @@ export class PrWatcher {
       return;
     }
     s.triage = { items, at: Date.now(), attempts: 1 };
-    this.fm.bus.feed('merge', `PR #${ref.id} (${t.id}): ${lines.join(', ')}. Marlow triages ${items.length} item${items.length === 1 ? '' : 's'}${this.opts.mode === 'observe' ? ' (observe mode)' : ''}`, { agentId: LEAD });
+    this.fm.bus.feed('merge', `PR #${ref.id} (${t.id}): ${lines.join(', ')}. ${this.fm.nameOf(this.leadOf(t))} triages ${items.length} item${items.length === 1 ? '' : 's'}${this.opts.mode === 'observe' ? ' (observe mode)' : ''}`, { agentId: this.leadOf(t) });
     this.opts.hooks.triage(cur, items);
   }
 
@@ -454,7 +453,7 @@ export class PrWatcher {
     this.fm.tasks.update(t.id, { pr: { ...t.pr!, status: 'merged', threads: { ...t.pr!.threads, new: 0 }, updatedAt: this.fm.ctx.now() } });
     this.fm.tasks.setStatus(t.id, 'done', { viaMerge: true, force: true });
     this.cancelDecisions(t.id, `PR #${ref.id} was merged`);
-    this.fm.bus.feed('merge', `PR #${ref.id} merged: ${t.id} "${truncate(t.title, 60)}" is done`, { agentId: LEAD });
+    this.fm.bus.feed('merge', `PR #${ref.id} merged: ${t.id} "${truncate(t.title, 60)}" is done`, { agentId: this.leadOf(t) });
     this.fm.notify('info', `PR #${ref.id} merged: ${t.id} is done`);
     try {
       this.opts.hooks.merged?.(this.fm.tasks.require(t.id));
@@ -470,7 +469,7 @@ export class PrWatcher {
       if (dep.status === 'todo') this.fm.tasks.setStatus(dep.id, 'blocked', { reason: `depends on ${t.id}, whose PR #${ref.id} was abandoned`, force: true });
     }
     this.cancelDecisions(t.id, `PR #${ref.id} was abandoned`);
-    this.fm.bus.feed('merge', `PR #${ref.id} was abandoned: ${t.id} "${truncate(t.title, 60)}" is cancelled`, { agentId: LEAD });
+    this.fm.bus.feed('merge', `PR #${ref.id} was abandoned: ${t.id} "${truncate(t.title, 60)}" is cancelled`, { agentId: this.leadOf(t) });
     this.fm.notify('warn', `PR #${ref.id} was abandoned: ${t.id} cancelled`);
   }
 
@@ -497,12 +496,17 @@ export class PrWatcher {
       this.observeNote(t, ref, `${question}\n(${why}; observe mode: nothing asked, nothing started)\n\n${notes}`);
       return;
     }
-    const d = this.fm.createDecision({ agentId: LEAD, kind: 'question', question, options: ['Fold in', 'Leave it'], context: `Automated review ${parsed.verdict ?? ''} (thread ${thread.id}); ${why}.\n${truncate(notes, 1500)}`, taskId: t.id });
+    const d = this.fm.createDecision({ agentId: this.leadOf(t), kind: 'question', question, options: ['Fold in', 'Leave it'], context: `Automated review ${parsed.verdict ?? ''} (thread ${thread.id}); ${why}.\n${truncate(notes, 1500)}`, taskId: t.id });
     this.data.decisions[d.id] = { taskId: t.id, kind: 'guard', notes: `The automated review (round ${s.reviewRounds + 1}) found:\n${notes}`, review: true };
     this.fm.store.markDirty();
   }
 
   // ---- triage verdicts ----------------------------------------------------------------------
+
+  /** The lead who triages a task's PR: the lead of its goal (its session), else of its repository's building. */
+  private leadOf(t: Task | undefined): string {
+    return this.fm.leadOfTask(t);
+  }
 
   /** Items waiting for the lead's verdicts, for the triage prompt. */
   pendingItems(taskId: string): TriageItem[] {
@@ -515,7 +519,8 @@ export class PrWatcher {
     if (!s.triage) return;
     s.triage.stale = true;
     this.fm.store.markDirty();
-    this.fm.bus.feed('error', `Marlow's triage turn for ${taskId} ended without verdicts; it is offered again on the next poll`, { agentId: LEAD });
+    const lead = this.leadOf(this.fm.tasks.get(taskId));
+    this.fm.bus.feed('error', `${this.fm.nameOf(lead)}'s triage turn for ${taskId} ended without verdicts; it is offered again on the next poll`, { agentId: lead });
   }
 
   /**
@@ -589,7 +594,7 @@ export class PrWatcher {
       else now.push({ threadId, status: 'closed', label: `resolve the automated review thread ${threadId}` });
     }
 
-    const summary = `Marlow triaged PR #${ref.id} (${t.id}): ${(['fold_in', 'reply', 'ask_user', 'ignore'] as const).filter((k) => count[k]).map((k) => `${count[k]} ${k.replace('_', ' ')}`).join(', ') || 'nothing'}`;
+    const summary = `${this.fm.nameOf(this.leadOf(t))} triaged PR #${ref.id} (${t.id}): ${(['fold_in', 'reply', 'ask_user', 'ignore'] as const).filter((k) => count[k]).map((k) => `${count[k]} ${k.replace('_', ' ')}`).join(', ') || 'nothing'}`;
     if (this.opts.mode !== 'on') {
       const body = [
         `Mode observe: nothing was posted and no fold-in started.`,
@@ -599,7 +604,7 @@ export class PrWatcher {
         `Items:\n${items.map((i) => `- ${i.ref} [${i.kind}${i.severity ? ` ${i.severity}` : ''}] ${where(i)} ${truncate(i.text, 300)} -> ${verdictOf(i)?.verdict ?? '(no verdict)'}${verdictOf(i)?.note ? `: ${verdictOf(i)!.note}` : ''}`).join('\n')}`,
       ].filter(Boolean);
       this.observeNote(t, ref, body.join('\n\n'));
-      this.fm.bus.feed('merge', `${summary} (observe mode: nothing posted, no fold-in)`, { agentId: LEAD });
+      this.fm.bus.feed('merge', `${summary} (observe mode: nothing posted, no fold-in)`, { agentId: this.leadOf(t) });
       return `${summary}. Observe mode: recorded only (memory note), nothing posted and no fold-in started.`;
     }
 
@@ -612,7 +617,7 @@ export class PrWatcher {
     }
     if (now.length || after.length) {
       const d = this.fm.createDecision({
-        agentId: LEAD,
+        agentId: this.leadOf(t),
         kind: 'question',
         question: this.postQuestion(ref, now, after),
         options: ['Post', 'Skip'],
@@ -623,12 +628,12 @@ export class PrWatcher {
       did.push(`decision ${d.id} for ${userName()} (replies/resolutions)`);
     }
     for (const a of asks) {
-      const d = this.fm.createDecision({ agentId: LEAD, kind: 'question', question: `PR #${ref.id} (${t.id}): ${truncate(a.note || a.item.text, 200)}`, options: ['Fold in', 'Leave it'], context: `${a.item.author ?? ''}${where(a.item) ? ` on ${where(a.item)}` : ''}: ${truncate(a.item.text, 1200)}`, taskId: t.id });
-      this.data.decisions[d.id] = { taskId: t.id, kind: 'ask', notes: `- [${a.item.author ?? 'comment'}] ${where(a.item) ? `${where(a.item)}: ` : ''}${a.item.text}${a.note ? `\n  Marlow: ${a.note}` : ''}`, review: a.item.kind === 'finding' };
+      const d = this.fm.createDecision({ agentId: this.leadOf(t), kind: 'question', question: `PR #${ref.id} (${t.id}): ${truncate(a.note || a.item.text, 200)}`, options: ['Fold in', 'Leave it'], context: `${a.item.author ?? ''}${where(a.item) ? ` on ${where(a.item)}` : ''}: ${truncate(a.item.text, 1200)}`, taskId: t.id });
+      this.data.decisions[d.id] = { taskId: t.id, kind: 'ask', notes: `- [${a.item.author ?? 'comment'}] ${where(a.item) ? `${where(a.item)}: ` : ''}${a.item.text}${a.note ? `\n  ${this.fm.nameOf(this.leadOf(t))}: ${a.note}` : ''}`, review: a.item.kind === 'finding' };
       did.push(`question ${d.id}`);
     }
     this.fm.store.markDirty();
-    this.fm.bus.feed('merge', `${summary}${did.length ? ` -> ${did.join('; ')}` : ''}`, { agentId: LEAD });
+    this.fm.bus.feed('merge', `${summary}${did.length ? ` -> ${did.join('; ')}` : ''}`, { agentId: this.leadOf(t) });
     return `${summary}.${did.length ? ` ${did.join('; ')}.` : ''}`;
   }
 
@@ -649,7 +654,7 @@ export class PrWatcher {
 
   private observeNote(t: Task, ref: PrRef, body: string): void {
     try {
-      this.fm.memory.write({ scope: 'shared', title: `PR triage ${t.id} #${ref.id} (observe)`, body: `${t.pr?.url ?? ''}\n\n${body}`, author: LEAD, mode: 'append' });
+      this.fm.memory.write({ scope: 'shared', title: `PR triage ${t.id} #${ref.id} (observe)`, body: `${t.pr?.url ?? ''}\n\n${body}`, author: this.leadOf(t), mode: 'append' });
     } catch (e) {
       this.fm.log.warn(`observe note: ${(e as Error).message}`);
     }
@@ -670,7 +675,7 @@ export class PrWatcher {
     };
     if (s.foldIn || t.status !== 'pr') return queue();
     if (s.foreignHead) {
-      this.fm.bus.feed('error', `Not starting review fixes for ${t.id}: PR #${t.pr?.id} has commits AgentCraft did not push (${s.foreignHead.slice(0, 7)}). Bring them into ${t.branch ?? 'the task branch'} (the fixes start once AgentCraft's push is the PR's tip again) or address the comments yourself.`, { agentId: LEAD });
+      this.fm.bus.feed('error', `Not starting review fixes for ${t.id}: PR #${t.pr?.id} has commits AgentCraft did not push (${s.foreignHead.slice(0, 7)}). Bring them into ${t.branch ?? 'the task branch'} (the fixes start once AgentCraft's push is the PR's tip again) or address the comments yourself.`, { agentId: this.leadOf(t) });
       this.fm.notify('warn', `${t.id}: review fixes not started (someone else pushed to PR #${t.pr?.id})`);
       return queue();
     }
@@ -703,7 +708,7 @@ export class PrWatcher {
   private async afterFoldIn(t: Task, gen: number, ops: PostOp[]): Promise<void> {
     const o = this.state(t.id).outcomes[gen];
     if (o?.outcome === 'landed') await this.execute(t, ops, o.sha);
-    else this.fm.bus.feed('merge', `${t.id}: the review fixes did not land (${o?.outcome ?? 'not started'}); ${ops.length} thread update${ops.length === 1 ? '' : 's'} not posted`, { agentId: LEAD });
+    else this.fm.bus.feed('merge', `${t.id}: the review fixes did not land (${o?.outcome ?? 'not started'}); ${ops.length} thread update${ops.length === 1 ? '' : 's'} not posted`, { agentId: this.leadOf(t) });
   }
 
   // ---- the user's answers ------------------------------------------------------------------
@@ -728,7 +733,7 @@ export class PrWatcher {
         const s = this.state(t.id);
         if (pd.gen !== undefined && s.outcomes[pd.gen]) await this.afterFoldIn(t, pd.gen, pd.afterLanding);
         else if (pd.gen !== undefined) s.pendingResolve.push({ gen: pd.gen, ops: pd.afterLanding });
-        else this.fm.bus.feed('merge', `${t.id}: no fold-in carries the fixes; ${pd.afterLanding.length} thread update${pd.afterLanding.length === 1 ? '' : 's'} not posted`, { agentId: LEAD });
+        else this.fm.bus.feed('merge', `${t.id}: no fold-in carries the fixes; ${pd.afterLanding.length} thread update${pd.afterLanding.length === 1 ? '' : 's'} not posted`, { agentId: this.leadOf(t) });
         this.fm.store.markDirty();
       }
       return true;
@@ -763,7 +768,7 @@ export class PrWatcher {
       }
       this.fm.store.markDirty();
     }
-    this.fm.bus.feed('merge', `PR #${ref.id}: posted ${replies} repl${replies === 1 ? 'y' : 'ies'}, resolved ${resolved} thread${resolved === 1 ? '' : 's'}${failed.length ? `; ${failed.length} failed` : ''}`, { agentId: LEAD });
+    this.fm.bus.feed('merge', `PR #${ref.id}: posted ${replies} repl${replies === 1 ? 'y' : 'ies'}, resolved ${resolved} thread${resolved === 1 ? '' : 's'}${failed.length ? `; ${failed.length} failed` : ''}`, { agentId: this.leadOf(t) });
     if (failed.length) {
       this.fm.log.warn(`PR #${ref.id}: ${failed.join(' | ')}`);
       this.fm.notify('warn', `PR #${ref.id}: ${failed.length} update(s) could not be posted (${truncate(failed[0]!, 120)})`);
