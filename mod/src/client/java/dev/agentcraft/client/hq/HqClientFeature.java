@@ -1,5 +1,6 @@
 package dev.agentcraft.client.hq;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.DecisionPodiumBlock;
 import dev.agentcraft.block.LampStatus;
@@ -11,9 +12,13 @@ import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Routing;
 import dev.agentcraft.layout.Anchors;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -61,6 +66,16 @@ public final class HqClientFeature {
 		Anchors.Layout l = Anchors.current();
 		o.addProperty("layout", l.name());
 		o.addProperty("revision", l.revision());
+		JsonArray regions = new JsonArray();
+		for (Routing.Region r : Buildings.regions()) {
+			JsonObject rj = new JsonObject();
+			rj.addProperty("layout", r.layout().name());
+			rj.addProperty("building", r.building());
+			Anchors.Bounds a = r.area();
+			rj.addProperty("area", a.minX() + "," + a.minY() + "," + a.minZ() + " .. " + a.maxX() + "," + a.maxY() + "," + a.maxZ());
+			regions.add(rj);
+		}
+		o.add("regions", regions);
 		o.addProperty("lastChanged", HqWorldDriver.lastChanged());
 		String report = dev.agentcraft.hq.HqFeature.lastReport();
 		if (report != null) {
@@ -125,11 +140,14 @@ public final class HqClientFeature {
 	private static void scan(ClientLevel level) {
 		waitingLamps.clear();
 		openPodiums.clear();
-		Anchors.Layout l = Anchors.current();
-		if (l.bounds() == null) {
-			return;
+		Set<BlockPos> seen = new HashSet<>();
+		// the HQ studio and every building
+		for (Routing.Region r : Buildings.regions()) {
+			scan(level, r.area(), seen);
 		}
-		Anchors.Bounds b = l.bounds();
+	}
+
+	private static void scan(ClientLevel level, Anchors.Bounds b, Set<BlockPos> seen) {
 		for (int cx = (b.minX() - 3) >> 4; cx <= (b.maxX() + 3) >> 4; cx++) {
 			for (int cz = (b.minZ() - 3) >> 4; cz <= (b.maxZ() + 3) >> 4; cz++) {
 				LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
@@ -137,6 +155,9 @@ public final class HqClientFeature {
 					continue;
 				}
 				for (BlockEntity be : chunk.getBlockEntities().values()) {
+					if (!seen.add(be.getBlockPos())) {
+						continue;
+					}
 					BlockState s = be.getBlockState();
 					if (be instanceof StatusLampBlockEntity && s.getBlock() instanceof StatusLampBlock && s.getValue(StatusLampBlock.STATUS) == LampStatus.WAITING) {
 						waitingLamps.add(be.getBlockPos());

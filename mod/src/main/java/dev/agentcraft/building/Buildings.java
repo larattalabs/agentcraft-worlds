@@ -141,6 +141,65 @@ public final class Buildings {
 		return b != null ? b.layout() : Anchors.current();
 	}
 
+	/** Published per-state views (built once per state, so per-frame readers never allocate layouts). */
+	private record Views(State state, Anchors.Layout current, List<Routing.Site> sites, List<Routing.Region> regions,
+		List<Anchors.Layout> layouts, long signature) {
+	}
+
+	private static volatile @Nullable Views views;
+
+	private static Views views() {
+		State s = state;
+		Anchors.Layout cur = Anchors.current();
+		Views v = views;
+		if (v == null || v.state() != s || v.current() != cur) {
+			List<Routing.Site> sites = new ArrayList<>();
+			for (Building b : s.byId().values()) {
+				sites.add(Routing.Site.of(b));
+			}
+			List<Routing.Site> list = List.copyOf(sites);
+			if (v != null && v.state() == s) {
+				list = v.sites(); // only Anchors.current() changed: keep the sites' identity
+			}
+			List<Routing.Region> regions = Routing.regions(cur, list);
+			v = new Views(s, cur, list, regions, Routing.layouts(cur, list), Routing.signature(regions));
+			views = v;
+		}
+		return v;
+	}
+
+	/**
+	 * The buildings as immutable {@link Routing.Site}s (placement order), rebuilt only when the buildings
+	 * change; the same list instance until then. Safe from any thread (the client reads it every tick).
+	 */
+	public static List<Routing.Site> sites() {
+		return views().sites();
+	}
+
+	/**
+	 * The world regions that belong to a layout ({@link Routing#regions}): {@link Anchors#current()} first,
+	 * then every other building. Cached until the buildings or the current layout change. Any thread.
+	 */
+	public static List<Routing.Region> regions() {
+		return views().regions();
+	}
+
+	/** Every distinct layout ({@link Routing#layouts}): current first. Cached like {@link #regions()}. Any thread. */
+	public static List<Anchors.Layout> layouts() {
+		return views().layouts();
+	}
+
+	/** Changes whenever {@link #regions()} does (names, revisions, areas). Any thread. */
+	public static long regionsSignature() {
+		return views().signature();
+	}
+
+	/** The layout agents working on {@code repoId} use, from the cached sites ({@link Routing#layoutFor}). Any thread. */
+	public static Anchors.Layout routeLayout(@Nullable String repoId) {
+		Views v = views();
+		return Routing.layoutFor(repoId, v.sites(), v.current());
+	}
+
 	/** Called with the new list after every change (place, remove, home, load, world stop), on the thread that made it. */
 	public static void addListener(Consumer<List<Building>> listener) {
 		LISTENERS.add(listener);

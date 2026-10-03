@@ -1,10 +1,13 @@
 package dev.agentcraft.client.agents;
 
 import dev.agentcraft.AgentCraft;
+import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Routing;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Agent;
+import dev.agentcraft.client.foreman.Protocol.AgentRole;
 import dev.agentcraft.client.foreman.Protocol.AgentState;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
@@ -21,6 +24,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
@@ -37,6 +41,13 @@ import org.jspecify.annotations.Nullable;
  *   <li>layout republished ({@code /agentcraft hq}): everyone is placed at their new anchors.</li>
  * </ul>
  * Without a layout, agents stand in a row near the world spawn so they are still visible.
+ *
+ * <p>Buildings (docs/BUILDINGS.md "Client (routing)"): every agent works in the building of its repo
+ * ({@link Routing#agentRepo}: its repo, its task's repo, the lead's goal repo), else in
+ * {@link Anchors#current()} (the home building, or the HQ studio). Stations, desks, seats and the
+ * pathfinder are per layout (keyed by layout name); an agent whose building changes teleports there
+ * with a puff of smoke at both ends. In a world without buildings everyone uses {@code Anchors.current()}
+ * exactly as before.
  *
  * <p>Phase 3: a station anchor with a seat block ({@link Seats}) is walked to via a free cell next
  * to the seat, then the agent steps in and sits; leaving a seat starts with standing up. An agent
@@ -58,14 +69,19 @@ public final class AgentManager {
 
 	private final Map<String, ClientAgentEntity> entities = new LinkedHashMap<>();
 	private final Map<Integer, ClientAgentEntity> byEntityId = new HashMap<>();
-	private final StationAssigner assigner = new StationAssigner();
+	/** One assigner per layout name (desks are {@code desk_<id>} in every building; slots are per building). */
+	private final Map<String, StationAssigner> assigners = new HashMap<>();
+	/** agentId -> the layout name it was last placed in (a change = it moves to another building). */
+	private final Map<String, String> agentLayouts = new HashMap<>();
+	/** layout name -> the revision last seen (a change = that layout was republished: its agents snap). */
+	private final Map<String, Long> layoutRevisions = new HashMap<>();
 	private final Seats seats = new Seats();
 	private final Map<String, UserSpot> userSpots = new HashMap<>();
 	private final Map<String, String> awaiting = new HashMap<>();
 	private final Map<String, Integer> awaitingCounts = new HashMap<>();
 	private long awaitingRevision = -1;
 	private @Nullable ClientLevel level;
-	private long layoutRevision = -1;
+	private long regionsSignature = Long.MIN_VALUE;
 	private int nextEntityId = -10_000;
 	private int pathFailures;
 	private long ticks;
@@ -103,7 +119,7 @@ public final class AgentManager {
 	 * (Foreman order), not on the history of this session. Agents that change slot walk there.
 	 */
 	void onSnapshot() {
-		assigner.clear();
+		assigners.values().forEach(StationAssigner::clear);
 		awaitingRevision = -1;
 	}
 
@@ -122,11 +138,13 @@ public final class AgentManager {
 		if (lvl != level) {
 			entities.clear(); // the old level and its entities are gone
 			byEntityId.clear();
-			assigner.clear();
+			assigners.clear();
+			agentLayouts.clear();
+			layoutRevisions.clear();
 			seats.clear();
 			userSpots.clear();
 			level = lvl;
-			layoutRevision = -1;
+			regionsSignature = Long.MIN_VALUE;
 		}
 		if (lvl == null) {
 			return;
@@ -137,23 +155,64 @@ public final class AgentManager {
 			removeAll();
 			return;
 		}
-		Anchors.Layout layout = Anchors.current();
-		boolean relayout = layout.revision() != layoutRevision;
-		layoutRevision = layout.revision();
-		if (relayout) {
+		Anchors.Layout current = Anchors.current();
+		long sig = Buildings.regionsSignature() * 31 + current.revision();
+		if (sig != regionsSignature) {
+			regionsSignature = sig;
 			seats.clear();
 			userSpots.clear();
 		}
 		List<Agent> agents = new ArrayList<>(st.agents().values());
-		Map<String, Anchor> targets = layout.isEmpty() ? fallbackTargets(agents, lvl) : assigner.assign(agents, layout);
+		// route: agent -> its building's layout; group by layout name (Foreman order kept within a group)
+		List<Routing.Site> sites = Buildings.sites();
+		Map<String, Anchors.Layout> layouts = new LinkedHashMap<>();
+		Map<String, List<Agent>> groups = new LinkedHashMap<>();
+		for (Agent a : agents) {
+			Anchors.Layout l = sites.isEmpty() ? current : Routing.layoutFor(repoOf(st, a), sites, current);
+			if (l != current && !Routing.canHost(l, StationAssigner.stationKey(a), a.id())) {
+				l = current; // the building has no place for it (no desk, station or lounge): home
+			}
+			layouts.putIfAbsent(l.name(), l);
+			groups.computeIfAbsent(l.name(), k -> new ArrayList<>()).add(a);
+		}
+		Set<String> relayout = new HashSet<>();
+		for (Anchors.Layout l : layouts.values()) {
+			Long seen = layoutRevisions.put(l.name(), l.revision());
+			if (seen == null || seen != l.revision()) {
+				relayout.add(l.name());
+			}
+		}
+		Map<String, Anchor> targets = new HashMap<>();
+		Map<String, GridPathfinder> pfs = new HashMap<>();
+		for (var g : groups.entrySet()) {
+			Anchors.Layout l = layouts.get(g.getKey());
+			if (l.isEmpty()) {
+				targets.putAll(fallbackTargets(g.getValue(), lvl));
+			} else {
+				targets.putAll(assigners.computeIfAbsent(l.name(), k -> new StationAssigner()).assign(g.getValue(), l));
+				pfs.put(l.name(), new GridPathfinder(lvl, l.bounds()));
+			}
+		}
+		assigners.keySet().retainAll(groups.keySet());
+		layoutRevisions.keySet().retainAll(groups.keySet());
 		boolean stale = st.isStale();
 		updateAwaiting(st);
-		GridPathfinder pf = layout.isEmpty() ? null : new GridPathfinder(lvl, layout.bounds());
-		Vec3 playerFeet = layout.isEmpty() ? null : playerInHq(mc, layout, pf);
+		// the player is in at most one building: its waiting agents come to you, the others use their user spot
+		Vec3 playerFeet = null;
+		String playerLayout = null;
+		for (Anchors.Layout l : layouts.values()) {
+			GridPathfinder lpf = pfs.get(l.name());
+			Vec3 feet = lpf == null ? null : playerInHq(mc, l, lpf);
+			if (feet != null) {
+				playerFeet = feet;
+				playerLayout = l.name();
+				break;
+			}
+		}
 		int waitingIndex = 0;
 		int waitingCount = 0;
 		if (playerFeet != null) {
-			for (Agent a : agents) {
+			for (Agent a : groups.get(playerLayout)) {
 				if (followsPlayer(a)) {
 					waitingCount++;
 				}
@@ -161,40 +220,60 @@ public final class AgentManager {
 		}
 
 		Set<String> keep = new HashSet<>();
-		for (Agent a : agents) {
-			Anchor target = targets.get(a.id());
-			if (target == null) {
-				continue;
-			}
-			keep.add(a.id());
-			ClientAgentEntity e = entities.get(a.id());
-			if (e == null || e.isRemoved() || e.level() != lvl) {
-				e = spawn(lvl, a, target);
-				entities.put(a.id(), e);
-				byEntityId.put(e.getId(), e);
-				showRecentSay(st, e);
-			} else if (!e.getSkin().equals(AgentSkins.get(a.id(), a.skin()))) {
-				e.setSkin(AgentSkins.get(a.id(), a.skin()));
-			}
-			AgentView v = e.view();
-			v.update(a, stale, awaiting.get(a.id()), awaitingCounts.getOrDefault(a.id(), 0));
-			v.station = StationAssigner.stationKey(a);
-			v.anchor = target.name();
-			if (playerFeet != null && !stale && followsPlayer(a)) {
-				Anchor near = userSpot(a.id(), e, playerFeet, waitingIndex++, waitingCount, pf);
-				if (near != null) {
-					target = near;
+		for (var g : groups.entrySet()) {
+			String layoutName = g.getKey();
+			Anchors.Layout layout = layouts.get(layoutName);
+			GridPathfinder pf = pfs.get(layoutName);
+			boolean snap = relayout.contains(layoutName);
+			boolean playerHere = layoutName.equals(playerLayout);
+			for (Agent a : g.getValue()) {
+				Anchor target = targets.get(a.id());
+				if (target == null) {
+					continue;
 				}
-			} else {
-				userSpots.remove(a.id());
-			}
-			Seats.Seat seat = pf == null ? null : seats.at(lvl, target, ticks, pf);
-			Anchor effective = seat != null ? seat.target() : target;
-			if (relayout) {
-				e.life().setSeat(seat);
-				place(e, effective);
-			} else if (!stale) {
-				retarget(lvl, layout, e, effective, seat);
+				keep.add(a.id());
+				ClientAgentEntity e = entities.get(a.id());
+				boolean spawned = false;
+				if (e == null || e.isRemoved() || e.level() != lvl) {
+					e = spawn(lvl, a, target, layout, pf);
+					entities.put(a.id(), e);
+					byEntityId.put(e.getId(), e);
+					showRecentSay(st, e);
+					spawned = true;
+				} else if (!e.getSkin().equals(AgentSkins.get(a.id(), a.skin()))) {
+					e.setSkin(AgentSkins.get(a.id(), a.skin()));
+				}
+				String before = agentLayouts.put(a.id(), layoutName);
+				boolean moved = !spawned && before != null && !before.equals(layoutName);
+				AgentView v = e.view();
+				v.update(a, stale, awaiting.get(a.id()), awaitingCounts.getOrDefault(a.id(), 0));
+				v.station = StationAssigner.stationKey(a);
+				v.anchor = target.name();
+				v.layout = layout;
+				v.repo = repoOf(st, a);
+				if (playerHere && playerFeet != null && pf != null && !stale && followsPlayer(a)) {
+					Anchor near = userSpot(a.id(), e, playerFeet, waitingIndex++, waitingCount, pf);
+					if (near != null) {
+						target = near;
+					}
+				} else {
+					userSpots.remove(a.id());
+				}
+				Seats.Seat seat = pf == null ? null : seats.at(lvl, layout, target, ticks, pf);
+				Anchor effective = seat != null ? seat.target() : target;
+				if (moved) {
+					// another building: no walk across the world (for now), a puff where it leaves and where it lands
+					poof(lvl, e.position());
+					e.life().setSeat(seat);
+					place(e, effective);
+					poof(lvl, effective.pos());
+					AgentCraft.LOGGER.info("Agent {} moved from {} to {} ({})", a.id(), before, layoutName, effective.name());
+				} else if (snap) {
+					e.life().setSeat(seat);
+					place(e, effective);
+				} else if (!stale) {
+					retarget(lvl, pf, e, effective, seat);
+				}
 			}
 		}
 		for (var it = entities.entrySet().iterator(); it.hasNext();) {
@@ -202,8 +281,26 @@ public final class AgentManager {
 			if (!keep.contains(en.getKey())) {
 				remove(lvl, en.getValue());
 				byEntityId.remove(en.getValue().getId());
+				agentLayouts.remove(en.getKey());
 				it.remove();
 			}
+		}
+	}
+
+	/** The repo whose building an agent works in ({@link Routing#agentRepo}), or null = home. */
+	static @Nullable String repoOf(ForemanState st, Agent a) {
+		Protocol.Task task = a.taskId() == null ? null : st.task(a.taskId());
+		Protocol.Goal goal = st.goal();
+		return Routing.agentRepo(a.repoId(), task == null ? null : task.repoId(), a.role() == AgentRole.LEAD, goal == null ? null : goal.repoId(),
+			a.isActive());
+	}
+
+	/** A small puff of smoke (vanilla poof) where an agent leaves or arrives by teleport. */
+	private static void poof(ClientLevel lvl, Vec3 at) {
+		for (int i = 0; i < 8; i++) {
+			double dx = (i % 3 - 1) * 0.18;
+			double dz = (i / 3 % 3 - 1) * 0.18;
+			lvl.addParticle(ParticleTypes.POOF, at.x + dx, at.y + 0.2 + (i % 4) * 0.35, at.z + dz, dx * 0.1, 0.02, dz * 0.1);
 		}
 	}
 
@@ -349,11 +446,11 @@ public final class AgentManager {
 		}
 	}
 
-	private ClientAgentEntity spawn(ClientLevel lvl, Agent a, Anchor target) {
+	private ClientAgentEntity spawn(ClientLevel lvl, Agent a, Anchor target, Anchors.Layout layout, @Nullable GridPathfinder pf) {
 		ClientAgentEntity e = new ClientAgentEntity(lvl, a.id(), AgentSkins.get(a.id(), a.skin()));
 		// Negative ids never collide with server-assigned entity ids.
 		e.setId(nextEntityId--);
-		Seats.Seat seat = seats.at(lvl, target, ticks, new GridPathfinder(lvl, Anchors.current().bounds()));
+		Seats.Seat seat = seats.at(lvl, layout, target, ticks, pf != null ? pf : new GridPathfinder(lvl, layout.bounds()));
 		e.life().setSeat(seat);
 		place(e, seat != null ? seat.target() : target);
 		lvl.addEntity(e);
@@ -366,12 +463,13 @@ public final class AgentManager {
 		e.snapTo(p, target.yaw());
 	}
 
-	private void retarget(ClientLevel lvl, Anchors.Layout layout, ClientAgentEntity e, Anchor target, Seats.@Nullable Seat seat) {
+	private void retarget(ClientLevel lvl, @Nullable GridPathfinder layoutPf, ClientAgentEntity e, Anchor target, Seats.@Nullable Seat seat) {
 		Anchor current = e.motion().target();
 		if (current != null && current.name().equals(target.name()) && current.pos().distanceToSqr(target.pos()) < 1e-4) {
 			return;
 		}
-		GridPathfinder pf = new GridPathfinder(lvl, layout.bounds());
+		// no layout (agents in a row near the spawn): an unbounded search, as before buildings
+		GridPathfinder pf = layoutPf != null ? layoutPf : new GridPathfinder(lvl, null);
 		AgentLife life = e.life();
 		List<Vec3> route = new ArrayList<>();
 		Vec3 start = e.position();

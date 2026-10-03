@@ -17,6 +17,8 @@ import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.client.ui.WorldUi;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
+import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Routing;
 import dev.agentcraft.layout.Anchors;
 import java.util.List;
 import java.util.Locale;
@@ -96,9 +98,11 @@ public class StatusLampRenderer extends StationRenderer<StatusLampBlockEntity, S
 		s.frameFace = null;
 		if (s.status == LampStatus.WAITING && !s.stale && (DECISIONS_BINDING.equals(s.binding) || MERGE_BINDING.equals(s.binding))
 			&& be.getLevel() != null) {
-			// the open face towards the middle of the HQ (a lamp set into an outer wall also has air outside)
+			// the open face towards the middle of the HQ / its building (a lamp set into an outer wall also has air outside)
 			double best = Double.MAX_VALUE;
-			Anchors.Bounds b = Anchors.current().bounds();
+			net.minecraft.core.BlockPos lp = be.getBlockPos();
+			Routing.Region region = Routing.regionAt(Buildings.regions(), lp.getX(), lp.getY(), lp.getZ(), 3);
+			Anchors.Bounds b = region != null ? region.area() : Anchors.current().bounds();
 			double cx = b == null ? 0 : (b.minX() + b.maxX()) / 2.0;
 			double cz = b == null ? 0 : (b.minZ() + b.maxZ()) / 2.0;
 			for (Direction d : Direction.Plane.HORIZONTAL) {

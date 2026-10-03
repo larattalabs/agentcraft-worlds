@@ -3,6 +3,7 @@ package dev.agentcraft.client.agents;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.AgentState;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.layout.Anchors;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -31,6 +32,10 @@ public final class AgentView {
 	/** The station key the agent is at or walking to ("desk", "library", ..., "lounge"). */
 	public String station = "lounge";
 	public @Nullable String anchor;
+	/** The layout (building, or the HQ studio) the agent works in; its anchors are the ones to use for this agent. */
+	public Anchors.Layout layout = Anchors.Layout.EMPTY;
+	/** The repo whose building the agent is routed to (null = home). */
+	public @Nullable String repo;
 	public boolean active = true;
 	public boolean paused;
 	/** The Foreman link is down: show the last known state, dimmed. */

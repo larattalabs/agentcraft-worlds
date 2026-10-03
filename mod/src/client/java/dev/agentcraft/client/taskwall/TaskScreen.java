@@ -39,6 +39,7 @@ import org.jspecify.annotations.Nullable;
 public class TaskScreen extends Screen {
 	private static final int W = 320;
 	private String taskId;
+	private final @Nullable String repoFilter;
 	private @Nullable String feedback;
 	private boolean feedbackError;
 	private boolean confirmCancel;
@@ -63,8 +64,14 @@ public class TaskScreen extends Screen {
 	}
 
 	public TaskScreen(String taskId) {
+		this(taskId, null);
+	}
+
+	/** {@code repoFilter}: browse only that repo's tasks (opened from a wall bound {@code repo:<id>}); null = all. */
+	public TaskScreen(String taskId, @Nullable String repoFilter) {
 		super(Component.literal("Task"));
 		this.taskId = taskId;
+		this.repoFilter = repoFilter;
 	}
 
 	public String taskId() {
@@ -83,6 +90,11 @@ public class TaskScreen extends Screen {
 
 	/** Tasks in wall order (Todo, Doing, Review, Done); cancelled tasks are not on the wall and not included. */
 	static List<Task> wallOrder() {
+		return wallOrder(null);
+	}
+
+	/** {@link #wallOrder()} of a wall filtered to {@code repoFilter} (null = all). */
+	static List<Task> wallOrder(@Nullable String repoFilter) {
 		ForemanState s = Foreman.state();
 		List<Task> out = new ArrayList<>();
 		if (s == null) {
@@ -91,7 +103,7 @@ public class TaskScreen extends Screen {
 		for (TaskBoard.Col c : TaskBoard.Col.values()) {
 			List<Task> col = new ArrayList<>();
 			for (Task t : s.tasks().values()) {
-				if (TaskBoard.shown(t) && TaskBoard.colOf(t) == c) {
+				if (TaskBoard.shown(t, repoFilter) && TaskBoard.colOf(t) == c) {
 					col.add(t);
 				}
 			}
@@ -112,9 +124,9 @@ public class TaskScreen extends Screen {
 
 	/** What left/right browse: the wall's tasks, plus this one at the end when it is not on the wall (cancelled). */
 	private List<Task> browseOrder() {
-		List<Task> all = wallOrder();
+		List<Task> all = wallOrder(repoFilter);
 		Task t = task();
-		if (t != null && !TaskBoard.shown(t)) {
+		if (t != null && !TaskBoard.shown(t, repoFilter)) {
 			all.add(t);
 		}
 		return all;

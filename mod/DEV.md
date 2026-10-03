@@ -405,6 +405,26 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   building's layout (`Anchors.showDerived`, never written to `agentcraft-anchors.json`), EMPTY with
   no buildings. `Buildings.layoutFor(repoId)` = that repo's building layout (name `building:<id>`,
   revision `placedAt`), else `Anchors.current()`.
+- Routing (client, `building.Routing` pure + unit-tested): `Buildings.sites()` / `regions()` / `layouts()`
+  are immutable views rebuilt once per change (volatile, safe from the client thread, same instance until
+  the next change). An agent's repo = `agent.repoId`, else its task's `repoId`, else (lead) the current
+  goal's `repoId`; off-shift agents have none (home lounge). Its layout = that repo's building, else
+  `Anchors.current()`; the home building is always the `Anchors.current()` instance (one identity and
+  revision whichever way it is reached). A building that has neither the agent's desk, its station nor a
+  lounge sends it home (`Routing.canHost`) instead of dropping it. `AgentManager` groups agents by layout
+  name: one `StationAssigner`, pathfinder and seat cache (`layout|anchor`) per layout; a layout's revision
+  change snaps only its agents; a changed building teleports the agent with a vanilla poof at both ends.
+  The player's building alone pulls waiting agents to the player. `AgentView.layout` is what
+  `AgentLife` (monitor gaze) uses; `dev.agents` lists `layout` and `repo` per agent.
+- Regions: `HqWorldDriver` (lamps, podium, merge station, monitors, signal bulbs), `HqClientFeature`
+  (particles), `StatusLampRenderer` (face towards the region's centre) and `MonitorFeature`
+  (`monitor_<id>` anchors of every layout) cover every region: the studio's bounds and each building's
+  box (+3). `ci:<repoId>` lamps work everywhere; `ci:#n` (the n-th Foreman repo) only in the studio, an
+  unrewritten placeholder in a building shows idle. `dev.state` -> `hq.regions` lists them.
+- Task walls: binding `repo:<repoId>` (from `repo:#n` at placement) filters the wall (and the task screen
+  opened from it) to that repo's tasks under a title strip with the Foreman repo's name; an empty or other
+  binding shows all tasks. `repo:#n` left unrewritten matches nothing (empty wall). `dev.taskwall` boards
+  show `repo`, `title`, `tasks`.
 - Commands (gamemaster, allowed in Hardcore too: explicit and reversible): `/agentcraft blueprints
   [reload]`, `/agentcraft buildings`, `/agentcraft place <blueprint> <repo>[,<repo>...] [rotation]
   [force]` (everything after the blueprint is one greedy argument, so repo ids need no quotes;

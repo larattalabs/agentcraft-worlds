@@ -1,9 +1,11 @@
 package dev.agentcraft.client.taskwall;
 
 import dev.agentcraft.AgentCraft;
+import dev.agentcraft.building.Routing;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.CiStatus;
+import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.TaskStatus;
 import dev.agentcraft.client.monitor.DisplayDraw;
@@ -20,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -48,12 +51,17 @@ import org.jspecify.annotations.Nullable;
  *   <li>A card keeps drawing its previous content while its size animates, until the new content
  *       fits (so a shrinking card never shows an empty body and a growing one never overflows).</li>
  * </ul>
+ *
+ * <p>A board bound {@code repo:<repoId>} (a building's wall, see docs/BUILDINGS.md) shows only that
+ * repo's tasks under a title strip with the repo's name; any other binding shows every task.
  */
 final class TaskBoard {
 	static final int TRIM = 2; // texels of brass trim on the outer edges
 	static final int PAD = 4;
 	static final int GAP = 4;
 	static final int HEADER_H = 13;
+	/** Title strip above the column headers of a repo-filtered board (the repo's name). */
+	static final int TITLE_H = 12;
 	static final int LINE = 10;
 	static final int MAX_LINES = 3;
 	/** Brief card: up to 2 title lines, no footer (the step between full and compact). */
@@ -329,6 +337,12 @@ final class TaskBoard {
 	int panelH;
 	long taskSeq = Long.MIN_VALUE;
 	long agentSeq = Long.MIN_VALUE;
+	/** The repo this board is filtered to ({@code repo:<id>} binding), null = all tasks. */
+	@Nullable String repoFilter;
+	/** The filtered repo's display name (Foreman repo name, else its id); "" when unfiltered. */
+	String title = "";
+	FormattedCharSequence titleSeq = FormattedCharSequence.EMPTY;
+	float titleY;
 	float pw, ph;             // panel px
 	float ix0, iy0, ix1, iy1; // inside the trim
 	float cardsTop;
@@ -384,6 +398,20 @@ final class TaskBoard {
 		return t.status() != TaskStatus.CANCELLED && t.status() != TaskStatus.UNKNOWN;
 	}
 
+	/** On a wall filtered to {@code repoFilter} (null = all): shown and of that repo. */
+	static boolean shown(Task t, @Nullable String repoFilter) {
+		return shown(t) && Routing.boardShows(repoFilter, t.repoId());
+	}
+
+	/** The title of a wall filtered to {@code repo}: the Foreman repo's name, else the id ("" = unfiltered). */
+	static String titleFor(@Nullable ForemanState s, @Nullable String repo) {
+		if (repo == null) {
+			return "";
+		}
+		Repo r = s == null ? null : s.repo(repo);
+		return r != null ? r.name() : repo;
+	}
+
 	/** Title text as shown on the wall (markdown backticks dropped). */
 	static String titleText(Task t) {
 		return t.title().replace("`", "").replace("**", "").strip();
@@ -393,12 +421,17 @@ final class TaskBoard {
 	 * Re-lay out when the tasks or the size changed, refresh card contents when only agents changed.
 	 * Returns true when anything was rebuilt.
 	 */
-	boolean sync(@Nullable ForemanState s, int panelW, int panelH, long taskSeq, long agentSeq, long now) {
+	boolean sync(@Nullable ForemanState s, String binding, int panelW, int panelH, long taskSeq, long agentSeq, long now) {
 		int ppb = density(panelW, panelH);
-		boolean resized = ppb != this.ppb || panelW != this.panelW || panelH != this.panelH;
+		String filter = Routing.boardRepo(binding);
+		String title = titleFor(s, filter);
+		boolean refiltered = !Objects.equals(filter, repoFilter) || !title.equals(this.title);
+		boolean resized = ppb != this.ppb || panelW != this.panelW || panelH != this.panelH || refiltered;
 		if (!resized && taskSeq == this.taskSeq && agentSeq == this.agentSeq && everLaidOut) {
 			return false;
 		}
+		repoFilter = filter;
+		this.title = title;
 		boolean tasksChanged = taskSeq != this.taskSeq;
 		this.taskSeq = taskSeq;
 		this.agentSeq = agentSeq;
@@ -428,6 +461,13 @@ final class TaskBoard {
 		float trim = ppb * TRIM / 16f;
 		ix0 = trim + PAD;
 		iy0 = trim + PAD - 1;
+		titleY = iy0;
+		titleSeq = FormattedCharSequence.EMPTY;
+		if (repoFilter != null) {
+			// the repo's name on a strip above the column headers
+			titleSeq = seq(TextUtil.ellipsize(font, title, (int) (pw - 2 * (trim + PAD)) - 8));
+			iy0 += TITLE_H;
+		}
 		ix1 = pw - trim - PAD;
 		iy1 = ph - trim - PAD + 1;
 		float equal = (ix1 - ix0 - GAP * 3) / 4f;
@@ -449,7 +489,7 @@ final class TaskBoard {
 		Set<String> titleIds = new HashSet<>();
 		if (s != null) {
 			for (Task t : s.tasks().values()) {
-				if (shown(t)) {
+				if (shown(t, repoFilter)) {
 					by.get(colOf(t)).add(t);
 					total++;
 					titleIds.add(t.id());

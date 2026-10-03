@@ -56,20 +56,25 @@ public final class Seats {
 		cache.clear();
 	}
 
-	/** The seat at {@code a} (cached), or null when the agent stands there. */
-	public @Nullable Seat at(BlockGetter level, Anchor a, long tick, @Nullable GridPathfinder pathfinder) {
+	/**
+	 * The seat at {@code a} (cached per layout and anchor name: shared station names repeat in every
+	 * building), or null when the agent stands there. {@code layout} is the layout {@code a} belongs to
+	 * (its {@code seat_<id>} chairs).
+	 */
+	public @Nullable Seat at(BlockGetter level, Anchors.Layout layout, Anchor a, long tick, @Nullable GridPathfinder pathfinder) {
 		if (!seatable(a.name())) {
 			return null;
 		}
-		Cached c = cache.get(a.name());
+		String key = layout.name() + "|" + a.name();
+		Cached c = cache.get(key);
 		if (c != null && c.x == a.x() && c.y == a.y() && c.z == a.z() && c.yaw == a.yaw() && tick - c.tick < RECHECK_TICKS && tick >= c.tick) {
 			return c.seat;
 		}
 		Seat s = detect(level, a, pathfinder);
 		if (s == null && a.name().startsWith(AnchorNames.DESK_PREFIX)) {
-			s = deskChair(level, a, pathfinder);
+			s = deskChair(level, layout, a, pathfinder);
 		}
-		cache.put(a.name(), new Cached(s, a.x(), a.y(), a.z(), a.yaw(), tick));
+		cache.put(key, new Cached(s, a.x(), a.y(), a.z(), a.yaw(), tick));
 		return s;
 	}
 
@@ -78,8 +83,8 @@ public final class Seats {
 	 * seat-top position + facing). It is used only when the desk is right in front of the chair
 	 * (otherwise a seated agent would type in the air; it stands at {@code desk_<id>} instead).
 	 */
-	private static @Nullable Seat deskChair(BlockGetter level, Anchor desk, @Nullable GridPathfinder pathfinder) {
-		Anchor chair = Anchors.get("seat_" + desk.name().substring(AnchorNames.DESK_PREFIX.length()));
+	private static @Nullable Seat deskChair(BlockGetter level, Anchors.Layout layout, Anchor desk, @Nullable GridPathfinder pathfinder) {
+		Anchor chair = layout.get("seat_" + desk.name().substring(AnchorNames.DESK_PREFIX.length()));
 		if (chair == null) {
 			return null;
 		}
