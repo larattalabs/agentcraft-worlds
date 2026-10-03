@@ -145,7 +145,11 @@ public final class ConsoleActions {
 			case Hub hub -> {
 				ConsoleLog.remember(raw);
 				clearFeedback();
-				dev.agentcraft.client.hub.HubFeature.open(dev.agentcraft.client.hub.HubTab.parse(hub.tab()));
+				if (ConsoleCommands.HUB_DESIGN.equals(hub.tab())) {
+					dev.agentcraft.client.design.DesignFeature.open(dev.agentcraft.client.hub.HubFeature.open(null));
+				} else {
+					dev.agentcraft.client.hub.HubFeature.open(dev.agentcraft.client.hub.HubTab.parse(hub.tab()));
+				}
 				return After.CLOSE;
 			}
 			case Decide d -> {

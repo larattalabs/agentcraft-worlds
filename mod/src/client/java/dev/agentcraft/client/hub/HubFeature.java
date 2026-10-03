@@ -46,7 +46,7 @@ public final class HubFeature {
 		Keys.ensureRegistered();
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			while (Keys.hub.consumeClick()) {
-				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active()) {
+				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active() && !dev.agentcraft.client.building.PlotMarker.active()) {
 					open(null);
 				}
 			}
@@ -60,12 +60,24 @@ public final class HubFeature {
 			s.setSub(HubScreen.Sub.BLUEPRINTS);
 			return s;
 		});
+		DevBridge.registerScreen("hub_designs", mc -> {
+			HubScreen s = new HubScreen(HubTab.BUILDINGS);
+			s.setSub(HubScreen.Sub.DESIGNS);
+			return s;
+		});
 		registerDev();
 	}
 
 	/** Opens the hub at {@code tab} (null = Buildings). Client thread. */
 	public static HubScreen open(@Nullable HubTab tab) {
 		HubScreen s = new HubScreen(tab == null ? HubTab.BUILDINGS : tab);
+		if (tab == null || tab == HubTab.BUILDINGS) {
+			// a design finished while the hub was closed: show its blueprint
+			String fresh = dev.agentcraft.client.design.DesignFeature.takePendingSelect();
+			if (fresh != null && s.selectBlueprint(fresh)) {
+				s.setView("iso");
+			}
+		}
 		Minecraft.getInstance().gui.setScreen(s);
 		return s;
 	}
@@ -83,7 +95,7 @@ public final class HubFeature {
 	}
 
 	private static void registerDev() {
-		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|blueprints, buildingId?, blueprint?, "
+		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|blueprints|designs, buildingId?, blueprint?, designId?, "
 			+ "view?: plan|iso|top|front|cutaway} - open the hub (H) and select; replies with dev.hub.state", (req, mc) -> {
 				Fields f = Fields.of(req);
 				String tabName = f.optStr("tab", null);
@@ -91,6 +103,7 @@ public final class HubFeature {
 				String building = f.optStr("buildingId", null);
 				String bp = f.optStr("blueprint", null);
 				String view = f.optStr("view", null);
+				String design = f.optStr("designId", null);
 				HubTab tab = tabName == null ? HubTab.BUILDINGS : HubTab.parse(tabName);
 				if (tab == null) {
 					throw new DevBridge.DevException("tab must be one of " + HubTab.ids());
@@ -105,6 +118,9 @@ public final class HubFeature {
 						s.setSub(parseSub(sub));
 					}
 					select(s, building, bp);
+					if (design != null) {
+						s.selectDesign(design);
+					}
 					if (view != null && !s.setView(view)) {
 						throw new DevBridge.DevException("view " + view + " is not available for blueprint " + s.selectedBlueprint());
 					}
@@ -114,9 +130,11 @@ public final class HubFeature {
 		DevBridge.register("dev.hub.state", 10_000, "{} - the hub: open, tab, sub, selections, armed remove, last action, buildings, blueprints, "
 			+ "rendered previews of the selected blueprint (paths tried, found, load state), buttons on screen", (req, mc) -> DevBridge.onClient(mc,
 				() -> state(mc)));
-		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|place_new|place|design_new, tab?, buildingId?, "
-			+ "blueprint?, repos?: [..] | \"a,b\", view?, confirm?: bool} - press a hub button (opens the hub when closed). home/teleport/"
-			+ "remove reply after the server answered; remove without confirm arms it (a second remove for the same id confirms)", (req, mc) -> {
+		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|place_new|place|place_plot|design_new|"
+			+ "cancel_design, tab?, buildingId?, blueprint?, designId?, repos?: [..] | \"a,b\", view?, confirm?: bool} - press a hub button (opens the "
+			+ "hub when closed). home/teleport/remove/cancel_design reply after the server/Foreman answered; remove without confirm arms it (a "
+			+ "second remove for the same id confirms); place_plot = Place on the plot (with repos: straight to placement locked on the plot)",
+			(req, mc) -> {
 				Fields f = Fields.of(req);
 				String action = f.nonBlank("action").toLowerCase(Locale.ROOT);
 				String building = f.optStr("buildingId", null);
@@ -125,7 +143,8 @@ public final class HubFeature {
 				String view = f.optStr("view", null);
 				boolean confirm = f.optBool("confirm", false);
 				List<String> repos = repoList(f);
-				return DevBridge.onClient(mc, () -> act(mc, action, building, bp, tabName, view, confirm, repos)).thenCompose(x -> x)
+				String design = f.optStr("designId", null);
+				return DevBridge.onClient(mc, () -> act(mc, action, building, bp, tabName, view, confirm, repos, design)).thenCompose(x -> x)
 					.thenCompose(o -> DevBridge.onClient(mc, () -> {
 						JsonObject st = state(mc);
 						st.add("result", o);
@@ -135,7 +154,7 @@ public final class HubFeature {
 	}
 
 	private static CompletableFuture<JsonObject> act(Minecraft mc, String action, @Nullable String building, @Nullable String bp,
-		@Nullable String tabName, @Nullable String view, boolean confirm, List<String> repos) {
+		@Nullable String tabName, @Nullable String view, boolean confirm, List<String> repos, @Nullable String design) {
 		HubScreen s = requireHub(mc);
 		JsonObject done = new JsonObject();
 		switch (action) {
@@ -193,7 +212,42 @@ public final class HubFeature {
 				}
 			}
 			case "design_new" -> done.addProperty("opened", s.designNew());
-			default -> throw new DevBridge.DevException("action must be tab|select|view|home|teleport|remove|place_new|place|design_new");
+			case "place_plot" -> {
+				String id = bp != null ? bp : s.selectedBlueprint();
+				if (id == null || Blueprints.get(id) == null) {
+					throw new DevBridge.DevException("blueprint: not loaded: " + id);
+				}
+				String why;
+				if (repos.isEmpty()) {
+					why = s.placeOnPlot(id);
+				} else {
+					try {
+						int[] spot = dev.agentcraft.client.design.DesignFeature.plotSpot(id);
+						why = BuildingWizardFeature.placeNowAt(id, repos, spot, spot[3]);
+					} catch (IllegalStateException e) {
+						why = e.getMessage();
+					}
+				}
+				if (why != null) {
+					throw new DevBridge.DevException(why);
+				}
+			}
+			case "cancel_design" -> {
+				String id = design != null ? design : s.selectedDesign();
+				if (id == null) {
+					throw new DevBridge.DevException("designId: which design?");
+				}
+				s.selectDesign(id);
+				return s.cancelDesign(id).thenApply(msg -> {
+					JsonObject o = new JsonObject();
+					o.addProperty("action", "cancel_design");
+					o.addProperty("designId", id);
+					o.addProperty("message", msg);
+					return o;
+				});
+			}
+			default -> throw new DevBridge.DevException("action must be tab|select|view|home|teleport|remove|place_new|place|place_plot|design_new|"
+				+ "cancel_design");
 		}
 		done.addProperty("action", action);
 		return CompletableFuture.completedFuture(done);
@@ -212,7 +266,8 @@ public final class HubFeature {
 		return switch (s.toLowerCase(Locale.ROOT)) {
 			case "buildings" -> HubScreen.Sub.BUILDINGS;
 			case "blueprints" -> HubScreen.Sub.BLUEPRINTS;
-			default -> throw new DevBridge.DevException("sub must be buildings or blueprints");
+			case "designs" -> HubScreen.Sub.DESIGNS;
+			default -> throw new DevBridge.DevException("sub must be buildings, blueprints or designs");
 		};
 	}
 
@@ -250,6 +305,8 @@ public final class HubFeature {
 		o.addProperty("sub", s == null ? null : s.sub().name().toLowerCase(Locale.ROOT));
 		o.addProperty("selectedBuilding", s == null ? null : s.selectedBuilding());
 		o.addProperty("selectedBlueprint", s == null ? null : s.selectedBlueprint());
+		o.addProperty("selectedDesign", s == null ? null : s.selectedDesign());
+		o.addProperty("designNote", s == null ? null : s.designNote());
 		o.addProperty("armedRemove", s == null ? null : s.armedRemove());
 		o.addProperty("busy", s != null && s.busy());
 		o.addProperty("view", s == null ? null : s.view());
@@ -286,9 +343,15 @@ public final class HubFeature {
 			Blueprints.Entry e = Blueprints.entry(bp.id());
 			j.addProperty("source", e == null ? null : e.source());
 			j.addProperty("previews", PreviewImages.find(bp.id()).size());
+			j.addProperty("hasPlot", dev.agentcraft.client.design.DesignFeature.plotForBlueprint(bp.id()) != null);
 			bps.add(j);
 		}
 		o.add("blueprints", bps);
+		JsonArray ds = new JsonArray();
+		for (var d : HubScreen.designs()) {
+			ds.add(dev.agentcraft.client.design.DesignFeature.designJson(d));
+		}
+		o.add("designs", ds);
 		if (s != null && s.selectedBlueprint() != null) {
 			o.add("previews", PreviewImages.describe(s.selectedBlueprint()));
 		} else {

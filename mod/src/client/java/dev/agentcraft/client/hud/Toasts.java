@@ -37,6 +37,7 @@ public final class Toasts implements HudElement {
 	private static final int FADE_MS = 350;
 	private static final List<Toast> ACTIVE = new ArrayList<>();
 	private static int shown;
+	private static final List<java.util.function.Predicate<Notify>> DROP = new java.util.concurrent.CopyOnWriteArrayList<>();
 
 	private record Toast(Notify n, @Nullable String agentId, String title, String body, long start, long life, @Nullable String decisionId) {
 	}
@@ -45,6 +46,11 @@ public final class Toasts implements HudElement {
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onNotify(Notify n) {
+				for (java.util.function.Predicate<Notify> d : DROP) {
+					if (d.test(n)) {
+						return;
+					}
+				}
 				push(n);
 			}
 
@@ -55,6 +61,14 @@ public final class Toasts implements HudElement {
 				}
 			}
 		});
+	}
+
+	/**
+	 * Drop Foreman notifies matching {@code drop} (a feature that shows its own, richer toast for the same
+	 * event, e.g. building designs). {@link #push} itself is never filtered.
+	 */
+	public static void addFilter(java.util.function.Predicate<Notify> drop) {
+		DROP.add(drop);
 	}
 
 	public static int shown() {
