@@ -66,6 +66,8 @@ export interface PolicyContext {
   skills?: string[];
   /** MCP tools (names or "prefix*") the user allowed without asking */
   mcpAllow?: string[];
+  /** subagents enabled (claude.subagents): the Agent/Task tool is allowed, never with its own worktree */
+  subagents?: boolean;
 }
 
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']);
@@ -2012,6 +2014,12 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     const name = typeof input.skill === 'string' ? input.skill : typeof input.command === 'string' ? input.command : '';
     const ok = ctx.skills.some((s) => s === name || s.split(':').pop() === name);
     return ok ? { action: 'allow', reason: `skill ${name}` } : { action: 'deny', reason: `Skill "${name}" is not enabled for AgentCraft agents (enabled: ${ctx.skills.join(', ')}).` };
+  }
+  if ((toolName === 'Agent' || toolName === 'Task') && ctx.subagents) {
+    // a subagent works in this agent's worktree with its tools; a worktree of its own would be
+    // outside the Foreman's control (merges, clean-up, other agents)
+    if (input.isolation !== undefined && input.isolation !== null && input.isolation !== 'none') return { action: 'deny', reason: 'Subagents work in your worktree; they cannot get a worktree of their own.' };
+    return { action: 'allow', reason: 'subagent' };
   }
   if (toolName in DENIED_TOOLS) return { action: 'deny', reason: DENIED_TOOLS[toolName]! };
   if (ALWAYS_OK.has(toolName)) return { action: 'allow', reason: toolName };

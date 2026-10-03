@@ -20,13 +20,13 @@
 // committed on its branch. The next worker's worktree then starts from that branch.
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
-import { query, type CanUseTool, type EffortLevel, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { query, type AgentDefinition, type CanUseTool, type EffortLevel, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeConfig } from '../../config.js';
 import { FOREMAN_VERSION } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
 import { withGitSafety } from '../../gitsafety.js';
 import { agentGitIdentity } from '../../util/git.js';
-import { classifyToolUse, describeRuleKey, describeToolCall } from '../../policy.js';
+import { classifyToolUse, describeRuleKey, describeToolCall, type PolicyContext } from '../../policy.js';
 import type { Decision, Goal, Task } from '../../protocol.js';
 import { MERGE_OPTIONS, PERMISSION_OPTIONS } from '../../protocol.js';
 import type { TestResult } from '../../repos.js';
@@ -35,6 +35,8 @@ import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
 import { buildSkillsPlugin, instructionsBlock } from './context.js';
+import { guardrailHook } from './permissions.js';
+import { loadSubagents } from './subagents.js';
 import { leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
 import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
@@ -177,6 +179,8 @@ export class ClaudeBackend implements Backend {
   private limitBackoffMs = LIMIT_BACKOFF_MS;
   /** the Foreman's skills plugin (built at start from claude.context.skills) */
   private skillsPlugin: { path: string; ids: string[] } | undefined;
+  /** subagent definitions from claude.subagents.agents (loaded at start) */
+  private subagentDefs: Record<string, AgentDefinition> = {};
 
   constructor(
     private fm: Foreman,
@@ -250,6 +254,7 @@ export class ClaudeBackend implements Backend {
     if (spent > 0) this.fm.setStatus({ costUsd: Math.round(spent * 1000) / 1000 });
     await this.checkAuth();
     this.prepareContext();
+    this.preparePermissions();
     if (!this.cfg.resumeOnStart) {
       this.st.inflight = {};
     } else {
@@ -282,6 +287,42 @@ export class ClaudeBackend implements Backend {
       Object.keys(c.mcpServers).length ? `MCP ${Object.keys(c.mcpServers).join(', ')}` : '',
     ].filter(Boolean);
     this.fm.log.info(`agent context: ${what.join('; ') || 'none'}`);
+  }
+
+  /** Load subagent definitions and report the permission setup. */
+  private preparePermissions(): void {
+    const p = this.cfg.permissions;
+    const s = this.cfg.subagents;
+    if (s.enabled) {
+      const { agents, problems } = loadSubagents(s.agents);
+      for (const pr of problems) this.fm.log.warn(`claude.subagents: ${pr}`);
+      this.subagentDefs = agents;
+    }
+    const rules = p.allow.length + p.deny.length + p.ask.length;
+    this.fm.log.info(
+      `permissions: ${p.mode === 'auto' ? `auto mode${p.protectCheckouts ? ' (checkouts protected)' : ''}` : 'AgentCraft policy'}` +
+        `${rules ? `, ${rules} rule(s)` : ''}${p.webTools ? ', web tools' : ''}` +
+        `${s.enabled ? `, subagents${Object.keys(this.subagentDefs).length ? ` (${Object.keys(this.subagentDefs).join(', ')})` : ''}` : ''}`,
+    );
+  }
+
+  /** What the AgentCraft policy needs to judge this agent's tool calls. */
+  private policyContext(agentId: string, role: 'lead' | 'worker', cwd: string): PolicyContext {
+    return {
+      role,
+      cwd,
+      readDirs: [this.fm.memory.dir, ...(this.skillsPlugin ? [this.skillsPlugin.path] : [])],
+      alwaysAllow: this.fm.store.data.permissionRules[agentId] ?? [],
+      mcpServer: MCP_SERVER,
+      ...(this.skillsPlugin ? { skills: this.skillsPlugin.ids } : {}),
+      mcpAllow: this.cfg.context.mcpAllow,
+      ...(this.cfg.subagents.enabled ? { subagents: true } : {}),
+    };
+  }
+
+  /** Auto mode's guardrails cover the user's checkouts and AgentCraft's own state. */
+  private protectedRoots(): string[] {
+    return this.cfg.permissions.protectCheckouts ? [...this.fm.repos.list().map((r) => r.path), this.fm.config.home] : [];
   }
 
   async checkAuth(): Promise<boolean> {
@@ -803,15 +844,7 @@ export class ClaudeBackend implements Backend {
     return async (toolName, input, opts): Promise<PermissionResult> => {
       // a stopped/paused/cancelled turn runs nothing more, even if its CLI has not exited yet
       if (turn.signal.aborted) return { behavior: 'deny', message: `Your turn was stopped by ${userName()}.`, interrupt: true };
-      const verdict = classifyToolUse(toolName, input, {
-        role,
-        cwd,
-        readDirs: [this.fm.memory.dir, ...(this.skillsPlugin ? [this.skillsPlugin.path] : [])],
-        alwaysAllow: this.fm.store.data.permissionRules[agentId] ?? [],
-        mcpServer: MCP_SERVER,
-        ...(this.skillsPlugin ? { skills: this.skillsPlugin.ids } : {}),
-        mcpAllow: this.cfg.context.mcpAllow,
-      });
+      const verdict = classifyToolUse(toolName, input, this.policyContext(agentId, role, cwd));
       if (verdict.action === 'allow') return { behavior: 'allow', updatedInput: input };
       if (verdict.action === 'deny') {
         this.fm.agentLog(agentId, 'error', `blocked: ${describeToolCall(toolName, input)} (${verdict.reason})`);
@@ -899,6 +932,47 @@ export class ClaudeBackend implements Backend {
     return { model, effort };
   }
 
+  /**
+   * Permission mode, tools, guardrail hook and the user's rules for one turn (claude.permissions,
+   * claude.subagents). Policy mode keeps upstream's behaviour: every call through canUseTool.
+   */
+  private permissionOptions(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle): Partial<Options> {
+    const p = this.cfg.permissions;
+    const sub = this.cfg.subagents.enabled;
+    const tools = role === 'lead' ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite'];
+    if (p.webTools) tools.push('WebFetch', 'WebSearch');
+    if (sub) tools.push('Agent', 'Task');
+    if (this.skillsPlugin) tools.push('Skill');
+    const disallowed = ['Bash(git push:*)', ...(sub ? [] : ['Task', 'Agent']), ...(p.webTools ? [] : ['WebSearch', 'WebFetch'])];
+    const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : undefined;
+    return {
+      permissionMode: p.mode === 'auto' ? 'auto' : 'default',
+      canUseTool: this.canUseTool(agentId, role, cwd, turn),
+      tools,
+      disallowedTools: disallowed,
+      ...(rules ? { settings: rules } : {}),
+      ...(sub && Object.keys(this.subagentDefs).length ? { agents: this.subagentDefs } : {}),
+      ...(p.mode === 'auto'
+        ? {
+            hooks: {
+              PreToolUse: [
+                {
+                  hooks: [
+                    guardrailHook(
+                      (tool, input) => classifyToolUse(tool, input, this.policyContext(agentId, role, cwd)),
+                      () => this.protectedRoots(),
+                      (tool, decision, reason, subagent) =>
+                        this.fm.agentLog(agentId, decision === 'deny' ? 'error' : 'tool', `guardrail ${decision === 'deny' ? 'blocked' : 'asks you'}${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
+                    ),
+                  ],
+                },
+              ],
+            },
+          }
+        : {}),
+    };
+  }
+
   private async runJob(job: Job): Promise<void> {
     const agentId = job.agentId;
     const abort = new AbortController();
@@ -929,7 +1003,6 @@ export class ClaudeBackend implements Backend {
       }
       const extra = instructionsBlock(this.cfg.context, cwd, userName());
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
-      const baseTools = role === 'lead' ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite'];
       const { model, effort } = this.modelFor(agentId, role, job.taskId);
       const options: Options = {
         cwd,
@@ -937,11 +1010,7 @@ export class ClaudeBackend implements Backend {
         effort,
         maxTurns: role === 'lead' ? this.cfg.maxTurnsLead : this.cfg.maxTurnsWorker,
         settingSources: [],
-        permissionMode: 'default',
-        canUseTool: this.canUseTool(agentId, role, cwd, turn),
-        tools: this.skillsPlugin ? [...baseTools, 'Skill'] : baseTools,
-        // no allowedTools: every tool call (incl. our MCP tools) goes through canUseTool/policy
-        disallowedTools: ['Bash(git push:*)', 'Task', 'Agent', 'WebSearch', 'WebFetch'],
+        ...this.permissionOptions(agentId, role, cwd, turn),
         // the user's extra servers first, so the team tools server can never be replaced
         mcpServers: { ...this.cfg.context.mcpServers, [MCP_SERVER]: buildMcpServer(this.fm, agentId, role, this.hooks, turn) },
         ...(this.skillsPlugin ? { plugins: [{ type: 'local' as const, path: this.skillsPlugin.path, skipMcpDiscovery: true }], skills: this.skillsPlugin.ids } : {}),

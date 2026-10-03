@@ -7,6 +7,8 @@ import type { BackendName } from './protocol.js';
 import { defaultUserName } from './user.js';
 import type { EffortLevel, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { DEFAULT_CONTEXT, type AgentContextConfig } from './agents/claude/context.js';
+import { DEFAULT_PERMISSIONS, type PermissionsConfig } from './agents/claude/permissions.js';
+import { DEFAULT_SUBAGENTS, type SubagentsConfig } from './agents/claude/subagents.js';
 
 export const FOREMAN_VERSION = '0.1.0';
 
@@ -57,6 +59,10 @@ export interface ClaudeConfig {
   agents: Record<string, AgentProfile>;
   /** model per task size the lead sets on create_task (wins over the agent's model) */
   taskModels: Partial<Record<TaskSize, string>>;
+  /** permission mode, guardrails and Claude Code permission rules (config.json claude.permissions) */
+  permissions: PermissionsConfig;
+  /** Claude Code subagents for the agents (config.json claude.subagents) */
+  subagents: SubagentsConfig;
 }
 
 /**
@@ -226,6 +232,25 @@ function taskModels(v: unknown): Partial<Record<TaskSize, string>> {
   return out;
 }
 
+function permissionsConfig(v: unknown): PermissionsConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const mode = o.mode ?? DEFAULT_PERMISSIONS.mode;
+  if (mode !== 'policy' && mode !== 'auto') throw new Error(`unknown permissions mode "${String(mode)}" (use policy or auto)`);
+  return {
+    mode,
+    allow: strings(o.allow),
+    deny: strings(o.deny),
+    ask: strings(o.ask),
+    webTools: typeof o.webTools === 'boolean' ? o.webTools : DEFAULT_PERMISSIONS.webTools,
+    protectCheckouts: typeof o.protectCheckouts === 'boolean' ? o.protectCheckouts : DEFAULT_PERMISSIONS.protectCheckouts,
+  };
+}
+
+function subagentsConfig(v: unknown): SubagentsConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  return { enabled: typeof o.enabled === 'boolean' ? o.enabled : DEFAULT_SUBAGENTS.enabled, agents: strings(o.agents) };
+}
+
 function mergeStyle(v: unknown): 'merge' | 'squash' {
   if (v === undefined || v === 'merge') return 'merge';
   if (v === 'squash') return 'squash';
@@ -346,6 +371,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       context: contextConfig(fileClaude.context),
       agents: agentProfiles(fileClaude.agents),
       taskModels: taskModels(fileClaude.taskModels),
+      permissions: permissionsConfig(fileClaude.permissions),
+      subagents: subagentsConfig(fileClaude.subagents),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),
