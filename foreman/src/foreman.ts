@@ -137,7 +137,7 @@ export class Foreman {
           id: c.id,
           name: c.name,
           role: c.role,
-          title: c.title,
+          title: this.config.claude.agents[c.id]?.title ?? c.title,
           color: c.color,
           skin: c.id,
           state: 'idle',
@@ -151,7 +151,7 @@ export class Foreman {
       } else {
         // cast may have been updated by the art track
         a.name = c.name;
-        a.title = c.title;
+        a.title = this.config.claude.agents[c.id]?.title ?? c.title;
         a.color = c.color;
         if (c.accent) a.accent = c.accent;
         a.role = c.role;

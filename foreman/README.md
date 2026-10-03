@@ -94,6 +94,24 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | sim: `--speed`, `--seed`, `--autostart`, `--showcase [late]`, `--auto-answer`, `--no-ambient` | | |
 
 `<home>/config.json` can hold the same settings (`{"backend":"claude","claude":{"workers":["kit","wren"]}}`).
+
+### Roles (`claude.agents`, `claude.taskModels`)
+
+```json
+{ "claude": {
+    "agents": {
+      "marlow": { "model": "opus", "effort": "high" },
+      "kit": { "title": "Backend", "prompt": "APIs, databases, the server side.", "model": "sonnet" },
+      "juniper": { "title": "Frontend", "prompt": "UI, styling, accessibility." } },
+    "taskModels": { "small": "haiku", "large": "opus" } } }
+```
+
+`title` is shown on the agent's nameplate. `prompt` (or, without one, the cast description) goes into
+the agent's own prompt and into the lead's team list, so the lead assigns by specialty. `model` and
+`effort` override the role defaults. With `taskModels`, the lead can size a task (`small`/`large` on
+create_task) and that model wins for the task. Workers keep private notes across tasks; each task
+prompt lists their earlier ones.
+
 While running, `<home>/<profile>/foreman.json` records `{pid, port, host, backend, profile, version, startedAt}`
 so launch scripts can find it; `<home>/foreman.json` holds the same for the first live Foreman (when
 it exits, another live profile takes its place). A second Foreman on a profile that is already
