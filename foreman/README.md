@@ -201,6 +201,12 @@ repo hooks would run ahead of, or outside, the permission policy. What they do g
 - **claude.ai connectors** (`connectors`, e.g. `["monday.com"]`): with a claude.ai login the CLI
   would also load the account's connectors (mail, calendars, accounting...). By default agents get
   none (`strictMcpConfig`); listed ones load, and tools of any other connector are refused.
+- **Earlier sessions** (`sessionHistory: true`, or `{ "enabled": true, "days": 60 }`): agents can
+  search and read your earlier Claude Code / Claude Desktop sessions (`find_sessions`, `read_session`)
+  from `~/.claude/projects`, only those whose folder is a registered repo, its workspace folder, or a
+  Desktop scratchpad of one; AgentCraft's own agent sessions are left out. A read is condensed
+  (prompts, Claude's text, commands, edits; no tool output), mostly from the end. For an
+  `on <branch>:` goal the lead is handed the sessions that worked on that branch before planning.
 - **MCP servers:** given to every agent. Their tools ask for permission unless listed in `mcpAllow`
   (exact names or `mcp__server__*`). The `agentcraft` server name is reserved.
 

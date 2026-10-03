@@ -11,6 +11,7 @@ import { MERGE_OPTIONS } from '../../protocol.js';
 import { truncate } from '../../util/text.js';
 import { boardSummary } from './prompts.js';
 import { userName } from '../../user.js';
+import { sessionLine, type SessionHistory } from '../../history.js';
 
 export const MCP_SERVER = 'agentcraft';
 
@@ -68,7 +69,7 @@ export function toolNames(role: 'lead' | 'worker'): string[] {
   return [...common, ...lead].map((n) => `mcp__${MCP_SERVER}__${n}`);
 }
 
-export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'worker', hooks: ToolHooks, turn?: TurnHandle): McpSdkServerConfigWithInstance {
+export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'worker', hooks: ToolHooks, turn?: TurnHandle, history?: SessionHistory): McpSdkServerConfigWithInstance {
   const withInbox = (text: string, isError = false): ToolResult => {
     const inbox = fm.bus.inbox(agentId, { markRead: true });
     const extra = inbox.length ? `\n\n[New messages]\n${formatInbox(inbox, (id) => fm.nameOf(id))}` : '';
@@ -230,6 +231,43 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
     ),
     tool('list_tasks', 'Show the task board (ids, status, assignee, deps).', {}, async () => withInbox(boardSummary(fm))),
   ];
+
+  if (history) {
+    tools.push(
+      tool(
+        'find_sessions',
+        `Search ${userName()}'s earlier Claude sessions (Claude Code / Claude Desktop) in these repositories' workspaces: by words (titles, prompts, files, PRs), by a branch they worked on, or by repository. Newest first without a query. Use it when a goal or task refers to earlier work ("continue what I started", "the session about X").`,
+        {
+          query: z.string().optional().describe('words to match'),
+          branch: z.string().optional().describe('a branch the session worked on'),
+          repo: z.string().optional().describe('repository id or name: only sessions in its workspace'),
+          days: z.number().int().positive().optional().describe('how far back (default from config)'),
+          limit: z.number().int().positive().max(25).optional(),
+        },
+        async ({ query, branch, repo, days, limit }) => {
+          let dir: string | undefined;
+          if (repo) {
+            const want = repo.trim().toLowerCase();
+            const r = fm.repos.list().find((x) => x.id.toLowerCase() === want || x.name.toLowerCase() === want);
+            if (!r) return fail(`no repository ${repo}`);
+            dir = r.path;
+          }
+          const found = await history.find({ ...(query ? { query } : {}), ...(branch ? { branch } : {}), ...(dir ? { dir } : {}), ...(days ? { days } : {}), limit: limit ?? 8 });
+          if (!found.length) return withInbox('No matching sessions.');
+          return withInbox(`${found.map(sessionLine).join('\n')}\n\nread_session(id) shows one.`);
+        },
+      ),
+      tool(
+        'read_session',
+        'Read one of the earlier sessions found with find_sessions: what was asked, what Claude concluded, commands and edits (tool output left out), most of it from the end, where it stopped.',
+        { id: z.string().describe('session id (or its first characters)'), max_chars: z.number().int().positive().max(60_000).optional() },
+        async ({ id, max_chars }) => {
+          const text = await history.read(id.trim(), max_chars ?? 20_000);
+          return text ? withInbox(text) : fail(`no session ${id} in scope (find_sessions lists them)`);
+        },
+      ),
+    );
+  }
 
   if (role === 'lead') {
     tools.push(

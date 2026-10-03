@@ -43,6 +43,12 @@ export interface AgentContextConfig {
    * sessions run with strictMcpConfig, so only AgentCraft's tools and mcpServers exist.
    */
   connectors: string[];
+  /**
+   * the user's earlier Claude sessions (Claude Code / Claude Desktop) agents may search and read
+   * (find_sessions / read_session), limited to sessions in the registered repos and their workspace
+   * folders; `days` = how far back (default 60). Off by default.
+   */
+  sessionHistory: { enabled: boolean; days: number };
 }
 
 export const DEFAULT_CONTEXT: AgentContextConfig = {
@@ -55,6 +61,7 @@ export const DEFAULT_CONTEXT: AgentContextConfig = {
   mcpServers: {},
   mcpAllow: [],
   connectors: [],
+  sessionHistory: { enabled: false, days: 60 },
 };
 
 export const SKILLS_PLUGIN = 'agentcraft-skills';

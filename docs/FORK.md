@@ -45,6 +45,8 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/workspace-repos` | workspace instructions above a repo, `baseBranch`, `protect`, repo `env` | after repo-settings |
 | `foreman/cross-repo-pr` | `land: "pr"` (push + `az`/`gh` PR on approval, squash as user), cross-repo goals; stacked on workspace-repos | after workspace-repos |
 | `foreman/lead-view` | the lead reads a read-only view of each repo's base (`_lead` worktree), not the user's checkout | after cross-repo-pr |
+| `foreman/goal-branch` | `on <branch>:` goals continue a user branch (view, tasks, land into it, ff push); `create_task base` | after lead-view |
+| `foreman/session-history` | agents search/read the user's earlier Claude sessions (`find_sessions`, `read_session`); branch goals get them automatically | after goal-branch |
 | `foreman/usage-banner` | plan usage windows in `foreman.status.usage` + console (stacked on `foreman/rate-limits`) | yes, after rate-limits |
 
 ## Build sequence

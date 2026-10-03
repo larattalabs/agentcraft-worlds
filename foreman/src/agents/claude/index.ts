@@ -36,6 +36,7 @@ import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
 import { buildSkillsPlugin, instructionsBlock, workspaceInstructionDirs } from './context.js';
+import { SessionHistory, sessionLine } from '../../history.js';
 import { connectorHook, guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
 import { type RepoRole, leadRepoContext, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
@@ -184,6 +185,8 @@ export class ClaudeBackend implements Backend {
   private limitBackoffMs = LIMIT_BACKOFF_MS;
   /** the Foreman's skills plugin (built at start from claude.context.skills) */
   private skillsPlugin: { path: string; ids: string[] } | undefined;
+  /** the user's earlier Claude sessions (claude.context.sessionHistory) */
+  private history: SessionHistory | undefined;
   /** subagent definitions from claude.subagents.agents (loaded at start) */
   private subagentDefs: Record<string, AgentDefinition> = {};
   /** role files that could not be read (warned once each) */
@@ -300,6 +303,16 @@ export class ClaudeBackend implements Backend {
       this.skillsPlugin ? `skills ${this.skillsPlugin.ids.map((i) => i.split(':')[1]).join(', ')}` : '',
       Object.keys(c.mcpServers).length ? `MCP ${Object.keys(c.mcpServers).join(', ')}` : '',
     ].filter(Boolean);
+    if (c.sessionHistory.enabled) {
+      this.history = new SessionHistory({
+        // the registered repositories and the workspace folders around them (and their Desktop scratchpads)
+        within: () => this.fm.repos.list().flatMap((r) => [r.path, ...workspaceInstructionDirs(r.path)]),
+        exclude: [this.fm.config.home],
+        indexFile: path.join(this.fm.config.dataDir, 'history-index.json'),
+        days: c.sessionHistory.days,
+      });
+      what.push(`session history (${c.sessionHistory.days} days)`);
+    }
     this.fm.log.info(`agent context: ${what.join('; ') || 'none'}`);
   }
 
@@ -736,7 +749,19 @@ export class ClaudeBackend implements Backend {
       }
     }
     const gb = this.st.goalBranch[goal.id];
-    this.enqueue({ kind: 'plan', agentId: LEAD, goalId: goal.id, sessionKey: `${LEAD}:${goal.id}`, fresh: true, prompt: planPrompt(this.fm, goal, repo.path, gb?.branch ?? repo.branch) });
+    let earlier = '';
+    if (gb && this.history) {
+      // the sessions that worked on that branch: the lead reads them before planning
+      const found = await this.history.find({ branch: gb.branch, limit: 3 }).catch((e) => {
+        this.fm.log.warn(`session history: ${(e as Error).message}`);
+        return [];
+      });
+      if (found.length) {
+        earlier = `\n\nEarlier Claude sessions that worked on ${gb.branch} (best match first):\n${found.map(sessionLine).join('\n')}\nRead the most relevant with read_session before planning (where it stopped, what was decided, what is left), and put what matters and the session id into the task descriptions.`;
+        this.fm.bus.feed('goal', `Found ${found.length} earlier session${found.length === 1 ? '' : 's'} on ${gb.branch} for Marlow to read`, { agentId: LEAD });
+      }
+    }
+    this.enqueue({ kind: 'plan', agentId: LEAD, goalId: goal.id, sessionKey: `${LEAD}:${goal.id}`, fresh: true, prompt: `${planPrompt(this.fm, goal, repo.path, gb?.branch ?? repo.branch)}${earlier}` });
   }
 
   private promoteGoal(goal: Goal, why: string): void {
@@ -1091,6 +1116,12 @@ export class ClaudeBackend implements Backend {
         const t = this.fm.tasks.require(job.taskId!);
         systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!), roleOf(agentId));
       }
+      if (this.history) {
+        systemAppend +=
+          role === 'lead'
+            ? `\n\n# Earlier sessions\n${userName()}'s earlier Claude sessions in these repositories are searchable (find_sessions, read_session). When a goal refers to earlier work, find and read the relevant session before planning, then put what a worker needs, and the session id, into the task description.`
+            : `\n\n# Earlier sessions\nIf your task names an earlier Claude session (an id), read it with read_session before you start; find_sessions searches others.`;
+      }
       const extra = instructionsBlock(this.cfg.context, cwd, userName(), os.homedir(), this.fm.repos.get(repoId)?.path);
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
       const { model, effort } = this.modelFor(agentId, role, job.taskId, role === 'worker' ? roleOf(agentId) : undefined);
@@ -1102,7 +1133,7 @@ export class ClaudeBackend implements Backend {
         settingSources: [],
         ...this.permissionOptions(agentId, role, cwd, turn, repoId),
         // the user's extra servers first, so the team tools server can never be replaced
-        mcpServers: { ...this.cfg.context.mcpServers, [MCP_SERVER]: buildMcpServer(this.fm, agentId, role, this.hooks, turn) },
+        mcpServers: { ...this.cfg.context.mcpServers, [MCP_SERVER]: buildMcpServer(this.fm, agentId, role, this.hooks, turn, this.history) },
         ...(this.skillsPlugin ? { plugins: [{ type: 'local' as const, path: this.skillsPlugin.path, skipMcpDiscovery: true }], skills: this.skillsPlugin.ids } : {}),
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
         abortController: abort,

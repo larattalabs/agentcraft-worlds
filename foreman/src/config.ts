@@ -236,6 +236,14 @@ function contextConfig(v: unknown): AgentContextConfig {
     mcpServers: servers,
     mcpAllow: strings(o.mcpAllow).filter((p) => p.startsWith('mcp__') && !p.startsWith('mcp__agentcraft__')),
     connectors: strings(o.connectors),
+    sessionHistory: ((h: unknown) => {
+      if (typeof h === 'boolean') return { enabled: h, days: DEFAULT_CONTEXT.sessionHistory.days };
+      const x = (h && typeof h === 'object' ? h : {}) as Record<string, unknown>;
+      return {
+        enabled: typeof x.enabled === 'boolean' ? x.enabled : DEFAULT_CONTEXT.sessionHistory.enabled,
+        days: typeof x.days === 'number' && x.days > 0 ? x.days : DEFAULT_CONTEXT.sessionHistory.days,
+      };
+    })(o.sessionHistory),
   };
 }
 
