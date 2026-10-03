@@ -1,7 +1,8 @@
 // Sim backend: deterministic scripted team working on a real sandbox repo.
 import type { SimConfig } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
-import type { Decision, Goal, Task } from '../../protocol.js';
+import type { Decision, Design, Goal, Task } from '../../protocol.js';
+import { SimDesigner } from './designer.js';
 import { truncate } from '../../util/text.js';
 import { SimDirector, Stopped, type SimState } from './director.js';
 import { BEATS, DEFAULT_SIM_GOAL } from './scenario.js';
@@ -21,11 +22,15 @@ export class SimBackend implements Backend {
   private replyCount = 0;
   /** resolves when the scenario reaches the showcase checkpoint or ends (tests) */
   private settledWaiters: Array<() => void> = [];
+  /** fake building design jobs (hub: Design new) */
+  readonly designer: SimDesigner;
 
   constructor(
     private fm: Foreman,
     private cfg: SimConfig,
-  ) {}
+  ) {
+    this.designer = new SimDesigner(fm, cfg.speed);
+  }
 
   get state(): SimState {
     const b = this.fm.store.data.backend;
@@ -139,7 +144,16 @@ export class SimBackend implements Backend {
 
   async stop(): Promise<void> {
     this.director?.stop();
+    await this.designer.stop();
     await this.running?.catch(() => undefined);
+  }
+
+  onDesignRequest(d: Design): void {
+    this.designer.request(d);
+  }
+
+  onDesignCancel(id: string): void {
+    this.designer.cancel(id);
   }
 
   onUserMessage(to: string, text: string): void {

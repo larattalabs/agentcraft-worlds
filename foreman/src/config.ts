@@ -30,6 +30,8 @@ export type TaskSize = 'small' | 'normal' | 'large';
 export interface ClaudeConfig {
   leadModel: string;
   workerModel: string;
+  /** model of the building design agent (design.request); default: the worker model */
+  designModel: string;
   effort: EffortLevel;
   leadEffort: EffortLevel;
   maxTurnsLead: number;
@@ -309,7 +311,7 @@ function effort(v: unknown, d: EffortLevel): EffortLevel {
 export const KNOWN_FLAGS = new Set([
   'home', 'backend', 'profile', 'user-name', 'use-claude-login', 'repo', 'workers', 'model', 'port', 'goal', 'autostart', 'reset', 'notify',
   'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges',
-  'lead-model', 'worker-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
+  'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
   'ambient',
 ]);
@@ -422,6 +424,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
     claude: {
       leadModel: str(flags['lead-model']) ?? model ?? str(env.AGENTCRAFT_LEAD_MODEL) ?? str(fileClaude.leadModel) ?? 'opus',
       workerModel: str(flags['worker-model']) ?? model ?? str(env.AGENTCRAFT_WORKER_MODEL) ?? str(fileClaude.workerModel) ?? 'sonnet',
+      designModel: '',
       effort: effort(flags.effort ?? fileClaude.effort, 'medium'),
       leadEffort: effort(flags['lead-effort'] ?? flags.effort ?? fileClaude.leadEffort, 'medium'),
       maxTurnsLead: num(flags['max-turns-lead'] ?? flags['max-turns'] ?? fileClaude.maxTurnsLead, 40),
@@ -449,6 +452,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       ambient: bool(flags.ambient ?? fileSim.ambient, true),
     },
   };
+  cfg.claude.designModel = str(flags['design-model']) ?? str(env.AGENTCRAFT_DESIGN_MODEL) ?? str(fileClaude.designModel) ?? cfg.claude.workerModel;
   if (cfg.sim.showcase) cfg.autostart = true;
   return cfg;
 }
@@ -490,6 +494,7 @@ usage: npm run start -- [options]
                            AGENTCRAFT_USE_CLAUDE_LOGIN=1, config.json claude.useClaudeLogin)
   --model <m>              model for lead and workers (default lead: opus, workers: sonnet)
   --lead-model <m> / --worker-model <m>
+  --design-model <m>       model of the building design agent (default: the worker model)
   --effort low|medium|high|xhigh|max   (default medium)
   --max-turns <n>          turn cap per session run (default lead 40 / worker 80)
   --workers <n|ids>        team size or comma list (default juniper,kit,wren)

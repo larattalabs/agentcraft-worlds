@@ -73,7 +73,15 @@ Client -> Foreman:
     "agentcraft"|"vanilla", features: string[], maxSize: {x,y,z}, remix?: string, notes?: string,
     outDir: string }` — `outDir` is the absolute `<gameDir>/agentcraft/blueprints` the mod reads
     user blueprints from.
-- `design.cancel` `{ id }`
+- `design.cancel` `{ designId }` (the envelope's `id` is the correlation id)
+
+As implemented (see `docs/protocol.md`): the ack's `result` is `{ designId, id }` (both the design
+id); `DesignRequest` also takes an optional `name` (display name; the blueprint id is
+`gen_<slug of name>`, else of the style); `style` is one of `modern`, `cabin`, `townhouse`,
+`workshop`, `campus`, `custom`; `features` are ids `porch`, `skylights`, `courtyard`,
+`big_windows`, `garden`; `single` has exactly 1 wing and `group` 2..8; `maxSize` x/z 9..128, y 6..48;
+`outDir` must be an absolute path ending in `agentcraft/blueprints` (anything else is refused).
+Design ids come from the decisions' counter, so a design id never equals a decision id.
 
 Foreman -> client:
 - `design.upsert` `{ design: Design }` (also in `snapshot.designs[]`)
@@ -89,7 +97,12 @@ Foreman -> client:
 - It writes `designs/<blueprintId>.mjs` as a parametric design with the kit (semantic, not raw
   coordinates), runs `build.mjs` (checker) and the offline renderer, looks at the PNGs, and iterates
   until the checker passes, the size is within `maxSize`, and the renders look right (max N rounds).
-- Permissions: the normal policy with `cwd` = the scratch dir; network off; no subagents needed.
+- Permissions: the normal policy with `cwd` = the scratch dir; network off; no subagents. Nothing
+  can prompt (no avatar to ask through): what the policy would ask about is refused with a reason.
+- The scratch dir mirrors the repo (`tools/blueprints`, `docs/BUILDINGS.md`, `BRIEF.md`), so
+  `node tools/blueprints/build.mjs <id>` works unchanged from its root. The Foreman restores a
+  pristine kit before its own check, so only `designs/<id>.mjs` counts. Max 4 agent turns (a failed
+  Foreman check goes back to the same session).
 - When done, the Foreman (not the agent) re-runs the checker and renderer, then copies
   `<blueprintId>.nbt`, `<blueprintId>.blueprint.json` and the preview PNGs
   (`<blueprintId>.preview-*.png`) into `outDir`, and reports `done` with the paths. Ids are

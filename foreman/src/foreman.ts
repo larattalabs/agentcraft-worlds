@@ -9,6 +9,7 @@ import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, type Ctx, type Logger } from './context.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
+import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { Memory, MemoryError } from './memory.js';
 import { Notifier } from './notifier.js';
 import type {
@@ -16,6 +17,8 @@ import type {
   AgentState,
   ClientMessage,
   Decision,
+  Design,
+  DesignRequest,
   ForemanStatus,
   Goal,
   GoalStatus,
@@ -48,6 +51,14 @@ export interface Backend {
   onMergeConflict?(task: Task, info: { base: string; branch: string; files: string[]; reason: string }): boolean;
   onTaskAction(task: Task, action: 'reassign' | 'cancel' | 'retry' | 'prioritize', arg?: string): void;
   onAgentAction(agentId: string, action: 'pause' | 'resume' | 'stop' | 'spawn', arg?: string): Promise<void> | void;
+  /**
+   * A building design was requested (status queued), or is picked up again after a restart. The
+   * backend runs it (one at a time) and reports through Foreman.designStep / designDone /
+   * designFailed. Without this method the backend cannot design (design.request is refused).
+   */
+  onDesignRequest?(design: Design): void;
+  /** The user cancelled a design (already marked cancelled): stop its turn, or drop it from the queue. */
+  onDesignCancel?(designId: string): void;
 }
 
 export type Reply = (msg: Outbound) => void;
@@ -72,6 +83,7 @@ export class Foreman {
   readonly memory: Memory;
   readonly decisions: DecisionQueue;
   readonly repos: RepoManager;
+  readonly designs: DesignBook;
   readonly notifier: Notifier;
   readonly log: Logger;
   readonly cast: CastMember[];
@@ -94,6 +106,7 @@ export class Foreman {
     this.bus = new MessageBus(this.ctx);
     this.memory = new Memory(this.ctx, path.join(opts.config.dataDir, 'memory'));
     this.decisions = new DecisionQueue(this.ctx);
+    this.designs = new DesignBook(this.ctx);
     this.repos = new RepoManager(this.ctx, path.join(opts.config.dataDir, 'worktrees'), { mergeStyle: opts.config.mergeStyle, signMerges: opts.config.signMerges, settings: opts.config.repoSettings });
     this.notifier =
       opts.notifier ??
@@ -492,6 +505,7 @@ export class Foreman {
       goals: this.goals().map((g) => ({ ...g })),
       feed: this.store.data.feed.slice(-200),
       logs: this.agents().map((a) => ({ agentId: a.id, entries: this.store.logTail(a.id).slice(-60) })),
+      designs: this.designs.recent(),
     };
   }
 
@@ -551,7 +565,73 @@ export class Foreman {
         this.bus.feed('system', `Repo connected: ${r.name} (${r.branch})`);
         return { repoId: r.id };
       }
+      case 'design.request': {
+        const d = this.requestDesign(msg.request);
+        return { designId: d.id, id: d.id };
+      }
+      case 'design.cancel':
+        this.cancelDesign(msg.designId);
+        return { designId: msg.designId };
     }
+  }
+
+  // ---- building designs ---------------------------------------------------------------------
+
+  requestDesign(request: DesignRequest): Design {
+    if (!this.backend) throw new ClientError('no backend running');
+    if (!this.backend.onDesignRequest) throw new ClientError(`the ${this.backend.name} backend cannot design buildings`);
+    if (this.status.auth === 'failed') throw new ClientError(`Claude is not available: ${this.status.message ?? 'auth failed'}`);
+    const bad = outDirProblem(request.outDir);
+    if (bad) throw new ClientError(`outDir ${bad}`);
+    const d = this.designs.create(request);
+    const queued = this.designs.active().filter((x) => x.id !== d.id).length;
+    this.bus.feed('system', `Design ${d.id} requested: ${describeRequest(request)}${queued ? ` (${queued} ahead in the queue)` : ''}`, { agentId: 'user' });
+    this.backend.onDesignRequest(d);
+    return d;
+  }
+
+  cancelDesign(id: string): Design {
+    const d = this.designs.get(id);
+    if (!d) throw new ClientError(`no design "${id}"`);
+    if (isFinalDesign(d)) throw new ClientError(`design ${id} is already ${d.status}`);
+    this.designs.update(id, { status: 'cancelled', step: `cancelled by ${userName()}` });
+    this.bus.feed('system', `Design ${id} cancelled by ${userName()}`, { agentId: 'user' });
+    try {
+      this.backend?.onDesignCancel?.(id);
+    } catch (e) {
+      this.log.error(`backend.onDesignCancel: ${(e as Error).message}`);
+    }
+    return d;
+  }
+
+  /** A design job's progress (status + one line). Ignored once the design is final. */
+  designStep(id: string, status: 'queued' | 'designing' | 'checking' | 'rendering', step: string): void {
+    const before = this.designs.get(id);
+    const first = before?.status === 'queued' && status === 'designing' && !before.step.startsWith('usage limit');
+    this.designs.update(id, { status, step });
+    if (first && before) this.bus.feed('system', `Design ${id} started: ${describeRequest(before.request)}`);
+  }
+
+  designDone(id: string, installed: Installed, size: { x: number; y: number; z: number }, note = ''): void {
+    const d = this.designs.get(id);
+    if (!d || isFinalDesign(d)) return;
+    this.designs.update(id, {
+      status: 'done',
+      step: `done: ${installed.blueprintId} (${size.x}x${size.y}x${size.z}), ${installed.previews.length} preview${installed.previews.length === 1 ? '' : 's'}${note ? `; ${note}` : ''}`,
+      blueprintId: installed.blueprintId,
+      size,
+      previews: installed.previews,
+    });
+    this.bus.feed('system', `Design ${id} is ready: blueprint ${installed.blueprintId} (${size.x}x${size.y}x${size.z}). Open the hub to review and place it.`);
+    this.notify('info', `New building design ready: ${installed.blueprintId}`);
+  }
+
+  designFailed(id: string, error: string): void {
+    const d = this.designs.get(id);
+    if (!d || isFinalDesign(d)) return;
+    this.designs.update(id, { status: 'failed', step: `failed: ${error.split('\n')[0]}`, error });
+    this.bus.feed('error', `Design ${id} failed: ${truncate(error.split('\n')[0] ?? error, 160)}`);
+    this.notify('warn', `Building design ${id} failed: ${truncate(error.split('\n')[0] ?? error, 120)}`);
   }
 
   async submitGoal(text: string, repoId?: string): Promise<Goal> {
@@ -652,6 +732,15 @@ export class Foreman {
     }
     this.repos.startPolling(this.config.repoPollMs);
     await backend.start();
+    // designs that were queued or running when the Foreman stopped
+    for (const d of this.designs.active()) {
+      if (!backend.onDesignRequest) {
+        this.designFailed(d.id, `the ${backend.name} backend cannot design buildings`);
+        continue;
+      }
+      this.designs.update(d.id, { status: 'queued', step: 'picked up again after a restart' });
+      backend.onDesignRequest(d);
+    }
   }
 
   async close(): Promise<void> {

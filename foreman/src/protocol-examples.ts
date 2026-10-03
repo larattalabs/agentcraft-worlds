@@ -1,6 +1,6 @@
 // One realistic example per message type. Used by docs/protocol.md generation and by the
 // protocol round-trip tests (every example must validate against its schema).
-import type { Agent, ClientMessage, Decision, MemoryEntry, Repo, ServerMessage, Task } from './protocol.js';
+import type { Agent, ClientMessage, Decision, Design, DesignRequest, MemoryEntry, Repo, ServerMessage, Task } from './protocol.js';
 
 const ts = 1790850000000;
 
@@ -88,6 +88,34 @@ const memory: MemoryEntry = {
   author: 'marlow',
 };
 
+const designRequest: DesignRequest = {
+  kind: 'single',
+  wings: 1,
+  style: 'cabin',
+  materials: 'agentcraft',
+  features: ['porch', 'big_windows'],
+  maxSize: { x: 24, y: 16, z: 20 },
+  name: 'Lakeside Cabin',
+  notes: 'cosy, a reading nook by the fire',
+  outDir: 'C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints',
+};
+
+const design: Design = {
+  id: 'd7',
+  request: designRequest,
+  status: 'done',
+  step: 'done: checker OK, 3 previews',
+  blueprintId: 'gen_lakeside_cabin',
+  size: { x: 23, y: 14, z: 19 },
+  previews: [
+    'C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-iso.png',
+    'C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-top.png',
+    'C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-front.png',
+  ],
+  createdAt: ts,
+  updatedAt: ts + 480_000,
+};
+
 type Ex<T> = Record<string, T>;
 
 export const SERVER_EXAMPLES: Ex<ServerMessage> = {
@@ -104,6 +132,7 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
     goals: [{ id: 'g1', text: 'Add #tags to pocket-notes', progress: 0.39, status: 'active', repoId: 'demo-app', createdAt: ts, updatedAt: ts + 120_000 }],
     feed: [{ ts: ts + 5_000, kind: 'plan', text: 'Marlow planned the goal into 9 tasks', agentId: 'marlow' }],
     logs: [{ agentId: 'kit', entries: [{ ts: ts + 90_000, kind: 'tool', text: 'Edit src/tags.ts' }] }],
+    designs: [design],
   },
   'agent.upsert': { v: 1, type: 'agent.upsert', agent },
   'agent.log': {
@@ -179,6 +208,7 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
     truncated: false,
   },
   notify: { v: 1, type: 'notify', level: 'need_user', text: 'Marlow: Merge t2 "Tag parser module" into main?', decisionId: 'd2', ts: ts + 120_000 },
+  'design.upsert': { v: 1, type: 'design.upsert', design },
   'foreman.status': { v: 1, type: 'foreman.status', status: { version: '0.1.0', backend: 'claude', auth: 'failed', message: 'Claude login check failed: not logged in. Run `claude` and /login, then restart the Foreman.' } },
   ack: { v: 1, type: 'ack', re: 'c12', ok: true, result: { goalId: 'g2' } },
   error: { v: 1, type: 'error', message: 'no agent named "kitt"', re: 'c13' },
@@ -193,4 +223,6 @@ export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
   'agent.action': { v: 1, type: 'agent.action', id: 'c16', agentId: 'juniper', action: 'pause' },
   'diff.request': { v: 1, type: 'diff.request', id: 'c17', requestId: 'r7', repoId: 'demo-app', worktree: 'kit-t2' },
   'repo.add': { v: 1, type: 'repo.add', id: 'c18', path: 'C:\\Projects\\agentcraft\\sandbox\\demo-app' },
+  'design.request': { v: 1, type: 'design.request', id: 'c19', request: designRequest },
+  'design.cancel': { v: 1, type: 'design.cancel', id: 'c20', designId: 'd7' },
 };

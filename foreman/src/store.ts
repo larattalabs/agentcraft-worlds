@@ -7,11 +7,12 @@
 //   <dir>/foreman.json          {pid, port, ...} of the Foreman running this profile (see runfile.ts)
 //   <dir>/memory/**.md          markdown memory (see memory.ts)
 //   <dir>/worktrees/<repo>/<wt> git worktrees for workers (see repos.ts)
+//   <dir>/designs/<designId>/   scratch dirs of building design jobs (see designs.ts)
 //
 // state.json is written atomically (temp + fsync + rename), debounced, and flushed on exit.
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Agent, Decision, FeedItem, Goal, LogEntry, Repo, Task } from './protocol.js';
+import type { Agent, Decision, Design, FeedItem, Goal, LogEntry, Repo, Task } from './protocol.js';
 import { ensureDir, readJson, writeJsonAtomic } from './util/fsx.js';
 
 export interface BusMessage {
@@ -57,6 +58,8 @@ export interface StateData {
   decisions: Decision[];
   repos: Repo[];
   goals: Goal[];
+  /** building design jobs (design.request), oldest first */
+  designs: Design[];
   feed: FeedItem[];
   messages: BusMessage[];
   counters: Record<string, number>;
@@ -104,6 +107,7 @@ function emptyState(now: number): StateData {
     decisions: [],
     repos: [],
     goals: [],
+    designs: [],
     feed: [],
     messages: [],
     counters: {},
