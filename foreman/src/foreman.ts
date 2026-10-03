@@ -681,7 +681,9 @@ export class Foreman {
         this.bus.feed('goal', `Goal closed: every task was cancelled or rejected (${truncate(g.text, 80)})`, { goalId });
         return;
       }
-      if (g.status === 'cancelled' && live.length) this.setGoal(goalId, { status: 'active' });
+      // a cancelled goal is active again once it has open work (the lead added or retried a task);
+      // tasks done before a goal.cancel do not re-open it
+      if (g.status === 'cancelled' && live.some((t) => t.status !== 'done')) this.setGoal(goalId, { status: 'active' });
       // progress stays 0 while the lead is still planning (avoids a jittering ring)
       if (g.status === 'cancelled' || g.status === 'failed' || g.status === 'planning') return;
       const progress = this.tasks.progress(goalId);

@@ -146,7 +146,7 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
       );
       d.doneNoCode('t1', 'Plan written to shared memory (Plan: #tags for pocket-notes).');
       d.fm.setGoal(d.goalId, { status: 'active' });
-      d.fm.bus.feed('plan', `${d.fm.nameOf(d.lead)} planned ${goal.text.slice(0, 60)}... into 9 tasks`, { agentId: d.lead });
+      d.fm.bus.feed('plan', `${d.fm.nameOf(d.lead)} planned ${goal.text.slice(0, 60)}... into 9 tasks`, { agentId: d.lead, goalId: d.goalId });
       await d.sleep(500);
       d.act(d.lead, 'idle', 'meeting', 'briefing the team');
       d.say(d.lead, 'all', `Plan is in shared memory. Kit: tag parser first (${t2.id}). Wren: tag highlighting (${t4.id}). Juniper: the CLI once Kit's parser lands. Tove: docs + QA. Rowan: reviews every branch.`);
@@ -258,7 +258,7 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
     async run(d) {
       const outcome = await d.settleMerge('t2', 'kit', 'src/tags.ts');
       if (outcome === 'rejected') return;
-      d.fm.bus.feed('task', `${d.task('t3').id} and ${d.task('t5').id} are unblocked`, { agentId: d.lead });
+      d.fm.bus.feed('task', `${d.task('t3').id} and ${d.task('t5').id} are unblocked`, { agentId: d.lead, goalId: d.goalId });
     },
   },
   {
@@ -505,7 +505,7 @@ export const SIDE_BEATS: Beat[] = [
       d.log(lead, 'tool', `create_task "${t.title}"`);
       d.memory(lead, 'shared', `Plan: ${goal.text.slice(0, 60)}`, `# Plan: ${goal.text}\n\n- ${t.id} ${t.title} - the first free worker\n\n${d.fm.nameOf(lead)} reviews it, then it goes to ${userName()} as a merge decision.`, 'replace', `plan-${goal.id}`);
       d.fm.setGoal(d.goalId, { status: 'active' });
-      d.fm.bus.feed('plan', `${d.fm.nameOf(lead)} planned ${goal.text.slice(0, 60)} into 1 task`, { agentId: lead });
+      d.fm.bus.feed('plan', `${d.fm.nameOf(lead)} planned ${goal.text.slice(0, 60)} into 1 task`, { agentId: lead, goalId: d.goalId });
       d.act(lead, 'idle', 'meeting', 'waiting for a free worker');
     },
   },
