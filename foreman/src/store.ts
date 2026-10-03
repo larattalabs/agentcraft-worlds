@@ -48,6 +48,8 @@ export interface WorktreeMeta {
   prBranch?: string;
   prPushedSha?: string;
   prUrl?: string;
+  /** a PR fold-in by another worker: the earlier worktree's branch tip (for Co-authored-by) */
+  prevTip?: string;
 }
 
 export interface StateData {
