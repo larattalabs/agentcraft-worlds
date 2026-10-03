@@ -10,6 +10,8 @@ import dev.agentcraft.client.foreman.Protocol.AgentUpsert;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.DecisionKind;
 import dev.agentcraft.client.foreman.Protocol.DecisionUpsert;
+import dev.agentcraft.client.foreman.Protocol.Design;
+import dev.agentcraft.client.foreman.Protocol.DesignUpsert;
 import dev.agentcraft.client.foreman.Protocol.FeedAdd;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.ForemanStatus;
@@ -42,7 +44,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The client-side model of the Foreman's state: agents, tasks, decisions, repos, memory, goals,
- * feed, per-agent log tails, the latest speech per agent, recent notifications, the Foreman status
+ * building designs, feed, per-agent log tails, the latest speech per agent, recent notifications, the Foreman status
  * and the link state.
  *
  * <p><b>Threading:</b> mutated only on the client (render) thread (the link parses frames on its
@@ -65,6 +67,7 @@ public final class ForemanState {
 	private final Map<String, Repo> repos = new LinkedHashMap<>();
 	private final Map<String, MemoryEntry> memory = new LinkedHashMap<>();
 	private final Map<String, Goal> goals = new LinkedHashMap<>();
+	private final Map<String, Design> designs = new LinkedHashMap<>();
 	private final Map<String, Deque<LogEntry>> logs = new HashMap<>();
 	private final Map<String, AgentSay> lastSay = new HashMap<>();
 	private final Deque<FeedItem> feed = new ArrayDeque<>();
@@ -163,6 +166,15 @@ public final class ForemanState {
 	/** All goals, oldest first. */
 	public Map<String, Goal> goals() {
 		return Collections.unmodifiableMap(goals);
+	}
+
+	/** Building designs (the Foreman's recent ones, oldest first; queued/running ones always included). */
+	public Map<String, Design> designs() {
+		return Collections.unmodifiableMap(designs);
+	}
+
+	public @Nullable Design design(String id) {
+		return designs.get(id);
 	}
 
 	/** Most recent feed items, oldest first (bounded to {@value #FEED_TAIL}); a read-only live view. */
@@ -429,6 +441,13 @@ public final class ForemanState {
 					fire(l -> l.onGoal(prev, g));
 				}
 			}
+			case "design.upsert" -> {
+				Design d = ForemanJson.read(json, DesignUpsert.class).design();
+				if (d != null && d.id() != null) {
+					Design prev = designs.put(d.id(), d);
+					fire(l -> l.onDesign(prev, d));
+				}
+			}
 			case "feed.add" -> {
 				FeedItem item = ForemanJson.read(json, FeedAdd.class).item();
 				if (item != null) {
@@ -462,6 +481,7 @@ public final class ForemanState {
 		repos.clear();
 		memory.clear();
 		goals.clear();
+		designs.clear();
 		logs.clear();
 		feed.clear();
 		for (Agent a : s.agents()) {
@@ -492,6 +512,11 @@ public final class ForemanState {
 		for (Goal g : s.goals()) {
 			if (g != null && g.id() != null) {
 				goals.put(g.id(), g);
+			}
+		}
+		for (Design d : s.designs()) {
+			if (d != null && d.id() != null) {
+				designs.put(d.id(), d);
 			}
 		}
 		goal = s.goal();

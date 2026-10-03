@@ -3,6 +3,7 @@ package dev.agentcraft.client.foreman;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.AgentSay;
 import dev.agentcraft.client.foreman.Protocol.Decision;
+import dev.agentcraft.client.foreman.Protocol.Design;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.ForemanStatus;
 import dev.agentcraft.client.foreman.Protocol.Goal;
@@ -46,6 +47,10 @@ public interface ForemanListener {
 	}
 
 	default void onGoal(@Nullable Goal previous, Goal goal) {
+	}
+
+	/** A building design was requested or progressed ({@code design.upsert}). */
+	default void onDesign(@Nullable Design previous, Design design) {
 	}
 
 	default void onFeed(FeedItem item) {
