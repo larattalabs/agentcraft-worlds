@@ -23,6 +23,9 @@ import net.minecraft.client.Minecraft;
  * <pre>
  * AGENTCRAFT_PORT     Foreman port (default 7878), always 127.0.0.1
  * AGENTCRAFT_FOREMAN  0 disables the link (the HUD then says so)
+ * AGENTCRAFT_HOME     the Foreman's home (default ~/.agentcraft): its run files name the client token
+ * AGENTCRAFT_PROFILE  the Foreman's profile (its run file is looked at first)
+ * AGENTCRAFT_CLIENT_TOKEN  the client token itself (overrides the run files; dev)
  * </pre>
  */
 public final class ForemanFeature {
@@ -39,6 +42,7 @@ public final class ForemanFeature {
 			uri.toString(), 0, null, System.currentTimeMillis(), System.currentTimeMillis(), false));
 		// Executor: the client thread. Minecraft.getInstance() is resolved lazily (it does not exist yet during init).
 		ForemanLink link = new ForemanLink(uri, modVersion, state, r -> Minecraft.getInstance().execute(r), enabled);
+		link.setTokenSource(() -> clientToken(port));
 		Foreman.install(state, link);
 		ClientLifecycleEvents.CLIENT_STARTED.register(mc -> link.start());
 		ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> link.stop());
@@ -115,6 +119,18 @@ public final class ForemanFeature {
 					return o;
 				});
 			});
+	}
+
+	/** The client token for {@code hello} (docs/HUB.md "Client token"); read on every connect. */
+	static dev.agentcraft.hub.ClientToken.Found clientToken(int port) {
+		String direct = ClientEnv.raw("AGENTCRAFT_CLIENT_TOKEN");
+		if (direct != null) {
+			return new dev.agentcraft.hub.ClientToken.Found(direct, null, null, "from AGENTCRAFT_CLIENT_TOKEN");
+		}
+		String home = ClientEnv.raw("AGENTCRAFT_HOME");
+		java.nio.file.Path h = home != null ? java.nio.file.Path.of(home.startsWith("~/") ? System.getProperty("user.home") + home.substring(1) : home)
+			: java.nio.file.Path.of(System.getProperty("user.home"), ".agentcraft");
+		return dev.agentcraft.hub.ClientToken.resolve(h.toAbsolutePath(), ClientEnv.raw("AGENTCRAFT_PROFILE"), port);
 	}
 
 	/**
@@ -200,6 +216,17 @@ public final class ForemanFeature {
 		o.addProperty("lastMessageAgoMs", s.lastMessageAt() == 0 ? -1 : System.currentTimeMillis() - s.lastMessageAt());
 		o.addProperty("stale", s.isStale());
 		o.addProperty("held", s.isHeld());
+		dev.agentcraft.hub.ClientToken.Found tok = Foreman.link().lastToken();
+		JsonObject tokJson = new JsonObject();
+		tokJson.addProperty("sent", tok != null && tok.token() != null);
+		tokJson.addProperty("runFile", tok == null || tok.runFile() == null ? null : tok.runFile().toString());
+		tokJson.addProperty("tokenFile", tok == null || tok.tokenFile() == null ? null : tok.tokenFile().toString());
+		tokJson.addProperty("note", tok == null ? null : tok.note());
+		o.add("clientToken", tokJson);
+		o.addProperty("readOnly", s.readOnly());
+		com.google.gson.JsonArray rr = new com.google.gson.JsonArray();
+		s.restartRequired().forEach(rr::add);
+		o.add("restartRequired", rr);
 		o.addProperty("heldQueued", s.heldCount());
 		ForemanStatus fs = s.status();
 		o.addProperty("backend", fs == null ? null : fs.backend().wire());

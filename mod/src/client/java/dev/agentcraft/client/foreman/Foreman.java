@@ -132,6 +132,31 @@ public final class Foreman {
 		return link.send(ForemanJson.msg("pr.refresh").put("taskId", taskId).json());
 	}
 
+	// ------------------------------------------------------------------ Team and Settings tabs (docs/HUB.md)
+
+	/** {@code config.get}: the global settings, or that repo's {@code repoSettings} ({@code repoId}); ack result {@code {file, settings}}. */
+	public static CompletableFuture<Ack> configGet(@Nullable String repoId) {
+		return link.send(ForemanJson.msg("config.get").put("repoId", repoId).json());
+	}
+
+	/**
+	 * {@code config.set}: validated all or nothing, written atomically; ack result {@code {applied, restartRequired, overridden}}.
+	 * {@code changes}: {@code [{key, value}]} (value JSON, null clears).
+	 */
+	public static CompletableFuture<Ack> configSet(@Nullable String repoId, com.google.gson.JsonArray changes) {
+		return link.send(ForemanJson.msg("config.set").put("repoId", repoId).put("changes", changes).json());
+	}
+
+	/** {@code foreman.restart}: the Foreman restarts itself with the same arguments; the link reconnects. */
+	public static CompletableFuture<Ack> restart() {
+		return link.send(ForemanJson.msg("foreman.restart").json());
+	}
+
+	/** {@code repo.agents}: the repo's {@code .claude/agents} files; ack result {@code {agents: [{name, path, description?, model?}]}}. */
+	public static CompletableFuture<Ack> repoAgents(String repoId) {
+		return link.send(ForemanJson.msg("repo.agents").put("repoId", repoId).json());
+	}
+
 	/** The digest in a {@code goal.digest} ack's result, or null when it has none. */
 	public static Protocol.@Nullable Digest digestOf(Ack ack) {
 		if (!ack.ok() || ack.result() == null) {
@@ -160,10 +185,19 @@ public final class Foreman {
 		return e.startsWith("type:") || e.contains("discriminator") || e.contains("unknown message type") || e.contains("unknown type");
 	}
 
-	/** The line to show for a refusal: "needs a newer Foreman" for an unknown type, else the Foreman's error. */
+	/** What a read-only refusal says (the Foreman did not accept the client token; docs/HUB.md "Client token"). */
+	public static final String READ_ONLY = "Foreman did not accept the client token (read-only connection)";
+
+	/**
+	 * The line to show for a refusal: "needs a newer Foreman" for an unknown type, the client-token line for a
+	 * read-only connection, else the Foreman's error.
+	 */
 	public static String refusal(String what, @Nullable Ack ack) {
 		if (unsupported(ack)) {
 			return what + " needs a newer Foreman";
+		}
+		if (ack != null && ForemanState.isReadOnlyError(ack.error())) {
+			return what + " refused: " + READ_ONLY;
 		}
 		return what + " refused: " + (ack == null || ack.error() == null ? "no reason given" : ack.error());
 	}

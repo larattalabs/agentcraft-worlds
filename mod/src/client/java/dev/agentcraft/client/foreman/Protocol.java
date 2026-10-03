@@ -338,8 +338,10 @@ public final class Protocol {
 		}
 	}
 
+	/** {@code restartRequired}: config keys written but waiting for a Foreman restart (Settings tab); null on an older Foreman. */
 	public record ForemanStatus(String version, BackendName backend, AuthStatus auth, @Nullable String message, @Nullable String account,
-		@Nullable Double speed, @Nullable Boolean showcase, @Nullable Double costUsd, @Nullable String userName, @Nullable PlanUsage usage) {
+		@Nullable Double speed, @Nullable Boolean showcase, @Nullable Double costUsd, @Nullable String userName, @Nullable PlanUsage usage,
+		@Nullable List<String> restartRequired) {
 		public ForemanStatus {
 			version = version == null ? "?" : version;
 			backend = backend == null ? BackendName.UNKNOWN : backend;
@@ -513,6 +515,21 @@ public final class Protocol {
 	}
 
 	public record ForemanStatusMsg(ForemanStatus status) {
+	}
+
+	/** {@code config.changed}: a {@code config.set} (by any client) changed these keys; {@code restartRequired} wait for a restart. */
+	public record ConfigChanged(List<String> keys, List<String> restartRequired) {
+		public ConfigChanged {
+			keys = keys == null ? List.of() : List.copyOf(keys);
+			restartRequired = restartRequired == null ? List.of() : List.copyOf(restartRequired);
+		}
+	}
+
+	/** One of a repo's {@code .claude/agents} files ({@code repo.agents} ack), for the roles picker. */
+	public record RepoAgentFile(String name, @Nullable String path, @Nullable String description, @Nullable String model) {
+		public RepoAgentFile {
+			name = name == null ? "" : name;
+		}
 	}
 
 	/** Reply to a client message with an id. {@code result} e.g. {goalId} for goal.submit. */

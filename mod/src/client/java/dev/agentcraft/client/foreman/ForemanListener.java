@@ -72,6 +72,10 @@ public interface ForemanListener {
 	default void onStatus(ForemanStatus status) {
 	}
 
+	/** {@code config.changed}: settings were written (by this or another client); refetch what you show. */
+	default void onConfigChanged(Protocol.ConfigChanged changed) {
+	}
+
 	/** Any change at all (after the specific callback). Cheap hook for "something to redraw". */
 	default void onChange(long revision) {
 	}

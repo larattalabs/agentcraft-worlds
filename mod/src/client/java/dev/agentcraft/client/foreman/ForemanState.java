@@ -83,6 +83,13 @@ public final class ForemanState {
 	private long snapshotAt;
 	private long lastMessageAt;
 	private int snapshots;
+	/** The Foreman refused an action as "read-only connection" (no valid client token) since this connection opened. */
+	private boolean readOnly;
+	private @Nullable String readOnlyError;
+	/** Config keys waiting for a Foreman restart (foreman.status.restartRequired, config.changed, config.set acks). */
+	private final java.util.LinkedHashSet<String> restartRequired = new java.util.LinkedHashSet<>();
+	/** Increments on every config.changed. */
+	private long configRevision;
 
 	private final List<ForemanListener> listeners = new CopyOnWriteArrayList<>();
 
@@ -269,6 +276,50 @@ public final class ForemanState {
 		}
 	}
 
+	/**
+	 * True once the Foreman refused something with "read-only connection": it did not accept the client token
+	 * (docs/HUB.md "Client token"). Cleared when the connection drops (the next one sends a fresh token).
+	 */
+	public boolean readOnly() {
+		return readOnly;
+	}
+
+	public @Nullable String readOnlyError() {
+		return readOnlyError;
+	}
+
+	/** A refusal said "read-only connection". Client thread. */
+	public void markReadOnly(String error) {
+		if (!readOnly) {
+			readOnly = true;
+			readOnlyError = error;
+			fire(l -> {
+			});
+		}
+	}
+
+	/** Whether an error text is the Foreman's read-only refusal. */
+	public static boolean isReadOnlyError(@Nullable String error) {
+		return error != null && error.toLowerCase(java.util.Locale.ROOT).contains("read-only connection");
+	}
+
+	/** Config keys written but not in effect until the Foreman restarts (in Foreman order of report). */
+	public List<String> restartRequired() {
+		return List.copyOf(restartRequired);
+	}
+
+	/** Adds keys a config.set ack reported as needing a restart. Client thread. */
+	public void addRestartRequired(java.util.Collection<String> keys) {
+		if (restartRequired.addAll(keys)) {
+			fire(l -> {
+			});
+		}
+	}
+
+	public long configRevision() {
+		return configRevision;
+	}
+
 	// ------------------------------------------------------------------ listeners
 
 	public void addListener(ForemanListener l) {
@@ -294,6 +345,10 @@ public final class ForemanState {
 	// ------------------------------------------------------------------ mutation (client thread, from ForemanLink)
 
 	void setLink(LinkStatus status) {
+		if (!status.synced()) {
+			readOnly = false;
+			readOnlyError = null;
+		}
 		this.link = status;
 		fire(l -> l.onConnection(status));
 	}
@@ -498,8 +553,18 @@ public final class ForemanState {
 				ForemanStatus s = ForemanJson.read(json, ForemanStatusMsg.class).status();
 				if (s != null) {
 					status = s;
+					if (s.restartRequired() != null) {
+						restartRequired.clear();
+						restartRequired.addAll(s.restartRequired());
+					}
 					fire(l -> l.onStatus(s));
 				}
+			}
+			case "config.changed" -> {
+				Protocol.ConfigChanged c = ForemanJson.read(json, Protocol.ConfigChanged.class);
+				restartRequired.addAll(c.restartRequired());
+				configRevision++;
+				fire(l -> l.onConfigChanged(c));
 			}
 			default -> {
 				return false;
@@ -570,6 +635,10 @@ public final class ForemanState {
 		// speech bubbles are transient: drop the ones of agents that no longer exist
 		lastSay.keySet().retainAll(agents.keySet());
 		status = s.foreman();
+		restartRequired.clear();
+		if (status != null && status.restartRequired() != null) {
+			restartRequired.addAll(status.restartRequired());
+		}
 		leads = s.leads() == null ? null : cleanLeads(s.leads());
 		snapshots++;
 		snapshotAt = System.currentTimeMillis();
