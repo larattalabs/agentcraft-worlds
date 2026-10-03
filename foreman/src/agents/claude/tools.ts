@@ -25,6 +25,8 @@ export interface ToolHooks {
   onMergeRequested(taskId: string, decision: Decision): void;
   /** agent is blocked waiting for the user */
   onWaiting(agentId: string, waiting: boolean): void;
+  /** the lead wrote a shared "Plan: ..." note during a turn for this goal */
+  onPlanWritten?(goalId: string, memoryId: string): void;
 }
 
 /** The turn a tool server belongs to: once it is aborted, tools refuse to act. */
@@ -32,6 +34,8 @@ export interface TurnHandle {
   signal: AbortSignal;
   /** why it was aborted: pause | stop | shutdown | cancel | timeout */
   reason(): string | undefined;
+  /** the goal this turn works for, if any */
+  goalId?: string;
 }
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
@@ -142,6 +146,7 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
       },
       async ({ title, body, scope, mode }) => {
         const e = fm.memory.write({ scope: scope === 'private' ? agentId : 'shared', title, body, author: agentId, mode: mode ?? 'replace' });
+        if (role === 'lead' && turn?.goalId && e.scope === 'shared' && /^plan\b/i.test(e.title)) hooks.onPlanWritten?.(turn.goalId, e.id);
         fm.bus.feed('memory', `${fm.nameOf(agentId)} wrote memory: ${e.title}`, { agentId });
         return withInbox(`Saved memory ${e.id}.`);
       },

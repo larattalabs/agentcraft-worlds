@@ -71,6 +71,8 @@ interface ClaudeState {
   ciFixes: Record<string, number>;
   /** agents the user stopped (off shift until resume/spawn) */
   stopped: string[];
+  /** goal id -> memory id of the plan the lead wrote for it */
+  plans: Record<string, string>;
 }
 
 interface Running {
@@ -166,6 +168,10 @@ export class ClaudeBackend implements Backend {
         if (waiting) this.waitingUser.add(agentId);
         else this.waitingUser.delete(agentId);
       },
+      onPlanWritten: (goalId, memoryId) => {
+        this.st.plans[goalId] = memoryId;
+        this.fm.store.markDirty();
+      },
     };
   }
 
@@ -173,12 +179,13 @@ export class ClaudeBackend implements Backend {
     const b = this.fm.store.data.backend;
     let s = b.claude as ClaudeState | undefined;
     if (!s) {
-      s = { inflight: {}, ciFixes: {}, stopped: [] };
+      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {} };
       b.claude = s;
     }
     s.inflight ??= {};
     s.ciFixes ??= {};
     s.stopped ??= [];
+    s.plans ??= {};
     return s;
   }
 
@@ -559,7 +566,7 @@ export class ClaudeBackend implements Backend {
     this.fm.setAgent(agentId, { taskId: t.id, repoId: t.repoId!, worktree: wt.id, state: 'thinking', station: 'desk', activity: `starting ${t.id}` });
     this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId });
     const inbox = formatInbox(this.fm.bus.inbox(agentId, { markRead: true }), (id) => this.fm.nameOf(id));
-    this.enqueue({ kind: 'work', agentId, taskId: t.id, goalId: goal.id, sessionKey: `${agentId}:${t.id}`, fresh: !this.fm.store.data.sessions[`${agentId}:${t.id}`]?.sessionId, prompt: workPrompt(this.fm, t, goal, wt, inbox, continuesFrom) });
+    this.enqueue({ kind: 'work', agentId, taskId: t.id, goalId: goal.id, sessionKey: `${agentId}:${t.id}`, fresh: !this.fm.store.data.sessions[`${agentId}:${t.id}`]?.sessionId, prompt: workPrompt(this.fm, t, goal, wt, inbox, continuesFrom, this.st.plans[goal.id]) });
   }
 
   // ---- job queue ----------------------------------------------------------------------------
@@ -666,7 +673,7 @@ export class ClaudeBackend implements Backend {
     const agentId = job.agentId;
     const abort = new AbortController();
     const entry: Running = { abort, job };
-    const turn: TurnHandle = { signal: abort.signal, reason: () => entry.reason };
+    const turn: TurnHandle = { signal: abort.signal, reason: () => entry.reason, ...(job.goalId ? { goalId: job.goalId } : {}) };
     // (pump records this turn as lastTurn right after this synchronous part: this is the previous one)
     const previous = this.lastTurn.get(agentId);
     this.running.set(agentId, entry);
