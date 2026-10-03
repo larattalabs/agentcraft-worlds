@@ -38,13 +38,14 @@ export const BEATS: Beat[] = [
   {
     name: 'kickoff',
     async run(d) {
-      for (const a of d.fm.agents()) d.fm.setAgent(a.id, { active: true, paused: false });
+      // the team and this goal's lead (other building leads keep to their own goals)
+      for (const a of d.fm.agents()) if (a.role !== 'lead' || a.id === d.lead) d.fm.setAgent(a.id, { active: true, paused: false });
       const goal = d.fm.goal(d.goalId)!;
-      d.act('marlow', 'thinking', 'meeting', 'reading the goal');
-      d.log('marlow', 'text', `New goal from ${userName()}: ${goal.text}`);
-      for (const w of ['juniper', 'kit', 'wren', 'rowan', 'tove']) d.act(w, 'idle', 'meeting', 'listening to Marlow');
+      d.act(d.lead, 'thinking', 'meeting', 'reading the goal');
+      d.log(d.lead, 'text', `New goal from ${userName()}: ${goal.text}`);
+      for (const w of ['juniper', 'kit', 'wren', 'rowan', 'tove']) d.act(w, 'idle', 'meeting', `listening to ${d.fm.nameOf(d.lead)}`);
       await d.sleep(1200);
-      d.say('marlow', 'all', `Morning, team. New goal from ${userName()}: ${goal.text}. Give me a minute with the repo.`);
+      d.say(d.lead, 'all', `Morning, team. New goal from ${userName()}: ${goal.text}. Give me a minute with the repo.`);
       await d.sleep(1500);
       for (const w of ['juniper', 'kit', 'wren', 'rowan', 'tove']) d.act(w, 'idle', 'lounge', 'waiting for the plan');
     },
@@ -53,52 +54,52 @@ export const BEATS: Beat[] = [
     name: 'explore',
     async run(d) {
       const root = d.repoPath;
-      await d.read('marlow', root, 'README.md');
-      await d.read('marlow', root, 'package.json');
-      await d.glob('marlow', root, 'src/**/*.ts');
-      await d.read('marlow', root, 'src/cli.ts', 1300);
-      await d.read('marlow', root, 'src/notes.ts');
-      await d.grep('marlow', root, '^export function');
-      await d.read('marlow', root, 'test/cli.test.ts');
-      const ok = await d.runTests('marlow');
-      d.log('marlow', 'text', ok ? 'Baseline is green. No tag support anywhere yet; notes are plain text, so tags can be derived on read (no storage migration).' : 'Baseline tests fail - noting it in the plan.');
+      await d.read(d.lead, root, 'README.md');
+      await d.read(d.lead, root, 'package.json');
+      await d.glob(d.lead, root, 'src/**/*.ts');
+      await d.read(d.lead, root, 'src/cli.ts', 1300);
+      await d.read(d.lead, root, 'src/notes.ts');
+      await d.grep(d.lead, root, '^export function');
+      await d.read(d.lead, root, 'test/cli.test.ts');
+      const ok = await d.runTests(d.lead);
+      d.log(d.lead, 'text', ok ? 'Baseline is green. No tag support anywhere yet; notes are plain text, so tags can be derived on read (no storage migration).' : 'Baseline tests fail - noting it in the plan.');
       await d.sleep(800);
     },
   },
   {
     name: 'plan',
     async run(d) {
-      await d.think('marlow', 'Splitting the goal into tasks with dependencies', 'desk', 1600);
-      const t1 = d.ensureTask('t1', { title: 'Explore repo & draft plan', createdBy: 'marlow', assignee: 'marlow' });
+      await d.think(d.lead, 'Splitting the goal into tasks with dependencies', 'desk', 1600);
+      const t1 = d.ensureTask('t1', { title: 'Explore repo & draft plan', createdBy: d.lead, assignee: d.lead });
       d.setTask('t1', 'doing');
-      const t2 = d.ensureTask('t2', { title: 'Tag parser module (src/tags.ts)', description: 'parseTags/hasTag/normalizeTag: lowercase, de-duplicated, "-" and "_" allowed, "issue#12" is not a tag. Unit tests.', deps: ['t1'], assignee: 'kit', createdBy: 'marlow', priority: 2 });
-      d.log('marlow', 'tool', `create_task "${t2.title}"`);
+      const t2 = d.ensureTask('t2', { title: 'Tag parser module (src/tags.ts)', description: 'parseTags/hasTag/normalizeTag: lowercase, de-duplicated, "-" and "_" allowed, "issue#12" is not a tag. Unit tests.', deps: ['t1'], assignee: 'kit', createdBy: d.lead, priority: 2 });
+      d.log(d.lead, 'tool', `create_task "${t2.title}"`);
       await d.sleep(400);
-      const t3 = d.ensureTask('t3', { title: '`notes list --tag` + `notes tags`', description: 'Filter list by tag; new `tags` command with usage counts. Uses src/tags.ts.', deps: ['t2'], assignee: 'juniper', createdBy: 'marlow', priority: 1 });
-      d.log('marlow', 'tool', `create_task "${t3.title}"`);
+      const t3 = d.ensureTask('t3', { title: '`notes list --tag` + `notes tags`', description: 'Filter list by tag; new `tags` command with usage counts. Uses src/tags.ts.', deps: ['t2'], assignee: 'juniper', createdBy: d.lead, priority: 1 });
+      d.log(d.lead, 'tool', `create_task "${t3.title}"`);
       await d.sleep(400);
-      const t4 = d.ensureTask('t4', { title: 'Highlight #tags in list output', description: 'Cyan tags when printing to a terminal; formatNote/formatList take {color}. No new dependencies.', deps: ['t1'], assignee: 'wren', createdBy: 'marlow', priority: 1 });
-      d.log('marlow', 'tool', `create_task "${t4.title}"`);
+      const t4 = d.ensureTask('t4', { title: 'Highlight #tags in list output', description: 'Cyan tags when printing to a terminal; formatNote/formatList take {color}. No new dependencies.', deps: ['t1'], assignee: 'wren', createdBy: d.lead, priority: 1 });
+      d.log(d.lead, 'tool', `create_task "${t4.title}"`);
       await d.sleep(400);
-      const t5 = d.ensureTask('t5', { title: 'Tag edge cases: unicode & punctuation', description: 'Tests + fixes for #café, #crème-brûlée, trailing punctuation.', deps: ['t2'], assignee: 'kit', createdBy: 'marlow' });
-      d.log('marlow', 'tool', `create_task "${t5.title}"`);
+      const t5 = d.ensureTask('t5', { title: 'Tag edge cases: unicode & punctuation', description: 'Tests + fixes for #café, #crème-brûlée, trailing punctuation.', deps: ['t2'], assignee: 'kit', createdBy: d.lead });
+      d.log(d.lead, 'tool', `create_task "${t5.title}"`);
       await d.sleep(400);
-      const t6 = d.ensureTask('t6', { title: 'README + help text for tags', description: 'Document tags; update `notes help`; enable colors on a TTY.', deps: ['t3', 't4'], assignee: 'tove', createdBy: 'marlow' });
-      d.log('marlow', 'tool', `create_task "${t6.title}"`);
+      const t6 = d.ensureTask('t6', { title: 'README + help text for tags', description: 'Document tags; update `notes help`; enable colors on a TTY.', deps: ['t3', 't4'], assignee: 'tove', createdBy: d.lead });
+      d.log(d.lead, 'tool', `create_task "${t6.title}"`);
       await d.sleep(400);
-      const t7 = d.ensureTask('t7', { title: 'Publish 0.3.0 to npm', description: `Needs ${userName()}: agents never publish or push.`, deps: ['t6'], createdBy: 'marlow', priority: -1 });
+      const t7 = d.ensureTask('t7', { title: 'Publish 0.3.0 to npm', description: `Needs ${userName()}: agents never publish or push.`, deps: ['t6'], createdBy: d.lead, priority: -1 });
       d.setTask('t7', 'blocked', { reason: `needs ${userName()}'s npm credentials - agents never publish` });
-      d.log('marlow', 'tool', `create_task "${t7.title}" (blocked)`);
+      d.log(d.lead, 'tool', `create_task "${t7.title}" (blocked)`);
       await d.sleep(400);
-      const t8 = d.ensureTask('t8', { title: 'QA: full test run + CLI smoke on main', description: 'After merges: npm test on main, smoke the CLI with tagged notes, draft release notes.', deps: ['t5', 't6'], assignee: 'tove', createdBy: 'marlow' });
-      d.log('marlow', 'tool', `create_task "${t8.title}"`);
+      const t8 = d.ensureTask('t8', { title: 'QA: full test run + CLI smoke on main', description: 'After merges: npm test on main, smoke the CLI with tagged notes, draft release notes.', deps: ['t5', 't6'], assignee: 'tove', createdBy: d.lead });
+      d.log(d.lead, 'tool', `create_task "${t8.title}"`);
       await d.sleep(400);
-      const t9 = d.ensureTask('t9', { title: 'Stretch: shell completion for #tags', deps: ['t3'], assignee: 'rowan', createdBy: 'marlow', priority: -2 });
-      d.log('marlow', 'tool', `create_task "${t9.title}"`);
+      const t9 = d.ensureTask('t9', { title: 'Stretch: shell completion for #tags', deps: ['t3'], assignee: 'rowan', createdBy: d.lead, priority: -2 });
+      d.log(d.lead, 'tool', `create_task "${t9.title}"`);
       await d.sleep(500);
       const goal = d.fm.goal(d.goalId)!;
       d.memory(
-        'marlow',
+        d.lead,
         'shared',
         'Plan: #tags for pocket-notes',
         `# Plan: #tags for pocket-notes
@@ -112,7 +113,7 @@ export const BEATS: Beat[] = [
 - Output: tags in cyan when stdout is a terminal (respect NO_COLOR).
 
 ## Tasks
-- ${t1.id} Explore repo & draft plan - Marlow
+- ${t1.id} Explore repo & draft plan - ${d.fm.nameOf(d.lead)}
 - ${t2.id} Tag parser module - Kit
 - ${t3.id} \`list --tag\` + \`tags\` command - Juniper (after ${t2.id})
 - ${t4.id} Highlight tags in output - Wren
@@ -130,7 +131,7 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
       );
       await d.sleep(600);
       d.memory(
-        'marlow',
+        d.lead,
         'shared',
         'Repo conventions',
         `# Repo conventions (pocket-notes)
@@ -145,10 +146,10 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
       );
       d.doneNoCode('t1', 'Plan written to shared memory (Plan: #tags for pocket-notes).');
       d.fm.setGoal(d.goalId, { status: 'active' });
-      d.fm.bus.feed('plan', `Marlow planned ${goal.text.slice(0, 60)}... into 9 tasks`, { agentId: 'marlow' });
+      d.fm.bus.feed('plan', `${d.fm.nameOf(d.lead)} planned ${goal.text.slice(0, 60)}... into 9 tasks`, { agentId: d.lead });
       await d.sleep(500);
-      d.act('marlow', 'idle', 'meeting', 'briefing the team');
-      d.say('marlow', 'all', `Plan is in shared memory. Kit: tag parser first (${t2.id}). Wren: tag highlighting (${t4.id}). Juniper: the CLI once Kit's parser lands. Tove: docs + QA. Rowan: reviews every branch.`);
+      d.act(d.lead, 'idle', 'meeting', 'briefing the team');
+      d.say(d.lead, 'all', `Plan is in shared memory. Kit: tag parser first (${t2.id}). Wren: tag highlighting (${t4.id}). Juniper: the CLI once Kit's parser lands. Tove: docs + QA. Rowan: reviews every branch.`);
       await d.sleep(1500);
     },
   },
@@ -257,7 +258,7 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
     async run(d) {
       const outcome = await d.settleMerge('t2', 'kit', 'src/tags.ts');
       if (outcome === 'rejected') return;
-      d.fm.bus.feed('task', `${d.task('t3').id} and ${d.task('t5').id} are unblocked`, { agentId: 'marlow' });
+      d.fm.bus.feed('task', `${d.task('t3').id} and ${d.task('t5').id} are unblocked`, { agentId: d.lead });
     },
   },
   {
@@ -270,16 +271,16 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
       await d.patch('juniper', jun.path, E.T3_NOTES, 1100);
       await d.patch('kit', kit.path, E.T5_TESTS, 1000);
       await d.requestMerge('t4', 1, 'wren-t4: small and clean, color is opt-in so tests stay deterministic.');
-      await d.think('marlow', 'Should `notes tags` count completed notes? That is a product call.', 'user', 900);
+      await d.think(d.lead, 'Should `notes tags` count completed notes? That is a product call.', 'user', 900);
       d.openDecision('q1', () => ({
-        agentId: 'marlow',
+        agentId: d.lead,
         kind: 'question',
         question: 'Should `notes tags` count tags on completed notes too?',
         options: [...Q1_OPTIONS],
         context: 'Juniper is building the `tags` command now. Open-only matches what `notes list` shows by default; `--all` could include done notes.',
         taskId: d.task('t3').id,
       }));
-      d.act('marlow', 'waiting_user', 'user', 'asking you about `notes tags`');
+      d.act(d.lead, 'waiting_user', 'user', 'asking you about `notes tags`');
     },
   },
   {
@@ -305,13 +306,13 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
       const q = await d.awaitDecision('q1');
       const includeDone = q1IncludesDone(d);
       const answer = [q.answer?.option, q.answer?.text].filter(Boolean).join(' - ');
-      d.act('marlow', 'thinking', 'meeting', 'relaying your answer');
-      d.say('marlow', 'juniper', includeDone ? `${userName()} says: count completed notes too.` : `${userName()} says: open notes only; \`notes tags --all\` includes completed ones.`);
-      d.memory('marlow', 'shared', 'Decisions', `- \`notes tags\`: ${answer} (asked by Marlow).`, 'append', 'decisions');
+      d.act(d.lead, 'thinking', 'meeting', 'relaying your answer');
+      d.say(d.lead, 'juniper', includeDone ? `${userName()} says: count completed notes too.` : `${userName()} says: open notes only; \`notes tags --all\` includes completed ones.`);
+      d.memory(d.lead, 'shared', 'Decisions', `- \`notes tags\`: ${answer} (asked by ${d.fm.nameOf(d.lead)}).`, 'append', 'decisions');
       const jun = d.wt('t3');
       await d.patch('juniper', jun.path, E.t3CliTags(includeDone), 1200);
       await d.patch('juniper', jun.path, E.t3CliTests(includeDone), 1000);
-      d.act('marlow', 'idle', 'meeting', 'keeping an eye on the wall');
+      d.act(d.lead, 'idle', 'meeting', 'keeping an eye on the wall');
     },
   },
   {
@@ -370,14 +371,14 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
       d.say('kit', 'all', 'Both my branches are merged. Shout if the parser misbehaves.');
       // Wren takes the release task and hits the wall agents never cross: publishing
       const t7 = d.task('t7');
-      d.say('marlow', 'wren', `Wren, can you take ${t7.id} (0.3.0 release)? Publishing itself is ${userName()}'s call.`);
+      d.say(d.lead, 'wren', `Wren, can you take ${t7.id} (0.3.0 release)? Publishing itself is ${userName()}'s call.`);
       d.fm.tasks.update(t7.id, { assignee: 'wren' });
       d.fm.setAgent('wren', { taskId: t7.id, repoId: d.repoId, worktree: null });
       await d.read('wren', d.repoPath, 'package.json', 700);
       await d.think('wren', 'npm publish needs an npm login - agents never log in or publish', 'desk', 900);
       d.act('wren', 'blocked', 'desk', `${t7.id}: needs ${userName()}'s npm login`);
       d.log('wren', 'error', `${t7.id} blocked: publishing needs ${userName()}'s npm credentials`);
-      d.say('wren', 'marlow', `${t7.id} is blocked: npm publish needs ${userName()}'s login. Version bump and notes can wait for that.`);
+      d.say('wren', d.lead, `${t7.id} is blocked: npm publish needs ${userName()}'s login. Version bump and notes can wait for that.`);
       // Juniper smoke-tests the merged CLI on main (real run of the CLI)
       await d.cli('juniper', ['add', 'triage inbox #work #today'], ['tags']);
       d.act('juniper', 'running', 'terminal', '$ notes tags (smoke test on main)');
@@ -385,7 +386,7 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
       await d.read('rowan', d.repoPath, 'src/cli.ts', 800);
       d.log('rowan', 'error', 'API error: overloaded_error (529). Retrying in 20s...');
       d.act('rowan', 'error', 'library', 'API overloaded - retrying');
-      d.act('marlow', 'thinking', 'meeting', 'drafting the 0.3.0 release plan');
+      d.act(d.lead, 'thinking', 'meeting', 'drafting the 0.3.0 release plan');
       d.act('tove', 'editing', 'desk', 'editing README.md');
     },
   },
@@ -435,47 +436,114 @@ Rowan reviews every branch; then it goes to ${userName()} as a merge decision. N
   {
     name: 'wrap-up',
     async run(d) {
-      await d.think('marlow', `Wrapping up: what is left for ${userName()}?`, 'meeting', 1200);
+      await d.think(d.lead, `Wrapping up: what is left for ${userName()}?`, 'meeting', 1200);
       if (!d.vars.rejected) {
         d.setTask('t9', 'cancelled', { summary: 'Stretch goal parked for a later goal.' });
-        d.log('marlow', 'tool', `update_task ${d.task('t9').id} cancelled`);
-        d.say('rowan', 'marlow', 'Fine by me - completion can be its own goal.');
+        d.log(d.lead, 'tool', `update_task ${d.task('t9').id} cancelled`);
+        d.say('rowan', d.lead, 'Fine by me - completion can be its own goal.');
       }
       await d.sleep(800);
       const t7 = d.task('t7');
       if (d.vars.rejected) {
         // the goal stays active: the rejected work and its dependents are on the wall for the user
-        d.say('marlow', 'user', 'Stopped after your rejection. Everything that was approved is merged; the rest is on the wall.');
+        d.say(d.lead, 'user', 'Stopped after your rejection. Everything that was approved is merged; the rest is on the wall.');
       } else {
-        d.say('marlow', 'user', `All merged into main: parser, --tag filter, tags command, highlighting, docs; QA is green. Only ${t7.id} (npm publish) is left, and that needs you.`);
-        await d.think('marlow', `Asking ${userName()} what to do with ${t7.id}`, 'user', 800);
+        d.say(d.lead, 'user', `All merged into main: parser, --tag filter, tags command, highlighting, docs; QA is green. Only ${t7.id} (npm publish) is left, and that needs you.`);
+        await d.think(d.lead, `Asking ${userName()} what to do with ${t7.id}`, 'user', 800);
         d.openDecision('q2', () => ({
-          agentId: 'marlow',
+          agentId: d.lead,
           kind: 'question',
           question: `${t7.id} "${t7.title}" needs your npm login (agents never publish). Close it and wrap up the goal?`,
           options: q2Options(t7.id),
           context: 'Everything else is merged and QA is green. Closing t7 completes the goal; keeping it leaves the goal open until you publish.',
           taskId: t7.id,
         }));
-        d.act('marlow', 'waiting_user', 'user', `asking you about ${t7.id}`);
+        d.act(d.lead, 'waiting_user', 'user', `asking you about ${t7.id}`);
         const q = await d.awaitDecision('q2');
         const close = q.answer?.option === q2Options(t7.id)[0] || (!q.answer?.option && q.status === 'answered');
         if (close) {
           // cancelled tasks do not count towards the goal: the task graph completes it (100%)
           d.setTask('t7', 'cancelled', { summary: `${userName()} publishes 0.3.0 by hand.` });
-          d.log('marlow', 'tool', `update_task ${t7.id} cancelled (${userName()} publishes)`);
-          d.say('marlow', 'all', `${userName()} will publish ${t7.id} by hand. That's the goal - thanks, team.`);
+          d.log(d.lead, 'tool', `update_task ${t7.id} cancelled (${userName()} publishes)`);
+          d.say(d.lead, 'all', `${userName()} will publish ${t7.id} by hand. That's the goal - thanks, team.`);
         } else {
-          d.say('marlow', 'all', `${t7.id} stays on the wall for ${userName()}; the goal stays open until it is published.`);
+          d.say(d.lead, 'all', `${t7.id} stays on the wall for ${userName()}; the goal stays open until it is published.`);
         }
         await d.sleep(600);
       }
       const goalDone = d.fm.goal(d.goalId)?.status === 'done';
       for (const a of d.fm.agents()) {
-        if (a.id === 'marlow') d.act(a.id, goalDone ? 'done' : 'idle', 'meeting', goalDone ? 'goal done' : `waiting on ${t7.id}`);
+        if (a.role === 'lead' && a.id !== d.lead) continue; // other leads run their own buildings
+        if (a.taskId && d.fm.tasks.get(a.taskId)?.goalId !== d.goalId) continue; // busy on another lead's goal
+        if (a.id === d.lead) d.act(a.id, goalDone ? 'done' : 'idle', 'meeting', goalDone ? 'goal done' : `waiting on ${t7.id}`);
         else d.act(a.id, 'done', 'lounge', 'done for today');
         d.fm.setAgent(a.id, { taskId: null, worktree: null });
       }
+    },
+  },
+];
+
+/**
+ * A goal for another building's lead while the script runs (or after it finished): a short side
+ * flow on that goal's repository. The goal's lead plans one task, the first free worker writes a
+ * note for it (a real worktree, edit and test run), the lead reviews it and asks for the merge.
+ * Workers are borrowed only while free, like the claude backend's shared pool.
+ */
+export const SIDE_BEATS: Beat[] = [
+  {
+    name: 'side-plan',
+    async run(d) {
+      const goal = d.fm.goal(d.goalId)!;
+      const lead = d.lead;
+      d.fm.setAgent(lead, { active: true, paused: false });
+      d.act(lead, 'thinking', 'meeting', 'reading the goal');
+      d.log(lead, 'text', `New goal from ${userName()}: ${goal.text}`);
+      d.say(lead, 'all', `New goal for my building: ${goal.text}. Planning it now.`);
+      await d.read(lead, d.repoPath, 'README.md');
+      await d.think(lead, 'One small task is enough for this', 'desk', 1000);
+      const t = d.ensureTask('s1', { title: `Notes for: ${goal.text.slice(0, 50)}`, description: `Write docs/goals/${goal.id}.md: what "${goal.text}" asks for and how to check it.`, createdBy: lead });
+      d.log(lead, 'tool', `create_task "${t.title}"`);
+      d.memory(lead, 'shared', `Plan: ${goal.text.slice(0, 60)}`, `# Plan: ${goal.text}\n\n- ${t.id} ${t.title} - the first free worker\n\n${d.fm.nameOf(lead)} reviews it, then it goes to ${userName()} as a merge decision.`, 'replace', `plan-${goal.id}`);
+      d.fm.setGoal(d.goalId, { status: 'active' });
+      d.fm.bus.feed('plan', `${d.fm.nameOf(lead)} planned ${goal.text.slice(0, 60)} into 1 task`, { agentId: lead });
+      d.act(lead, 'idle', 'meeting', 'waiting for a free worker');
+    },
+  },
+  {
+    name: 'side-work',
+    async run(d) {
+      // the first free worker (the workers are shared with every other lead)
+      let worker = typeof d.vars.worker === 'string' ? d.vars.worker : undefined;
+      while (!worker) {
+        const free = d.fm.agents().find((a) => a.role === 'worker' && !a.taskId && !a.paused && !d.fm.tasks.list().some((t) => t.assignee === a.id && t.status === 'doing'));
+        if (free) {
+          worker = free.id;
+          d.vars.worker = worker;
+        } else await d.sleep(1500);
+      }
+      const goal = d.fm.goal(d.goalId)!;
+      d.fm.setAgent(worker, { active: true });
+      d.say(d.lead, worker, `${d.fm.nameOf(worker)}, can you take ${d.task('s1').id}?`);
+      const wt = d.task('s1').worktree ? d.wt('s1') : await d.startTask(worker, 's1');
+      await d.patch(worker, wt.path, [{ file: `docs/goals/${goal.id}.md`, create: `# ${goal.text}\n\nAsked by ${userName()}; planned by ${d.fm.nameOf(d.lead)}.\n\n- What: ${goal.text}\n- Check: the tests pass and this note is merged.\n` }]);
+      await d.runTests(worker, { taskKey: 's1', worktree: wt });
+      await d.commit(worker, 's1', `Notes for ${goal.id}`);
+      d.finishTask(worker, 's1', `Wrote docs/goals/${goal.id}.md.`);
+      d.act(worker, 'idle', 'lounge', `${d.task('s1').id} in review`);
+    },
+  },
+  {
+    name: 'side-review',
+    async run(d) {
+      const worker = String(d.vars.worker);
+      const goal = d.fm.goal(d.goalId)!;
+      await d.requestMerge('s1', 1, 'Small and clear; tests pass.', d.lead);
+      await d.settleMerge('s1', worker, `docs/goals/${goal.id}.md`, d.lead);
+      d.act(worker, 'idle', 'lounge', 'idle');
+      d.fm.setAgent(worker, { taskId: null, worktree: null });
+      const done = d.fm.goal(d.goalId)?.status === 'done';
+      if (done) d.say(d.lead, 'user', `Done: "${goal.text}" is merged.`);
+      d.act(d.lead, done ? 'done' : 'idle', 'meeting', done ? 'goal done' : 'watching the task wall');
     },
   },
 ];

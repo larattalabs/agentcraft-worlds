@@ -29,6 +29,8 @@ export interface SimState {
   vars: Record<string, string | number | boolean>;
   finished?: boolean;
   checkpoint?: string;
+  /** goals of other leads' buildings run as short side flows (SIDE_BEATS), by goal id */
+  side?: Record<string, SimState>;
 }
 
 /** mulberry32: tiny seeded PRNG so jitter and filler lines are reproducible. */
@@ -75,6 +77,11 @@ export class SimDirector {
     return this.st.goalId!;
   }
 
+  /** The lead running this goal (Goal.leadId; marlow takes over when a building lead is released). */
+  get lead(): string {
+    return this.fm.leadOf(this.fm.goal(this.goalId));
+  }
+
   get repoId(): string {
     const g = this.fm.goal(this.goalId);
     return g?.repoId ?? this.fm.repos.defaultRepo()!.id;
@@ -114,7 +121,8 @@ export class SimDirector {
 
   /** Wait while an agent is paused or stopped (off shift): the script continues once resumed. */
   async gate(agentId: string): Promise<void> {
-    for (let a = this.fm.agent(agentId); a && (a.paused || !a.active); a = this.fm.agent(agentId)) {
+    // a released building lead is off duty, not paused: the script goes on (its goal is marlow's now)
+    for (let a = this.fm.agent(agentId); a && (a.paused || !a.active) && !(a.role === 'lead' && !this.fm.leads.onDuty(a.id)); a = this.fm.agent(agentId)) {
       if (this.stopped) throw new Stopped();
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -407,7 +415,7 @@ export class SimDirector {
           if (settled || this.stopped) break;
           const working = this.fm.agents().filter((a) => a.active && ['reading', 'editing', 'testing', 'thinking'].includes(a.state));
           const a = working[Math.floor(this.random() * working.length)];
-          const lines = a ? AMBIENT[a.id] : undefined;
+          const lines = a ? (AMBIENT[a.id] ?? (a.role === 'lead' ? AMBIENT.marlow : undefined)) : undefined;
           if (a && lines) this.log(a.id, 'text', lines[Math.floor(this.random() * lines.length)]!);
           n++;
         }
@@ -424,36 +432,37 @@ export class SimDirector {
   }
 
   /** Reviewer looks at the real diff, lead opens a merge decision for the user. */
-  async requestMerge(taskKey: string, round: number, review: string): Promise<Decision> {
+  async requestMerge(taskKey: string, round: number, review: string, reviewer = 'rowan'): Promise<Decision> {
     const t = this.task(taskKey);
     const wt = this.wt(taskKey);
     const key = `merge:${taskKey}:${round}`;
+    const lead = this.lead;
     if (typeof this.vars[`dec:${key}`] !== 'string') {
-      await this.gate('rowan');
-      this.act('rowan', 'reading', 'mergestation', `reviewing ${wt.id}`);
-      this.log('rowan', 'tool', `diff ${wt.branch}`);
+      await this.gate(reviewer);
+      this.act(reviewer, 'reading', 'mergestation', `reviewing ${wt.id}`);
+      this.log(reviewer, 'tool', `diff ${wt.branch}`);
       const diff = await this.fm.repos.diff(this.repoId, wt.id);
       await this.sleep(900);
-      this.log('rowan', 'result', `${diff.stats.files} files, +${diff.stats.additions} -${diff.stats.deletions}: ${diff.files.map((f) => f.path).join(', ')}`);
+      this.log(reviewer, 'result', `${diff.stats.files} files, +${diff.stats.additions} -${diff.stats.deletions}: ${diff.files.map((f) => f.path).join(', ')}`);
       await this.sleep(1100);
-      this.say('rowan', 'marlow', review);
+      if (reviewer !== lead) this.say(reviewer, lead, review);
       await this.sleep(700);
-      await this.gate('marlow');
-      this.act('marlow', 'thinking', 'mergestation', `preparing review of ${t.id}`);
-      this.log('marlow', 'tool', `request_merge ${t.id}`);
+      await this.gate(lead);
+      this.act(lead, 'thinking', 'mergestation', `preparing review of ${t.id}`);
+      this.log(lead, 'tool', `request_merge ${t.id}`);
       await this.sleep(600);
       const stats = `${diff.stats.files} file${diff.stats.files === 1 ? '' : 's'}, +${diff.stats.additions} -${diff.stats.deletions}`;
       this.openDecision(key, () => ({
-        agentId: 'marlow',
+        agentId: lead,
         kind: 'merge',
         question: `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
         options: [...MERGE_OPTIONS],
-        context: `${t.summary ?? ''}\n${stats} | tests: ${t.ci}\nReviewed by Rowan: ${review}`.trim(),
+        context: `${t.summary ?? ''}\n${stats} | tests: ${t.ci}\nReviewed by ${this.fm.nameOf(reviewer)}: ${review}`.trim(),
         taskId: t.id,
         repoId: this.repoId,
         worktree: wt.id,
       }));
-      this.act('marlow', 'idle', 'mergestation', `awaiting your review of ${t.id}`);
+      this.act(lead, 'idle', 'mergestation', `awaiting your review of ${t.id}`);
     }
     return this.fm.decisions.get(this.vars[`dec:${key}`] as string)!;
   }
@@ -462,21 +471,21 @@ export class SimDirector {
    * Wait for the merge decision; handle "Request changes" (worker revises, new round) and
    * "Reject". Returns the final outcome.
    */
-  async settleMerge(taskKey: string, worker: string, mainFile: string): Promise<'merged' | 'rejected'> {
+  async settleMerge(taskKey: string, worker: string, mainFile: string, reviewer = 'rowan'): Promise<'merged' | 'rejected'> {
     for (let round = 1; round <= 5; round++) {
       const key = `merge:${taskKey}:${round}`;
-      if (typeof this.vars[`dec:${key}`] !== 'string') await this.requestMerge(taskKey, round, 'Changes addressed; re-reviewed. Looks good.');
+      if (typeof this.vars[`dec:${key}`] !== 'string') await this.requestMerge(taskKey, round, 'Changes addressed; re-reviewed. Looks good.', reviewer);
       const d = await this.awaitDecision(key);
       const t = this.task(taskKey);
       if (d.answer?.option === 'Merge' && t.status === 'done') {
-        this.say('marlow', worker, `Merged ${t.id} into main. Nice work.`);
+        this.say(this.lead, worker, `Merged ${t.id} into main. Nice work.`);
         this.act(worker, 'idle', 'lounge', `${t.id} merged`);
         this.fm.setAgent(worker, { taskId: null, worktree: null });
         await this.sleep(800);
         return 'merged';
       }
       if (d.answer?.option === 'Reject' || d.status === 'cancelled') {
-        this.say('marlow', 'all', `${userName()} rejected ${t.id}. I'll stop the work that depends on it.`);
+        this.say(this.lead, 'all', `${userName()} rejected ${t.id}. I'll stop the work that depends on it.`);
         this.act(worker, 'idle', 'lounge', `${t.id} rejected`);
         this.fm.setAgent(worker, { taskId: null, worktree: null });
         this.vars.rejected = true;
@@ -485,7 +494,7 @@ export class SimDirector {
       }
       // Request changes
       const note = d.answer?.text ?? 'please tidy this up';
-      this.say('marlow', worker, `${userName()} asked for changes on ${t.id}: "${note}"`);
+      this.say(this.lead, worker, `${userName()} asked for changes on ${t.id}: "${note}"`);
       await this.sleep(800);
       const wt = this.wt(taskKey);
       await this.think(worker, `Addressing review feedback: ${note}`, 'desk');
@@ -493,7 +502,7 @@ export class SimDirector {
       await this.runTests(worker, { taskKey, worktree: wt });
       await this.commit(worker, taskKey, `Address review (round ${round})`);
       this.setTask(taskKey, 'review', { summary: `${t.summary ?? ''} (revised: ${note})`.trim() });
-      this.say(worker, 'marlow', `Done, ${t.id} is ready for another look.`);
+      this.say(worker, this.lead, `Done, ${t.id} is ready for another look.`);
     }
     return 'merged';
   }
