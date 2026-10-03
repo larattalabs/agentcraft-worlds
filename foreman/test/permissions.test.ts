@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { HookInput, Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ClaudeBackend } from '../src/agents/claude/index.js';
-import { guardrail, guardrailHook, writeTargets } from '../src/agents/claude/permissions.js';
+import { connectorAllowed, connectorHook, guardrail, guardrailHook, writeTargets } from '../src/agents/claude/permissions.js';
 import { loadSubagents } from '../src/agents/claude/subagents.js';
 import { loadConfig } from '../src/config.js';
 import { classifyToolUse, type PolicyContext } from '../src/policy.js';
@@ -204,6 +204,44 @@ describe('session options', () => {
     } finally {
       await cleanup();
       rmrf(agentsHome);
+    }
+  });
+});
+
+// ---- claude.ai connectors -------------------------------------------------------------------------
+
+
+describe('claude.ai connectors', () => {
+  it('refuses tools of connectors that are not listed, by source', async () => {
+    expect(connectorAllowed('claude.ai monday.com', ['monday.com'])).toBe(true);
+    expect(connectorAllowed('claude.ai Microsoft 365', ['monday.com'])).toBe(false);
+    const blocked: string[] = [];
+    const hook = connectorHook(['monday.com'], (tool, server) => blocked.push(`${server}:${tool}`));
+    const run = (tool_name: string, mcp_server?: { name: string; source: string }) =>
+      hook({ hook_event_name: 'PreToolUse', tool_name, tool_input: {}, tool_use_id: 'x', session_id: 's', transcript_path: '', cwd: '/', ...(mcp_server ? { mcp_server } : {}) } as HookInput, 'x', { signal: new AbortController().signal });
+    expect(await run('mcp__m365__send_mail', { name: 'claude.ai Microsoft 365', source: 'claudeai' })).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+    expect(await run('mcp__monday__get_board', { name: 'claude.ai monday.com', source: 'claudeai' })).toEqual({});
+    expect(await run('mcp__xcode__build', { name: 'claude.ai Microsoft 365', source: 'sdk' })).toEqual({}); // not a connector, whatever its name
+    expect(await run('Bash')).toEqual({});
+    expect(blocked).toEqual(['claude.ai Microsoft 365:mcp__m365__send_mail']);
+  });
+
+  it('runs sessions without connectors by default, and filters them when some are listed', async () => {
+    const none = await session({});
+    try {
+      expect(none.options.every((o) => o.strictMcpConfig === true)).toBe(true);
+    } finally {
+      await none.cleanup();
+    }
+    const some = await session({ claude: { context: { connectors: ['monday.com'] } } });
+    try {
+      for (const o of some.options) {
+        expect(o.strictMcpConfig).toBe(false);
+        expect(o.hooks?.PreToolUse).toHaveLength(1); // the connector filter (policy mode: no guardrail hook)
+      }
+      expect(some.h.cfg.claude.context.connectors).toEqual(['monday.com']);
+    } finally {
+      await some.cleanup();
     }
   });
 });

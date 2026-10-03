@@ -37,6 +37,12 @@ export interface AgentContextConfig {
   mcpServers: Record<string, McpServerConfig>;
   /** MCP tool names (or `prefix*`) that run without asking, e.g. "mcp__xcode__*" */
   mcpAllow: string[];
+  /**
+   * claude.ai connectors (MCP servers attached to the claude.ai account) agents may use, matched
+   * case-insensitively against the connector's name, e.g. "monday.com". Empty (default): none; the
+   * sessions run with strictMcpConfig, so only AgentCraft's tools and mcpServers exist.
+   */
+  connectors: string[];
 }
 
 export const DEFAULT_CONTEXT: AgentContextConfig = {
@@ -48,6 +54,7 @@ export const DEFAULT_CONTEXT: AgentContextConfig = {
   skills: [],
   mcpServers: {},
   mcpAllow: [],
+  connectors: [],
 };
 
 export const SKILLS_PLUGIN = 'agentcraft-skills';

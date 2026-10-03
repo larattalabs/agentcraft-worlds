@@ -21,7 +21,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { query, type AgentDefinition, type CanUseTool, type EffortLevel, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { query, type AgentDefinition, type CanUseTool, type HookCallbackMatcher, type EffortLevel, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeConfig } from '../../config.js';
 import { FOREMAN_VERSION } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
@@ -36,7 +36,7 @@ import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
 import { buildSkillsPlugin, instructionsBlock, workspaceInstructionDirs } from './context.js';
-import { guardrailHook } from './permissions.js';
+import { connectorHook, guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
 import { type RepoRole, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
@@ -982,6 +982,18 @@ export class ClaudeBackend implements Backend {
     if (this.skillsPlugin) tools.push('Skill');
     const disallowed = ['Bash(git push:*)', ...(sub ? [] : ['Task', 'Agent']), ...(p.webTools ? [] : ['WebSearch', 'WebFetch'])];
     const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : undefined;
+    const connectors = this.cfg.context.connectors;
+    const hooks: HookCallbackMatcher[] = [];
+    if (connectors.length) hooks.push({ hooks: [connectorHook(connectors, (tool, server) => this.fm.agentLog(agentId, 'error', `blocked ${tool}: connector "${server}" is not enabled`))] });
+    if (p.mode === 'auto') {
+      const guard = guardrailHook(
+        (tool, input) => classifyToolUse(tool, input, this.policyContext(agentId, role, cwd, repoId)),
+        () => this.protectedRoots(),
+        (tool, decision, reason, subagent) =>
+          this.fm.agentLog(agentId, decision === 'deny' ? 'error' : 'tool', `guardrail ${decision === 'deny' ? 'blocked' : 'asks you'}${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
+      );
+      hooks.push({ hooks: [guard] });
+    }
     return {
       permissionMode: p.mode === 'auto' ? 'auto' : 'default',
       canUseTool: this.canUseTool(agentId, role, cwd, turn, repoId),
@@ -989,24 +1001,9 @@ export class ClaudeBackend implements Backend {
       disallowedTools: disallowed,
       ...(rules ? { settings: rules } : {}),
       ...(sub && Object.keys(defs).length ? { agents: defs } : {}),
-      ...(p.mode === 'auto'
-        ? {
-            hooks: {
-              PreToolUse: [
-                {
-                  hooks: [
-                    guardrailHook(
-                      (tool, input) => classifyToolUse(tool, input, this.policyContext(agentId, role, cwd, repoId)),
-                      () => this.protectedRoots(),
-                      (tool, decision, reason, subagent) =>
-                        this.fm.agentLog(agentId, decision === 'deny' ? 'error' : 'tool', `guardrail ${decision === 'deny' ? 'blocked' : 'asks you'}${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
-                    ),
-                  ],
-                },
-              ],
-            },
-          }
-        : {}),
+      // claude.ai connectors: none unless listed (strict), listed ones only (hook)
+      strictMcpConfig: connectors.length === 0,
+      ...(hooks.length ? { hooks: { PreToolUse: hooks } } : {}),
     };
   }
 

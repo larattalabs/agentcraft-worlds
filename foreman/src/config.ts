@@ -235,6 +235,7 @@ function contextConfig(v: unknown): AgentContextConfig {
     skills: strings(o.skills),
     mcpServers: servers,
     mcpAllow: strings(o.mcpAllow).filter((p) => p.startsWith('mcp__') && !p.startsWith('mcp__agentcraft__')),
+    connectors: strings(o.connectors),
   };
 }
 

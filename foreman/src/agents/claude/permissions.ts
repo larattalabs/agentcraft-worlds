@@ -71,6 +71,27 @@ export function guardrail(v: Verdict, protectedRoots: string[]): { decision: 'al
   return undefined;
 }
 
+/** Is this claude.ai connector (by name) one the user allowed (claude.context.connectors)? */
+export function connectorAllowed(name: string, allowed: string[]): boolean {
+  const n = name.toLowerCase();
+  return allowed.some((a) => n.includes(a.toLowerCase()));
+}
+
+/**
+ * PreToolUse hook (both permission modes, when claude.context.connectors is set): tools of claude.ai
+ * connectors the user did not list are refused. Keyed on the server's `source`, not its name.
+ */
+export function connectorHook(allowed: string[], report: (toolName: string, server: string) => void): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
+    const server = (input as { mcp_server?: { name: string; source: string } }).mcp_server;
+    if (!server || server.source !== 'claudeai' || connectorAllowed(server.name, allowed)) return {};
+    report(input.tool_name, server.name);
+    const reason = `The claude.ai connector "${server.name}" is not enabled for AgentCraft agents (claude.context.connectors).`;
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
+  };
+}
+
 /**
  * The PreToolUse hook for auto mode. `classify` runs the AgentCraft policy for this agent; denials
  * and forced asks are reported through `report`.

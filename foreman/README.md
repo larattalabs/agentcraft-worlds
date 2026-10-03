@@ -185,6 +185,9 @@ repo hooks would run ahead of, or outside, the permission policy. What they do g
 - **Skills:** names under `~/.claude/skills` or paths. They are copied into `<profile>/agent-plugin`
   with `allowed-tools` removed from `SKILL.md` (it would pre-approve tools), and only these can be
   loaded with the Skill tool. Everything a skill then does goes through the normal permission checks.
+- **claude.ai connectors** (`connectors`, e.g. `["monday.com"]`): with a claude.ai login the CLI
+  would also load the account's connectors (mail, calendars, accounting...). By default agents get
+  none (`strictMcpConfig`); listed ones load, and tools of any other connector are refused.
 - **MCP servers:** given to every agent. Their tools ask for permission unless listed in `mcpAllow`
   (exact names or `mcp__server__*`). The `agentcraft` server name is reserved.
 
