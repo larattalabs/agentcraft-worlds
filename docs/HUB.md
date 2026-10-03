@@ -303,3 +303,72 @@ Details and DevBridge in mod/DEV.md "Hub" -> "Repos and Goals tabs". Notes where
   `repos[]`, wing order). Branch suggestions: the repo's worktree branches and its goals' branches.
 - Compact layout (content area under 470 × 200 GUI px, i.e. GUI scale 4 at 1080p): list or detail with a back
   button; `dev.hub.state` reports `layout.overflow`.
+
+## Team and Settings tabs, config get/set (contract, 2026-10-03)
+
+### Client token (prerequisite)
+Today any local process can drive the Foreman's WebSocket, including an agent's Bash (answer its own
+decisions, and with config.set loosen its own permissions). From now on:
+- The Foreman writes a random token to `<dataDir>/client.token` (mode 0600, new per start) and lists
+  its path in the run file.
+- `hello` takes `token?`. Without a valid token a connection is **read-only**: snapshot and events, and
+  only `hello`/`diff.request`/`goal.digest`. Every other client message is refused (`ok:false`,
+  "read-only connection: no client token").
+- The mod (it reads the run file's token path), `tools/foremancli.mjs` and the dev tools send it.
+- The agent policy denies agents: reading `client.token` or anything under the Foreman home's profile
+  dirs (`~/.agentcraft/<profile>/`, the config file) by any tool, and Bash commands that mention them
+  or open a connection to the Foreman's port (best effort; documented as such). Denials say why.
+- `--no-client-token` (dev only) restores the old behaviour.
+
+### Protocol
+- `config.get { repoId? }` -> ack result `{ file, settings: SettingDef[] }` (global settings, or that
+  repo's `repoSettings` when `repoId` is given).
+  `SettingDef = { key, label, help, group, type: "bool"|"int"|"enum"|"string"|"stringList"|"model"|
+  "effort"|"agentList"|"map", options?: string[], min?, max?, value, default, source: "file"|"flag"|
+  "env"|"default", live: boolean, overriddenBy?: string }`. `key` is the config.json path
+  (`claude.prWatch`, `claude.agents.kit.model`, for a repo `land`, `pr.draft`, `roles.kit`).
+  `model` options are the Opus and Sonnet models plus "default" (no Haiku). No secret values: env
+  values, tokens and MCP server env are never returned (MCP servers are listed by name and command
+  only, read-only).
+- `config.set { repoId?, changes: [{ key, value }] }` -> validates every change first (all or
+  nothing), writes the config file atomically (unknown keys and other sections untouched, a
+  `config.json.bak` of the previous file), applies `live` keys at once, and acks `{ applied: [key],
+  restartRequired: [key], overridden: [{key, by}] }` (a key also set by a flag/env is written but stays
+  overridden until that flag goes). Broadcast `config.changed { keys, restartRequired }`.
+- `foreman.restart {}` -> ack, then the Foreman restarts itself with the same arguments (running turns
+  are interrupted and resumed by `resumeOnStart`); the mod reconnects. `foreman.status` gains
+  `restartRequired?: string[]`.
+- `repo.agents { repoId }` -> ack `{ agents: [{ name, path, description?, model? }] }`: the repo's
+  `.claude/agents` files (for the roles picker).
+
+### Editable settings (v1)
+- Team: `claude.workers` (from the cast), `claude.leads` (order), `claude.agents.<id>.{title,prompt,
+  model,effort}`, `claude.leadModel`, `claude.leadEffort`, `claude.workerModel`, `claude.effort`,
+  `claude.taskModels.{small,normal,large}`, `claude.maxConcurrent`, `claude.throttleConcurrent`,
+  `claude.maxConcurrentTurns`, `claude.designModel`, `claude.leadReview`.
+- Settings: `userName`, `notify`, `toastSilent`, `mergeStyle`, `signMerges`; permissions
+  (`claude.permissions.mode`, `allow`, `deny`, `webTools`, `protectCheckouts`); context
+  (`claude.context.userInstructions`, `skills`, `sessionHistory.enabled/days`, `maxChars`, `mcpAllow`,
+  `connectors`; MCP servers read-only); `claude.subagents` (list); PRs (`claude.prWatch`,
+  `claude.prPollSeconds`); usage (`claude.maxBudgetUsdPerTurn`, `claude.useClaudeLogin` - restart).
+- Repo settings (Repos tab "Edit settings", now enabled): `land`, `baseBranch`, `ci`, `setup`, `copy`,
+  `setupTimeoutMs`, `protect`, `roles.<agent>` (picker from `repo.agents`), `subagents`, `pr.*`,
+  `prReview.*`; `env` stays read-only (keys only).
+- Not editable in the hub: `repos` (Repos tab add/remove), host/port/home/profile, sim settings.
+
+### Team tab (mod)
+- Roster: leads (order, building, model/effort) and workers (on/off the team, title, specialty prompt,
+  model, effort, per-repo roles), each with live state (station, task, goal, lead) and portrait.
+- Models: lead/worker/design models and effort, task-size models, concurrency limits.
+- Edits are staged in the tab and applied with one "Apply" (config.set); changes needing a restart show
+  a banner with "Restart Foreman".
+
+### Settings tab (mod)
+- Groups: General, Permissions, Context, Subagents, PRs, Usage (with the Status tab's usage windows
+  read-only), each a form generated from `SettingDef`s (bool toggle, enum chips, int stepper, string
+  field, string list editor, model/effort pickers). Source badges (file/flag/env/default), "overridden
+  by --flag" notes, Apply / Revert, restart banner.
+- A destructive or widening change (permission mode to a looser one, removing a deny rule, adding an
+  allow rule, `useClaudeLogin`) asks a second confirm naming the change.
+- DevBridge: `dev.hub.open {tab: team|settings, group?}`, state for both tabs, actions for every
+  control; screens `hub_team`, `hub_settings_<group>`.
