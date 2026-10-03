@@ -8,7 +8,7 @@ A blueprint is two files with the same id (`[a-z0-9_]+`):
 
 | file | what |
 |---|---|
-| `<id>.nbt` | a vanilla structure template (gzipped NBT, `DataVersion`, `size`, `palette`, `blocks`, `entities: []`), exactly what a structure block saves; no size limit beyond vanilla's template format |
+| `<id>.nbt` | a vanilla structure template (gzipped NBT, `DataVersion`, `size`, `palette` with entries `{id, properties}` (26.3 renamed `Name`/`Properties`; the old keys place nothing, silently), `blocks`, `entities: []`), exactly what a structure block saves; no size limit beyond vanilla's template format |
 | `<id>.blueprint.json` | the sidecar below |
 
 Where they live:
@@ -113,5 +113,5 @@ the server API (singleplayer: `ServerTasks`).
 `tools/blueprints/verify.mjs <id>`: with the dev client running (`node tools/mac.mjs launch
 --backend sim --dev`), places the template in the dev HQ world away from the studio, takes an
 exterior orbit (4 views) + interior views (each `cam_*` anchor), writes PNGs and a contact sheet
-under `artifacts/shots/blueprints/<id>/`, and checks the sidecar (required anchors, anchors inside
+under `artifacts/shots/blueprints/<id>/` (see `tools/blueprints/VERIFY.md`), and checks the sidecar (required anchors, anchors inside
 `walk`, standing anchors on a floor with head room).
