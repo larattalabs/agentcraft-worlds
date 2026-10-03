@@ -478,10 +478,11 @@ The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
   armed remove expires after 6 s.
 - Actions: `HubActions` through `ServerTasks.callAsPlayer((level, player) -> ...)` (integrated server,
   the player's own level and ServerPlayer, completes on the client thread), calling `Buildings` directly,
-  so no operator permission is needed (Hardcore). `Building` has no dimension field and
-  `Buildings.remove` pastes the snapshot into whatever level it is given, so remove and teleport first
-  require `Buildings.stationCount(level, box) > 0` (AgentCraft station block entities in the box in the
-  player's dimension; loads those chunks). Remove refuses with the player in the box. Teleport goes to
+  so no operator permission is needed (Hardcore). `Building.dimension` (recorded by `Buildings.place`;
+  null in older records) must equal the player's dimension for remove and teleport, and
+  `Buildings.remove` itself refuses another dimension (it pastes the snapshot into the level it is
+  given). Old records without a dimension fall back to `Buildings.stationCount(level, box) > 0`
+  (AgentCraft station block entities in the box in the player's dimension; loads those chunks). Remove refuses with the player in the box. Teleport goes to
   the `entrance` anchor (else `spawn`, else the box centre), tries y+0, +1, -1, +2..+4 for a spot with no
   collision, no lava and a floor, dismounts, `teleportTo` in the same level, resets fall distance, and
   closes the hub. Every result is a toast and `HubActions.last()`.
@@ -491,22 +492,77 @@ The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
   bytes are read on `Util.ioPool()`, decoded and registered as `DynamicTexture`s
   (`agentcraft:hub_preview/<n>`) on the client thread, only for the view shown; max 2048 px a side,
   LRU-evicted beyond 8 textures / 48 MB, all released when the hub closes; keyed by path + mtime + size
-  so a regenerated PNG shows. Missing previews just leave the Plan chip. "Design new…" is disabled
-  until a feature sets `HubFeature.designNew` (a `Consumer<Screen>` called with the hub as parent).
+  so a regenerated PNG shows. Missing previews just leave the Plan chip. "Design new…" calls
+  `HubFeature.designNew` (a `Consumer<Screen>` called with the hub as parent), set by `DesignFeature`.
+- Designs (third list, `Sub.DESIGNS`): `ForemanState.designs()` newest first, status pill + step,
+  detail with the request, result and error, Cancel / Show blueprint / Place on the plot / Place….
 - Status: `Foreman.link().status()` (phase, url, attempt, last error, since), `ForemanState.status()`
   (backend, auth, account, user, message, `usage.windows` with progress bars and reset times, spend,
   version), the mod version and `DevBridge.status()`.
-- DevBridge: `dev.hub.open {tab?, sub?: buildings|blueprints, buildingId?, blueprint?, view?:
-  plan|iso|top|front|cutaway}` (cancels a placement, opens, selects); `dev.hub.state` (`open, tab, sub,
-  selectedBuilding, selectedBlueprint, armedRemove, busy, view, lastAction, buildings[], blueprints[]
-  (with preview counts), previews{tried[], found[{kind, where, path, state, width, height, error}]}` for
+- DevBridge: `dev.hub.open {tab?, sub?: buildings|blueprints|designs, buildingId?, blueprint?, designId?,
+  view?: plan|iso|top|front|cutaway}` (cancels a placement, opens, selects); `dev.hub.state` (`open, tab,
+  sub, selectedBuilding, selectedBlueprint, selectedDesign, designNote, armedRemove, busy, view,
+  lastAction, buildings[] (with dimension), blueprints[] (with preview counts, hasPlot), designs[], previews{tried[], found[{kind, where, path, state, width, height, error}]}` for
   the selected blueprint, `previewTextures`, `buttons[{id, label, state}]` drawn last frame,
   `description{rows, lines}`); `dev.hub.action {action, ...}` with `tab {tab}`, `select {buildingId |
   blueprint}`, `view {view}`, `home|teleport {buildingId}`, `remove {buildingId, confirm?}` (without
   confirm the first call arms and a second confirms; replies with `result`), `place_new`, `place
   {blueprint, repos?}` (with repos: straight to placement mode, else the fixed-blueprint repo step),
-  `design_new`. Server actions reply after the server answered. Screens for `dev.screen`: `hub`,
-  `hub_<tab>`, `hub_blueprints`.
+  `place_plot {blueprint, repos?}` (Place on the plot; with repos straight to placement locked on the
+  plot), `design_new`, `cancel_design {designId}`. Server and Foreman actions reply after they answered.
+  Screens for `dev.screen`: `hub`, `hub_<tab>`, `hub_blueprints`, `hub_designs`.
+
+### Generated buildings (design form, plot marking, design progress)
+The contract is docs/HUB.md "Generated buildings"; code in `dev.agentcraft.client.design` plus
+`building.PlotMarker` / `PlotHud` / `GhostRenderer.submitPlot` and the pure `building.DesignSpec` (choices,
+limits, presets, plot geometry; unit-tested in `DesignSpecTest`).
+- Protocol mirror: `Protocol.DesignRequest/Design/Size3/DesignStatus/DesignUpsert`, `Snapshot.designs`;
+  `ForemanState.designs()` (snapshot replaces, `design.upsert` fires `ForemanListener.onDesign`).
+  Requests are built by hand as JSON (optional fields omitted, never null; `wings` 1 for single).
+- `DesignFeature`: the form's model (`DesignForm`, kept across plot marking), `submit()` (validates,
+  creates `Blueprints.userDir()`, sends `design.request`, reads `designId` from the ack's result,
+  remembers the plot by design id), `cancel(id)`, the done flow (transition to done/failed from
+  upserts, or a snapshot showing a design it saw running: toast; done: `ServerTasks.callOnServer(
+  Blueprints::reload)`, select in the open hub or `takePendingSelect()` on the next `HubFeature.open`;
+  the plot moves to the blueprint id). The Foreman's own "design ready / failed" notifies are dropped
+  (`Toasts.addFilter`) in favour of these toasts.
+- Plot marking: `PlotMarker` (client thread) uses `BuildPlacement.spot` (the placement look ray: the
+  looked-at block's open neighbour dropped to the ground; nothing in reach = the feet), keys through
+  `BuildingWizardFeature.onKey` (Enter, PgUp/PgDn, Backspace, Esc), `PlotHud`, and
+  `GhostRenderer.submitPlot`. Starting placement cancels it and vice versa; leaving the level (or the
+  dimension) cancels it. `DesignSpec.Plot.maxSize()` is in the template's frame (x along the entrance
+  side: dx/dz swap for an east/west front); `placement(front, sx, sz, groundY)` gives the locked spot
+  `{ox, oy, oz, turns}` (`turnsToFace`, centred with `rotatedSizeX/Z`, `oy = ground - groundY`).
+- DevBridge:
+  - `dev.design.open {fields?, reset?, parent?: hub|none}` opens the form (parent = the hub) after
+    setting fields; `fields` = `{kind?, wings?, style?, materials?, features?: [..] | "a,b", size?:
+    S|M|L|plot, maxSize?: {x,y,z} | [x,y,z] (an explicit limit, e.g. invalid to see the inline error),
+    remix?, name?, notes?}` (values are kept as given, so bad ones show as errors).
+  - `dev.design.submit {fields?}` presses "Design it": replies after the ack with `sent{designId,
+    error}` + the state; on success the hub's Designs list is open with it selected.
+  - `dev.design.state`: `form{open, focus, busy, kind, wings, style, materials, features, size,
+    maxSize, plot, remix, name, notes, outDir, errors{field: message}, sendError, request (exactly as
+    sent), buttons[{id, label, state}]}`, `foremanConnected`, `lastSent`, `lastReload`,
+    `pendingSelect`, `designs[{id, status, step, blueprintId, loaded, size, previews, error, kind,
+    wings, style, maxSize, name, hasPlot}]`, `plotsByBlueprint`, `plotsByDesign`, `plotMode`.
+  - `dev.design.cancel {designId}` (replies after the ack: `ok`, `ackError`); `dev.design.place
+    {blueprint, repos?}` = Place on the plot (with repos: placement mode locked on the plot, replies
+    with the placement state).
+  - `dev.plot.start {height?}` (= Fit a plot…), `dev.plot.corner {x, y, z, front?, confirm?: true,
+    height?}` (y = the surface, feet level; `confirm:false` pins the corner as the looked-at one, for a
+    shot of the rectangle; the second confirmed corner returns to the form with maxSize filled),
+    `dev.plot.state` (`active, phase: first_corner|second_corner, first, hover, pinned, height, front,
+    plot{min, max, x, z, height, front, dimension, maxSize, clamped}, last`), `dev.plot.cancel` (Esc).
+  - Screens: `design_form`, `hub_designs`.
+- End-to-end with the sim backend (`AGENTCRAFT_BACKEND=sim`, which fakes a design by copying the bundled
+  workshop, 29×15×32, or campus2..4 for a group, and fails it when that exceeds `maxSize`):
+  `dev.design.open {reset:true}` -> `dev.design.submit {fields:{size:"M", name:"Test hall"}}` -> poll
+  `dev.design.state` until the design is `done` (a few seconds) -> `lastReload` says loaded and
+  `dev.hub.state` has the blueprint selected -> `dev.hub.action {action:"place", repos:["demo"]}`.
+  Failure path: `size:"S"` (24×14×24 < the workshop). Plot path: `dev.plot.start`, `dev.plot.corner`
+  twice (at least 29 wide × 32 deep in the template frame, height >= 15), `dev.design.submit
+  {fields:{size:"plot"}}`, wait for done, `dev.design.place {blueprint, repos:["demo"]}`, `dev.build.state`
+  (origin/turns on the plot), `dev.build.confirm`.
 
 ### Blocks
 All 16 blocks of the assets-src block contract are registered (`block.ModBlocks`) with block items
