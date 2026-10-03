@@ -76,6 +76,14 @@ public final class HubSeen {
 		}
 	}
 
+	/** Forgets a world's marks; {@code tab} > 0 sets the Goals tab's last look (may move back: tests and dev only). */
+	public void resetWorld(String world, long tab) {
+		World w = new World();
+		w.tab = Math.max(0, tab);
+		worlds.put(world, w);
+		dirty = true;
+	}
+
 	/** Marks a goal seen at {@code ts} (never moves back). */
 	public void markGoal(String world, String goalId, long ts) {
 		World w = worlds.computeIfAbsent(world, k -> new World());

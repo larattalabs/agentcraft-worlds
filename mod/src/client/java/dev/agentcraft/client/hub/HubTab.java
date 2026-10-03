@@ -10,14 +10,8 @@ import org.jspecify.annotations.Nullable;
  */
 public enum HubTab {
 	BUILDINGS("buildings", "Buildings", true, List.of()),
-	REPOS("repos", "Repos", false, List.of(
-		"The repos the Foreman knows (path, branch, head, uncommitted changes).",
-		"Per-repo settings: test and lint commands, merge policy, protected paths.",
-		"Add a repo by path; until then: /repo add <path> in the console.")),
-	GOALS("goals", "Goals", false, List.of(
-		"Submit a goal to a repo, continue a branch or an earlier session.",
-		"Open goals with their progress, tasks and who works on them.",
-		"Until then: type a goal in the console (`).")),
+	REPOS("repos", "Repos", true, List.of()),
+	GOALS("goals", "Goals", true, List.of()),
 	TEAM("team", "Team", false, List.of(
 		"The agents: role, model, effort and shift.",
 		"Pause, resume, put on or take off shift.",

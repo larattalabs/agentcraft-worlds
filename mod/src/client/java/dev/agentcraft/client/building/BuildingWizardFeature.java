@@ -82,6 +82,16 @@ public final class BuildingWizardFeature {
 		mc.gui.setScreen(new RepoPickScreen(keep));
 	}
 
+	/** Opens step 1 with {@code repos} already picked (the hub's Repos tab: "Place a building"). Cancels a placement in progress. */
+	public static void openWithRepos(List<String> repos) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc.player == null) {
+			return;
+		}
+		BuildPlacement.cancel();
+		mc.gui.setScreen(new RepoPickScreen(List.copyOf(repos)));
+	}
+
 	/**
 	 * Opens the repo step for a blueprint chosen up front (the hub's "Place"): picking repos goes straight
 	 * to placement mode with it. Cancels a placement in progress.

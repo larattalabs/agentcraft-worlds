@@ -69,7 +69,7 @@ public final class HubScreen extends Screen {
 		BUILDINGS, BLUEPRINTS, DESIGNS
 	}
 
-	private record Btn(String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger, Runnable action) {
+	record Btn(String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger, Runnable action) {
 		boolean hit(double mx, double my) {
 			return mx >= x && mx < x + w && my >= y && my < y + 20;
 		}
@@ -109,10 +109,81 @@ public final class HubScreen extends Screen {
 	private int descW;
 	private int descRows;
 	private int descTotal;
+	final ReposTab repos = new ReposTab(this);
+	final GoalsTab goals = new GoalsTab(this);
+	private boolean opened;
+	private boolean textInput;
 
 	public HubScreen(HubTab tab) {
 		super(Component.literal("AgentCraft hub"));
 		this.tab = tab;
+	}
+
+	/** The pane of a tab with its own state and input (Repos, Goals), or null. */
+	@Nullable HubPane pane(HubTab t) {
+		return switch (t) {
+			case REPOS -> repos;
+			case GOALS -> goals;
+			default -> null;
+		};
+	}
+
+	@Nullable HubPane pane() {
+		return pane(tab);
+	}
+
+	@Override
+	protected void init() {
+		super.init();
+		if (!opened) {
+			opened = true;
+			HubGoals.checkAway();
+		}
+		// also on coming back from a screen opened over the hub (task, decision): removed() hid the pane
+		HubPane p = pane();
+		if (p != null) {
+			p.shown(true);
+		}
+	}
+
+	@Override
+	public boolean isInputCaptured() {
+		HubPane p = pane();
+		return p != null && p.focus() != null;
+	}
+
+	/** A pane's text field gained or lost focus: SDL text input follows (typed characters are only delivered while on). */
+	void textFocus(boolean on) {
+		if (on != textInput && minecraft != null) {
+			textInput = on;
+			minecraft.onTextInputFocusChange(this, on);
+		}
+	}
+
+	net.minecraft.client.gui.Font font() {
+		return font;
+	}
+
+	net.minecraft.client.Minecraft mc() {
+		return minecraft;
+	}
+
+	/** Presses a button drawn last frame by id (DevBridge: "every button"); false when there is none or it is disabled. */
+	boolean press(String id) {
+		for (Btn b : List.copyOf(buttons)) {
+			if (b.id().equals(id)) {
+				if (b.disabled()) {
+					return false;
+				}
+				b.action().run();
+				return true;
+			}
+		}
+		return false;
+	}
+
+	boolean hasButton(String id) {
+		return buttons.stream().anyMatch(b -> b.id().equals(id));
 	}
 
 	@Override
@@ -123,6 +194,13 @@ public final class HubScreen extends Screen {
 	@Override
 	public void removed() {
 		PreviewImages.releaseAll();
+		HubPane p = pane();
+		if (p != null) {
+			p.unfocus();
+			p.shown(false);
+		}
+		textFocus(false);
+		HubGoals.flush(true);
 		super.removed();
 	}
 
@@ -134,7 +212,18 @@ public final class HubScreen extends Screen {
 
 	public void setTab(HubTab t) {
 		if (t != tab) {
+			HubPane old = pane();
+			if (old != null) {
+				old.unfocus();
+				if (opened) {
+					old.shown(false);
+				}
+			}
 			tab = t;
+			HubPane now = pane();
+			if (now != null && opened) {
+				now.shown(true);
+			}
 			disarm();
 			listScroll = 0;
 		}
@@ -371,6 +460,10 @@ public final class HubScreen extends Screen {
 	@Override
 	public boolean keyPressed(KeyEvent e) {
 		int k = e.key();
+		HubPane p = pane();
+		if (p != null && p.keyPressed(e)) {
+			return true;
+		}
 		if (e.isEscape() || Keys.matches(Keys.hub, e)) {
 			onClose();
 			return true;
@@ -432,6 +525,15 @@ public final class HubScreen extends Screen {
 	}
 
 	@Override
+	public boolean charTyped(net.minecraft.client.input.CharacterEvent e) {
+		HubPane p = pane();
+		if (p != null && p.charTyped(e)) {
+			return true;
+		}
+		return super.charTyped(e);
+	}
+
+	@Override
 	public boolean mouseClicked(MouseButtonEvent e, boolean doubleClick) {
 		for (int i = 0; i < tabRects.size(); i++) {
 			int[] r = tabRects.get(i);
@@ -447,6 +549,10 @@ public final class HubScreen extends Screen {
 				}
 				return true;
 			}
+		}
+		HubPane pane = pane();
+		if (pane != null && pane.mouseClicked(e.x(), e.y(), doubleClick)) {
+			return true;
 		}
 		for (int i = 0; i < viewRects.size(); i++) {
 			int[] r = viewRects.get(i);
@@ -481,6 +587,10 @@ public final class HubScreen extends Screen {
 	@Override
 	public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
 		int d = scrollY > 0 ? -1 : 1;
+		HubPane pane = pane();
+		if (pane != null && pane.mouseScrolled(x, y, d)) {
+			return true;
+		}
 		if (descRows > 0 && x >= descX && x < descX + descW && y >= descY && y < descY + descRows * 10) {
 			descScroll = Math.max(0, Math.min(Math.max(0, descTotal - descRows), descScroll + d));
 			return true;
@@ -534,9 +644,12 @@ public final class HubScreen extends Screen {
 		switch (tab) {
 			case BUILDINGS -> drawBuildingsTab(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			case STATUS -> drawStatus(g, cx, y, cw, footerY - 4 - y);
+			case REPOS -> repos.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
+			case GOALS -> goals.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			default -> drawComingNext(g, cx, y, cw, footerY - 4 - y);
 		}
-		String[] hints = tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "buildings/blueprints/designs", "↑↓", "select",
+		HubPane hp = pane();
+		String[] hints = hp != null ? hp.hints() : tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "buildings/blueprints/designs", "↑↓", "select",
 			"Esc", "close"} : new String[] {"Tab", "next tab", "Esc", "close"};
 		if (UiBits.hintsWidth(font, hints) <= cw) {
 			UiBits.hints(g, font, cx, footerY, false, hints);
@@ -559,7 +672,7 @@ public final class HubScreen extends Screen {
 		}
 	}
 
-	private Btn button(GuiGraphicsExtractor g, String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger,
+	Btn button(GuiGraphicsExtractor g, String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger,
 		int mx, int my, Runnable action) {
 		Btn b = new Btn(id, label, x, y, w, primary, disabled, danger, action);
 		buttons.add(b);
@@ -568,7 +681,7 @@ public final class HubScreen extends Screen {
 		return b;
 	}
 
-	private int bw(String label) {
+	int bw(String label) {
 		return UiBits.buttonWidth(font, label, 0);
 	}
 
@@ -610,7 +723,7 @@ public final class HubScreen extends Screen {
 		}
 	}
 
-	private void drawList(GuiGraphicsExtractor g, int x, int y, int w, int h, int count, int selected, int mx, int my, RowDrawer drawer) {
+	void drawList(GuiGraphicsExtractor g, int x, int y, int w, int h, int count, int selected, int mx, int my, RowDrawer drawer) {
 		listX = x;
 		listY = y;
 		listW = w;
@@ -646,7 +759,7 @@ public final class HubScreen extends Screen {
 	}
 
 	@FunctionalInterface
-	private interface RowDrawer {
+	interface RowDrawer {
 		/** Draws row {@code i}; returns its id. */
 		String draw(int i, int x, int y, int w);
 	}
@@ -1153,13 +1266,13 @@ public final class HubScreen extends Screen {
 		return FabricLoader.getInstance().getModContainer(AgentCraft.MOD_ID).map(c -> c.getMetadata().getVersion().getFriendlyString()).orElse("?");
 	}
 
-	private int section(GuiGraphicsExtractor g, String title, int x, int y, int w) {
+	int section(GuiGraphicsExtractor g, String title, int x, int y, int w) {
 		g.text(font, title, x, y, UiStyle.CLAY_DARK, false);
 		Panels.divider(g, x, y + 10, w);
 		return y + 16;
 	}
 
-	private int fact(GuiGraphicsExtractor g, String label, @Nullable String value, int x, int y, int w) {
+	int fact(GuiGraphicsExtractor g, String label, @Nullable String value, int x, int y, int w) {
 		int lw = label.isEmpty() ? 0 : 58;
 		if (!label.isEmpty()) {
 			g.text(font, label, x, y, UiBits.muted(), false);
