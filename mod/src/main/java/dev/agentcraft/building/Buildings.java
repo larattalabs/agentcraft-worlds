@@ -218,18 +218,31 @@ public final class Buildings {
 		Path snap = snapshotFile(server, id);
 		snapshot(level, box, snap);
 
-		if (!template.placeInWorld(level, placePos, placePos, settings, level.getRandom(), FLAGS)) {
-			restore(level, box, snap);
-			throw new BuildingException("Template " + bp.id() + " placed nothing (empty template?); the area was restored");
-		}
-		int connected = connectPanels(level, box);
-		int bound = rewriteBindings(level, box, repos);
-		clearDrops(level, box);
-
 		Map<String, Building> map = new LinkedHashMap<>(s.byId());
-		Building b = new Building(id, bp.id(), repos, map.isEmpty(), BlueprintTransform.rotationName(turns), box,
-			BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
-			BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), System.currentTimeMillis());
+		Building b;
+		int connected;
+		int bound;
+		try {
+			if (!template.placeInWorld(level, placePos, placePos, settings, level.getRandom(), FLAGS)) {
+				throw new IllegalStateException("template " + bp.id() + " placed nothing (empty template?)");
+			}
+			connected = connectPanels(level, box);
+			bound = rewriteBindings(level, box, repos);
+			clearDrops(level, box);
+			b = new Building(id, bp.id(), repos, map.isEmpty(), BlueprintTransform.rotationName(turns), box,
+				BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
+				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), System.currentTimeMillis());
+		} catch (RuntimeException e) {
+			// never leave a half-built, unrecorded box behind: put the snapshot back
+			AgentCraft.LOGGER.error("Placing {} at {} failed; restoring box {}", bp.id(), origin.toShortString(), str(box), e);
+			restore(level, box, snap);
+			try {
+				Files.deleteIfExists(snap);
+			} catch (IOException io) {
+				AgentCraft.LOGGER.warn("Could not delete {}", snap, io);
+			}
+			throw new BuildingException("Placing " + bp.id() + " failed (" + e.getMessage() + "); the area was restored");
+		}
 		map.put(id, b);
 		commit(server, new State(Collections.unmodifiableMap(map), next + 1));
 		AgentCraft.LOGGER.info("Placed building {} ({}) for {} at {} rotation {}: box {}, {} anchors, {} panels connected, {} bindings rewritten{}",

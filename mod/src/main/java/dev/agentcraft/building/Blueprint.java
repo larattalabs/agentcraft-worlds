@@ -30,6 +30,8 @@ public record Blueprint(String id, String name, String description, String kind,
 	public static final Pattern ID = Pattern.compile("[a-z0-9_]+");
 	public static final String SINGLE = "single";
 	public static final String GROUP = "group";
+	/** Cast workers every blueprint needs a desk and a monitor for (docs/BUILDINGS.md). */
+	public static final List<String> CAST_WORKERS = List.of("juniper", "kit", "wren", "rowan", "tove");
 
 	public boolean isGroup() {
 		return GROUP.equals(kind);
@@ -118,6 +120,13 @@ public record Blueprint(String id, String name, String description, String kind,
 			"goal_atrium", "entrance", "spawn", "cam_overview")) {
 			if (!anchors.containsKey(req)) {
 				w.add("missing anchor " + req);
+			}
+		}
+		for (String worker : CAST_WORKERS) {
+			for (String prefix : List.of("desk_", "monitor_")) {
+				if (!anchors.containsKey(prefix + worker)) {
+					w.add("missing anchor " + prefix + worker);
+				}
 			}
 		}
 		for (int n = 1; n <= wings; n++) {
