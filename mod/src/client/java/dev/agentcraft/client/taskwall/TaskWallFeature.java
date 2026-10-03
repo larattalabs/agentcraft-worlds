@@ -100,7 +100,8 @@ public final class TaskWallFeature {
 			Vec3 hit = hr instanceof BlockHitResult bh && hr.getType() == HitResult.Type.BLOCK ? bh.getLocation() : Vec3.atCenterOf(pos);
 			String id = taskAt(pos, state, hit);
 			if (id != null) {
-				mc.gui.setScreen(new TaskScreen(id));
+				TaskBoard b = mc.level == null ? null : BOARDS.get(PanelBlock.origin(mc.level, pos, state));
+				mc.gui.setScreen(new TaskScreen(id, b == null ? null : b.repoFilter));
 			}
 		});
 		DevBridge.registerScreen("task", mc -> new TaskScreen(defaultTask()));
@@ -308,6 +309,9 @@ public final class TaskWallFeature {
 			j.addProperty("size", b.panelW + "x" + b.panelH);
 			j.addProperty("ppb", b.ppb);
 			j.addProperty("listMode", b.listMode);
+			j.addProperty("repo", b.repoFilter);
+			j.addProperty("title", b.title);
+			j.addProperty("tasks", b.total);
 			j.addProperty("layoutUs", b.layoutNanos / 1000);
 			j.addProperty("ageMs", (System.nanoTime() - b.lastUsedNanos) / 1_000_000L);
 			JsonObject cols = new JsonObject();

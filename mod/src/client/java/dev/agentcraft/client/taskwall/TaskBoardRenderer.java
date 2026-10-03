@@ -93,7 +93,9 @@ public class TaskBoardRenderer extends StationRenderer<TaskBoardBlockEntity, Tas
 		ForemanState fs = Foreman.state();
 		TaskBoard b = TaskWallFeature.board(be.getBlockPos());
 		b.lastUsedNanos = now;
-		if (b.sync(fs != null && fs.hasData() ? fs : null, s.panelWidth, s.panelHeight, TaskWallFeature.taskSeq(), TaskWallFeature.agentSeq(), now)) {
+		// the panel origin's binding: repo:<id> filters the wall to that repo (a building's wall)
+		if (b.sync(fs != null && fs.hasData() ? fs : null, be.binding(), s.panelWidth, s.panelHeight, TaskWallFeature.taskSeq(),
+			TaskWallFeature.agentSeq(), now)) {
 			DisplayStats.rebuilt(DisplayStats.Kind.BOARD);
 		}
 		b.step(now);
@@ -175,9 +177,17 @@ public class TaskBoardRenderer extends StationRenderer<TaskBoardBlockEntity, Tas
 					UiStyle.color("palette.ui.edge", 0xFFC9BBA3), light);
 			}
 		}
+		if (b.repoFilter != null) {
+			// title strip: the repo this wall belongs to
+			r.add(b.ix0, b.titleY + 1, b.ix1, b.titleY + TaskBoard.TITLE_H - 2, 2 * Z, UiStyle.color("board.label", 0xFFF4EFE6), light);
+			r.add(b.ix0, b.titleY + TaskBoard.TITLE_H - 3, b.ix1, b.titleY + TaskBoard.TITLE_H - 2, 2.5f * Z, rule, light);
+		}
 		r.submit(ps, c);
 		ps.pushPose();
 		ps.translate(0, 0, 3 * Z);
+		if (b.repoFilter != null) {
+			WorldUi.submitText(ps, c, b.titleSeq, b.ix0 + 4, b.titleY + 2, headInk, light);
+		}
 		for (TaskBoard.Column col : b.columns) {
 			WorldUi.submitText(ps, c, col.label, col.ax + 4, b.iy0 + 3, headInk, light);
 			WorldUi.submitText(ps, c, col.countSeq, col.countX(), b.iy0 + 3, muted, light);
@@ -229,7 +239,7 @@ public class TaskBoardRenderer extends StationRenderer<TaskBoardBlockEntity, Tas
 	/** No tasks yet: a paper note pinned in the middle that says how to start, with the console key as a keycap. */
 	private static void drawEmpty(PoseStack ps, SubmitNodeCollector c, TaskBoard b, int light) {
 		Font font = Minecraft.getInstance().font;
-		String l1 = "No tasks yet";
+		String l1 = b.repoFilter != null ? "No tasks for " + b.title + " yet" : "No tasks yet";
 		String key = TaskWallFeature.startKey();
 		String pre = key.isEmpty() ? "Open the console, type a goal" : "Press ";
 		String post = key.isEmpty() ? "" : " and type a goal";
