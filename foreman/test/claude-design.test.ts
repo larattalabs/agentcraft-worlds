@@ -58,11 +58,15 @@ function fakeProjectRoot(): string {
   fs.writeFileSync(
     path.join(root, 'tools', 'blueprints', 'render.mjs'),
     [
-      "import fs from 'node:fs'; import path from 'node:path';",
-      'const [nbt, , out] = process.argv.slice(2);',
-      "const id = path.basename(nbt, '.nbt');",
-      "if (!fs.existsSync(nbt)) { console.error('no nbt'); process.exit(2); }",
-      "for (const v of ['iso', 'top', 'front']) fs.writeFileSync(path.join(out, `${id}.preview-${v}.png`), `png ${v}`);",
+      "import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';",
+      // build.mjs imports renderStructure (it renders after a passing check); the stub renders nothing there
+      'export function renderStructure() { return { files: {}, ms: 0 }; }',
+      'if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {',
+      '  const [nbt, , out] = process.argv.slice(2);',
+      "  const id = path.basename(nbt, '.nbt');",
+      "  if (!fs.existsSync(nbt)) { console.error('no nbt'); process.exit(2); }",
+      "  for (const v of ['iso', 'top', 'front']) fs.writeFileSync(path.join(out, `${id}.preview-${v}.png`), `png ${v}`);",
+      '}',
     ].join('\n'),
   );
   return root;
