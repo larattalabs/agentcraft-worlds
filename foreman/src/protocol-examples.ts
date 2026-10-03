@@ -146,7 +146,21 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
     ],
   },
   'agent.say': { v: 1, type: 'agent.say', agentId: 'kit', to: 'juniper', text: 'parseTags() is in src/tags.ts - you are unblocked once it merges.', ts: ts + 95_000 },
-  'task.upsert': { v: 1, type: 'task.upsert', task },
+  'task.upsert': {
+    v: 1,
+    type: 'task.upsert',
+    task: {
+      ...task,
+      id: 't4',
+      title: 'Tag filter in the list view',
+      status: 'pr',
+      ci: 'pass',
+      branch: 'agentcraft/wren/t4-tag-filter',
+      worktree: 'wren-t4',
+      assignee: 'wren',
+      pr: { url: 'https://dev.azure.com/acme/Notes/_git/pocket-notes/pullrequest/612', id: 612, host: 'ado', branch: 'feat/t4-tag-filter', target: 'dev', status: 'open', checks: 'passing', threads: { open: 2, new: 1 }, updatedAt: ts + 400_000 },
+    },
+  },
   'decision.upsert': { v: 1, type: 'decision.upsert', decision },
   'repo.upsert': { v: 1, type: 'repo.upsert', repo },
   'memory.upsert': { v: 1, type: 'memory.upsert', entry: memory },
@@ -225,4 +239,5 @@ export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
   'repo.add': { v: 1, type: 'repo.add', id: 'c18', path: 'C:\\Projects\\agentcraft\\sandbox\\demo-app' },
   'design.request': { v: 1, type: 'design.request', id: 'c19', request: designRequest },
   'design.cancel': { v: 1, type: 'design.cancel', id: 'c20', designId: 'd7' },
+  'pr.refresh': { v: 1, type: 'pr.refresh', id: 'c21', taskId: 't4' },
 };

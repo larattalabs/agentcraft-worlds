@@ -45,6 +45,8 @@ const ENUMS: Record<string, AnySchema> = {
   DesignStatus: P.DesignStatus,
   DesignStyle: P.DesignStyle,
   DesignFeature: P.DesignFeature,
+  PrStatus: P.PrStatus,
+  PrChecks: P.PrChecks,
 };
 for (const [name, schema] of Object.entries(ENUMS)) NAMES.set(schema, name);
 

@@ -5,8 +5,10 @@
 //  - a task can only move to `doing` when all deps are `done` and it has an assignee
 //  - `done` for a task that owns a worktree happens only through an approved merge (`viaMerge`)
 //  - `cancelled` is terminal for scheduling but can be retried (-> todo)
+//  - `pr`: landed as a pull request that is still open (the PR watcher moves it to done when it is
+//    merged, cancelled when abandoned, back to todo/doing for a review fold-in)
 import type { Ctx } from './context.js';
-import type { CiStatus, Task, TaskStatus } from './protocol.js';
+import type { CiStatus, Task, TaskPr, TaskStatus } from './protocol.js';
 
 export class TaskError extends Error {
   constructor(message: string) {
@@ -38,12 +40,15 @@ export interface TaskPatch {
   summary?: string;
   blockedReason?: string | null;
   repoId?: string;
+  /** the task's pull request (null removes it) */
+  pr?: TaskPr | null;
 }
 
 const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   todo: ['doing', 'blocked', 'cancelled', 'done'],
   doing: ['review', 'blocked', 'todo', 'done', 'cancelled'],
-  review: ['done', 'doing', 'blocked', 'todo', 'cancelled'],
+  review: ['done', 'pr', 'doing', 'blocked', 'todo', 'cancelled'],
+  pr: ['done', 'cancelled', 'todo', 'doing'],
   blocked: ['todo', 'doing', 'cancelled', 'review'],
   done: ['todo'],
   cancelled: ['todo'],
@@ -124,6 +129,10 @@ export class TaskGraph {
     if (patch.ci !== undefined) t.ci = patch.ci;
     if (patch.summary !== undefined) t.summary = patch.summary;
     if (patch.repoId !== undefined) t.repoId = patch.repoId;
+    if (patch.pr !== undefined) {
+      if (patch.pr === null) delete t.pr;
+      else t.pr = { ...patch.pr, threads: { ...patch.pr.threads } };
+    }
     if (patch.blockedReason !== undefined) {
       if (patch.blockedReason === null) delete t.blockedReason;
       else t.blockedReason = patch.blockedReason;
@@ -198,11 +207,11 @@ export class TaskGraph {
     return false;
   }
 
-  /** Goal progress in 0..1: done=1, review=0.75, doing=0.4, blocked/todo=0 (cancelled excluded). */
+  /** Goal progress in 0..1: done=1, pr=0.9, review=0.75, doing=0.4, blocked/todo=0 (cancelled excluded). */
   progress(goalId: string): number {
     const ts = this.forGoal(goalId).filter((t) => t.status !== 'cancelled');
     if (!ts.length) return 0;
-    const w: Record<TaskStatus, number> = { done: 1, review: 0.75, doing: 0.4, todo: 0, blocked: 0, cancelled: 0 };
+    const w: Record<TaskStatus, number> = { done: 1, pr: 0.9, review: 0.75, doing: 0.4, todo: 0, blocked: 0, cancelled: 0 };
     return Math.round((ts.reduce((s, t) => s + w[t.status], 0) / ts.length) * 1000) / 1000;
   }
 
@@ -215,6 +224,6 @@ export class TaskGraph {
   private touch(t: Task): void {
     t.updatedAt = this.ctx.now();
     this.ctx.store.markDirty();
-    this.ctx.emit({ type: 'task.upsert', task: { ...t, deps: [...t.deps] } });
+    this.ctx.emit({ type: 'task.upsert', task: { ...t, deps: [...t.deps], ...(t.pr ? { pr: { ...t.pr, threads: { ...t.pr.threads } } } : {}) } });
   }
 }

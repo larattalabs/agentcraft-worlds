@@ -54,7 +54,7 @@ public final class StatusMap {
 		}
 		return switch (t.status()) {
 			case DOING -> "working";
-			case REVIEW -> "thinking";
+			case REVIEW, PR -> "thinking";
 			case DONE -> "done";
 			case BLOCKED -> "error";
 			case CANCELLED -> "cancelled";

@@ -387,7 +387,7 @@ final class TaskBoard {
 	static Col colOf(Task t) {
 		return switch (t.status()) {
 			case DOING -> Col.DOING;
-			case REVIEW -> Col.REVIEW;
+			case REVIEW, PR -> Col.REVIEW;
 			case DONE -> Col.DONE;
 			case BLOCKED -> t.worktree() != null || t.branch() != null ? Col.DOING : Col.TODO;
 			default -> Col.TODO;
@@ -955,7 +955,7 @@ final class TaskBoard {
 		}
 		if (o.needsYou) {
 			o.dot = "waiting"; // one mapping everywhere (StatusMap): waits on you = clay, pulsing
-		} else if (t.status() == TaskStatus.REVIEW) {
+		} else if (t.status() == TaskStatus.REVIEW || t.status() == TaskStatus.PR) {
 			o.dot = StatusMap.task(s, t);
 		}
 		// footer hint (right): the most useful single fact
@@ -987,6 +987,8 @@ final class TaskBoard {
 			hint = "after " + String.join(", ", pending);
 		} else if (t.ci() == CiStatus.RUNNING) {
 			hint = "CI running";
+		} else if (t.status() == TaskStatus.PR) {
+			hint = "PR open  " + t.id();
 		} else if (t.priority() > 0 && c.col == Col.TODO) {
 			hint = "P" + t.priority() + "  " + t.id();
 		} else {
