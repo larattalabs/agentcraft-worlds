@@ -240,7 +240,7 @@ Foreman -> client:
   board. The backend tracks which lead last had a turn per goal, so this also works after a restart.
 - **Lead tools**: a lead may `update_task` only its own goals' tasks; another lead's task is refused with a
   pointer to `send_message`. Reassigning a task that is `doing` goes through the proper hand-off
-  (`task.action reassign`) instead of just changing the assignee. `create_task` naming a worker busy on another
+  (`task.action reassign`) instead of just changing the assignee. **This changes single-lead behaviour too**: the worker's turn is aborted and the next worker continues its branch. Before, only the assignee changed. The feed line for it reads as a user reassign. `create_task` naming a worker busy on another
   lead's task creates it (the scheduler waits for that worker, never preempts) and the result says so. Leads cannot
   be assignees.
 - **Prompts**: a building lead's header is `# You are Ines, lead of building b3 on an AgentCraft team`. Every lead,
