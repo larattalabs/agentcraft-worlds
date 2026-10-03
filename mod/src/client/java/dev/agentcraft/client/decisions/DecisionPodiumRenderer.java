@@ -9,6 +9,7 @@ import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.hud.Keys;
 import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.leads.Leads;
 import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
@@ -22,6 +23,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
@@ -33,6 +35,10 @@ import org.jspecify.annotations.Nullable;
  * {@code bubble} drawn opaque): the waiting count with a pulsing clay dot and the key hint, the first
  * decision's agent (face + name) and its question, two lines at most. It also keeps the podium's
  * {@code open} block state in sync (lit paper, lens and bell).
+ *
+ * <p>A lead per building ({@link Leads}): a podium in a building shows the decisions of that building's
+ * lead; the home podium (and the HQ studio's) shows Marlow's and every decision whose agent is not an
+ * assigned lead with a podium of its own. {@code HqWorldDriver} opens the block with the same filter.
  */
 public class DecisionPodiumRenderer extends StationRenderer<DecisionPodiumBlockEntity, DecisionPodiumRenderer.State> {
 	/** Bubble pixel scale relative to vanilla name tags (1/40 block per px): 1/72 block per px. */
@@ -86,8 +92,12 @@ public class DecisionPodiumRenderer extends StationRenderer<DecisionPodiumBlockE
 		// no allocation per frame: count the waiting ones and keep the first
 		Decision d = null;
 		int count = 0;
+		// a building's podium shows its lead's decisions; the home podium marlow's and everyone else's
+		Leads.View leads = Leads.view();
+		BlockPos at = be.getBlockPos();
+		String building = Leads.buildingAt(at.getX(), at.getY(), at.getZ(), 0);
 		for (Decision x : DecisionQueue.open()) {
-			if (!DecisionsFeature.isAnswering(x.id())) {
+			if (!DecisionsFeature.isAnswering(x.id()) && leads.podiumShows(building, x.agentId())) {
 				if (d == null) {
 					d = x;
 				}

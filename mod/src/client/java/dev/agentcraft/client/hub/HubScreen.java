@@ -6,6 +6,7 @@ import dev.agentcraft.building.Blueprint;
 import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.building.Building;
 import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.LeadRouting;
 import dev.agentcraft.client.building.BlueprintPreview;
 import dev.agentcraft.client.building.BuildingWizardFeature;
 import dev.agentcraft.client.design.DesignFeature;
@@ -19,6 +20,9 @@ import dev.agentcraft.client.foreman.Protocol.ForemanStatus;
 import dev.agentcraft.client.foreman.Protocol.UsageWindow;
 import dev.agentcraft.client.hud.Keys;
 import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.diff.ReviewKit;
+import dev.agentcraft.client.leads.Leads;
+import dev.agentcraft.client.leads.LeadsFeature;
 import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
@@ -673,7 +677,7 @@ public final class HubScreen extends Screen {
 				UiBits.dotPill(g, font, "done", "home", rx + rw - hw + 2, ry - 1, UiBits.okText());
 			}
 			g.text(font, TextUtil.ellipsize(font, head, rw - hw - 2), rx, ry, ink, false);
-			g.text(font, TextUtil.ellipsize(font, String.join(", ", b.repos()), rw), rx, ry + 10, muted, false);
+			g.text(font, TextUtil.ellipsize(font, String.join(", ", b.repos()) + " · " + LeadsFeature.leadLabel(b), rw), rx, ry + 10, muted, false);
 			return b.id();
 		});
 		// detail
@@ -687,7 +691,13 @@ public final class HubScreen extends Screen {
 		g.text(font, TextUtil.ellipsize(font, cur.id() + " · " + (bp != null ? bp.name() : cur.blueprint()), dw), dx, dy, ink, false);
 		dy += 13;
 		Anchors.Bounds box = cur.box();
+		// the building's lead: its portrait + name, "Marlow (home)", or "no lead: Foreman offline"
+		String leadId = Foreman.connected() ? Leads.view().leadOf(cur.id()) : null;
+		if (leadId == null && Foreman.connected()) {
+			leadId = LeadRouting.MARLOW;
+		}
 		String[][] facts = {
+			{"Lead", LeadsFeature.leadLabel(cur)},
 			{"Blueprint", cur.blueprint() + (bp == null ? " (not loaded)" : "")},
 			{cur.repos().size() == 1 ? "Repo" : "Repos (wings)", String.join(", ", cur.repos())},
 			{"Home", cur.home() ? "yes: idle agents go here" : "no"},
@@ -702,8 +712,13 @@ public final class HubScreen extends Screen {
 		}
 		for (String[] f : facts) {
 			g.text(font, f[0], dx, dy, muted, false);
-			for (String line : TextUtil.wrapPlain(font, f[1], dw - labelW - 8)) {
-				g.text(font, line, dx + labelW + 8, dy, ink, false);
+			int vx = dx + labelW + 8;
+			if (f[0].equals("Lead") && leadId != null) {
+				ReviewKit.face(g, font, leadId, vx, dy - 1, 8);
+				vx += 11;
+			}
+			for (String line : TextUtil.wrapPlain(font, f[1], dx + dw - vx)) {
+				g.text(font, line, vx, dy, ink, false);
 				dy += 10;
 			}
 			dy += 1;

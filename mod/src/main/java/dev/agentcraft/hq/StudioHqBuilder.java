@@ -212,7 +212,7 @@ public final class StudioHqBuilder implements HqBuilder {
 
 	/** Desk bay owners, west to east (see {@link #DESK_ORDER}). */
 	static List<String> deskIds() {
-		List<String> cast = Cast.ids();
+		List<String> cast = Cast.deskIds(); // building leads have no desk
 		List<String> out = new ArrayList<>();
 		for (String id : DESK_ORDER) {
 			if (cast.contains(id)) {

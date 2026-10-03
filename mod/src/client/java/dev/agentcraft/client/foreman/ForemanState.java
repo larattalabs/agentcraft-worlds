@@ -18,6 +18,8 @@ import dev.agentcraft.client.foreman.Protocol.ForemanStatus;
 import dev.agentcraft.client.foreman.Protocol.ForemanStatusMsg;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.GoalUpsert;
+import dev.agentcraft.client.foreman.Protocol.LeadAssignment;
+import dev.agentcraft.client.foreman.Protocol.LeadsUpdate;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
 import dev.agentcraft.client.foreman.Protocol.MemoryEntry;
 import dev.agentcraft.client.foreman.Protocol.MemoryUpsert;
@@ -74,6 +76,8 @@ public final class ForemanState {
 	private final Deque<Notify> notifications = new ArrayDeque<>();
 	private @Nullable Goal goal;
 	private @Nullable ForemanStatus status;
+	/** Lead assignments ({@code snapshot.leads} / {@code leads.update}); null until the Foreman sent any (an older Foreman never does). */
+	private @Nullable List<LeadAssignment> leads;
 	private LinkStatus link;
 	private long revision;
 	private long snapshotAt;
@@ -166,6 +170,20 @@ public final class ForemanState {
 	/** All goals, oldest first. */
 	public Map<String, Goal> goals() {
 		return Collections.unmodifiableMap(goals);
+	}
+
+	/** Lead assignments (Foreman order), empty until known. Marlow is listed without a building. */
+	public List<LeadAssignment> leads() {
+		return leads == null ? List.of() : leads;
+	}
+
+	/**
+	 * Whether the Foreman publishes lead assignments (a snapshot carried {@code leads} or a
+	 * {@code leads.update} arrived). False with a Foreman from before leads per building: routing then
+	 * keeps the old rule (the lead follows its goal's repo).
+	 */
+	public boolean leadsKnown() {
+		return leads != null;
 	}
 
 	/** Building designs (the Foreman's recent ones, oldest first; queued/running ones always included). */
@@ -460,6 +478,11 @@ public final class ForemanState {
 				bounded(notifications, n, NOTIFY_TAIL);
 				fire(l -> l.onNotify(n));
 			}
+			case "leads.update" -> {
+				List<LeadAssignment> l = cleanLeads(ForemanJson.read(json, LeadsUpdate.class).leads());
+				leads = l;
+				fire(x -> x.onLeads(l));
+			}
 			case "foreman.status" -> {
 				ForemanStatus s = ForemanJson.read(json, ForemanStatusMsg.class).status();
 				if (s != null) {
@@ -536,9 +559,20 @@ public final class ForemanState {
 		// speech bubbles are transient: drop the ones of agents that no longer exist
 		lastSay.keySet().retainAll(agents.keySet());
 		status = s.foreman();
+		leads = s.leads() == null ? null : cleanLeads(s.leads());
 		snapshots++;
 		snapshotAt = System.currentTimeMillis();
 		fire(l -> l.onSnapshot(this));
+	}
+
+	private static List<LeadAssignment> cleanLeads(List<LeadAssignment> in) {
+		List<LeadAssignment> out = new ArrayList<>();
+		for (LeadAssignment l : in) {
+			if (l != null && l.leadId() != null && !l.leadId().isBlank()) {
+				out.add(l);
+			}
+		}
+		return List.copyOf(out);
 	}
 
 	private void appendLogs(String agentId, List<LogEntry> entries) {

@@ -1,8 +1,11 @@
 package dev.agentcraft.client.agents;
 
+import com.google.gson.JsonObject;
 import dev.agentcraft.AgentCraft;
 import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.LeadRouting;
 import dev.agentcraft.building.Routing;
+import dev.agentcraft.client.leads.Leads;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
@@ -82,6 +85,14 @@ public final class AgentManager {
 	private long awaitingRevision = -1;
 	private @Nullable ClientLevel level;
 	private long regionsSignature = Long.MIN_VALUE;
+	/** Released leads walking out: agent id -> the tick by which they are removed even if still walking. */
+	private final Map<String, Long> departing = new HashMap<>();
+	/** Ids seen as building leads (role lead, not marlow): only they walk out when they leave the view. */
+	private final Set<String> leadIds = new HashSet<>();
+	/** The level was populated once (a lead appearing after that was newly assigned: it walks in). */
+	private boolean populated;
+	/** Longest a released lead takes to walk out (ticks). */
+	private static final int DEPART_TICKS = 30 * 20;
 	private int nextEntityId = -10_000;
 	private int pathFailures;
 	private long ticks;
@@ -143,6 +154,9 @@ public final class AgentManager {
 			layoutRevisions.clear();
 			seats.clear();
 			userSpots.clear();
+			departing.clear();
+			leadIds.clear();
+			populated = false;
 			level = lvl;
 			regionsSignature = Long.MIN_VALUE;
 		}
@@ -162,13 +176,29 @@ public final class AgentManager {
 			seats.clear();
 			userSpots.clear();
 		}
-		List<Agent> agents = new ArrayList<>(st.agents().values());
+		Leads.View leads = Leads.view();
+		List<Agent> agents = new ArrayList<>();
+		for (Agent a : st.agents().values()) {
+			if (isBuildingLead(a)) {
+				leadIds.add(a.id());
+				if (leads.known() && !LeadRouting.present(a.id(), leads.buildingOf(a.id()))) {
+					continue; // released, or leads a building of another world: not here (walks home and leaves if shown)
+				}
+			}
+			agents.add(a);
+		}
 		// route: agent -> its building's layout; group by layout name (Foreman order kept within a group)
 		List<Routing.Site> sites = Buildings.sites();
 		Map<String, Anchors.Layout> layouts = new LinkedHashMap<>();
 		Map<String, List<Agent>> groups = new LinkedHashMap<>();
 		for (Agent a : agents) {
-			Anchors.Layout l = sites.isEmpty() ? current : Routing.layoutFor(repoOf(st, a), sites, current);
+			Anchors.Layout l;
+			if (leads.known() && a.role() == AgentRole.LEAD) {
+				// a lead works in the building it leads (marlow and unassigned: home), not in its goal's repo
+				l = Routing.layoutForBuilding(leads.buildingOf(a.id()), sites, current);
+			} else {
+				l = sites.isEmpty() ? current : Routing.layoutFor(repoOf(st, a), sites, current);
+			}
 			if (l != current && !Routing.canHost(l, StationAssigner.stationKey(a), a.id())) {
 				l = current; // the building has no place for it (no desk, station or lounge): home
 			}
@@ -234,14 +264,19 @@ public final class AgentManager {
 				keep.add(a.id());
 				ClientAgentEntity e = entities.get(a.id());
 				boolean spawned = false;
+				boolean walkIn = false;
+				departing.remove(a.id()); // reassigned while walking out: back to work
+				boolean lead = a.role() == AgentRole.LEAD;
 				if (e == null || e.isRemoved() || e.level() != lvl) {
 					e = spawn(lvl, a, target, layout, pf);
 					entities.put(a.id(), e);
 					byEntityId.put(e.getId(), e);
 					showRecentSay(st, e);
 					spawned = true;
-				} else if (!e.getSkin().equals(AgentSkins.get(a.id(), a.skin()))) {
-					e.setSkin(AgentSkins.get(a.id(), a.skin()));
+					// a lead newly assigned to a building comes in through its door (not on the first population)
+					walkIn = populated && leads.known() && isBuildingLead(a) && enterAtDoor(e, layout);
+				} else if (!e.getSkin().equals(AgentSkins.get(a.id(), a.skin(), lead))) {
+					e.setSkin(AgentSkins.get(a.id(), a.skin(), lead));
 				}
 				String before = agentLayouts.put(a.id(), layoutName);
 				boolean moved = !spawned && before != null && !before.equals(layoutName);
@@ -268,7 +303,7 @@ public final class AgentManager {
 					place(e, effective);
 					poof(lvl, effective.pos());
 					AgentCraft.LOGGER.info("Agent {} moved from {} to {} ({})", a.id(), before, layoutName, effective.name());
-				} else if (snap) {
+				} else if (snap && !walkIn) {
 					e.life().setSeat(seat);
 					place(e, effective);
 				} else if (!stale) {
@@ -278,13 +313,105 @@ public final class AgentManager {
 		}
 		for (var it = entities.entrySet().iterator(); it.hasNext();) {
 			var en = it.next();
-			if (!keep.contains(en.getKey())) {
-				remove(lvl, en.getValue());
-				byEntityId.remove(en.getValue().getId());
-				agentLayouts.remove(en.getKey());
-				it.remove();
+			String id = en.getKey();
+			if (keep.contains(id)) {
+				continue;
 			}
+			ClientAgentEntity e = en.getValue();
+			Long deadline = departing.get(id);
+			if (deadline == null && !stale && leads.known() && leadIds.contains(id) && startDeparture(lvl, e, current)) {
+				departing.put(id, ticks + DEPART_TICKS);
+				continue;
+			}
+			if (deadline != null && ticks < deadline && e.motion().walking()) {
+				continue; // still walking out
+			}
+			if (deadline != null) {
+				poof(lvl, e.position());
+				AgentCraft.LOGGER.info("Lead {} left (released)", id);
+			}
+			departing.remove(id);
+			remove(lvl, e);
+			byEntityId.remove(e.getId());
+			agentLayouts.remove(id);
+			it.remove();
 		}
+		populated = true;
+	}
+
+	/** A lead that can lead a building (every lead but marlow). */
+	private static boolean isBuildingLead(Agent a) {
+		return a.role() == AgentRole.LEAD && !LeadRouting.MARLOW.equals(a.id());
+	}
+
+	/** Puts a just-spawned agent at its layout's entrance (else its spawn anchor) so it walks in. False when there is neither. */
+	private static boolean enterAtDoor(ClientAgentEntity e, Anchors.Layout layout) {
+		Anchor door = layout.get(AnchorNames.ENTRANCE);
+		if (door == null) {
+			door = layout.get(AnchorNames.SPAWN);
+		}
+		if (door == null) {
+			return false;
+		}
+		e.life().setSeat(null);
+		place(e, door);
+		return true;
+	}
+
+	/**
+	 * A released lead walks to the home building's entrance and leaves there (like an off-shift agent,
+	 * home is where it goes). From another building it first moves home (a puff at both ends, as any
+	 * move between buildings), into the lounge. False when home has no entrance or spawn (removed at once).
+	 */
+	private boolean startDeparture(ClientLevel lvl, ClientAgentEntity e, Anchors.Layout home) {
+		if (home.isEmpty()) {
+			return false;
+		}
+		Anchor exit = home.get(AnchorNames.ENTRANCE);
+		if (exit == null) {
+			exit = home.get(AnchorNames.SPAWN);
+		}
+		if (exit == null) {
+			return false;
+		}
+		String before = agentLayouts.get(e.agentId());
+		if (before != null && !before.equals(home.name())) {
+			poof(lvl, e.position());
+			Anchor from = home.get(AnchorNames.LOUNGE) != null ? home.get(AnchorNames.LOUNGE) : exit;
+			e.life().setSeat(null);
+			place(e, from);
+			poof(lvl, from.pos());
+		}
+		agentLayouts.put(e.agentId(), home.name());
+		userSpots.remove(e.agentId());
+		retarget(lvl, new GridPathfinder(lvl, home.bounds()), e, exit, null);
+		AgentCraft.LOGGER.info("Lead {} released: walking out of {} ({})", e.agentId(), home.name(), exit.name());
+		return true;
+	}
+
+	/** Agents walking out to despawn (released leads). Client thread. */
+	public Set<String> departingIds() {
+		return Set.copyOf(departing.keySet());
+	}
+
+	/** dev.leads.state: where a lead is routed, its target and whether it is leaving. Client thread. */
+	public JsonObject leadDebug(String agentId) {
+		JsonObject o = new JsonObject();
+		o.addProperty("id", agentId);
+		Leads.View v = Leads.view();
+		String b = v.buildingOf(agentId);
+		o.addProperty("assignedBuilding", b);
+		o.addProperty("routedLayout", agentLayouts.get(agentId));
+		ClientAgentEntity e = entities.get(agentId);
+		o.addProperty("spawned", e != null);
+		Anchor t = e == null ? null : e.motion().target();
+		o.addProperty("target", t == null ? null : t.name());
+		o.addProperty("walking", e != null && e.motion().walking());
+		o.addProperty("departing", departing.containsKey(agentId));
+		if (e != null) {
+			o.addProperty("pos", String.format(java.util.Locale.ROOT, "%.1f %.1f %.1f", e.getX(), e.getY(), e.getZ()));
+		}
+		return o;
 	}
 
 	/** The repo whose building an agent works in ({@link Routing#agentRepo}), or null = home. */
@@ -447,7 +574,7 @@ public final class AgentManager {
 	}
 
 	private ClientAgentEntity spawn(ClientLevel lvl, Agent a, Anchor target, Anchors.Layout layout, @Nullable GridPathfinder pf) {
-		ClientAgentEntity e = new ClientAgentEntity(lvl, a.id(), AgentSkins.get(a.id(), a.skin()));
+		ClientAgentEntity e = new ClientAgentEntity(lvl, a.id(), AgentSkins.get(a.id(), a.skin(), a.role() == AgentRole.LEAD));
 		// Negative ids never collide with server-assigned entity ids.
 		e.setId(nextEntityId--);
 		Seats.Seat seat = seats.at(lvl, layout, target, ticks, pf != null ? pf : new GridPathfinder(lvl, layout.bounds()));
@@ -530,6 +657,8 @@ public final class AgentManager {
 		}
 		entities.clear();
 		byEntityId.clear();
+		departing.clear();
+		populated = false;
 	}
 
 	private static void remove(ClientLevel lvl, ClientAgentEntity e) {

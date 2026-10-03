@@ -469,6 +469,58 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   write `<id>.blueprint.json` next to it (size = the structure block's size), then
   `/agentcraft blueprints reload`.
 
+### A lead per building (`dev.agentcraft.client.leads`)
+The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUILDINGS.md "Client (routing)".
+- Building key `"<worldId>/<buildingId>"`, worldId = the save folder name (`Buildings.worldId()`, from
+  `getWorldPath(ROOT)`; set before the listeners hear about a loaded world, null before they hear it stopped).
+  Pure rules are `building.LeadRouting` (keys, the assign/release diff, a lead's building, the podium filter,
+  `leadForRepo`) + `Routing.layoutForBuilding` / `siteAt`, unit-tested in `LeadRoutingTest`.
+- `LeadsFeature` is the only sender, from one `Buildings` change listener (every placement path ends in
+  `Buildings.place`, every removal in `forget`): world loaded -> `lead.sync {world, buildings:[{building,
+  repos}]}`; new building -> `lead.assign {building, repos}`; building gone -> `lead.release {building}`;
+  link (re)connected -> `lead.sync` (the reconciler for anything done offline); world stopped -> nothing.
+  Nothing is sent without a singleplayer world, nor for a world whose `agentcraft-buildings.json` could not
+  be read (it loads as "no buildings"; a sync would release every lead of the world; `dev.leads.state`
+  `blocked`). A refused ack (an older Foreman acks unknown types `ok:false`) is logged once per type.
+- Cast: `Cast.deskIds()` (workers + Marlow) owns the studio's / test room's desks, monitors and test-bench
+  lamps, so lead entries (`ines`, `bram`, `cass`, role `lead`) added to cast.json get none. An agent
+  whose Foreman name is missing or just its id shows the cast name, else the id capitalised
+  (`Protocol.Agent.displayName`).
+- `ForemanState.leads()` from `snapshot.leads` / `leads.update`; `leadsKnown()` is false until the Foreman
+  sends either (an older Foreman never does). `Leads.view()` resolves the assignments against this world's
+  buildings once per Foreman revision / buildings change (client thread): `assignedHere` (lead -> building
+  of this world that still exists), `podiumOwners` (lead -> building whose podium has its decisions),
+  `leadOf(building)`, `leadForRepo(repo)`.
+- With leads known, `AgentManager` routes role-`lead` agents by assignment only (Marlow and unassigned:
+  home; the Foreman sets the lead's `repoId` to its goal's repo, which is ignored). A lead (not Marlow)
+  without an assignment to an existing building here is not shown: an entity already shown walks to the
+  home `entrance` (from another building it first moves into the home lounge with a puff) and despawns
+  with a puff (or after 30 s); reassigned while walking out, it goes back to work. A lead spawned after
+  the level was first populated starts at its layout's `entrance` (else `spawn`) and walks in. A lead
+  whose station is `desk` (leads have no desk) goes to `meeting`. A lead without its own skin texture
+  wears Marlow's (`AgentSkins.get(id, skin, lead)`); names fall back to the cast name, else the id
+  capitalised; portraits to the tinted initial.
+  Without leads known (older Foreman) routing is as before (the lead follows its goal's repo).
+- Podiums: `DecisionPodiumRenderer` (bubble, count, `open` sync) and `HqWorldDriver` (block `open`,
+  signal bulbs, `decisions` lamps, per region: `Wanted.podiumOpen(area)`) use the same filter: a building's
+  podium shows its lead's decisions; the home podium (and one outside any building, the studio's) Marlow's
+  and every decision whose agent is not an assigned lead with a podium of its own. Particles follow the
+  block's `open`. Older Foreman: every podium shows everything, as before.
+- Hub Buildings tab: a `Lead` row (portrait + name, `Marlow (home)`, `no lead: Foreman offline`) and the
+  lead in the list; `dev.hub.state` buildings carry `lead`, `leadLabel`, `leadKey`. A `repo:` task wall's
+  title is `<repo> · lead <name>` (`dev.taskwall` `title`).
+- DevBridge: `dev.leads.state` (worldId, known, raw `assignments`, `buildings` with `key`/`lead`/`leadLabel`/
+  `hasPodium`, `podiumOwners`, `leads` with `assignedBuilding`/`routedLayout`/`target`/`walking`/`departing`/
+  `pos`, and `sent`: the last 20 `lead.*` messages with `ok`/`error`/`result`), `dev.leads.sync` (send
+  `lead.sync` now), `dev.state` -> `leads` (summary), `dev.state` -> `hq.homePodiumOpen` / `podiumOpenIn`.
+- Testing without a Foreman that knows leads (sim backend, `node tools/mac.mjs launch --backend sim --dev`):
+  hold the live stream (`dev.foreman.hold {on:true}`, else the next snapshot clears what you inject), then
+  `dev.foreman.inject` an `agent.upsert` with `{id:"ines", name:"Ines", role:"lead", state:"idle",
+  station:"meeting", ...}`, a `leads.update {leads:[{leadId:"marlow", repos:[]}, {leadId:"ines",
+  building:"<worldId>/b2", repos:["..."]}]}` (worldId from `dev.leads.state`) and a `decision.upsert` with
+  `agentId:"ines"`; then `dev.leads.state`, `dev.agents`, `dev.hub.state`, `dev.state` (hq). Releasing:
+  inject a `leads.update` without ines and watch `departing`. `dev.foreman.hold {on:false}` reconnects.
+
 ### Hub (`H`, `/hub [tab]`)
 The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
 - `HubScreen` (not pausing): tabs from `HubTab` (Buildings, Repos, Goals, Team, Settings, Status; the

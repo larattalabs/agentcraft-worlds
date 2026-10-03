@@ -47,7 +47,8 @@ public final class StationAssigner {
 					assigned.put(a.id(), desk.name());
 					continue;
 				}
-				key = AnchorNames.LOUNGE; // no desk for this agent in the layout
+				// no desk for this agent in the layout: a lead works at the meeting table by the podium, others lounge
+				key = a.role() == dev.agentcraft.client.foreman.Protocol.AgentRole.LEAD ? AnchorNames.MEETING : AnchorNames.LOUNGE;
 			}
 			byStation.computeIfAbsent(key, k -> new ArrayList<>()).add(a);
 		}

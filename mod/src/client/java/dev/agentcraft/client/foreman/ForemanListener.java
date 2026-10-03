@@ -53,6 +53,10 @@ public interface ForemanListener {
 	default void onDesign(@Nullable Design previous, Design design) {
 	}
 
+	/** The lead assignments changed ({@code leads.update}, the full list; a snapshot fires only {@link #onSnapshot}). */
+	default void onLeads(List<Protocol.LeadAssignment> leads) {
+	}
+
 	default void onFeed(FeedItem item) {
 	}
 

@@ -87,6 +87,7 @@ public final class Buildings {
 	public static void init() {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			drivesAnchors = !HqWorld.isHq(server);
+			worldId = LeadRouting.worldIdOf(server.getWorldPath(LevelResource.ROOT));
 			load(server);
 			publishHome();
 			notifyListeners();
@@ -94,8 +95,26 @@ public final class Buildings {
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			state = State.EMPTY;
 			drivesAnchors = false;
+			worldId = null;
 			notifyListeners();
 		});
+	}
+
+	/** The running world's id (its save folder name) for the Foreman's building keys, or null when no world runs. */
+	private static volatile @Nullable String worldId;
+
+	/**
+	 * The running world's id: its save folder name ({@link LeadRouting#worldIdOf}); the Foreman keys a
+	 * building {@code "<worldId>/<buildingId>"}. Set before the listeners hear about a loaded world, null
+	 * before they hear that it stopped. Any thread.
+	 */
+	public static @Nullable String worldId() {
+		return worldId;
+	}
+
+	/** Whether the world's buildings file exists but could not be read (no buildings are loaded, placing is refused). */
+	public static boolean loadFailed() {
+		return loadFailed;
 	}
 
 	// ------------------------------------------------------------------ reads

@@ -1,0 +1,126 @@
+package dev.agentcraft.client.leads;
+
+import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.LeadRouting;
+import dev.agentcraft.building.Routing;
+import dev.agentcraft.client.foreman.Foreman;
+import dev.agentcraft.client.foreman.ForemanState;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.layout.AnchorNames;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * The client's view of "a lead per building" (docs/PRWATCH.md, docs/BUILDINGS.md "Client (routing)"): the
+ * Foreman's lead assignments resolved against this world's buildings, built once per change of the
+ * Foreman state or the buildings, so agents, podiums, lamps, the hub and task walls all read the same
+ * answer. Client thread (it reads {@link ForemanState}).
+ */
+public final class Leads {
+	/**
+	 * @param worldId        this world's id (save folder name), null outside singleplayer
+	 * @param known          whether the Foreman publishes assignments (false: an older Foreman, old routing)
+	 * @param leads          the assignments as received
+	 * @param assignedHere   lead id -> building id, leads assigned to an existing building of this world
+	 * @param podiumOwners   lead id -> building id whose podium shows that lead's decisions (absent = home podium)
+	 * @param homeBuilding   the home building's id (null without buildings)
+	 */
+	public record View(@Nullable String worldId, boolean known, List<LeadRouting.Lead> leads, Map<String, String> assignedHere,
+		Map<String, String> podiumOwners, @Nullable String homeBuilding) {
+
+		/** The building a lead works in (null = home): only for leads, only while assignments are known. */
+		public @Nullable String buildingOf(String agentId) {
+			return assignedHere.get(agentId);
+		}
+
+		/** This world's building's lead, or null (Marlow leads it from home). */
+		public @Nullable String leadOf(String buildingId) {
+			return LeadRouting.leadOfBuilding(buildingId, leads, worldId);
+		}
+
+		/** The lead of a repo (Foreman-wide), Marlow when none. */
+		public String leadForRepo(@Nullable String repoId) {
+			return LeadRouting.leadForRepo(repoId, leads);
+		}
+
+		/** Whether the podium of {@code podiumBuilding} (null = outside any building) shows a decision of {@code agentId}. */
+		public boolean podiumShows(@Nullable String podiumBuilding, @Nullable String agentId) {
+			if (!known) {
+				return true; // older Foreman: every podium shows everything, as before
+			}
+			return LeadRouting.podiumShows(podiumBuilding, homeBuilding, agentId, podiumOwners);
+		}
+	}
+
+	private static final View EMPTY = new View(null, false, List.of(), Map.of(), Map.of(), null);
+	private static View view = EMPTY;
+	private static long seenRevision = Long.MIN_VALUE;
+	private static long seenRegions = Long.MIN_VALUE;
+	private static @Nullable String seenWorld;
+	private static @Nullable List<Routing.Site> seenSites;
+
+	private Leads() {
+	}
+
+	/** The current view (rebuilt when the Foreman state, the buildings or the world changed). Client thread. */
+	public static View view() {
+		ForemanState st = Foreman.state();
+		long rev = st == null ? -1 : st.revision();
+		long regions = Buildings.regionsSignature();
+		String world = Buildings.worldId();
+		List<Routing.Site> sites = Buildings.sites();
+		if (rev == seenRevision && regions == seenRegions && java.util.Objects.equals(world, seenWorld) && sites == seenSites) {
+			return view;
+		}
+		seenRevision = rev;
+		seenRegions = regions;
+		seenWorld = world;
+		seenSites = sites;
+		view = build(st, world, sites);
+		return view;
+	}
+
+	private static View build(@Nullable ForemanState st, @Nullable String world, List<Routing.Site> sites) {
+		if (st == null) {
+			return EMPTY;
+		}
+		List<LeadRouting.Lead> leads = new ArrayList<>();
+		for (Protocol.LeadAssignment a : st.leads()) {
+			leads.add(new LeadRouting.Lead(a.leadId(), a.building(), a.repos()));
+		}
+		Set<String> ids = new HashSet<>();
+		Set<String> podiums = new HashSet<>();
+		String home = null;
+		for (Routing.Site s : sites) {
+			ids.add(s.buildingId());
+			if (s.layout().get(AnchorNames.DECISION_PODIUM) != null) {
+				podiums.add(s.buildingId());
+			}
+			if (s.home()) {
+				home = s.buildingId();
+			}
+		}
+		Map<String, String> here = LeadRouting.assignedHere(leads, world, ids);
+		return new View(world, st.leadsKnown(), List.copyOf(leads), Map.copyOf(here), Map.copyOf(LeadRouting.podiumOwners(here, podiums)), home);
+	}
+
+	/** The building id of the site containing the block (grown by {@code margin}), or null (studio / open world). Any thread. */
+	public static @Nullable String buildingAt(int x, int y, int z, int margin) {
+		Routing.Site s = Routing.siteAt(Buildings.sites(), x, y, z, margin);
+		return s == null ? null : s.buildingId();
+	}
+
+	/** Display name for a lead id: the Foreman's agent name, the cast name, else the id capitalised. */
+	public static String name(String leadId) {
+		Protocol.Agent a = Foreman.state() == null ? null : Foreman.state().agent(leadId);
+		if (a != null) {
+			return a.name();
+		}
+		dev.agentcraft.Cast.Member m = dev.agentcraft.Cast.get(leadId);
+		return m != null ? m.name() : leadId.isEmpty() ? leadId : Character.toUpperCase(leadId.charAt(0)) + leadId.substring(1);
+	}
+}

@@ -98,6 +98,34 @@ public final class Routing {
 	}
 
 	/**
+	 * The layout of building {@code buildingId} (a lead's assignment), else {@code current} (home). Like
+	 * {@link #layoutFor}, the home building is returned as {@code current}.
+	 */
+	public static Anchors.Layout layoutForBuilding(@Nullable String buildingId, List<Site> sites, Anchors.Layout current) {
+		if (blank(buildingId)) {
+			return current;
+		}
+		for (Site s : sites) {
+			if (s.buildingId().equals(buildingId)) {
+				return s.layout().name().equals(current.name()) ? current : s.layout();
+			}
+		}
+		return current;
+	}
+
+	/** The building whose box (grown by {@code margin}) contains the block, or null (the HQ studio / open world). */
+	public static @Nullable Site siteAt(List<Site> sites, int x, int y, int z, int margin) {
+		for (Site s : sites) {
+			Anchors.Bounds b = s.box();
+			if (x >= b.minX() - margin && x <= b.maxX() + margin && y >= b.minY() - margin && y <= b.maxY() + margin && z >= b.minZ() - margin
+				&& z <= b.maxZ() + margin) {
+				return s;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Whether {@code layout} has a place for an agent at {@code stationKey} ("desk", a shared station or
 	 * "lounge"): its desk, a slot of the station, or (the assigner's fallback) a lounge slot. An agent
 	 * routed to a building that cannot host it goes home instead of disappearing.

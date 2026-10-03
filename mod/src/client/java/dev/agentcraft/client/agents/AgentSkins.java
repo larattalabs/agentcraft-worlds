@@ -18,15 +18,25 @@ import net.minecraft.world.entity.player.PlayerSkin;
  */
 public final class AgentSkins {
 	private static final Map<String, PlayerSkin> CACHE = new HashMap<>();
+	/** The skin a lead without its own texture wears. */
+	private static final String LEAD_FALLBACK = "marlow";
 
 	private AgentSkins() {
 	}
 
 	public static PlayerSkin get(String agentId, String skinId) {
-		return CACHE.computeIfAbsent(agentId + "|" + skinId, k -> create(agentId, skinId));
+		return get(agentId, skinId, false);
 	}
 
-	private static PlayerSkin create(String agentId, String skinId) {
+	/**
+	 * The skin of an agent; a lead ({@code lead}) without a texture of its own (a new lead whose skin is
+	 * not generated yet) wears Marlow's, so it reads as a lead rather than a vanilla default.
+	 */
+	public static PlayerSkin get(String agentId, String skinId, boolean lead) {
+		return CACHE.computeIfAbsent(agentId + "|" + skinId + (lead ? "|lead" : ""), k -> create(agentId, skinId, lead));
+	}
+
+	private static PlayerSkin create(String agentId, String skinId, boolean lead) {
 		Identifier asset = AgentCraft.id("entity/agent/" + skinId);
 		ClientAsset.ResourceTexture tex = new ClientAsset.ResourceTexture(asset);
 		Cast.Member m = Cast.get(agentId);
@@ -34,6 +44,10 @@ public final class AgentSkins {
 			m = Cast.get(skinId);
 		}
 		boolean exists = Minecraft.getInstance().getResourceManager().getResource(tex.texturePath()).isPresent();
+		if (!exists && lead && !skinId.equals(LEAD_FALLBACK)) {
+			AgentCraft.LOGGER.info("No skin texture {} for lead {}; wearing {}'s", tex.texturePath(), agentId, LEAD_FALLBACK);
+			return create(LEAD_FALLBACK, LEAD_FALLBACK, false);
+		}
 		if (!exists) {
 			AgentCraft.LOGGER.warn("No skin texture {} for agent {}; using a default skin", tex.texturePath(), agentId);
 			return DefaultPlayerSkin.get(java.util.UUID.nameUUIDFromBytes(agentId.getBytes(java.nio.charset.StandardCharsets.UTF_8)));

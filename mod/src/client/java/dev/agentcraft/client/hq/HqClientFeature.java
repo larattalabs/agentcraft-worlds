@@ -89,6 +89,11 @@ public final class HqClientFeature {
 			w.lamps().forEach((k, v) -> lamps.addProperty(k, v.getSerializedName()));
 			o.add("lamps", lamps);
 			o.addProperty("podiumOpen", w.podiumOpen());
+			o.addProperty("homePodiumOpen", w.homePodiumOpen());
+			com.google.gson.JsonArray in = new com.google.gson.JsonArray();
+			w.podiumOpenIn().forEach(in::add);
+			o.add("podiumOpenIn", in);
+			o.addProperty("podiumsPerBuilding", w.leadsKnown());
 			o.addProperty("mergeActive", w.mergeActive());
 		}
 		return o;
