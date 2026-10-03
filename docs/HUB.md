@@ -356,6 +356,61 @@ decisions, and with config.set loosen its own permissions). From now on:
   `prReview.*`; `env` stays read-only (keys only).
 - Not editable in the hub: `repos` (Repos tab add/remove), host/port/home/profile, sim settings.
 
+#### As implemented (Foreman, branch foreman/settings)
+- **Token**: the run file (`<home>/<profile>/foreman.json`, and `<home>/foreman.json` for the
+  primary Foreman) gains `tokenFile`, the absolute path of `<dataDir>/client.token`. The file holds
+  64 hex characters and a newline (trim it); mode 0600; a new one on every start; removed on a clean
+  exit. Send it as `hello.token`. A refused message gets `error` and (with an id) `ack {ok:false,
+  error:"read-only connection: no client token"}`. A connection whose first message is not `hello`
+  is read-only. Sending `hello` again with the token makes a connection trusted.
+  `--no-client-token` (dev): every connection is trusted. Tools: `--home` / `AGENTCRAFT_HOME` to find
+  the run file, `AGENTCRAFT_CLIENT_TOKEN` overrides (never passed on to agents, CI or setup).
+- **Agent policy** (src/policy.ts `foremanPrivateVerdict`, checked first in `classifyToolUse` and by
+  a PreToolUse hook on every turn, so allow rules, "Always allow" and subagents cannot skip it):
+  file tools on anything under the Foreman home except `<profile>/{worktrees,memory,agent-plugin,
+  designs}`, on any `client.token` (also through links), Grep over a folder containing the home;
+  Bash/PowerShell mentioning such a path (`~`, `$HOME`, relative paths resolved), `client.token`,
+  `foremancli`, `$AGENTCRAFT_HOME`/`_CLIENT_TOKEN`/`_PROFILE`, or the Foreman's port next to a
+  loopback host or `ws://`. Best effort (documented in foreman/README.md "Permissions").
+- **SettingDef**: as specified, plus `readOnly?: true` (`claude.context.mcpServers`, a repository's
+  `env`; `config.set` refuses them). `value` is the *configured* value (config.json + flags +
+  environment now), which for a restart-only key may differ from what is running until the restart.
+  Global groups: `team` (workers, leads, leadReview, `claude.agents.<id>.*` for every cast member,
+  leads included), `models` (lead/worker/design models and effort, task-size models, concurrency),
+  `general`, `permissions`, `context`, `subagents`, `prs`, `usage`. Repository groups: `landing`
+  (`land`, `baseBranch`, `pr.*`), `worktrees` (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`,
+  `env`), `agents` (`roles.<id>` for every cast member, `subagents` as enum `off`/`repo`), `review`
+  (`prReview.*`). `claude.subagents` is two keys: `claude.subagents.enabled`, `claude.subagents.agents`.
+  `claude.permissions.ask` is not exposed. `claude.maxBudgetUsdPerTurn` is an `int` (whole dollars,
+  0 = no cap).
+- **Values**: model `options` = `default`, `opus`, `sonnet` and every Opus/Sonnet id the config uses
+  (never Haiku). Clearing a key: `null` for any key; also `"default"` for a model or per-agent
+  effort, `""` for a string, `0` for `maxConcurrentTurns` / `maxBudgetUsdPerTurn`, `"off"` for a
+  repository's `subagents`. Per-agent model/effort show `"default"` when unset; `claude.designModel`
+  shows `"default"` while it follows the worker model. Maps: `claude.context.mcpServers` is
+  `{name: command}` (remote servers: `"<type> <host>"`; never args, env, headers or URL paths), a
+  repository's `env` is `{NAME: "(hidden)"}`.
+- **config.set ack**: a key a flag or variable overrides is listed only under `overridden`
+  (`by`: the flag as given, e.g. `"--no-notify"`, or the variable name), not under `applied` or
+  `restartRequired`. `config.changed.keys` are the keys as sent, repository keys as
+  `repo:<repoId>:<key>`; `config.changed.restartRequired` is the **full** pending list (same as
+  `foreman.status.restartRequired`, which is omitted when empty). A restart-only key set back to the
+  value the Foreman started with leaves the list.
+- **Live vs restart** (foreman/README.md has the table): restart-only are `claude.workers`,
+  `claude.leads`, `claude.context.skills`, `claude.context.sessionHistory.*`, `claude.subagents.*`,
+  `claude.useClaudeLogin`; everything else editable applies from the next turn / tick / poll
+  (agent titles and `userName` at once, PR watching switches over at once, `baseBranch` at the
+  repository's next refresh).
+- **repo.agents**: `{agents: [{id, name, path, description?, model?}]}`, only files with a
+  description and a prompt; `id` (the file name without `.md`) is what `roles.<agent>` stores and
+  what the `roles.*` SettingDefs offer as `options`. `config.set` also accepts the front-matter
+  `name` or the `path` and writes the `id`.
+- **foreman.restart**: acked with `{}`; about 150 ms later the server closes and a new process
+  starts (same node, flags, script, arguments, environment and cwd, minus `--reset`, `--goal`,
+  `--autostart`), on the same port with a **new token**: re-read the run file before reconnecting.
+  The run file names the new pid at once; `tokenFile` reappears when the new process has claimed it.
+  Refused (`ok:false`) when the Foreman was not started by `main` (tests).
+
 ### Team tab (mod)
 - Roster: leads (order, building, model/effort) and workers (on/off the team, title, specialty prompt,
   model, effort, per-repo roles), each with live state (station, task, goal, lead) and portrait.
