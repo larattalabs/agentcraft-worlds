@@ -17,8 +17,10 @@ import net.minecraft.world.phys.Vec3;
  * alpha, shaded by face direction so the shape reads;</li>
  * <li>cells that would replace a solid world block at or above the ground row in orange, block
  * entities that block placement in strong red (whole cubes, drawn a little larger);</li>
- * <li>the box's edges as thin bars: sage when placement would go ahead, red when it would be refused,
- * and a brass bar along the entrance side at ground level.</li>
+ * <li>the outline of the ghost's footprint ({@link GhostModel#outline}) as thin bars: sage when placement
+ * would go ahead, red when it would be refused (plus the whole reserved box, faintly, when the refusal is
+ * an overlap or the player standing in it), and a brass bar along the front-most entrance face at ground
+ * level.</li>
  * </ul>
  * Cubes are inflated slightly so their faces never z-fight with the world faces they coincide with.
  * Coordinates are camera-relative (world minus camera in double, then float), on an identity pose.
@@ -85,35 +87,48 @@ final class GhostRenderer {
 		quads += cells(pose, vc, v.obstructed(), OBSTRUCTED, 0.012f, cx, cy, cz);
 		quads += cells(pose, vc, v.blocked(), BLOCKED, 0.03f, cx, cy, cz);
 
-		// box edges
-		int edge = v.refusals().isEmpty() ? UiStyle.withAlpha(UiStyle.SAGE, 0xE0) : UiStyle.withAlpha(0xFFD0402A, 0xE8);
-		float w = m.sizeX;
-		float h = m.sizeY;
-		float d = m.sizeZ;
+		// the outline of what is drawn (GhostModel.outline: the footprint's perimeter, not the template's box,
+		// whose corners can be cells the template never writes, e.g. beside the studio's porch)
+		boolean refused = !v.refusals().isEmpty();
+		int edge = refused ? UiStyle.withAlpha(0xFFD0402A, 0xE8) : UiStyle.withAlpha(UiStyle.SAGE, 0xE0);
 		float t = EDGE;
-		for (int a = 0; a <= 1; a++) {
-			for (int b = 0; b <= 1; b++) {
-				float ya = by + a * h;
-				float zb = bz + b * d;
-				float xb = bx + b * w;
-				float za = bz + a * d;
-				// along x (y, z corners), along z (y, x corners), along y (x, z corners)
-				quads += cube(pose, vc, bx - t, ya - t, zb - t, bx + w + t, ya + t, zb + t, edge, 0x3F, false);
-				quads += cube(pose, vc, xb - t, ya - t, bz - t, xb + t, ya + t, bz + d + t, edge, 0x3F, false);
-				quads += cube(pose, vc, bx + a * w - t, by - t, bz + b * d - t, bx + a * w + t, by + h + t, bz + b * d + t, edge, 0x3F, false);
+		for (GhostModel.Edge e : m.outline()) {
+			quads += bar(pose, vc, bx, by, bz, e, t, edge);
+		}
+		// the whole box place() reserves, faintly, when a refusal is about the box itself (an overlap or the
+		// player standing in it), so a corner the footprint leaves out still explains the refusal
+		if (refused && v.refusals().stream().anyMatch(r -> r.startsWith("overlaps") || r.equals(BuildPlacement.PLAYER_INSIDE))) {
+			int faint = UiStyle.withAlpha(0xFFD0402A, 0x60);
+			float w = m.sizeX;
+			float h = m.sizeY;
+			float d = m.sizeZ;
+			float ft = t * 0.5f;
+			for (int a = 0; a <= 1; a++) {
+				for (int b = 0; b <= 1; b++) {
+					float ya = by + a * h;
+					quads += cube(pose, vc, bx - ft, ya - ft, bz + b * d - ft, bx + w + ft, ya + ft, bz + b * d + ft, faint, 0x3F, false);
+					quads += cube(pose, vc, bx + b * w - ft, ya - ft, bz - ft, bx + b * w + ft, ya + ft, bz + d + ft, faint, 0x3F, false);
+					quads += cube(pose, vc, bx + a * w - ft, by - ft, bz + b * d - ft, bx + a * w + ft, by + h + ft, bz + b * d + ft, faint, 0x3F, false);
+				}
 			}
 		}
-		// the entrance side: a brass bar at the ground row (feet level) along the front face
-		float gy = by + m.groundY;
+		// the entrance side: a brass bar at the ground row (feet level) along the footprint's front-most face
 		int brass = UiStyle.withAlpha(UiStyle.BRASS, 0xF0);
-		float tt = t * 2.2f;
-		quads += switch (v.front()) {
-			case "north" -> cube(pose, vc, bx, gy - tt, bz - tt, bx + w, gy + tt, bz + tt, brass, 0x3F, false);
-			case "south" -> cube(pose, vc, bx, gy - tt, bz + d - tt, bx + w, gy + tt, bz + d + tt, brass, 0x3F, false);
-			case "west" -> cube(pose, vc, bx - tt, gy - tt, bz, bx + tt, gy + tt, bz + d, brass, 0x3F, false);
-			default -> cube(pose, vc, bx + w - tt, gy - tt, bz, bx + w + tt, gy + tt, bz + d, brass, 0x3F, false);
-		};
+		for (GhostModel.Edge e : m.frontEdges(v.front())) {
+			quads += bar(pose, vc, bx, by, bz, e, t * 2.2f, brass);
+		}
 		return quads;
+	}
+
+	/** A straight model edge (rotated-local corner coordinates) as a thin bar of half-thickness {@code t}. */
+	private static int bar(PoseStack.Pose pose, VertexConsumer vc, float bx, float by, float bz, GhostModel.Edge e, float t, int argb) {
+		float x0 = bx + Math.min(e.x0(), e.x1());
+		float x1 = bx + Math.max(e.x0(), e.x1());
+		float y0 = by + Math.min(e.y0(), e.y1());
+		float y1 = by + Math.max(e.y0(), e.y1());
+		float z0 = bz + Math.min(e.z0(), e.z1());
+		float z1 = bz + Math.max(e.z0(), e.z1());
+		return cube(pose, vc, x0 - t, y0 - t, z0 - t, x1 + t, y1 + t, z1 + t, argb, 0x3F, false);
 	}
 
 	/** The exposed faces of world cells given as (x, y, z, face mask) quadruples. */
