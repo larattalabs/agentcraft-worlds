@@ -160,6 +160,12 @@ export interface Config {
   /** the person the team works for (prompts, feed, UI); default: the OS user name */
   userName: string;
   home: string;
+  /** <home>/config.json */
+  configFile: string;
+  /** the command-line arguments this configuration came from (foreman.restart starts with them again) */
+  argv: string[];
+  /** the flags given and the AGENTCRAFT_* variables set (names only): they win over config.json */
+  overrides: { flags: string[]; env: string[] };
   profile: string;
   /** profile directory: <home>/<profile> */
   dataDir: string;
@@ -377,14 +383,38 @@ function checkArgs(flags: Flags, positional: string[]): void {
   if (positional.length) throw new Error(`unexpected argument "${positional[0]}" (options start with --; see --help)`);
 }
 
+/** Every environment variable loadConfig reads (only their presence is recorded: Config.overrides). */
+export const CONFIG_ENV_VARS = [
+  'AGENTCRAFT_HOME', 'AGENTCRAFT_BACKEND', 'AGENTCRAFT_PROFILE', 'AGENTCRAFT_WORKERS', 'AGENTCRAFT_USER_NAME', 'AGENTCRAFT_PORT',
+  'AGENTCRAFT_NOTIFY', 'AGENTCRAFT_TOAST_SILENT', 'AGENTCRAFT_DEBUG', 'AGENTCRAFT_MERGE_STYLE', 'AGENTCRAFT_SIGN_MERGES',
+  'AGENTCRAFT_LEAD_MODEL', 'AGENTCRAFT_WORKER_MODEL', 'AGENTCRAFT_DESIGN_MODEL', 'AGENTCRAFT_LEADS', 'AGENTCRAFT_USE_CLAUDE_LOGIN',
+  'AGENTCRAFT_PR_WATCH', 'AGENTCRAFT_SIM_SPEED',
+];
+
+/** <home>/config.json, home from --home / AGENTCRAFT_HOME / ~/.agentcraft */
+export function configFilePath(argv: string[], env: NodeJS.ProcessEnv = process.env): string {
+  const { flags } = parseFlags(argv);
+  return path.join(path.resolve(str(flags.home) ?? env.AGENTCRAFT_HOME ?? path.join(os.homedir(), '.agentcraft')), 'config.json');
+}
+
 export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env): Config {
+  return configFrom(argv, env);
+}
+
+/**
+ * The configuration from defaults < `file` (default: <home>/config.json as it is on disk) <
+ * environment < flags. config.set validates a candidate file with it before writing.
+ */
+export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?: Record<string, unknown>): Config {
   const { flags, positional } = parseFlags(argv);
   checkArgs(flags, positional);
   const home = path.resolve(str(flags.home) ?? env.AGENTCRAFT_HOME ?? path.join(os.homedir(), '.agentcraft'));
-  const file = readJson<Record<string, unknown>>(path.join(home, 'config.json')) ?? {};
+  const configFile = path.join(home, 'config.json');
+  const file = fileOverride ?? readJson<Record<string, unknown>>(configFile) ?? {};
   const fileClaude = (file.claude ?? {}) as Record<string, unknown>;
   const fileSim = (file.sim ?? {}) as Record<string, unknown>;
-  const pick = (k: string, envKey?: string): unknown => flags[k] ?? (envKey ? env[envKey] : undefined) ?? file[k];
+  // file keys: camelCase (what the Settings tab writes), or the flag's spelling
+  const pick = (k: string, envKey?: string, fileKey?: string): unknown => flags[k] ?? (envKey ? env[envKey] : undefined) ?? (fileKey ? file[fileKey] : undefined) ?? file[k];
 
   const backendRaw = String(pick('backend', 'AGENTCRAFT_BACKEND') ?? 'claude');
   if (backendRaw !== 'sim' && backendRaw !== 'claude') throw new Error(`unknown backend "${backendRaw}" (use sim or claude)`);
@@ -456,8 +486,11 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const model = str(flags.model);
   const cfg: Config = {
     backend,
-    userName: (str(pick('user-name', 'AGENTCRAFT_USER_NAME')) ?? str(file.userName))?.trim().slice(0, 40) || defaultUserName(),
+    userName: (str(pick('user-name', 'AGENTCRAFT_USER_NAME', 'userName')))?.trim().slice(0, 40) || defaultUserName(),
     home,
+    configFile,
+    argv: [...argv],
+    overrides: { flags: Object.keys(flags), env: CONFIG_ENV_VARS.filter((k) => env[k] !== undefined && env[k] !== '') },
     profile,
     dataDir: path.join(home, profile),
     host: '127.0.0.1',
@@ -468,16 +501,16 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
     autostart: bool(flags.autostart, false) || !!str(flags.goal),
     reset: bool(flags.reset, false),
     notify: bool(pick('notify', 'AGENTCRAFT_NOTIFY'), backend === 'claude'),
-    toastSilent: bool(pick('toast-silent', 'AGENTCRAFT_TOAST_SILENT'), false),
+    toastSilent: bool(pick('toast-silent', 'AGENTCRAFT_TOAST_SILENT', 'toastSilent'), false),
     debug: bool(pick('debug', 'AGENTCRAFT_DEBUG'), false),
     quiet: bool(flags.quiet, false),
     projectRoot: PROJECT_ROOT,
     allowBrowserOrigins: bool(pick('allow-browser-origins'), false),
     clientToken: bool(flags['client-token'], true),
     repoPollMs: Math.max(500, num(pick('repo-poll-ms'), 10_000)),
-    mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE')),
+    mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE', 'mergeStyle')),
     // the sim answers merges unattended (screenshot QA, --auto-answer): never sign there
-    signMerges: bool(pick('sign-merges', 'AGENTCRAFT_SIGN_MERGES'), backend === 'claude'),
+    signMerges: bool(pick('sign-merges', 'AGENTCRAFT_SIGN_MERGES', 'signMerges'), backend === 'claude'),
     claude: {
       leadModel: str(flags['lead-model']) ?? model ?? str(env.AGENTCRAFT_LEAD_MODEL) ?? str(fileClaude.leadModel) ?? 'opus',
       workerModel: str(flags['worker-model']) ?? model ?? str(env.AGENTCRAFT_WORKER_MODEL) ?? str(fileClaude.workerModel) ?? 'sonnet',

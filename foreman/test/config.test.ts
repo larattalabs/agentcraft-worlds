@@ -88,3 +88,24 @@ describe('config.json repos', () => {
     expect(loadConfig(['--home', home, '--backend', 'sim', '--repo', '/x/demo'], {}).repos).toEqual(['/x/demo']);
   });
 });
+
+describe('config.json key spellings and overrides', () => {
+  it('reads camelCase keys (what the Settings tab writes) and the older flag spellings', () => {
+    home = tempDir();
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mergeStyle: 'squash', signMerges: false, toastSilent: true, userName: 'Sam' }));
+    const a = loadConfig(['--home', home, '--backend', 'claude'], {});
+    expect([a.mergeStyle, a.signMerges, a.toastSilent, a.userName]).toEqual(['squash', false, true, 'Sam']);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ 'merge-style': 'squash', 'sign-merges': false, 'toast-silent': true, 'user-name': 'Kim' }));
+    const b = loadConfig(['--home', home, '--backend', 'claude'], {});
+    expect([b.mergeStyle, b.signMerges, b.toastSilent, b.userName]).toEqual(['squash', false, true, 'Kim']);
+  });
+
+  it('records which flags and AGENTCRAFT_* variables were given (names only)', () => {
+    home = tempDir();
+    const cfg = loadConfig(['--home', home, '--lead-model', 'sonnet', '--no-notify'], { AGENTCRAFT_PR_WATCH: 'on', AGENTCRAFT_DEBUG: '', OTHER: 'x' });
+    expect(cfg.overrides.flags.sort()).toEqual(['home', 'lead-model', 'notify']);
+    expect(cfg.overrides.env).toEqual(['AGENTCRAFT_PR_WATCH']);
+    expect(cfg.configFile).toBe(path.join(home, 'config.json'));
+    expect(cfg.argv).toEqual(['--home', home, '--lead-model', 'sonnet', '--no-notify']);
+  });
+});
