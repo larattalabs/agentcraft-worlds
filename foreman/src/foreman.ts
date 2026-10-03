@@ -39,6 +39,7 @@ import { setUserName, userName } from './user.js';
 import { truncate } from './util/text.js';
 import { unifiedDiff } from './util/udiff.js';
 import { buildDigest } from './digest.js';
+import { applyLive, ConfigError, configGet, configSet, listRepoAgents, pendingRestart, restartBaseline } from './settings.js';
 
 export interface Backend {
   readonly name: 'sim' | 'claude';
@@ -91,6 +92,11 @@ export interface Backend {
   onGoalMessage?(goal: Goal, leadId: string): void;
   /** goal.cancel (the goal and its open tasks are cancelled already): stop the lead's work on it */
   onGoalCancel?(goal: Goal): void;
+  /**
+   * config.set copied live settings into the config the backend holds (in place): pick up what is
+   * not read afresh anyway (PR watching, the status line) and schedule again (concurrency).
+   */
+  onConfigChanged?(keys: string[]): void;
 }
 
 export interface GoalOptions {
@@ -147,6 +153,10 @@ export class Foreman {
   status: ForemanStatus;
   /** where clients reach this Foreman (set by main once the server listens): the agent policy keeps agents away from both */
   endpoint: { port: number; tokenFile?: string } | undefined;
+  /** foreman.restart: set by main (re-spawns the process); without it restarting is refused */
+  restarter: (() => void) | undefined;
+  /** the restart-only settings as this Foreman started (settings.ts pendingRestart) */
+  private restartBase: Map<string, string>;
 
   private listeners = new Set<(m: Outbound) => void>();
   private logBuffers = new Map<string, LogEntry[]>();
@@ -173,6 +183,7 @@ export class Foreman {
     const { cast, source } = loadCast(opts.config.projectRoot, opts.config.claude.leads);
     this.cast = cast;
     this.log.debug(`cast from ${source}`);
+    this.restartBase = restartBaseline(opts.config, cast);
     setUserName(opts.config.userName);
     this.status = { version: FOREMAN_VERSION, backend: opts.config.backend, auth: opts.config.backend === 'sim' ? 'ok' : 'unknown', userName: userName() };
     if (opts.config.backend === 'sim') this.status.message = 'Simulated team (sim backend)';
@@ -270,7 +281,7 @@ export class Foreman {
   /** Patch an agent and broadcast if anything changed. */
   setAgent(
     id: string,
-    patch: Partial<Pick<Agent, 'state' | 'station' | 'activity' | 'paused' | 'active'>> & {
+    patch: Partial<Pick<Agent, 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title'>> & {
       taskId?: string | null;
       repoId?: string | null;
       worktree?: string | null;
@@ -278,7 +289,7 @@ export class Foreman {
   ): Agent {
     const a = this.requireAgent(id);
     let changed = false;
-    const set = <K extends 'state' | 'station' | 'activity' | 'paused' | 'active'>(k: K, v: Agent[K] | undefined) => {
+    const set = <K extends 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title'>(k: K, v: Agent[K] | undefined) => {
       if (v !== undefined && a[k] !== v) {
         a[k] = v;
         changed = true;
@@ -289,6 +300,7 @@ export class Foreman {
     if (patch.activity !== undefined) set('activity', truncate(patch.activity.replace(/\s+/g, ' ').trim(), 48));
     set('paused', patch.paused);
     set('active', patch.active);
+    set('title', patch.title);
     for (const k of ['taskId', 'repoId', 'worktree'] as const) {
       const v = patch[k];
       if (v === undefined) continue;
@@ -885,6 +897,7 @@ export class Foreman {
 
   setStatus(patch: Partial<ForemanStatus>): void {
     const next = { ...this.status, ...patch };
+    for (const k of Object.keys(next) as Array<keyof ForemanStatus>) if (next[k] === undefined) delete next[k];
     if (JSON.stringify(next) === JSON.stringify(this.status)) return;
     this.status = next;
     this.emit({ type: 'foreman.status', status: { ...this.status } });
@@ -926,7 +939,7 @@ export class Foreman {
       const result = await this.dispatch(msg, reply);
       ack(true, result ? { result } : {});
     } catch (e) {
-      const known = e instanceof ClientError || e instanceof TaskError || e instanceof RepoError || e instanceof DecisionError || e instanceof MemoryError;
+      const known = e instanceof ClientError || e instanceof ConfigError || e instanceof TaskError || e instanceof RepoError || e instanceof DecisionError || e instanceof MemoryError;
       const message = known ? (e as Error).message : `internal error: ${(e as Error).message}`;
       if (!known) this.log.error(`${msg.type}: ${(e as Error).stack ?? e}`);
       reply({ type: 'error', message, ...(msg.id ? { re: msg.id } : {}) });
@@ -998,12 +1011,73 @@ export class Foreman {
         return {};
       case 'lead.sync':
         return { leads: this.syncLeads(msg.world, msg.buildings) };
+      case 'config.get':
+        return configGet({ cfg: this.config, cast: this.cast, ...(msg.repoId ? { repo: this.repoTarget(msg.repoId) } : {}) }) as unknown as Record<string, unknown>;
+      case 'config.set':
+        return this.setConfig(msg.repoId, msg.changes);
+      case 'foreman.restart': {
+        const restart = this.restarter;
+        if (!restart) throw new ClientError('this Foreman cannot restart itself (not started by main)');
+        // after the ack is on its way
+        setTimeout(restart, 150).unref?.();
+        return {};
+      }
+      case 'repo.agents':
+        return { agents: listRepoAgents(this.repoTarget(msg.repoId).path) };
       case 'pr.refresh': {
         if (!this.backend?.onPrRefresh || !this.backend.watchesPrs?.()) throw new ClientError('pull requests are not watched (claude backend with claude.prWatch "observe" or "on")');
         if (msg.taskId && this.tasks.get(msg.taskId)?.status !== 'pr') throw new ClientError(`task ${msg.taskId} has no open pull request`);
         this.backend.onPrRefresh(msg.taskId);
         return msg.taskId ? { taskId: msg.taskId } : {};
       }
+    }
+  }
+
+  // ---- settings -----------------------------------------------------------------------------
+
+  private repoTarget(repoId: string): { id: string; path: string } {
+    const r = this.repos.get(repoId);
+    if (!r) throw new ClientError(`no repo "${repoId}"`);
+    return { id: r.id, path: r.path };
+  }
+
+  /** config.set: write config.json, apply the live settings, announce the change. */
+  setConfig(repoId: string | undefined, changes: Array<{ key: string; value: unknown }>): Record<string, unknown> {
+    const repo = repoId ? this.repoTarget(repoId) : undefined;
+    const res = configSet({ cfg: this.config, cast: this.cast, ...(repo ? { repo } : {}) }, changes);
+    const before = { titles: Object.fromEntries(this.cast.map((c) => [c.id, this.config.claude.agents[c.id]?.title])) };
+    applyLive(this.config, res.next);
+    this.afterConfigApplied(before.titles);
+    const pending = pendingRestart(this.restartBase, res.next, this.cast);
+    this.setStatus({ restartRequired: pending.length ? pending : undefined });
+    const keys = changes.map((c) => (repo ? `repo:${repo.id}:${c.key}` : c.key));
+    const what = [...res.applied, ...res.restartRequired, ...res.overridden.map((o) => o.key)];
+    this.log.info(`config.set${repo ? ` (${repo.id})` : ''}: ${what.join(', ')}${res.restartRequired.length ? ` (after a restart: ${res.restartRequired.join(', ')})` : ''}`);
+    this.emit({ type: 'config.changed', keys, restartRequired: pending });
+    try {
+      this.backend?.onConfigChanged?.(keys);
+    } catch (e) {
+      this.log.error(`backend.onConfigChanged: ${(e as Error).message}`);
+    }
+    return { applied: res.applied, restartRequired: res.restartRequired, overridden: res.overridden };
+  }
+
+  /** What the live settings change outside the config object itself. */
+  private afterConfigApplied(oldTitles: Record<string, string | undefined>): void {
+    const c = this.config;
+    setUserName(c.userName);
+    this.notifier.setEnabled(c.notify);
+    this.notifier.setSilent(c.toastSilent);
+    this.repos.setMergeOptions(c.mergeStyle, c.signMerges);
+    this.setStatus({ userName: userName() });
+    for (const m of this.cast) {
+      const title = c.claude.agents[m.id]?.title;
+      if (title !== oldTitles[m.id] && this.agent(m.id)) this.setAgent(m.id, { title: title ?? m.title });
+    }
+    // the repositories' settings views, and their base branch (applied on refresh)
+    for (const r of this.repos.list()) {
+      this.repos.announce(r.id);
+      if (fs.existsSync(r.path)) void this.repos.refresh(r.id).catch((e) => this.log.warn(`refresh ${r.id}: ${(e as Error).message}`));
     }
   }
 

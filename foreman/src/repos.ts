@@ -134,7 +134,7 @@ function realPath(p: string): string {
   }
 }
 
-function samePath(a: string, b: string): boolean {
+export function samePath(a: string, b: string): boolean {
   if (!a || !b) return false;
   const n = (p: string) => {
     const r = realPath(p).replace(/[\\/]+$/, '');
@@ -181,6 +181,18 @@ export class RepoManager {
     private opts: RepoOptions = {},
   ) {
     this.worktreeRoot = ensureDir(worktreeRoot);
+  }
+
+  /** config.set: mergeStyle / signMerges for the next approved merge */
+  setMergeOptions(mergeStyle: 'merge' | 'squash', signMerges: boolean): void {
+    this.opts.mergeStyle = mergeStyle;
+    this.opts.signMerges = signMerges;
+  }
+
+  /** Broadcast a repository again (e.g. its settings view changed). */
+  announce(repoId: string): void {
+    const r = this.get(repoId);
+    if (r) this.emitRepo(r);
   }
 
   /** the command runner for the PR host CLIs (tests replace it) */

@@ -2021,6 +2021,18 @@ export class ClaudeBackend implements Backend {
     for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge' && !this.prs.owns(x.id))) this.fm.decisions.cancel(d.id, why);
   }
 
+  /**
+   * config.set copied live settings into this.cfg (models, effort, concurrency, permissions, context
+   * lists and repo settings are read at every turn / tick anyway): PR watching switches over now,
+   * the status line shows the new models, and more turns may start.
+   */
+  onConfigChanged(): void {
+    this.prs.configure(this.cfg.prWatch, this.cfg.prPollSeconds);
+    const msg = this.fm.status.message;
+    if (this.fm.status.auth === 'ok' && msg?.startsWith('Claude (lead ')) this.fm.setStatus({ message: this.baseStatusMessage() });
+    this.tick();
+  }
+
   async onAgentAction(agentId: string, action: 'pause' | 'resume' | 'stop' | 'spawn'): Promise<void> {
     const r = this.running.get(agentId);
     const name = this.fm.nameOf(agentId);

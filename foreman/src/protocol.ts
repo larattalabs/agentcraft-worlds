@@ -347,6 +347,7 @@ export const ForemanStatus = z.object({
   costUsd: z.number().optional().describe('claude: estimated spend of this profile (sum over all sessions, survives restarts)'),
   userName: z.string().optional().describe('the person the team works for, as the agents address them (UI: "<name> answered")'),
   usage: PlanUsage.optional().describe('claude.ai login: how much of the plan\'s usage windows is used (from the agents\' sessions)'),
+  restartRequired: z.array(z.string()).optional().describe('config keys changed (config.set) that take effect only after a restart (`foreman.restart`); omitted when none'),
 });
 export type ForemanStatus = z.infer<typeof ForemanStatus>;
 
@@ -402,6 +403,29 @@ export const Design = z.object({
   updatedAt: Ts,
 });
 export type Design = z.infer<typeof Design>;
+
+export const SettingType = z
+  .enum(['bool', 'int', 'enum', 'string', 'stringList', 'model', 'effort', 'agentList', 'map'])
+  .describe('How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only: MCP servers by name and command, repo env by name)');
+export const SettingSource = z.enum(['file', 'flag', 'env', 'default']).describe('where the value comes from: config.json, a command-line flag, an AGENTCRAFT_* environment variable, or the built-in default');
+
+export const SettingDef = z.object({
+  key: z.string().describe('the config.json path, e.g. "claude.prWatch", "claude.agents.kit.model"; for a repository relative to its repoSettings entry, e.g. "land", "pr.draft", "roles.kit"'),
+  label: z.string(),
+  help: z.string().describe('one or two sentences for the user'),
+  group: z.string().describe('global: team, models, general, permissions, context, subagents, prs, usage; repository: landing, worktrees, agents, review'),
+  type: SettingType,
+  options: z.array(z.string()).optional().describe('enum / model / effort / agentList / stringList choices (model: the Opus and Sonnet models in use and "default"; "default" clears the setting)'),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  value: z.unknown().describe('the configured value (what config.json, a flag or the environment says now; may differ from what the running Foreman uses until a restart, see restartRequired)'),
+  default: z.unknown().describe('the value when nothing is configured'),
+  source: SettingSource,
+  live: z.boolean().describe('true: a change applies from the next turn / poll without a restart; false: after foreman.restart'),
+  overriddenBy: z.string().optional().describe('the flag or variable that wins over config.json, e.g. "--lead-model" or "AGENTCRAFT_PR_WATCH": a change is written but has no effect while it is given'),
+  readOnly: z.boolean().optional().describe('shown, never changed through config.set (MCP servers, repo env)'),
+});
+export type SettingDef = z.infer<typeof SettingDef>;
 
 export const AgentLogs = z.object({ agentId: Id, entries: z.array(LogEntry) });
 export type AgentLogs = z.infer<typeof AgentLogs>;
@@ -499,6 +523,11 @@ export const NotifyMsg = z.object({
 export const DesignUpsertMsg = z.object({ ...envelope('design.upsert'), design: Design });
 export const ForemanStatusMsg = z.object({ ...envelope('foreman.status'), status: ForemanStatus });
 export const LeadsUpdateMsg = z.object({ ...envelope('leads.update'), leads: z.array(LeadAssignment).describe('the full list (replace): marlow first, then each assigned building lead') });
+export const ConfigChangedMsg = z.object({
+  ...envelope('config.changed'),
+  keys: z.array(z.string()).describe('the keys config.set changed (repository keys as "repo:<repoId>:<key>")'),
+  restartRequired: z.array(z.string()).describe('every changed key still waiting for a restart (the full list, same as foreman.status.restartRequired)'),
+});
 export const AckMsg = z.object({
   ...envelope('ack'),
   re: z.string().describe('the `id` of the client message being acknowledged'),
@@ -528,6 +557,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
   DesignUpsertMsg,
   ForemanStatusMsg,
   LeadsUpdateMsg,
+  ConfigChangedMsg,
   AckMsg,
   ErrorMsg,
 ]);
@@ -615,6 +645,17 @@ export const PrRefreshMsg = z.object({
   taskId: Id.optional().describe('the task whose PR to poll now; omitted = every task in status `pr`'),
 });
 
+export const ConfigGetMsg = z.object({ ...envelope('config.get'), repoId: Id.optional().describe('that repository\'s repoSettings instead of the global settings') });
+export const ConfigSetMsg = z.object({
+  ...envelope('config.set'),
+  repoId: Id.optional().describe('change that repository\'s repoSettings'),
+  changes: z
+    .array(z.object({ key: z.string().min(1), value: z.unknown().describe('the new value; null (or "default" for a model / per-agent effort) removes the key from config.json, back to the default') }))
+    .min(1),
+});
+export const ForemanRestartMsg = z.object({ ...envelope('foreman.restart') });
+export const RepoAgentsMsg = z.object({ ...envelope('repo.agents'), repoId: Id });
+
 export const ClientMessage = z.discriminatedUnion('type', [
   HelloMsg,
   GoalSubmitMsg,
@@ -636,6 +677,10 @@ export const ClientMessage = z.discriminatedUnion('type', [
   GoalCancelMsg,
   GoalDigestMsg,
   RepoRemoveMsg,
+  ConfigGetMsg,
+  ConfigSetMsg,
+  ForemanRestartMsg,
+  RepoAgentsMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -698,6 +743,7 @@ export const SERVER_MESSAGES = {
   'design.upsert': { schema: DesignUpsertMsg, doc: 'A building design was requested or progressed (status, step) or finished. Replace by `design.id`. On `done` the blueprint files are already in `request.outDir`: reload blueprints.' },
   'foreman.status': { schema: ForemanStatusMsg, doc: 'Backend/auth status changed (banner).' },
   'leads.update': { schema: LeadsUpdateMsg, doc: 'Lead assignments changed (lead.assign / lead.release / lead.sync, or the Foreman dropped a lead that is no longer configured). Full list; also in `snapshot.leads`. A lead agent (role `lead`) other than marlow is in `snapshot.agents` and gets `agent.upsert` only while it is assigned; a released lead gets one last `agent.upsert` (active=false, lounge) and should walk home and despawn.' },
+  'config.changed': { schema: ConfigChangedMsg, doc: 'config.set changed config.json (any client). Clients showing settings fetch them again (`config.get`).' },
   ack: { schema: AckMsg, doc: 'Reply to any client message that carried an `id`.' },
   error: { schema: ErrorMsg, doc: 'A client message was invalid or failed (also sent as ack.ok=false when it had an id).' },
 } as const;
@@ -722,6 +768,10 @@ export const CLIENT_MESSAGES = {
   'pr.refresh': { schema: PrRefreshMsg, doc: 'Poll the pull request(s) of tasks in status `pr` now instead of at the next interval (claude backend with PR watching on). Changes arrive as `task.upsert`.' },
   'lead.assign': { schema: LeadAssignMsg, doc: 'A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it. New goals in these repositories go to that lead; goals already running keep theirs.' },
   'lead.release': { schema: LeadReleaseMsg, doc: 'The building was removed. Acked with `{}` (also for a building that has no lead). Its lead goes off shift; its open goals move to marlow (feed line; marlow gets the plan note when it takes over).' },
+  'config.get': { schema: ConfigGetMsg, doc: 'The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository\'s repoSettings. Never contains secret values (environment values, tokens, MCP server env or arguments).' },
+  'config.set': { schema: ConfigSetMsg, doc: 'Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo\'s path as config.json spells it, else its absolute path>]`.' },
+  'foreman.restart': { schema: ForemanRestartMsg, doc: 'Restart the Foreman with the same arguments, environment and working directory (except `--reset`, `--goal` and `--autostart`). Acked with `{}` first; then the server closes (clients see the connection drop and reconnect), running turns are interrupted and resumed on start (`resumeOnStart`), and a new Foreman process (new pid, new client token: read the run file again) takes over the same port.' },
+  'repo.agents': { schema: RepoAgentsMsg, doc: 'The repository\'s Claude Code agent files (`.claude/agents/*.md` in its checkout), for the roles picker. Acked with `{agents: [{id, name, path, description?, model?}]}`: `id` is the file name without `.md` (the value to store in `roles.<agent>`), `name` the front matter name (else the id), `path` repo-relative.' },
   'lead.sync': { schema: LeadSyncMsg, doc: 'Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id).' },
 } as const;
 
@@ -750,6 +800,7 @@ export const ENTITY_SCHEMAS = {
   DiffLine,
   DesignRequest,
   Design,
+  SettingDef,
 } as const;
 
 /** Merge decision option labels (exact strings). */

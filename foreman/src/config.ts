@@ -548,7 +548,19 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
   };
   cfg.claude.designModel = str(flags['design-model']) ?? str(env.AGENTCRAFT_DESIGN_MODEL) ?? str(fileClaude.designModel) ?? cfg.claude.workerModel;
   if (cfg.sim.showcase) cfg.autostart = true;
+  // the AGENTCRAFT_* variables this configuration was read with, for re-reading config.json the same
+  // way later (configEnv). Not enumerable: never serialized or logged with the config.
+  const used: NodeJS.ProcessEnv = {};
+  for (const k of cfg.overrides.env) used[k] = env[k];
+  Object.defineProperty(cfg, ENV_KEY, { value: used, enumerable: false });
   return cfg;
+}
+
+const ENV_KEY = Symbol('agentcraft.configEnv');
+
+/** The AGENTCRAFT_* variables `cfg` was read with (config.set parses the new file with the same ones). */
+export function configEnv(cfg: Config): NodeJS.ProcessEnv {
+  return { ...((cfg as unknown as Record<symbol, NodeJS.ProcessEnv>)[ENV_KEY] ?? {}) };
 }
 
 export const HELP = `AgentCraft Foreman ${FOREMAN_VERSION}

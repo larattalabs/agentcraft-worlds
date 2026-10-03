@@ -110,6 +110,10 @@ export class Notifier {
     this.opts.enabled = on;
   }
 
+  setSilent(silent: boolean): void {
+    this.opts.silent = silent;
+  }
+
   /** Queue a "you are needed" notification. */
   needUser(text: string): void {
     if (this.opts.bell !== false && process.stdout.isTTY) process.stdout.write('\x07');
