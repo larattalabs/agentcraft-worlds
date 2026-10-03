@@ -101,6 +101,28 @@ public final class DecisionsFeature {
 		return t != null && System.currentTimeMillis() - t < 15_000;
 	}
 
+	/**
+	 * Answers a decision the way every answer path does (the decision screen, the hub's goal thread): marks it
+	 * as being answered (podiums, badge and the queue skip it), sends {@code decision.answer}, records the
+	 * answer on success and unmarks it on a refusal. Completes on the client thread with null when the
+	 * Foreman took it, else the reason it did not.
+	 */
+	public static java.util.concurrent.CompletableFuture<@Nullable String> answer(String id, @Nullable String option, @Nullable String text) {
+		markAnswering(id);
+		return Foreman.answer(id, option, text).handle((ack, err) -> {
+			if (err == null && ack != null && ack.ok()) {
+				recordAnswer(id, option, text);
+				return null;
+			}
+			unmarkAnswering(id);
+			if (err != null) {
+				Throwable c = err instanceof java.util.concurrent.CompletionException && err.getCause() != null ? err.getCause() : err;
+				return c.getMessage() != null ? c.getMessage() : c.getClass().getSimpleName();
+			}
+			return ack == null ? "no answer from the Foreman" : ack.error() != null ? ack.error() : "the Foreman refused the answer";
+		});
+	}
+
 	public static void recordAnswer(String id, @Nullable String option, @Nullable String text) {
 		ANSWERS.put(id, (option == null ? "" : option) + (text == null ? "" : " | " + text));
 	}

@@ -484,7 +484,7 @@ public class DecisionScreen extends Screen {
 		long now = Util.getMillis();
 		mine.add(id);
 		sending.put(id, option);
-		DecisionsFeature.markAnswering(id);
+		DecisionsFeature.markAnswering(id); // before picking the next one (DecisionsFeature.answer marks it too)
 		last = new Sent(id, label, now, true, null, false);
 		// the next decision comes up at once (armed again after ARM_MS); with nothing else waiting
 		// this one stays, the chosen button pressed, until the ack
@@ -495,11 +495,10 @@ public class DecisionScreen extends Screen {
 			focusText(false);
 			status = null;
 		}
-		Foreman.answer(id, option, text).whenComplete((Ack ack, Throwable err) -> {
+		DecisionsFeature.answer(id, option, text).thenAccept(error -> {
 			sending.remove(id);
 			long t = Util.getMillis();
-			if (err == null && ack != null && ack.ok()) {
-				DecisionsFeature.recordAnswer(id, option, text);
+			if (error == null) {
 				last = new Sent(id, label, t, false, null, false);
 				if (id.equals(currentId)) {
 					Decision n = firstWaiting();
@@ -513,15 +512,8 @@ public class DecisionScreen extends Screen {
 				}
 				return;
 			}
-			DecisionsFeature.unmarkAnswering(id);
 			mine.remove(id);
-			String msg;
-			if (err != null) {
-				Throwable c = err instanceof CompletionException && err.getCause() != null ? err.getCause() : err;
-				msg = c.getMessage() != null ? c.getMessage() : c.getClass().getSimpleName();
-			} else {
-				msg = ack == null ? "no answer from the Foreman" : ack.error() != null ? ack.error() : "the Foreman refused the answer";
-			}
+			String msg = error;
 			last = new Sent(id, label, t, false, msg, false);
 			if (minecraft != null && minecraft.gui.screen() != this) {
 				// closed meanwhile: don't let the refusal go unnoticed

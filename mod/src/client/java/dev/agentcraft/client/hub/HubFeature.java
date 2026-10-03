@@ -12,6 +12,7 @@ import dev.agentcraft.client.building.BuildPlacement;
 import dev.agentcraft.client.building.BuildingWizardFeature;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
+import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.hud.Keys;
 import dev.agentcraft.layout.Anchors;
 import java.util.ArrayList;
@@ -65,7 +66,19 @@ public final class HubFeature {
 			s.setSub(HubScreen.Sub.DESIGNS);
 			return s;
 		});
+		for (GoalsTab.View v : GoalsTab.View.values()) {
+			// the newest goal (of the Foreman's), opened in that view
+			DevBridge.registerScreen("hub_goal_" + v.id(), mc -> {
+				HubScreen s = new HubScreen(HubTab.GOALS);
+				List<Protocol.Goal> gs = HubGoals.goals(null);
+				if (!gs.isEmpty()) {
+					s.goals.open(gs.get(0).id(), v);
+				}
+				return s;
+			});
+		}
 		registerDev();
+		HubDev.register();
 	}
 
 	/** Opens the hub at {@code tab} (null = Buildings). Client thread. */
@@ -84,7 +97,7 @@ public final class HubFeature {
 
 	// ------------------------------------------------------------------ dev
 
-	private static HubScreen requireHub(Minecraft mc) {
+	static HubScreen requireHub(Minecraft mc) {
 		if (mc.gui.screen() instanceof HubScreen h) {
 			return h;
 		}
@@ -96,7 +109,8 @@ public final class HubFeature {
 
 	private static void registerDev() {
 		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|blueprints|designs, buildingId?, blueprint?, designId?, "
-			+ "view?: plan|iso|top|front|cutaway} - open the hub (H) and select; replies with dev.hub.state", (req, mc) -> {
+			+ "view?: plan|iso|top|front|cutaway (Buildings) | thread|plan|instructions|tasks (Goals), goalId?, repoId?, form?: bool (Goals: the new goal "
+			+ "form)} - open the hub (H) and select; replies with dev.hub.state", (req, mc) -> {
 				Fields f = Fields.of(req);
 				String tabName = f.optStr("tab", null);
 				String sub = f.optStr("sub", null);
@@ -104,6 +118,9 @@ public final class HubFeature {
 				String bp = f.optStr("blueprint", null);
 				String view = f.optStr("view", null);
 				String design = f.optStr("designId", null);
+				String goalId = f.optStr("goalId", null);
+				String repoId = f.optStr("repoId", null);
+				boolean form = f.optBool("form", false);
 				HubTab tab = tabName == null ? HubTab.BUILDINGS : HubTab.parse(tabName);
 				if (tab == null) {
 					throw new DevBridge.DevException("tab must be one of " + HubTab.ids());
@@ -114,6 +131,10 @@ public final class HubFeature {
 					}
 					BuildPlacement.cancel();
 					HubScreen s = open(tab);
+					if (tab == HubTab.GOALS || tab == HubTab.REPOS) {
+						HubDev.openPane(s, tab, goalId, repoId, view, form);
+						return state(mc);
+					}
 					if (sub != null) {
 						s.setSub(parseSub(sub));
 					}
@@ -131,7 +152,7 @@ public final class HubFeature {
 			+ "rendered previews of the selected blueprint (paths tried, found, load state), buttons on screen", (req, mc) -> DevBridge.onClient(mc,
 				() -> state(mc)));
 		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|place_new|place|place_plot|design_new|"
-			+ "cancel_design, tab?, buildingId?, blueprint?, designId?, repos?: [..] | \"a,b\", view?, confirm?: bool} - press a hub button (opens the "
+			+ "cancel_design|" + HubDev.ACTIONS + ", tab?, buildingId?, blueprint?, designId?, repos?: [..] | \"a,b\", view?, confirm?: bool} - press a hub button (opens the "
 			+ "hub when closed). home/teleport/remove/cancel_design reply after the server/Foreman answered; remove without confirm arms it (a "
 			+ "second remove for the same id confirms); place_plot = Place on the plot (with repos: straight to placement locked on the plot)",
 			(req, mc) -> {
@@ -144,7 +165,8 @@ public final class HubFeature {
 				boolean confirm = f.optBool("confirm", false);
 				List<String> repos = repoList(f);
 				String design = f.optStr("designId", null);
-				return DevBridge.onClient(mc, () -> act(mc, action, building, bp, tabName, view, confirm, repos, design)).thenCompose(x -> x)
+				return DevBridge.onClient(mc, () -> HubDev.handles(action) ? HubDev.act(mc, requireHub(mc), action, f) : act(mc, action, building, bp, tabName,
+					view, confirm, repos, design)).thenCompose(x -> x)
 					.thenCompose(o -> DevBridge.onClient(mc, () -> {
 						JsonObject st = state(mc);
 						st.add("result", o);
@@ -362,6 +384,8 @@ public final class HubFeature {
 			o.add("previews", null);
 		}
 		o.add("previewTextures", PreviewImages.stats());
+		o.add("reposTab", s == null ? null : s.repos.state());
+		o.add("goalsTab", s == null ? null : s.goals.state());
 		if (s != null) {
 			JsonArray btns = new JsonArray();
 			for (String[] b : s.buttonsShown()) {

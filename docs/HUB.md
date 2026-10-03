@@ -10,8 +10,9 @@ server (`ServerTasks`), so it needs no operator permission; commands do.
 **Status:** implemented: the screen, `H`, `/hub [tab]`, the **Buildings** tab (buildings with make
 home / teleport / remove, blueprint browser with plan + rendered previews, Place, Place on the plot,
 Design new; the Designs list) and the **Status** tab (branch `mod/hub`); the design form, plot marking
-and the design flow (branch `mod/design-form`, see "Generated buildings"). Repos, Goals, Team and
-Settings show a "coming next" panel. Code: `mod/src/client/java/dev/agentcraft/client/hub/` and
+and the design flow (branch `mod/design-form`, see "Generated buildings"); the **Repos** and **Goals**
+tabs (branch `mod/goals-tabs`, see "Repos and Goals tabs" below). Team and Settings show a "coming next"
+panel. Code: `mod/src/client/java/dev/agentcraft/client/hub/` and
 `.../client/design/`, notes in mod/DEV.md "Hub" and "Generated buildings".
 
 - Opened with a key (default `H`, rebindable, AgentCraft category; vanilla binds H only as F3+H) and
@@ -28,8 +29,8 @@ Settings show a "coming next" panel. Code: `mod/src/client/java/dev/agentcraft/c
      dimensions, when the player is elsewhere; records from before the field fall back to requiring
      AgentCraft stations in the box in the player's dimension. Remove also refuses while the player
      stands in the box. *(done)*
-  2. **Repos** *(later)*: registered repos and their `repoSettings`.
-  3. **Goals** *(later)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
+  2. **Repos** *(done, branch `mod/goals-tabs`)*: registered repos and their `repoSettings`.
+  3. **Goals** *(done in the mod, branch `mod/goals-tabs`; Foreman side in `foreman/goals-tabs`)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the
        goal id; the lead's replies and its plan/task changes for that goal), instead of free-floating
        `@marlow` messages.
@@ -280,3 +281,25 @@ Client -> Foreman (all ack; errors as `ok:false` with a message):
   repositories (order of first appearance); `repos[0]` becomes `repoId` when `repoId` is absent,
   every listed repo must exist. The claude planning prompt says "This goal is for the repositories
   a (primary), b: give each task the one repository it changes" for goals with 2+ repos.
+
+### As implemented (mod, branch `mod/goals-tabs`)
+Details and DevBridge in mod/DEV.md "Hub" -> "Repos and Goals tabs". Notes where the mod fills gaps:
+- Home: `LeadRouting.leadBuildings` leaves the home building out of `lead.assign`/`lead.sync`; a home change
+  sends one `lead.sync`; routing, podiums and `leadForRepo` ignore an assignment to the home building.
+- An older Foreman: the new types are acked `ok:false` (schema error on `type`); the mod shows "… needs a newer
+  Foreman" inline (thread send, plan, instructions, cancel, digest, repo.remove). Against the merged Foreman: a
+  `repo.remove` ok drops the repo locally (no removal broadcast); `changed:false` acks say "unchanged". `goal.submit`'s new fields
+  are silently dropped by an old schema: the form says so when the goal comes back without them. Absent fields
+  read "not reported". Decisions without `goalId` are put in a goal's thread through their task's `goalId`.
+- The thread shows what is in the mod's feed tail (200 items, replaced by every snapshot); older history needs
+  a Foreman query (not in this contract).
+- Inline decision answers keep the decision screen's guards (350 ms arm, Reject twice, Request changes needs
+  the message box's text); "Open…" opens the decision screen over the hub.
+- "Since you were away": asked on opening the hub or the Goals tab when the tab was last looked at >= 10
+  minutes ago, once per away stretch; the goal's own digest is asked on opening a goal that had activity since
+  its last view. A goal never opened counts as seen as of the Goals tab's previous visit (the tab is marked when it leaves the screen). `hub-seen.json` is keyed by the save
+  folder name ("multiplayer" outside singleplayer).
+- The new goal form's "For" offers each repo and each group building (2+ repos; it sends all of them as
+  `repos[]`, wing order). Branch suggestions: the repo's worktree branches and its goals' branches.
+- Compact layout (content area under 470 × 200 GUI px, i.e. GUI scale 4 at 1080p): list or detail with a back
+  button; `dev.hub.state` reports `layout.overflow`.

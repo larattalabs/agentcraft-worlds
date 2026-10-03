@@ -29,6 +29,9 @@ import org.jspecify.annotations.Nullable;
  * wizard, the hub, {@code /agentcraft place} or the design's "Place on the plot" all end in
  * {@code Buildings.place}; the hub's remove and {@code /agentcraft remove [forget]} in {@code forget}):
  * <ul>
+ *   <li>the home building is always Marlow's: it is never sent ({@link LeadRouting#leadBuildings}); making
+ *       another building home (hub, {@code /agentcraft home}) sends a {@code lead.sync}, so the old home
+ *       gets a lead and the new home's lead is released;</li>
  *   <li>a world was loaded (the world id changed): {@code lead.sync {world, buildings}};</li>
  *   <li>a building appeared: {@code lead.assign {building, repos}}; one disappeared: {@code lead.sync} (releases it, then the freed lead takes a building that overflowed to marlow);</li>
  *   <li>the link (re)connected: {@code lead.sync} (the reconciler: a placement while offline is caught up here);</li>
@@ -41,7 +44,10 @@ public final class LeadsFeature {
 	private static final int SENT_TAIL = 20;
 	/** The world whose buildings {@link #known} holds (null = no world). Client thread. */
 	private static @Nullable String world;
+	/** This world's buildings that get a lead (all but the home one): building id -> repos. */
 	private static Map<String, List<String>> known = Map.of();
+	/** The home building of {@link #world} (never sent), null when it has none. */
+	private static @Nullable String home;
 	private static boolean wasSynced;
 	/** This world's buildings file could not be read: nothing is sent for it (see {@link #onBuildings}). */
 	private static boolean blocked;
@@ -57,7 +63,8 @@ public final class LeadsFeature {
 			String w = Buildings.worldId();
 			boolean unreadable = Buildings.loadFailed();
 			Map<String, List<String>> now = repos(list);
-			Minecraft.getInstance().execute(() -> onBuildings(w, unreadable, now));
+			String h = list.stream().filter(Building::home).map(Building::id).findFirst().orElse(null);
+			Minecraft.getInstance().execute(() -> onBuildings(w, unreadable, LeadRouting.leadBuildings(now, h), h));
 		});
 		Foreman.addListener(new ForemanListener() {
 			@Override
@@ -81,22 +88,32 @@ public final class LeadsFeature {
 	}
 
 	/** Client thread: the world's buildings changed (or a world started / stopped). */
-	static void onBuildings(@Nullable String w, boolean unreadable, Map<String, List<String>> now) {
+	static void onBuildings(@Nullable String w, boolean unreadable, Map<String, List<String>> now, @Nullable String homeId) {
 		if (w == null) {
 			world = null;
 			known = Map.of();
+			home = null;
 			blocked = false;
 			return;
 		}
 		if (!w.equals(world)) {
 			world = w;
 			known = now;
+			home = homeId;
 			// an unreadable buildings file loads as "no buildings": syncing that would release every lead of the world
 			blocked = unreadable;
 			sync("world");
 			return;
 		}
 		if (blocked) {
+			return;
+		}
+		if (!java.util.Objects.equals(home, homeId)) {
+			// a home change: one sync (releases the new home's lead, gives the old home a lead), not assign + sync
+			String was = home;
+			home = homeId;
+			known = now;
+			sync("home " + was + " -> " + homeId);
 			return;
 		}
 		LeadRouting.Diff d = LeadRouting.diff(known, now);
@@ -219,6 +236,7 @@ public final class LeadsFeature {
 		o.addProperty("syncedWorld", world);
 		o.addProperty("blocked", blocked);
 		o.addProperty("homeBuilding", v.homeBuilding());
+		o.addProperty("syncedHome", home);
 		JsonArray raw = new JsonArray();
 		for (LeadRouting.Lead l : v.leads()) {
 			JsonObject j = new JsonObject();

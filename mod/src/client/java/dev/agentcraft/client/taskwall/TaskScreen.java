@@ -78,6 +78,24 @@ public class TaskScreen extends Screen {
 		return taskId;
 	}
 
+	/** Where Esc goes back to (the hub's goal Tasks view); null = the world. */
+	private net.minecraft.client.gui.screens.@Nullable Screen parent;
+
+	/** Opened from another screen: Esc returns there. */
+	public TaskScreen withParent(net.minecraft.client.gui.screens.@Nullable Screen parent) {
+		this.parent = parent;
+		return this;
+	}
+
+	@Override
+	public void onClose() {
+		if (parent != null && minecraft != null) {
+			minecraft.gui.setScreen(parent);
+		} else {
+			super.onClose();
+		}
+	}
+
 	@Override
 	public boolean isPauseScreen() {
 		return false;
