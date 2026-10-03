@@ -33,6 +33,32 @@ Applies to tasks landed as pull requests (`repoSettings.land: "pr"`; the Foreman
 - What the Foreman remembers per PR: the thread ids it has seen and triaged (so only new threads or
   new comments in existing threads trigger triage), the last check state.
 
+### Automated reviews ("Claude Code Review")
+
+Observed on an Azure DevOps PR with a Claude review pipeline (2026-10-03):
+- The reviewer posts as **Project Collection Build Service (contoso)**, one PR-level thread (no file
+  anchor) per review run, a new thread after every push; body starts `**Claude Code Review**` and has
+  fixed sections: `### 🔍 Critical Findings`, `### ⚠️ Important Suggestions`, `### 💡 Minor
+  Improvements`, `### 📚 Teachable Moments`, `### ✅ Testing Recommendations`, `### 📈 Performance
+  Notes`, `### 🎯 Verdict` (e.g. **PASS**). Findings are bullets naming `file` / `file:line`.
+  "*No critical issues found.*" style lines mean an empty section.
+- The same identity posts a `<!-- changelog-draft -->` thread (informational, ignore).
+- System threads (author `Microsoft.VisualStudio.Services.TFS`, commentType `system`: ref updated,
+  status changes) are ignored.
+
+Handling:
+- Parse each new review into findings `{severity: critical|important|minor|testing|performance|
+  teachable, file?, line?, text}` + the verdict; only the newest review per PR counts (older review
+  threads are superseded once a newer one exists).
+- Triage defaults (configurable per repo, `repoSettings.prReview`): critical and important ->
+  `fold_in` unless the lead judges a finding wrong (then `reply` with why); testing/performance/minor
+  -> the lead decides (fold in only clearly worthwhile, cheap items); teachable -> ignore.
+- Loop guard: at most `prReview.maxRounds` (default 2) fold-in rounds driven by automated reviews per
+  PR; after that, or when a round would only address minor items, the lead stops and the decision
+  goes to the user ("review round 3 suggests …; fold in?"). A PASS verdict with nothing above minor
+  ends automated rounds.
+- Resolving the review thread after the fold-in lands is part of the reply/resolve decision.
+
 ### Triage
 
 When there are new comment threads (from the automated reviewer or a human), or checks turn failing:
