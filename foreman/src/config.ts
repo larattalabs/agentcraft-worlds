@@ -13,6 +13,18 @@ export const FOREMAN_VERSION = '0.1.0';
 /** Repo root of the AgentCraft project (foreman/src/config.ts -> ../..). */
 export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+/** One agent's profile (config.json claude.agents.<id>). */
+export interface AgentProfile {
+  /** role title shown on the agent's nameplate, e.g. "Frontend" */
+  title?: string;
+  /** what this agent specialises in; goes into its own prompt and the lead's team list */
+  prompt?: string;
+  model?: string;
+  effort?: EffortLevel;
+}
+
+export type TaskSize = 'small' | 'normal' | 'large';
+
 export interface ClaudeConfig {
   leadModel: string;
   workerModel: string;
@@ -41,6 +53,10 @@ export interface ClaudeConfig {
   useClaudeLogin: boolean;
   /** Claude Code context for the agents: instruction files, skills, MCP servers (config.json claude.context) */
   context: AgentContextConfig;
+  /** per-agent profiles (role title, specialty prompt, model, effort) */
+  agents: Record<string, AgentProfile>;
+  /** model per task size the lead sets on create_task (wins over the agent's model) */
+  taskModels: Partial<Record<TaskSize, string>>;
 }
 
 /**
@@ -184,6 +200,32 @@ function contextConfig(v: unknown): AgentContextConfig {
   };
 }
 
+function agentProfiles(v: unknown): Record<string, AgentProfile> {
+  const out: Record<string, AgentProfile> = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const [id, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (!/^[a-z0-9_-]+$/i.test(id) || !raw || typeof raw !== 'object') continue;
+    const o = raw as Record<string, unknown>;
+    const p: AgentProfile = {};
+    if (str(o.title)) p.title = (o.title as string).trim().slice(0, 40);
+    if (str(o.prompt)) p.prompt = o.prompt as string;
+    if (str(o.model)) p.model = o.model as string;
+    if (o.effort !== undefined) p.effort = effort(o.effort, 'medium');
+    out[id.toLowerCase()] = p;
+  }
+  return out;
+}
+
+function taskModels(v: unknown): Partial<Record<TaskSize, string>> {
+  const out: Partial<Record<TaskSize, string>> = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const k of ['small', 'normal', 'large'] as const) {
+    const m = (v as Record<string, unknown>)[k];
+    if (str(m)) out[k] = m as string;
+  }
+  return out;
+}
+
 function mergeStyle(v: unknown): 'merge' | 'squash' {
   if (v === undefined || v === 'merge') return 'merge';
   if (v === 'squash') return 'squash';
@@ -302,6 +344,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       leadReview: bool(flags['lead-review'] ?? fileClaude.leadReview, true),
       useClaudeLogin: bool(flags['use-claude-login'] ?? env.AGENTCRAFT_USE_CLAUDE_LOGIN ?? fileClaude.useClaudeLogin, false),
       context: contextConfig(fileClaude.context),
+      agents: agentProfiles(fileClaude.agents),
+      taskModels: taskModels(fileClaude.taskModels),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),

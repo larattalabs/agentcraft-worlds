@@ -20,7 +20,7 @@
 // committed on its branch. The next worker's worktree then starts from that branch.
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
-import { query, type CanUseTool, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { query, type CanUseTool, type EffortLevel, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeConfig } from '../../config.js';
 import { FOREMAN_VERSION } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
@@ -78,6 +78,8 @@ interface ClaudeState {
   limit?: { until: number; type?: string };
   /** the plan warned about usage: fewer workers at once until `until` */
   throttle?: { until: number; type?: string };
+  /** task id -> size the lead gave it (picks the worker's model) */
+  taskSize: Record<string, 'small' | 'normal' | 'large'>;
 }
 
 interface Running {
@@ -194,6 +196,10 @@ export class ClaudeBackend implements Backend {
         this.st.plans[goalId] = memoryId;
         this.fm.store.markDirty();
       },
+      onTaskSize: (taskId, size) => {
+        this.st.taskSize[taskId] = size;
+        this.fm.store.markDirty();
+      },
     };
   }
 
@@ -201,13 +207,14 @@ export class ClaudeBackend implements Backend {
     const b = this.fm.store.data.backend;
     let s = b.claude as ClaudeState | undefined;
     if (!s) {
-      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {} };
+      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {}, taskSize: {} };
       b.claude = s;
     }
     s.inflight ??= {};
     s.ciFixes ??= {};
     s.stopped ??= [];
     s.plans ??= {};
+    s.taskSize ??= {};
     return s;
   }
 
@@ -858,6 +865,19 @@ export class ClaudeBackend implements Backend {
     }
   }
 
+  /**
+   * Model and effort for a turn: the task's size (claude.taskModels) wins, then the agent's profile
+   * (claude.agents), then the role defaults.
+   */
+  modelFor(agentId: string, role: 'lead' | 'worker', taskId?: string): { model: string; effort: EffortLevel } {
+    const profile = this.cfg.agents[agentId];
+    let model = profile?.model ?? (role === 'lead' ? this.cfg.leadModel : this.cfg.workerModel);
+    const effort = profile?.effort ?? (role === 'lead' ? this.cfg.leadEffort : this.cfg.effort);
+    const size = role === 'worker' && taskId ? this.st.taskSize[taskId] : undefined;
+    if (size && this.cfg.taskModels[size]) model = this.cfg.taskModels[size]!;
+    return { model, effort };
+  }
+
   private async runJob(job: Job): Promise<void> {
     const agentId = job.agentId;
     const abort = new AbortController();
@@ -889,11 +909,11 @@ export class ClaudeBackend implements Backend {
       const extra = instructionsBlock(this.cfg.context, cwd, userName());
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
       const baseTools = role === 'lead' ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite'];
-      const model = role === 'lead' ? this.cfg.leadModel : this.cfg.workerModel;
+      const { model, effort } = this.modelFor(agentId, role, job.taskId);
       const options: Options = {
         cwd,
         model,
-        effort: role === 'lead' ? this.cfg.leadEffort : this.cfg.effort,
+        effort,
         maxTurns: role === 'lead' ? this.cfg.maxTurnsLead : this.cfg.maxTurnsWorker,
         settingSources: [],
         permissionMode: 'default',

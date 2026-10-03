@@ -33,10 +33,11 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 |---|---|---|
 | `mod/safe-defaults` | roadmap 7–8 (+ this file) | yes, without `docs/FORK.md` |
 | `foreman/node-test-spec-output` | parse Node 24's `node --test` spec output (upstream test fails on Node 24 without it) | yes |
-| `foreman/plan-per-goal` | roadmap 1 | yes |
+| `foreman/plan-per-goal` | roadmap 1, plus create_task filing tasks under the goal being planned | yes |
 | `foreman/repo-settings` | roadmap 2 | yes |
 | `foreman/rate-limits` | roadmap 3 | yes |
 | `foreman/agent-context` | roadmap 4 (`claude.context`: instructions, skills, MCP) | yes |
+| `foreman/agent-roles` | roadmap 5 (`claude.agents`, `claude.taskModels`, notes across tasks) | yes |
 
 ## Build sequence
 
@@ -51,7 +52,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 
 **Phase 1: Foreman features**
 4. ✅ Roadmap 4: agent context (instructions, skills, MCP).
-5. Roadmap 5: roles (per-agent role prompt, model, effort; cheap-task routing; per-agent memory notes).
+5. ✅ Roadmap 5: roles (per-agent role prompt, model, effort; cheap-task routing; per-agent memory notes).
 6. Usage banner: `getUsage()` 5-hour/7-day windows in `foreman.status` (finishes roadmap 3).
 - *Gate:* about a week of real work on Phase 1.
 
@@ -82,7 +83,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
    `plugins`/`skills` (remove `Skill` from `policy.ts` `DENIED_TOOLS` when configured); allowlisted
    extra MCP servers (policy rule so they don't ask every call). Files: `index.ts` `runJob`,
    `config.ts`, `policy.ts`.
-5. **Roles** — per-agent role prompt, model and effort from config/cast; cast descriptions reach the
+5. ✅ **Roles** (`foreman/agent-roles`) — per-agent role prompt, model and effort from config/cast; cast descriptions reach the
    prompts; lead may set `model` on `create_task` for cheap tasks. Files: `cast.ts`, `config.ts`,
    `prompts.ts`, `tools.ts`, `index.ts`.
 6. **Coordination extras, only as needed after real use** — task specs/artifacts, ADRs, merge

@@ -137,6 +137,23 @@ repo hooks would run ahead of, or outside, the permission policy. What they do g
 - **MCP servers:** given to every agent. Their tools ask for permission unless listed in `mcpAllow`
   (exact names or `mcp__server__*`). The `agentcraft` server name is reserved.
 
+### Roles (`claude.agents`, `claude.taskModels`)
+
+```json
+{ "claude": {
+    "agents": {
+      "marlow": { "model": "opus", "effort": "high" },
+      "kit": { "title": "Backend", "prompt": "APIs, databases, the server side.", "model": "sonnet" },
+      "juniper": { "title": "Frontend", "prompt": "UI, styling, accessibility." } },
+    "taskModels": { "small": "haiku", "large": "opus" } } }
+```
+
+`title` is shown on the agent's nameplate. `prompt` (or, without one, the cast description) goes into
+the agent's own prompt and into the lead's team list, so the lead assigns by specialty. `model` and
+`effort` override the role defaults. With `taskModels`, the lead can size a task (`small`/`large` on
+create_task) and that model wins for the task. Workers keep private notes across tasks; each task
+prompt lists their earlier ones.
+
 While running, `<home>/<profile>/foreman.json` records `{pid, port, host, backend, profile, version, startedAt}`
 so launch scripts can find it; `<home>/foreman.json` holds the same for the first live Foreman (when
 it exits, another live profile takes its place). A second Foreman on a profile that is already

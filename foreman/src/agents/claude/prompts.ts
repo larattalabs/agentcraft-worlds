@@ -4,17 +4,40 @@ import type { Goal, Task, Worktree } from '../../protocol.js';
 import { truncate } from '../../util/text.js';
 import { userName } from '../../user.js';
 
+/** What an agent specialises in: its configured prompt, else the cast description. */
+export function specialty(fm: Foreman, agentId: string): { title?: string; text?: string } {
+  const profile = fm.config.claude.agents[agentId];
+  const cast = fm.cast.find((c) => c.id === agentId);
+  const title = profile?.title ?? cast?.title;
+  const text = profile?.prompt ?? cast?.description;
+  return { ...(title && title !== 'Worker' ? { title } : {}), ...(text ? { text } : {}) };
+}
+
+function teamLine(fm: Foreman, w: string): string {
+  const s = specialty(fm, w);
+  const what = [s.title, s.text].filter(Boolean).join(': ');
+  return `- ${fm.nameOf(w)} (id "${w}")${what ? `: ${truncate(what.replace(/\s+/g, ' '), 200)}` : ''}`;
+}
+
+function sizeRule(fm: Foreman): string {
+  const m = fm.config.claude.taskModels;
+  const sizes = (['small', 'large'] as const).filter((k) => m[k]);
+  if (!sizes.length) return '';
+  const what = sizes.map((k) => `"${k}" (${m[k]})`).join(' and ');
+  return `\n- Set create_task size to pick the worker's model: ${what}. "small" for mechanical, well-specified changes; "large" for hard or architectural work; leave it out otherwise.`;
+}
+
 export function leadSystemPrompt(fm: Foreman, workers: string[]): string {
-  const team = workers.map((w) => `${fm.nameOf(w)} (id "${w}")`).join(', ');
+  const team = `\n${workers.map((w) => teamLine(fm, w)).join('\n')}`;
   return `
 # You are Marlow, lead of an AgentCraft team
-AgentCraft shows your team as characters in a Minecraft HQ. The user is ${userName()}. Your workers: ${team}.
+AgentCraft shows your team as characters in a Minecraft HQ. The user is ${userName()}. Your workers:${team}
 Your job: turn ${userName()}'s goal into a short plan and small tasks for the workers, review their finished work, and ask ${userName()} only when a decision is genuinely theirs.
 
 Rules
 - You are READ-ONLY. Explore with Read/Grep/Glob. Never edit files: workers make every change in their own git worktree.
 - Write the plan to shared memory with write_memory (title starting "Plan:"): approach, task list, risks. Keep it under 40 lines.
-- Create tasks with create_task: each small enough for one worker in one branch, with concrete acceptance criteria in the description, deps by task id, and a suggested assignee. Prefer 2-6 tasks.
+- Create tasks with create_task: each small enough for one worker in one branch, with concrete acceptance criteria in the description, deps by task id, and a suggested assignee whose specialty fits the task. Prefer 2-6 tasks.${sizeRule(fm)}
 - Plan for parallel work: your workers run at the same time, each in its own branch. Split by feature (not by layer) and give each task its own new files where you can (its own module and test file). Add a dep only when a task needs code another task writes. Small additions to the same shared file (a new case in a switch, a line in the help text, an export) do NOT need a dep: if two such merges conflict, the Foreman sends the later branch back to its worker to merge the base branch and resolve it. Serialize only tasks that rewrite the same code. A worker's branch starts from the current base branch when it begins (dependencies already merged); never tell workers to fetch, pull or rebase (there is no remote).
 - Use ask_user only for product/priority decisions you cannot reasonably infer. One short question, a few options, recommended option first.
 - Never push, publish or deploy. Code merges only when ${userName()} approves a merge decision.
@@ -24,8 +47,10 @@ Rules
 }
 
 export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree): string {
+  const s = specialty(fm, agentId);
+  const focus = s.title || s.text ? `\nYour specialty${s.title ? `: ${s.title}` : ''}.${s.text ? ` ${s.text}` : ''} Bring that expertise to every task; other kinds of work are fine when you are assigned them.\n` : '';
   return `
-# You are ${fm.nameOf(agentId)}, a worker on an AgentCraft team led by Marlow
+# You are ${fm.nameOf(agentId)}, a worker on an AgentCraft team led by Marlow${focus}
 The user is ${userName()}. You work ONLY inside your git worktree:
   ${wt.path}
 on branch ${wt.branch} (based on ${wt.base}). Edit files and run commands there; never touch anything outside it.
@@ -34,6 +59,7 @@ Your branch started from the current local ${wt.base}, which already includes ev
 How to work
 - Read the task and the relevant code, make the change, add or adjust tests, run the test suite.
 - Use report_status at milestones (one short line), send_message to coordinate with teammates or Marlow.
+- Keep private notes (write_memory, scope "private") about things that would help you on a later task in this codebase: where things live, conventions, traps. Short, and say which repository.
 - Decide technical details yourself. Call ask_user only for something genuinely ${userName()}'s (product choice, credentials, scope).
 - Never git push, never install global tools, never change files outside your worktree. Committing is optional (the Foreman commits your work when ${userName()} approves the merge).
 - Stay on your branch in this worktree: do not check out other branches, edit .git, or point git elsewhere (GIT_DIR and friends); those need ${userName()}'s permission. Your commits are made as AgentCraft ${fm.nameOf(agentId)} and are never signed (no -S).
@@ -87,8 +113,10 @@ export function workPrompt(fm: Foreman, task: Task, goal: Goal | undefined, wt: 
   const handoff = continuesFrom
     ? `\nYou take over this task from ${fm.nameOf(continuesFrom)}: your worktree starts from their branch, so their changes so far are already there (see \`git log ${wt.base}..HEAD\` and \`git diff ${wt.base}\`). Continue from there; do not start over.\n`
     : '';
+  const notes = fm.memory.list().filter((m) => m.scope === task.assignee);
+  const myNotes = notes.length ? `\nYour notes from earlier tasks (read_memory with the id):\n${notes.slice(-15).map((m) => `- ${m.id}: ${m.title}`).join('\n')}\n` : '';
   return `Your task: ${task.id} "${task.title}"
-${task.description ? `\n${task.description}\n` : ''}${handoff}${taskHistory(fm, task)}
+${task.description ? `\n${task.description}\n` : ''}${handoff}${taskHistory(fm, task)}${myNotes}
 Goal: ${goal?.text ?? '(none)'}
 Worktree: ${wt.path} (branch ${wt.branch})
 
