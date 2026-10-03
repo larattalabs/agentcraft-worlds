@@ -69,6 +69,19 @@ export const AuthStatus = z
   .describe('`failed` must be shown loudly (in-world banner): the claude backend cannot run.');
 export type AuthStatus = z.infer<typeof AuthStatus>;
 
+export const DesignStatus = z
+  .enum(['queued', 'designing', 'checking', 'rendering', 'done', 'failed', 'cancelled'])
+  .describe('queued -> designing (the design agent works) -> checking (the Foreman re-runs the checker) -> rendering (previews) -> done; or failed / cancelled. done, failed and cancelled are final.');
+export type DesignStatus = z.infer<typeof DesignStatus>;
+
+export const DesignStyle = z
+  .enum(['modern', 'cabin', 'townhouse', 'workshop', 'campus', 'custom'])
+  .describe('style preset of a generated building (docs/HUB.md); `custom` = described only by the notes');
+export type DesignStyle = z.infer<typeof DesignStyle>;
+
+export const DesignFeature = z.enum(['porch', 'skylights', 'courtyard', 'big_windows', 'garden']);
+export type DesignFeature = z.infer<typeof DesignFeature>;
+
 const Id = z.string().min(1);
 const Ts = z.number().int().nonnegative().describe('epoch milliseconds');
 const HexColor = z.string().regex(/^#[0-9A-Fa-f]{6}$/).describe('"#RRGGBB"');
@@ -236,6 +249,59 @@ export const ForemanStatus = z.object({
 });
 export type ForemanStatus = z.infer<typeof ForemanStatus>;
 
+/**
+ * Where generated blueprints go: the absolute `<gameDir>/agentcraft/blueprints` folder the mod reads
+ * user blueprints from (Windows or POSIX), without `.`/`..` segments. Anything else is refused, so a
+ * client cannot make the Foreman write elsewhere.
+ */
+export function blueprintOutDirError(p: string): string | undefined {
+  const absolute = /^\//.test(p) || /^[A-Za-z]:[\\/]/.test(p) || /^\\\\[^\\/]+[\\/][^\\/]+/.test(p);
+  if (!absolute) return 'must be an absolute path';
+  const segs = p.split(/[\\/]+/).filter(Boolean);
+  if (segs.some((x) => x === '.' || x === '..')) return 'must not contain . or .. segments';
+  if (segs.length < 3 || segs[segs.length - 2] !== 'agentcraft' || segs[segs.length - 1] !== 'blueprints') return 'must be the <gameDir>/agentcraft/blueprints folder';
+  return undefined;
+}
+
+const SizeBox = (x: [number, number], y: [number, number], z_: [number, number]) =>
+  z.object({ x: z.number().int().min(x[0]).max(x[1]), y: z.number().int().min(y[0]).max(y[1]), z: z.number().int().min(z_[0]).max(z_[1]) });
+
+export const DesignRequest = z
+  .object({
+    kind: z.enum(['single', 'group']).describe('single: one repo (wings must be 1); group: N repos, one wing each (wings >= 2)'),
+    wings: z.number().int().min(1).max(8),
+    style: DesignStyle,
+    materials: z.enum(['agentcraft', 'vanilla']).describe('agentcraft: AgentCraft blocks first; vanilla: vanilla blocks allowed freely'),
+    features: z.array(DesignFeature).max(5),
+    maxSize: SizeBox([9, 128], [6, 48], [9, 128]).describe('the largest template allowed (x/z 9..128, y 6..48), e.g. from a marked plot'),
+    remix: z.string().regex(/^[a-z0-9_]+$/).optional().describe('start from this blueprint id (bundled or user)'),
+    name: z.string().min(1).max(40).optional().describe('display name; also names the blueprint id (gen_<slug>). Default: from the style'),
+    notes: z.string().max(2000).optional().describe('free text for the designer'),
+    outDir: z.string().min(1).describe('absolute `<gameDir>/agentcraft/blueprints` (the mod\'s user blueprint folder); any other path is refused'),
+  })
+  .superRefine((r, ctx) => {
+    const e = blueprintOutDirError(r.outDir);
+    if (e) ctx.addIssue({ code: 'custom', path: ['outDir'], message: e });
+    if (r.kind === 'single' && r.wings !== 1) ctx.addIssue({ code: 'custom', path: ['wings'], message: 'a single building has exactly 1 wing' });
+    if (r.kind === 'group' && r.wings < 2) ctx.addIssue({ code: 'custom', path: ['wings'], message: 'a group building has at least 2 wings' });
+    if (new Set(r.features).size !== r.features.length) ctx.addIssue({ code: 'custom', path: ['features'], message: 'duplicate feature' });
+  });
+export type DesignRequest = z.infer<typeof DesignRequest>;
+
+export const Design = z.object({
+  id: Id.describe('e.g. "d7" (allocated from the same counter as decision ids, so never equal to one)'),
+  request: DesignRequest,
+  status: DesignStatus,
+  step: z.string().describe('one line of progress, e.g. "running the checker (round 2)"'),
+  blueprintId: z.string().optional().describe('done: the new blueprint id in outDir (gen_<slug>, gen_<slug>_2, ...)'),
+  size: z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int() }).optional().describe('done: template size'),
+  previews: z.array(z.string()).optional().describe('done: absolute paths of the preview PNGs in outDir (empty when no renderer is available)'),
+  error: z.string().optional().describe('failed: what went wrong (tail of the checker output)'),
+  createdAt: Ts,
+  updatedAt: Ts,
+});
+export type Design = z.infer<typeof Design>;
+
 export const AgentLogs = z.object({ agentId: Id, entries: z.array(LogEntry) });
 export type AgentLogs = z.infer<typeof AgentLogs>;
 
@@ -292,6 +358,7 @@ export const SnapshotMsg = z.object({
   goals: z.array(Goal).describe('all goals, oldest first'),
   feed: z.array(FeedItem).describe('most recent feed items, oldest first (<= 200)'),
   logs: z.array(AgentLogs).describe('recent log tail per agent (<= 60 entries each)'),
+  designs: z.array(Design).describe('the most recent building designs (<= 20), oldest first; queued/running ones always included'),
 });
 export const AgentUpsertMsg = z.object({ ...envelope('agent.upsert'), agent: Agent });
 export const AgentLogMsg = z.object({ ...envelope('agent.log'), agentId: Id, entries: z.array(LogEntry) });
@@ -327,6 +394,7 @@ export const NotifyMsg = z.object({
   decisionId: Id.optional(),
   ts: Ts,
 });
+export const DesignUpsertMsg = z.object({ ...envelope('design.upsert'), design: Design });
 export const ForemanStatusMsg = z.object({ ...envelope('foreman.status'), status: ForemanStatus });
 export const AckMsg = z.object({
   ...envelope('ack'),
@@ -354,6 +422,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
   FeedAddMsg,
   DiffMsg,
   NotifyMsg,
+  DesignUpsertMsg,
   ForemanStatusMsg,
   AckMsg,
   ErrorMsg,
@@ -410,6 +479,8 @@ export const DiffRequestMsg = z.object({
   worktree: Id.describe('worktree id (e.g. "kit-t2"); an agent id resolves to that agent\'s current worktree'),
 });
 export const RepoAddMsg = z.object({ ...envelope('repo.add'), path: z.string().min(1) });
+export const DesignRequestMsg = z.object({ ...envelope('design.request'), request: DesignRequest });
+export const DesignCancelMsg = z.object({ ...envelope('design.cancel'), designId: Id });
 
 export const ClientMessage = z.discriminatedUnion('type', [
   HelloMsg,
@@ -420,6 +491,8 @@ export const ClientMessage = z.discriminatedUnion('type', [
   AgentActionMsg,
   DiffRequestMsg,
   RepoAddMsg,
+  DesignRequestMsg,
+  DesignCancelMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -479,6 +552,7 @@ export const SERVER_MESSAGES = {
   'feed.add': { schema: FeedAddMsg, doc: 'Append to the activity feed.' },
   diff: { schema: DiffMsg, doc: 'Reply to `diff.request` (sent only to the requesting client). Structured unified diff of worktree vs base, including uncommitted changes.' },
   notify: { schema: NotifyMsg, doc: 'Toast/banner for the player. `need_user` = a decision is waiting (play a bell).' },
+  'design.upsert': { schema: DesignUpsertMsg, doc: 'A building design was requested or progressed (status, step) or finished. Replace by `design.id`. On `done` the blueprint files are already in `request.outDir`: reload blueprints.' },
   'foreman.status': { schema: ForemanStatusMsg, doc: 'Backend/auth status changed (banner).' },
   ack: { schema: AckMsg, doc: 'Reply to any client message that carried an `id`.' },
   error: { schema: ErrorMsg, doc: 'A client message was invalid or failed (also sent as ack.ok=false when it had an id).' },
@@ -493,6 +567,8 @@ export const CLIENT_MESSAGES = {
   'agent.action': { schema: AgentActionMsg, doc: 'Pause/resume/stop an agent, or spawn (activate) an off-shift worker.' },
   'diff.request': { schema: DiffRequestMsg, doc: 'Ask for the structured diff of a worktree. Answered with `diff` (same requestId).' },
   'repo.add': { schema: RepoAddMsg, doc: 'Register a local git repo (console: `/repo add <path>`).' },
+  'design.request': { schema: DesignRequestMsg, doc: 'Design a new building blueprint (hub: Buildings -> Design new). Acked with `{designId}`; progress arrives as `design.upsert`. One design runs at a time; later ones queue.' },
+  'design.cancel': { schema: DesignCancelMsg, doc: 'Cancel a queued or running design (the design agent\'s turn is stopped; nothing is written to outDir).' },
 } as const;
 
 export const ENTITY_SCHEMAS = {
@@ -511,6 +587,8 @@ export const ENTITY_SCHEMAS = {
   DiffFile,
   DiffHunk,
   DiffLine,
+  DesignRequest,
+  Design,
 } as const;
 
 /** Merge decision option labels (exact strings). */

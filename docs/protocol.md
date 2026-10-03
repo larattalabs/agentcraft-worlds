@@ -28,6 +28,9 @@
 - <a id="worktreestatus"></a>**WorktreeStatus**: `active`, `merged`, `abandoned`
 - <a id="backendname"></a>**BackendName**: `sim`, `claude`
 - <a id="authstatus"></a>**AuthStatus**: `ok`, `failed`, `unknown`, `checking` - `failed` must be shown loudly (in-world banner): the claude backend cannot run.
+- <a id="designstatus"></a>**DesignStatus**: `queued`, `designing`, `checking`, `rendering`, `done`, `failed`, `cancelled` - queued -> designing (the design agent works) -> checking (the Foreman re-runs the checker) -> rendering (previews) -> done; or failed / cancelled. done, failed and cancelled are final.
+- <a id="designstyle"></a>**DesignStyle**: `modern`, `cabin`, `townhouse`, `workshop`, `campus`, `custom` - style preset of a generated building (docs/HUB.md); `custom` = described only by the notes
+- <a id="designfeature"></a>**DesignFeature**: `porch`, `skylights`, `courtyard`, `big_windows`, `garden`
 
 Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; permission decisions use `Allow once`, `Always allow for this agent`, `Deny`. Question decisions use agent-supplied options (may be empty: free text).
 
@@ -225,6 +228,36 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `oldNo` | integer | no | line number in base (del, ctx) |
 | `newNo` | integer | no | line number in branch (add, ctx) |
 
+### <a id="designrequest"></a>DesignRequest
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `kind` | `single` \| `group` | yes | single: one repo (wings must be 1); group: N repos, one wing each (wings >= 2) |
+| `wings` | integer | yes |  |
+| `style` | [DesignStyle](#designstyle) | yes | style preset of a generated building (docs/HUB.md); `custom` = described only by the notes |
+| `materials` | `agentcraft` \| `vanilla` | yes | agentcraft: AgentCraft blocks first; vanilla: vanilla blocks allowed freely |
+| `features` | [DesignFeature](#designfeature)[] | yes |  |
+| `maxSize` | { x: integer, y: integer, z: integer } | yes | the largest template allowed (x/z 9..128, y 6..48), e.g. from a marked plot |
+| `remix` | string (#RRGGBB) | no | start from this blueprint id (bundled or user) |
+| `name` | string | no | display name; also names the blueprint id (gen_<slug>). Default: from the style |
+| `notes` | string | no | free text for the designer |
+| `outDir` | string | yes | absolute `<gameDir>/agentcraft/blueprints` (the mod's user blueprint folder); any other path is refused |
+
+### <a id="design"></a>Design
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | yes | e.g. "d7" (allocated from the same counter as decision ids, so never equal to one) |
+| `request` | [DesignRequest](#designrequest) | yes |  |
+| `status` | [DesignStatus](#designstatus) | yes | queued -> designing (the design agent works) -> checking (the Foreman re-runs the checker) -> rendering (previews) -> done; or failed / cancelled. done, failed and cancelled are final. |
+| `step` | string | yes | one line of progress, e.g. "running the checker (round 2)" |
+| `blueprintId` | string | no | done: the new blueprint id in outDir (gen_<slug>, gen_<slug>_2, ...) |
+| `size` | { x: integer, y: integer, z: integer } | no | done: template size |
+| `previews` | string[] | no | done: absolute paths of the preview PNGs in outDir (empty when no renderer is available) |
+| `error` | string | no | failed: what went wrong (tail of the checker output) |
+| `createdAt` | integer | yes | epoch milliseconds |
+| `updatedAt` | integer | yes | epoch milliseconds |
+
 ## Foreman -> Mod
 
 ### `snapshot`
@@ -244,6 +277,7 @@ Full state. Sent in reply to every `hello`; the mod rebuilds its view from it.
 | `goals` | [Goal](#goal)[] | yes | all goals, oldest first |
 | `feed` | [FeedItem](#feeditem)[] | yes | most recent feed items, oldest first (<= 200) |
 | `logs` | [AgentLogs](#agentlogs)[] | yes | recent log tail per agent (<= 60 entries each) |
+| `designs` | [Design](#design)[] | yes | the most recent building designs (<= 20), oldest first; queued/running ones always included |
 
 ```json
 {
@@ -390,6 +424,44 @@ Full state. Sent in reply to every `hello`; the mod rebuilds its view from it.
           "text": "Edit src/tags.ts"
         }
       ]
+    }
+  ],
+  "designs": [
+    {
+      "id": "d7",
+      "request": {
+        "kind": "single",
+        "wings": 1,
+        "style": "cabin",
+        "materials": "agentcraft",
+        "features": [
+          "porch",
+          "big_windows"
+        ],
+        "maxSize": {
+          "x": 24,
+          "y": 16,
+          "z": 20
+        },
+        "name": "Lakeside Cabin",
+        "notes": "cosy, a reading nook by the fire",
+        "outDir": "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints"
+      },
+      "status": "done",
+      "step": "done: checker OK, 3 previews",
+      "blueprintId": "gen_lakeside_cabin",
+      "size": {
+        "x": 23,
+        "y": 14,
+        "z": 19
+      },
+      "previews": [
+        "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-iso.png",
+        "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-top.png",
+        "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-front.png"
+      ],
+      "createdAt": 1790850000000,
+      "updatedAt": 1790850480000
     }
   ]
 }
@@ -793,6 +865,58 @@ Toast/banner for the player. `need_user` = a decision is waiting (play a bell).
 }
 ```
 
+### `design.upsert`
+
+A building design was requested or progressed (status, step) or finished. Replace by `design.id`. On `done` the blueprint files are already in `request.outDir`: reload blueprints.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `design` | [Design](#design) | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "design.upsert",
+  "design": {
+    "id": "d7",
+    "request": {
+      "kind": "single",
+      "wings": 1,
+      "style": "cabin",
+      "materials": "agentcraft",
+      "features": [
+        "porch",
+        "big_windows"
+      ],
+      "maxSize": {
+        "x": 24,
+        "y": 16,
+        "z": 20
+      },
+      "name": "Lakeside Cabin",
+      "notes": "cosy, a reading nook by the fire",
+      "outDir": "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints"
+    },
+    "status": "done",
+    "step": "done: checker OK, 3 previews",
+    "blueprintId": "gen_lakeside_cabin",
+    "size": {
+      "x": 23,
+      "y": 14,
+      "z": 19
+    },
+    "previews": [
+      "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-iso.png",
+      "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-top.png",
+      "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints\\gen_lakeside_cabin.preview-front.png"
+    ],
+    "createdAt": 1790850000000,
+    "updatedAt": 1790850480000
+  }
+}
+```
+
 ### `foreman.status`
 
 Backend/auth status changed (banner).
@@ -1023,6 +1147,59 @@ Register a local git repo (console: `/repo add <path>`).
   "type": "repo.add",
   "id": "c18",
   "path": "C:\\Projects\\agentcraft\\sandbox\\demo-app"
+}
+```
+
+### `design.request`
+
+Design a new building blueprint (hub: Buildings -> Design new). Acked with `{designId}`; progress arrives as `design.upsert`. One design runs at a time; later ones queue.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `request` | [DesignRequest](#designrequest) | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "design.request",
+  "id": "c19",
+  "request": {
+    "kind": "single",
+    "wings": 1,
+    "style": "cabin",
+    "materials": "agentcraft",
+    "features": [
+      "porch",
+      "big_windows"
+    ],
+    "maxSize": {
+      "x": 24,
+      "y": 16,
+      "z": 20
+    },
+    "name": "Lakeside Cabin",
+    "notes": "cosy, a reading nook by the fire",
+    "outDir": "C:\\Users\\alex\\AppData\\Roaming\\.minecraft\\agentcraft\\blueprints"
+  }
+}
+```
+
+### `design.cancel`
+
+Cancel a queued or running design (the design agent's turn is stopped; nothing is written to outDir).
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `designId` | string | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "design.cancel",
+  "id": "c20",
+  "designId": "d7"
 }
 ```
 
