@@ -36,6 +36,7 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/plan-per-goal` | roadmap 1 | yes |
 | `foreman/repo-settings` | roadmap 2 | yes |
 | `foreman/rate-limits` | roadmap 3 | yes |
+| `foreman/agent-context` | roadmap 4 (`claude.context`: instructions, skills, MCP) | yes |
 
 ## Build sequence
 
@@ -49,7 +50,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
    `repoSettings`): worktree setup, CI, usage-limit handling.
 
 **Phase 1: Foreman features**
-4. Roadmap 4: agent context (instructions, skills, MCP).
+4. ✅ Roadmap 4: agent context (instructions, skills, MCP).
 5. Roadmap 5: roles (per-agent role prompt, model, effort; cheap-task routing; per-agent memory notes).
 6. Usage banner: `getUsage()` 5-hour/7-day windows in `foreman.status` (finishes roadmap 3).
 - *Gate:* about a week of real work on Phase 1.
@@ -76,7 +77,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
    requeue instead of marking tasks blocked; throttle `maxConcurrent` on `allowed_warning`; surface
    `getUsage()` windows in `foreman.status`. Files: `agents/claude/stream.ts`, `index.ts`
    (`schedule`/`pump`/`afterTurn`). *(upstream PR)*
-4. **Curated Claude Code context** — config-driven: inject repo `CLAUDE.md`/`AGENTS.md` plus an
+4. ✅ **Curated Claude Code context** (`foreman/agent-context`) — config-driven: inject repo `CLAUDE.md`/`AGENTS.md` plus an
    optional personal instructions file into `systemPrompt.append`; selected skills via SDK
    `plugins`/`skills` (remove `Skill` from `policy.ts` `DENIED_TOOLS` when configured); allowlisted
    extra MCP servers (policy rule so they don't ask every call). Files: `index.ts` `runJob`,
