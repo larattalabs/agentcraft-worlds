@@ -25,10 +25,10 @@ import org.jspecify.annotations.Nullable;
  * completes on the client thread with a {@link Result}, which is also kept as {@link #last()} and shown
  * as a toast.
  *
- * <p>Buildings do not record their dimension, so Remove and Teleport first check that the building's
- * box in the player's current dimension holds AgentCraft stations ({@link Buildings#stationCount}):
- * removing pastes the saved terrain into whatever level it is given, so doing it in the wrong dimension
- * would wreck that box and lose the snapshot. Remove also refuses while the player stands in the box (the
+ * <p>Remove and Teleport refuse unless the player is in the building's dimension ({@link Building#dimension()}):
+ * removing pastes the saved terrain into the level it is given, so doing it in the wrong dimension would
+ * wreck that box and lose the snapshot. Records from before the dimension was recorded fall back to
+ * checking that the box in the player's dimension holds AgentCraft stations ({@link Buildings#stationCount}). Remove also refuses while the player stands in the box (the
  * terrain coming back would bury them), and Teleport only lands on a free two-block-high spot with a
  * floor (survival-safe: no fall, no suffocation, no lava).
  */
@@ -93,17 +93,35 @@ public final class HubActions {
 		});
 	}
 
-	/** The building, if its box in this level holds AgentCraft stations; otherwise a refusal naming the dimension. */
+	/**
+	 * The building, if it is in the player's dimension; otherwise a refusal naming both. A record from
+	 * before buildings recorded their dimension falls back to the old check: its box in this level must
+	 * hold AgentCraft stations.
+	 */
 	private static Building requireHere(ServerLevel level, String id, String verb) throws Buildings.BuildingException {
 		Building b = Buildings.get(id);
 		if (b == null) {
 			throw new Buildings.BuildingException("No building " + id);
 		}
+		String here = Buildings.dimensionId(level);
+		if (b.dimension() != null) {
+			if (!b.dimension().equals(here)) {
+				throw new Buildings.BuildingException(id + " is in " + pretty(b.dimension()) + " and you are in " + pretty(here) + ": go there to "
+					+ verb + " it; nothing was done");
+			}
+			return b;
+		}
 		if (Buildings.stationCount(level, b.box()) == 0) {
-			throw new Buildings.BuildingException("Found no AgentCraft stations in " + id + "'s box in " + level.dimension().identifier()
-				+ ": it is in another dimension (or its stations were broken). Go there to " + verb + " it; nothing was done");
+			throw new Buildings.BuildingException("Found no AgentCraft stations in " + id + "'s box in " + pretty(here) + " (an old record "
+				+ "without its dimension, assumed " + pretty(Building.OVERWORLD) + "): it is in another dimension (or its stations were broken). "
+				+ "Go there to " + verb + " it; nothing was done");
 		}
 		return b;
+	}
+
+	/** "minecraft:the_nether" -> "the nether"; other namespaces stay as they are. */
+	public static String pretty(String dimension) {
+		return dimension.startsWith("minecraft:") ? dimension.substring(10).replace('_', ' ') : dimension;
 	}
 
 	/**

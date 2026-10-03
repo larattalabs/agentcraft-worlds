@@ -290,7 +290,8 @@ public final class Buildings {
 			clearDrops(level, box);
 			b = new Building(id, bp.id(), repos, map.isEmpty(), BlueprintTransform.rotationName(turns), box,
 				BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
-				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), System.currentTimeMillis());
+				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), System.currentTimeMillis(),
+				dimensionId(level));
 		} catch (RuntimeException e) {
 			// never leave a half-built, unrecorded box behind: put the snapshot back
 			AgentCraft.LOGGER.error("Placing {} at {} failed; restoring box {}", bp.id(), origin.toShortString(), str(box), e);
@@ -316,6 +317,10 @@ public final class Buildings {
 		Building b = get(id);
 		if (b == null) {
 			throw new BuildingException("No building " + id + " (see /agentcraft buildings)");
+		}
+		if (b.dimension() != null && !b.dimension().equals(dimensionId(level))) {
+			throw new BuildingException(id + " is in " + b.dimension() + ", not in " + dimensionId(level)
+				+ ": remove it from there (removing pastes the saved terrain into the level it is given)");
 		}
 		MinecraftServer server = level.getServer();
 		Path snap = snapshotFile(server, id);
@@ -385,11 +390,16 @@ public final class Buildings {
 		return out;
 	}
 
+	/** The level's dimension id as recorded in {@link Building#dimension()} ({@code minecraft:overworld}, ...). */
+	public static String dimensionId(ServerLevel level) {
+		return level.dimension().identifier().toString();
+	}
+
 	/**
 	 * AgentCraft station block entities in {@code box} of {@code level}: a building placed in that level has
-	 * them, the same box in another dimension almost never does. Buildings do not record their dimension,
-	 * so the hub uses this before removing (which pastes the snapshot into the given level) or teleporting.
-	 * Loads the box's chunks. Server thread.
+	 * them, the same box in another dimension almost never does. Buildings record their dimension since the
+	 * hub's design wave; for older records (no dimension) the hub uses this before removing (which pastes
+	 * the snapshot into the given level) or teleporting. Loads the box's chunks. Server thread.
 	 */
 	public static int stationCount(ServerLevel level, Anchors.Bounds box) {
 		int[] n = {0};

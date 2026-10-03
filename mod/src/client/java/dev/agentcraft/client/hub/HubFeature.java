@@ -268,6 +268,7 @@ public final class HubFeature {
 			j.add("repos", rs);
 			j.addProperty("home", b.home());
 			j.addProperty("rotation", b.rotation());
+			j.addProperty("dimension", b.dimension());
 			Anchors.Bounds box = b.box();
 			j.addProperty("box", box.minX() + "," + box.minY() + "," + box.minZ() + " .. " + box.maxX() + "," + box.maxY() + "," + box.maxZ());
 			j.addProperty("hasEntrance", b.anchors().containsKey("entrance"));

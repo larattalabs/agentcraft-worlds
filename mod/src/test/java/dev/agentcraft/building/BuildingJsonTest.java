@@ -2,6 +2,7 @@ package dev.agentcraft.building;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -92,9 +93,10 @@ class BuildingJsonTest {
 		Blueprint bp = parse(SIDECAR);
 		Building a = new Building("b1", "workshop", List.of("pocket-api"), true, "clockwise_90", new Anchors.Bounds(100, 64, -40, 116, 72, -20),
 			BlueprintTransform.worldBounds(bp, 1, 100, 64, -40), BlueprintTransform.worldAnchors(bp, 1, 100, 64, -40, List.of("pocket-api")),
-			1759500000000L);
+			1759500000000L, "minecraft:overworld");
 		Building b = new Building("b3", "campus", List.of("x", "y.z"), false, "none", new Anchors.Bounds(0, 60, 0, 30, 70, 30),
-			new Anchors.Bounds(1, 61, 1, 29, 69, 29), Map.of("task_wall:x", new Anchor("task_wall:x", 1.5, 62, 0.0, 0f, 0f)), 1759500001234L);
+			new Anchors.Bounds(1, 61, 1, 29, 69, 29), Map.of("task_wall:x", new Anchor("task_wall:x", 1.5, 62, 0.0, 0f, 0f)), 1759500001234L,
+			"minecraft:the_nether");
 		JsonObject file = Building.fileJson(List.of(a, b), 4);
 		assertEquals(List.of(100, 64, -40), List.of(file.getAsJsonArray("buildings").get(0).getAsJsonObject().getAsJsonArray("origin").get(0).getAsInt(),
 			file.getAsJsonArray("buildings").get(0).getAsJsonObject().getAsJsonArray("origin").get(1).getAsInt(),
@@ -104,12 +106,32 @@ class BuildingJsonTest {
 		assertEquals(List.of(a, b), back.buildings());
 		assertEquals("building:b1", back.buildings().get(0).layout().name());
 		assertEquals(1759500000000L, back.buildings().get(0).layout().revision());
+		assertEquals("minecraft:the_nether", back.buildings().get(1).dimension());
+		assertEquals("minecraft:the_nether", file.getAsJsonArray("buildings").get(1).getAsJsonObject().get("dimension").getAsString());
+	}
+
+	@Test
+	void oldRecordsWithoutADimension() {
+		// written before buildings recorded their dimension: parses, stays "unknown" (null), reads as the overworld
+		JsonObject old = JsonParser.parseString("""
+			{"id": "b2", "blueprint": "workshop", "repos": ["r"], "home": true, "rotation": "none",
+			 "box": {"minX": 0, "minY": 60, "minZ": 0, "maxX": 28, "maxY": 74, "maxZ": 31}, "placedAt": 5}
+			""").getAsJsonObject();
+		Building b = Building.fromJson(old);
+		assertNull(b.dimension());
+		assertEquals(Building.OVERWORLD, b.dimensionOrDefault());
+		// and it is written back without one (still an old record, so the hub keeps its fallback check)
+		assertFalse(b.toJson().has("dimension"));
+		assertEquals(b, Building.fromJson(b.toJson()));
+		assertNull(b.withHome(false).dimension());
+		Building placed = new Building("b4", "w", List.of("r"), false, "none", b.box(), b.box(), Map.of(), 6L, "minecraft:the_end");
+		assertEquals("minecraft:the_end", placed.withHome(true).dimension());
 	}
 
 	@Test
 	void nextIdNeverGoesBelowExistingIds() {
 		JsonObject file = Building.fileJson(List.of(new Building("b7", "w", List.of("r"), true, "none", new Anchors.Bounds(0, 0, 0, 1, 1, 1),
-			new Anchors.Bounds(0, 0, 0, 1, 1, 1), Map.of(), 1L)), 2);
+			new Anchors.Bounds(0, 0, 0, 1, 1, 1), Map.of(), 1L, null)), 2);
 		assertEquals(8, Building.fileFromJson(file).next());
 	}
 

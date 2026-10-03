@@ -21,9 +21,14 @@ import org.jspecify.annotations.Nullable;
  *            The snapshot taken before placement covers exactly this box.
  * @param bounds the walkable region in world space (the layout bounds agents path inside)
  * @param anchors world-space anchors, rotated, wing names resolved
+ * @param dimension the dimension it was placed in ({@code minecraft:overworld}, ...); null for records written before the
+ *                  field existed (read as the overworld, see {@link #dimensionOrDefault}; the hub then falls back to
+ *                  looking for its stations)
  */
 public record Building(String id, String blueprint, List<String> repos, boolean home, String rotation, Anchors.Bounds box,
-	Anchors.Bounds bounds, Map<String, Anchor> anchors, long placedAt) {
+	Anchors.Bounds bounds, Map<String, Anchor> anchors, long placedAt, @Nullable String dimension) {
+	/** What a record without a dimension is assumed to be in. */
+	public static final String OVERWORLD = "minecraft:overworld";
 
 	public Building {
 		repos = List.copyOf(repos);
@@ -31,7 +36,12 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 	}
 
 	public Building withHome(boolean h) {
-		return new Building(id, blueprint, repos, h, rotation, box, bounds, anchors, placedAt);
+		return new Building(id, blueprint, repos, h, rotation, box, bounds, anchors, placedAt, dimension);
+	}
+
+	/** The recorded dimension, or {@link #OVERWORLD} for an old record without one. */
+	public String dimensionOrDefault() {
+		return dimension != null ? dimension : OVERWORLD;
 	}
 
 	/**
@@ -68,6 +78,9 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 		anchors.forEach((n, v) -> a.add(n, Anchors.anchorJson(v)));
 		o.add("anchors", a);
 		o.addProperty("placedAt", placedAt);
+		if (dimension != null) {
+			o.addProperty("dimension", dimension);
+		}
 		return o;
 	}
 
@@ -88,7 +101,7 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 		Anchors.Bounds bounds = o.has("bounds") ? boundsFromJson(o.getAsJsonObject("bounds")) : box;
 		return new Building(o.get("id").getAsString(), o.get("blueprint").getAsString(), repos, o.has("home") && o.get("home").getAsBoolean(),
 			o.has("rotation") ? o.get("rotation").getAsString() : "none", box, bounds, anchors,
-			o.has("placedAt") ? o.get("placedAt").getAsLong() : 0L);
+			o.has("placedAt") ? o.get("placedAt").getAsLong() : 0L, o.has("dimension") ? o.get("dimension").getAsString() : null);
 	}
 
 	public static JsonObject boundsJson(Anchors.Bounds b) {

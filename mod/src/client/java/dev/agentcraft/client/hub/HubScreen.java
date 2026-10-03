@@ -607,6 +607,7 @@ public final class HubScreen extends Screen {
 			{"Box", box.minX() + ", " + box.minY() + ", " + box.minZ() + "  ..  " + box.maxX() + ", " + box.maxY() + ", " + box.maxZ()},
 			{"Size", (box.maxX() - box.minX() + 1) + " × " + (box.maxY() - box.minY() + 1) + " × " + (box.maxZ() - box.minZ() + 1)},
 			{"Rotation", cur.rotation().replace('_', ' ')},
+			{"Dimension", HubActions.pretty(cur.dimensionOrDefault()) + (cur.dimension() == null ? " (assumed: old record)" : "")},
 			{"Placed", cur.placedAt() > 0 ? UiBits.ago(cur.placedAt()) : "?"}};
 		int labelW = 0;
 		for (String[] f : facts) {
@@ -654,7 +655,7 @@ public final class HubScreen extends Screen {
 			note = last.message();
 			noteColor = last.ok() ? UiBits.okText() : UiBits.errorText();
 		} else {
-			note = "Teleport lands at the entrance (this dimension). Remove asks twice.";
+			note = "Teleport lands at the entrance (in the building's dimension). Remove asks twice.";
 		}
 		for (String line : TextUtil.wrapPlain(font, note, dw)) {
 			if (dy > y + h - 10) {
