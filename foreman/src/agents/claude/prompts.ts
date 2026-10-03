@@ -103,11 +103,23 @@ export function planText(fm: Foreman, goal?: Goal, planId?: string): string {
   return plan ? truncate(plan.body, 3000) : '(no plan in memory)';
 }
 
+/** The registered repositories, for goals that span several (create_task repo). */
+function reposSection(fm: Foreman, goal: Goal): string {
+  const repos = fm.repos.list();
+  if (repos.length < 2) return '';
+  const lines = repos.map((r) => `- ${r.id}${r.id === goal.repoId ? ' (this goal\'s repository, the default)' : ''}: ${r.path}, base ${r.branch}, ${fm.repos.landsAsPr(r.id) ? 'lands as a pull request' : 'lands by a local merge'}`);
+  return `
+Registered repositories (you may read all of them; give every task the one repository it changes with create_task repo):
+${lines.join('\n')}
+A goal can span repositories (e.g. an API change and the UI that uses it): one task per repository change, deps across repositories for order. A dependent task's worker sees another repository's change only once it has landed there.
+`;
+}
+
 export function planPrompt(fm: Foreman, goal: Goal, repoPath: string, branch: string): string {
   return `New goal from ${userName()}:
 "${goal.text}"
 
-Repository: ${repoPath} (base branch ${branch}). Explore it read-only (Glob/Grep to find files, Read for a file - Read cannot open a directory), then:
+Repository: ${repoPath} (base branch ${branch}).${reposSection(fm, goal)} Explore it read-only (Glob/Grep to find files, Read for a file - Read cannot open a directory), then:
 1. write_memory the plan (title "Plan: ...", scope shared)
 2. create_task for each task (deps + assignee)
 3. send_message to "all" with a two-line briefing
@@ -128,10 +140,19 @@ export function workPrompt(fm: Foreman, task: Task, goal: Goal | undefined, wt: 
   const handoff = continuesFrom
     ? `\nYou take over this task from ${fm.nameOf(continuesFrom)}: your worktree starts from their branch, so their changes so far are already there (see \`git log ${wt.base}..HEAD\` and \`git diff ${wt.base}\`). Continue from there; do not start over.\n`
     : '';
+  // what this task builds on: other tasks' branches (same repository: merge them in if the base lacks them)
+  const depLines = task.deps
+    .map((id) => fm.tasks.get(id))
+    .filter((d): d is Task => !!d && !!d.branch)
+    .map((d) => {
+      const same = d.repoId === task.repoId;
+      return `- ${d.id} "${d.title}" (${d.status}) in ${d.repoId ?? '?'} on branch ${d.branch}${same ? `: if your base does not contain it yet, run \`git merge ${d.branch}\` first` : ': another repository (read it there; do not edit it)'}`;
+    });
+  const builds = depLines.length ? `\nThis task builds on:\n${depLines.join('\n')}\n` : '';
   const notes = fm.memory.list().filter((m) => m.scope === task.assignee);
   const myNotes = notes.length ? `\nYour notes from earlier tasks (read_memory with the id):\n${notes.slice(-15).map((m) => `- ${m.id}: ${m.title}`).join('\n')}\n` : '';
   return `Your task: ${task.id} "${task.title}"
-${task.description ? `\n${task.description}\n` : ''}${handoff}${taskHistory(fm, task)}${myNotes}
+${task.description ? `\n${task.description}\n` : ''}${handoff}${builds}${taskHistory(fm, task)}${myNotes}
 Goal: ${goal?.text ?? '(none)'}
 Worktree: ${wt.path} (branch ${wt.branch})
 

@@ -241,8 +241,9 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
           assignee: z.string().optional().describe('worker id/name'),
           priority: z.number().int().optional(),
           size: z.enum(['small', 'normal', 'large']).optional().describe('small = mechanical, well-specified; large = hard or architectural (picks the model)'),
+          repo: z.string().optional().describe("repository id or name for this task (default: the goal's repository)"),
         },
-        async ({ title, description, deps, assignee, priority, size }) => {
+        async ({ title, description, deps, assignee, priority, size, repo }) => {
           // the goal this turn plans (several can be open; the newest is not necessarily this one)
           const goal = (turn?.goalId ? fm.goal(turn.goalId) : undefined) ?? fm.currentGoal();
           let who: string | undefined;
@@ -250,6 +251,13 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
             who = fm.resolveAgentId(assignee);
             if (!who) return fail(`no worker ${assignee}`);
             if (fm.agent(who)?.role === 'lead') return fail('assign tasks to workers, not yourself');
+          }
+          let repoId = goal?.repoId;
+          if (repo) {
+            const want = repo.trim().toLowerCase();
+            const r = fm.repos.list().find((x) => x.id.toLowerCase() === want || x.name.toLowerCase() === want);
+            if (!r) return fail(`no repository ${repo} (registered: ${fm.repos.list().map((x) => x.id).join(', ')})`);
+            repoId = r.id;
           }
           try {
             const t = fm.tasks.create({
@@ -260,7 +268,7 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
               ...(priority !== undefined ? { priority } : {}),
               createdBy: agentId,
               ...(goal ? { goalId: goal.id } : {}),
-              ...(goal?.repoId ? { repoId: goal.repoId } : {}),
+              ...(repoId ? { repoId } : {}),
             });
             if (size) hooks.onTaskSize?.(t.id, size);
             fm.bus.feed('task', `Marlow created ${t.id}: ${t.title}`, { agentId });

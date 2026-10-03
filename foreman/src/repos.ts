@@ -21,7 +21,8 @@ import { parseUnifiedDiff, type ParsedDiff } from './diff.js';
 import type { CiStatus, Decision, Repo, Worktree } from './protocol.js';
 import { withGitSafety } from './gitsafety.js';
 import { ensureDir, isInsideOrEqual } from './util/fsx.js';
-import { agentGitIdentity, git, gitConfigGet, gitOut, identityEnv, listWorktrees } from './util/git.js';
+import { agentGitIdentity, git, gitConfigGet, gitOut, gitRemote, identityEnv, listWorktrees } from './util/git.js';
+import { openPullRequest, parseRemote, type PrHost } from './prs.js';
 import { runShell } from './util/proc.js';
 import { slugify, tailLines } from './util/text.js';
 
@@ -50,6 +51,21 @@ export interface MergeResult {
   branch: string;
   files: number;
 }
+
+/** An approved task landed as a pull request (repoSettings.land "pr"). */
+export interface PrResult {
+  /** the PR's web URL (undefined: the remote is not Azure DevOps or GitHub; the branch was pushed) */
+  url?: string;
+  /** the branch name on the remote */
+  remoteBranch: string;
+  /** target branch on the remote */
+  base: string;
+  branch: string;
+  /** a PR for this task existed already: the branch was updated */
+  updated: boolean;
+}
+
+export type LandResult = ({ kind: 'merge' } & MergeResult) | ({ kind: 'pr' } & PrResult);
 
 export interface TestResult {
   pass: boolean;
@@ -373,6 +389,10 @@ export class RepoManager {
         wtPath = `${wtPath}-${n}`;
       }
     }
+    // PR repos branch from the server's base branch (origin/<base>), fetched just now
+    const pr = this.landsAsPr(r.id);
+    const base = pr ? `${this.remoteOf(r.id)}/${r.branch}` : r.branch;
+    if (pr && !fs.existsSync(wtPath)) await this.fetchBase(r);
     if (!fs.existsSync(wtPath)) {
       const exists = async (b: string) => (await git(r.path, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true })).code === 0;
       let branchExists = await exists(branch);
@@ -393,14 +413,14 @@ export class RepoManager {
       // a fresh directory needs its copy/setup again (prepareWorktree)
       delete this.ctx.store.data.worktreeMeta[`${r.id}/${id}`]?.prepared;
       if (branchExists) await git(r.path, [...lf, 'worktree', 'add', wtPath, branch]);
-      else await git(r.path, [...lf, 'worktree', 'add', '-b', branch, wtPath, startPoint ?? r.branch]);
+      else await git(r.path, [...lf, 'worktree', 'add', '--no-track', '-b', branch, wtPath, startPoint ?? base]);
     }
     const w: Worktree = {
       id,
       agentId,
       taskId: task.id,
       branch,
-      base: r.branch,
+      base: existing?.base ?? base,
       path: wtPath,
       status: 'active',
       ahead: 0,
@@ -560,7 +580,7 @@ export class RepoManager {
     const r = this.require(repoId);
     const w = this.requireWorktree(repoId, worktreeId);
     if (w.status !== 'active') return { ok: false, reason: `worktree ${w.id} is ${w.status}`, code: 'refused' };
-    const target = await this.checkoutOf(r, w.base);
+    const target = this.landsAsPr(r.id) ? undefined : await this.checkoutOf(r, w.base);
     if (target && (await this.isDirty(target))) {
       return { ok: false, reason: `the checkout at ${target} (${w.base}) has uncommitted changes — commit or stash them, then approve again`, code: 'dirty' };
     }
@@ -578,6 +598,86 @@ export class RepoManager {
    * option is "Merge" and that targets this worktree.
    */
   /** `commitMessage` is used if the agent left uncommitted work (e.g. "t1: Add --version flag"). */
+  /** Land an approved task the repo's way: a local merge, or a pull request (repoSettings.land). */
+  async land(decision: Decision, opts: { commitMessage?: string; title?: string; description?: string } = {}): Promise<LandResult> {
+    if (decision.repoId && this.landsAsPr(decision.repoId)) return { kind: 'pr', ...(await this.openPr(decision, opts)) };
+    return { kind: 'merge', ...(await this.merge(decision, opts)) };
+  }
+
+  /**
+   * Push an approved task's branch and open a pull request into the base branch. ONLY with an
+   * answered merge decision whose option is "Merge". Never force-pushes over someone else's work: the
+   * push expects the remote branch to be absent, or to be exactly what AgentCraft pushed last time.
+   */
+  openPr(decision: Decision, opts: { commitMessage?: string; title?: string; description?: string } = {}): Promise<PrResult> {
+    return this.serial(decision.repoId ?? '?', () => this.doOpenPr(decision, opts));
+  }
+
+  private async doOpenPr(decision: Decision, opts: { commitMessage?: string; title?: string; description?: string }): Promise<PrResult> {
+    if (decision.kind !== 'merge') throw new RepoError('a pull request requires a merge decision', 'refused');
+    if (decision.status !== 'answered' || decision.answer?.option !== 'Merge') throw new RepoError(`decision ${decision.id} does not approve landing`, 'refused');
+    if (!decision.repoId || !decision.worktree) throw new RepoError(`decision ${decision.id} names no repo/worktree`, 'refused');
+    const r = this.require(decision.repoId);
+    const w = this.requireWorktree(r.id, decision.worktree);
+    if (w.status !== 'active') throw new RepoError(`worktree ${w.id} is ${w.status}`, 'refused');
+    const s = this.settingsFor(r.id);
+    const remote = this.remoteOf(r.id);
+    const target = w.base.startsWith(`${remote}/`) ? w.base.slice(remote.length + 1) : w.base;
+    const baseRef = `refs/remotes/${remote}/${target}`;
+
+    // 1. the agent's work committed on its branch; the base as it is on the server now
+    await this.commitAll(r.id, w.id, opts.commitMessage ?? `agentcraft: ${w.taskId ?? w.id}`);
+    await this.fetchBase({ ...r, branch: target });
+    const ahead = Number(await gitOut(r.path, ['rev-list', '--count', `${baseRef}..refs/heads/${w.branch}`]));
+    if (!ahead) throw new RepoError(`${w.branch} has no changes to land`, 'empty');
+    const mt = await git(r.path, ['merge-tree', '--write-tree', '--name-only', '--no-messages', baseRef, `refs/heads/${w.branch}`], { allowFail: true });
+    if (mt.code === 1) {
+      const files = mt.stdout.trim().split('\n').slice(1).filter(Boolean);
+      throw new RepoError(`the branch conflicts with ${remote}/${target} in: ${files.join(', ') || '(unknown files)'}`, 'conflict', files);
+    }
+    if (mt.code !== 0) throw new RepoError(`merge-tree failed: ${mt.stderr.trim()}`, 'failed');
+
+    // 2. what to push: the agents' commits, or one commit authored by the user on top of the base
+    let src = `refs/heads/${w.branch}`;
+    if (s.pr?.squash) {
+      const tree = mt.stdout.trim().split('\n')[0]!.trim();
+      const baseSha = await gitOut(r.path, ['rev-parse', baseRef]);
+      const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseRef}..refs/heads/${w.branch}`])).split('\n').filter(Boolean))];
+      const msg = `${(opts.title ?? opts.commitMessage ?? w.taskId ?? w.id).trim()}${opts.description ? `\n\n${opts.description.trim()}` : ''}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
+      const { env } = await userIdentity(r.path);
+      src = await gitOut(r.path, ['commit-tree', tree, '-p', baseSha, '-m', msg], { env });
+    }
+
+    // 3. push, never over work AgentCraft did not push itself
+    const key = `${r.id}/${w.id}`;
+    const meta = (this.ctx.store.data.worktreeMeta[key] ??= { createdAt: this.ctx.now() });
+    const tail = w.branch.startsWith(BRANCH_PREFIX) ? w.branch.split('/').slice(2).join('/') : w.branch;
+    const remoteBranch = meta.prBranch ?? (s.pr?.branchPrefix ? `${s.pr.branchPrefix}${tail}` : w.branch);
+    const lease = `--force-with-lease=refs/heads/${remoteBranch}:${meta.prPushedSha ?? ''}`;
+    const push = await gitRemote(r.path, ['push', '--no-verify', lease, remote, `${src}:refs/heads/${remoteBranch}`], { allowFail: true });
+    if (push.code !== 0) throw new RepoError(`push to ${remote}/${remoteBranch} failed: ${(push.stderr || push.stdout).trim().split('\n').slice(-2).join(' ')}`, 'refused');
+    meta.prBranch = remoteBranch;
+    meta.prPushedSha = await gitOut(r.path, ['rev-parse', src]);
+
+    // 4. the pull request (once; later approvals update the same branch)
+    const updated = !!meta.prUrl;
+    if (!meta.prUrl) {
+      const host: PrHost | undefined = parseRemote(await gitOut(r.path, ['remote', 'get-url', remote]));
+      if (host) {
+        meta.prUrl = await openPullRequest(host, { source: remoteBranch, target, title: opts.title ?? `${w.taskId ?? w.id}`, description: opts.description ?? '', draft: !!s.pr?.draft }, r.path);
+      } else this.ctx.log.warn(`${r.name}: ${remote} is not an Azure DevOps or GitHub remote; pushed ${remoteBranch}, open the PR yourself`);
+    }
+
+    // 5. bookkeeping: keep the local branch (the diff stays viewable); remove the worktree directory
+    meta.mergedBaseSha = await gitOut(r.path, ['merge-base', baseRef, `refs/heads/${w.branch}`]);
+    meta.mergedSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.branch}`]);
+    w.status = 'merged';
+    this.ctx.store.markDirty();
+    await this.removeWorktreeDir(r, w);
+    await this.refresh(r.id);
+    return { ...(meta.prUrl ? { url: meta.prUrl } : {}), remoteBranch, base: target, branch: w.branch, updated };
+  }
+
   merge(decision: Decision, opts: { commitMessage?: string } = {}): Promise<MergeResult> {
     return this.serial(decision.repoId ?? '?', () => this.doMerge(decision, opts.commitMessage));
   }
@@ -732,7 +832,7 @@ export class RepoManager {
   /** Commits on `branch` that `base` does not have (0 if the branch is gone). */
   async commitsAhead(repoId: string, branch: string, base: string): Promise<number> {
     const r = this.require(repoId);
-    const res = await git(r.path, ['rev-list', '--count', `refs/heads/${base}..refs/heads/${branch}`], { allowFail: true });
+    const res = await git(r.path, ['rev-list', '--count', `${base}..refs/heads/${branch}`], { allowFail: true });
     return res.code === 0 ? Number(res.stdout.trim()) || 0 : 0;
   }
 
@@ -754,6 +854,25 @@ export class RepoManager {
     }
     this.ctx.log.info(`${r.name}: base branch ${base} (repoSettings; the checkout stays on ${r.branch})`);
     r.branch = base;
+  }
+
+  /** Does this repo land approved work as pull requests (repoSettings.land "pr")? */
+  landsAsPr(repoId: string): boolean {
+    return this.settingsFor(repoId).land === 'pr';
+  }
+
+  private remoteOf(repoId: string): string {
+    return this.settingsFor(repoId).pr?.remote ?? 'origin';
+  }
+
+  /**
+   * PR repos: fetch the base branch so new work starts from what is on the server, not from a
+   * local branch nobody updates. A failed fetch (offline) is logged; the last fetched state is used.
+   */
+  private async fetchBase(r: Repo): Promise<void> {
+    const remote = this.remoteOf(r.id);
+    const res = await gitRemote(r.path, ['fetch', '--no-tags', remote, `+refs/heads/${r.branch}:refs/remotes/${remote}/${r.branch}`], { allowFail: true });
+    if (res.code !== 0) this.ctx.log.warn(`${r.name}: could not fetch ${remote}/${r.branch} (${(res.stderr || res.stdout).trim().split('\n').pop()}); using the last fetched state`);
   }
 
   /** repoSettings.protect for a repo. */

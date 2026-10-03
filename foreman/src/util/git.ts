@@ -62,6 +62,25 @@ export async function git(cwd: string, args: string[], opts: GitOptions = {}): P
   return res;
 }
 
+/**
+ * The one exception to "the Foreman needs no network": in a repository that lands work as pull
+ * requests (repoSettings.land "pr"), the Foreman fetches the base branch and, after the user approved
+ * a task, pushes its branch. Only `fetch` and `push`; https/ssh only; never interactive (credentials
+ * come from the user's credential helper or ssh agent); repository hooks still never run. Agents can
+ * never reach this: their own git refuses every transport (gitsafety.ts).
+ */
+export async function gitRemote(cwd: string, args: ['fetch' | 'push', ...string[]], opts: GitOptions = {}): Promise<RunResult> {
+  const env: NodeJS.ProcessEnv = { ...baseEnv(), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', LC_ALL: 'C', ...(opts.env ?? {}) };
+  delete env.GIT_ALLOW_PROTOCOL;
+  const netArgs = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', `core.hooksPath=${NO_HOOKS_DIR}`, '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'protocol.ssh.allow=always'];
+  const res = await run('git', [...netArgs, ...args], { cwd, env, timeoutMs: opts.timeoutMs ?? 180_000 });
+  if (res.code !== 0 && !opts.allowFail) {
+    const msg = (res.stderr || res.stdout).trim().split('\n').slice(-3).join(' | ');
+    throw new GitError(`git ${args.slice(0, 3).join(' ')} failed: ${msg}`, res, args);
+  }
+  return res;
+}
+
 export async function gitOut(cwd: string, args: string[], opts: GitOptions = {}): Promise<string> {
   return (await git(cwd, args, opts)).stdout.trim();
 }

@@ -43,6 +43,10 @@ export interface WorktreeMeta {
   pendingRemoval?: boolean;
   /** repoSettings copy/setup already ran in this worktree */
   prepared?: boolean;
+  /** land "pr": the remote branch, the last sha AgentCraft pushed to it, the PR's URL */
+  prBranch?: string;
+  prPushedSha?: string;
+  prUrl?: string;
 }
 
 export interface StateData {

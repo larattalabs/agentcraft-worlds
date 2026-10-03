@@ -95,6 +95,24 @@ export interface RepoSettings {
   protect?: string[];
   /** environment for agents, setup and CI in this repo ($VAR / ${VAR} and ~ expanded; GIT_* ignored) */
   env?: Record<string, string>;
+  /**
+   * how approved work lands: "merge" (default) = a local merge commit into the base branch;
+   * "pr" = the Foreman pushes the branch and opens a pull request into the base branch
+   */
+  land?: 'merge' | 'pr';
+  /** pull request options (land "pr") */
+  pr?: PrSettings;
+}
+
+export interface PrSettings {
+  /** remote to fetch the base from and push to (default "origin") */
+  remote?: string;
+  /** remote branch name prefix, e.g. "feat/" -> feat/t3-tune-the-flight-model (default: the agent's branch name) */
+  branchPrefix?: string;
+  /** open PRs as drafts */
+  draft?: boolean;
+  /** push one commit authored by the user (agents' commits squashed, with Co-authored-by) instead of the agents' commits */
+  squash?: boolean;
 }
 
 export type ShowcaseCheckpoint = 'showcase' | 'showcase-late';
@@ -347,6 +365,16 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       if (o.subagents === 'repo') s.subagents = 'repo';
       if (str(o.baseBranch) && /^[\w./-]+$/.test(o.baseBranch as string)) s.baseBranch = o.baseBranch as string;
       if (Array.isArray(o.protect)) s.protect = o.protect.filter((x): x is string => typeof x === 'string' && x.length > 0 && !x.startsWith('/') && !x.split(/[\\/]/).includes('..'));
+      if (o.land === 'pr' || o.land === 'merge') s.land = o.land;
+      if (o.pr && typeof o.pr === 'object') {
+        const q = o.pr as Record<string, unknown>;
+        const pr: PrSettings = {};
+        if (str(q.remote) && /^[\w.-]+$/.test(q.remote as string)) pr.remote = q.remote as string;
+        if (str(q.branchPrefix) && /^[\w./-]+$/.test(q.branchPrefix as string)) pr.branchPrefix = q.branchPrefix as string;
+        if (typeof q.draft === 'boolean') pr.draft = q.draft;
+        if (typeof q.squash === 'boolean') pr.squash = q.squash;
+        s.pr = pr;
+      }
       if (o.env && typeof o.env === 'object') {
         const env: Record<string, string> = {};
         for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && typeof v === 'string') env[k] = v;

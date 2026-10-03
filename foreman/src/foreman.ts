@@ -390,10 +390,26 @@ export class Foreman {
     const option = d.answer?.option;
     if (option === 'Merge') {
       try {
-        const res = await this.repos.merge(d, task ? { commitMessage: `${task.id}: ${task.title}${task.summary ? `\n\n${task.summary}` : ''}` } : {});
+        const res = await this.repos.land(
+          d,
+          task
+            ? {
+                commitMessage: `${task.id}: ${task.title}${task.summary ? `\n\n${task.summary}` : ''}`,
+                title: task.title,
+                description: [task.summary, d.context?.split('\n')[0], `Built and reviewed in AgentCraft (${task.id}), approved by ${userName()}.`].filter(Boolean).join('\n\n'),
+              }
+            : {},
+        );
         if (task) this.tasks.setStatus(task.id, 'done', { viaMerge: true, force: task.status !== 'review' });
-        this.bus.feed('merge', `Merged ${res.branch} into ${res.base} (${res.sha}, ${res.files} file${res.files === 1 ? '' : 's'})`, { agentId: d.agentId });
-        this.notify('info', `Merged ${res.branch} into ${res.base}`);
+        if (res.kind === 'merge') {
+          this.bus.feed('merge', `Merged ${res.branch} into ${res.base} (${res.sha}, ${res.files} file${res.files === 1 ? '' : 's'})`, { agentId: d.agentId });
+          this.notify('info', `Merged ${res.branch} into ${res.base}`);
+        } else {
+          const what = res.url ? `${res.updated ? 'Updated the pull request' : 'Opened a pull request'} ${res.url}` : `Pushed ${res.remoteBranch} (open the pull request yourself)`;
+          if (task) this.tasks.update(task.id, { summary: `${what}${task.summary ? `\n${task.summary}` : ''}` });
+          this.bus.feed('merge', `${task?.id ?? res.branch}: ${what} (${res.remoteBranch} → ${res.base})`, { agentId: d.agentId });
+          this.notify('info', `${task?.id ?? res.branch}: ${what}`);
+        }
       } catch (e) {
         if (e instanceof RepoError && e.code === 'empty' && task && d.repoId && d.worktree) {
           // nothing to merge (a report or investigation): the task is simply done

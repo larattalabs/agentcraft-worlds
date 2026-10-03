@@ -318,7 +318,8 @@ export class ClaudeBackend implements Backend {
     return {
       role,
       cwd,
-      readDirs: [this.fm.memory.dir, ...(this.skillsPlugin ? [this.skillsPlugin.path] : []), ...workspace],
+      // every registered repository is readable (goals can span them); writing stays in the worktree
+      readDirs: [this.fm.memory.dir, ...(this.skillsPlugin ? [this.skillsPlugin.path] : []), ...workspace, ...this.fm.repos.list().map((r) => r.path)],
       ...(protectedPaths.length ? { protectedPaths } : {}),
       alwaysAllow: this.fm.store.data.permissionRules[agentId] ?? [],
       mcpServer: MCP_SERVER,
@@ -1330,12 +1331,13 @@ export class ClaudeBackend implements Backend {
 
   private openMergeDecision(t: Task, summary: string): void {
     const wt = this.fm.repos.requireWorktree(t.repoId!, t.worktree!);
+    const pr = this.fm.repos.landsAsPr(t.repoId!);
     this.fm.createDecision({
       agentId: LEAD,
       kind: 'merge',
-      question: `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
+      question: pr ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?` : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
       options: [...MERGE_OPTIONS],
-      context: `${summary}\n${wt.files} files, +${wt.additions} -${wt.deletions} | tests: ${t.ci}`,
+      context: `${summary}\n${wt.files} files, +${wt.additions} -${wt.deletions} | tests: ${t.ci}${pr ? `\n"${MERGE_OPTIONS[0]}" pushes the branch and opens the pull request (agents never push).` : ''}`,
       taskId: t.id,
       repoId: t.repoId!,
       worktree: wt.id,
@@ -1434,7 +1436,8 @@ export class ClaudeBackend implements Backend {
       const t = this.fm.tasks.get(d.taskId);
       if (!t) return;
       if (d.answer?.option === 'Merge' && t.status === 'done') {
-        if (t.assignee && this.fm.agent(t.assignee)?.taskId === t.id) this.fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} merged`, taskId: null, worktree: null });
+        const landed = t.repoId && this.fm.repos.landsAsPr(t.repoId) ? 'PR opened' : 'merged';
+        if (t.assignee && this.fm.agent(t.assignee)?.taskId === t.id) this.fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} ${landed}`, taskId: null, worktree: null });
         if (!this.isStopped(LEAD)) this.fm.setAgent(LEAD, { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
         const g = t.goalId ? this.fm.goal(t.goalId) : undefined;
         if (g && this.fm.tasks.goalComplete(g.id)) {

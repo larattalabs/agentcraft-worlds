@@ -138,6 +138,26 @@ ignored). `CLAUDE.md` / `AGENTS.md` in the folders above a repository (a workspa
 repos, up to your home folder) are read too, and that folder is readable for agents
 (`claude.context.workspaceInstructions`, default on).
 
+Landing as pull requests instead of local merges:
+
+```json
+{ "repoSettings": { "~/work/api": {
+    "baseBranch": "dev", "land": "pr",
+    "pr": { "branchPrefix": "feat/", "squash": true, "draft": false, "remote": "origin" } } } }
+```
+
+With `land: "pr"` workers start from the server's base (`origin/<base>`, fetched by the Foreman when
+the worktree is made). When you approve ("Merge" on the decision), the Foreman fetches again, checks
+for conflicts (a conflict goes back to the worker), pushes the branch (`branchPrefix` + the task slug)
+and opens the pull request with the remote's own CLI and your login: `az repos pr create` for Azure
+DevOps, `gh pr create` for GitHub (other remotes: pushed only). `squash` pushes one commit authored
+by you, with the agents as Co-authored-by. The push never overwrites a remote branch AgentCraft did
+not push itself. Agents still never push: only the Foreman does, and only after your approval.
+
+A goal can span registered repositories: the lead sees all of them (with base and landing mode),
+gives each task its repository (`create_task` `repo`), and orders them with deps; every registered
+repository is readable for agents.
+
 `copy` brings untracked files from your checkout into each new worker worktree. `setup` runs once per
 new worktree before the worker's first turn (git network access stays off; a failure is shown to the
 worker rather than stopping it). `ci` replaces `--ci` and detection for that repo.
