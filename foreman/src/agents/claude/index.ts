@@ -22,13 +22,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { query, type AgentDefinition, type CanUseTool, type HookCallbackMatcher, type EffortLevel, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { DesignJobs, type AuxTurn, type AuxTurnSpec } from './design.js';
 import type { ClaudeConfig } from '../../config.js';
 import { FOREMAN_VERSION } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
 import { withGitSafety } from '../../gitsafety.js';
 import { agentGitIdentity } from '../../util/git.js';
 import { classifyToolUse, describeRuleKey, describeToolCall, type PolicyContext } from '../../policy.js';
-import type { Decision, Goal, Task } from '../../protocol.js';
+import type { Decision, Design, Goal, Task } from '../../protocol.js';
 import { MERGE_OPTIONS, PERMISSION_OPTIONS } from '../../protocol.js';
 import type { TestResult } from '../../repos.js';
 import { renderDiffText } from '../../diff.js';
@@ -191,6 +192,8 @@ export class ClaudeBackend implements Backend {
   private subagentDefs: Record<string, AgentDefinition> = {};
   /** role files that could not be read (warned once each) */
   private roleProblems = new Set<string>();
+  /** building design jobs (design.request), one at a time */
+  readonly designs: DesignJobs;
 
   constructor(
     private fm: Foreman,
@@ -198,6 +201,17 @@ export class ClaudeBackend implements Backend {
     private opts: ClaudeBackendOptions = {},
   ) {
     this.queryFn = opts.queryFn ?? query;
+    this.designs = new DesignJobs({
+      fm: this.fm,
+      cfg: this.cfg,
+      canStart: () => !this.authFailed && !this.stopping && !this.limited(),
+      holdForLimit: (stats) => {
+        if (!this.limited()) this.setLimit(stats.rateLimit?.resetsAt, stats.rateLimit?.type);
+        return this.st.limit?.until;
+      },
+      runTurn: (spec) => this.runAuxTurn(spec),
+      tick: () => this.tick(),
+    });
     this.hooks = {
       onReview: () => {
         /* handled after the worker's turn ends (CI then review) */
@@ -500,7 +514,8 @@ export class ClaudeBackend implements Backend {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     const turns = [...this.running.values()];
     for (const r of turns) this.abortTurn(r, 'shutdown');
-    await Promise.race([Promise.allSettled([...this.turnPromises]), sleep(4000)]);
+    const designs = this.designs.stop();
+    await Promise.race([Promise.allSettled([...this.turnPromises, designs]), sleep(4000)]);
     // nothing an agent started outlives the Foreman (sessions resume on the next start)
     await Promise.race([Promise.allSettled(turns.map((r) => this.reap(r, 1500))), sleep(3000)]);
     // inflight entries stay persisted so the next start resumes them
@@ -797,6 +812,8 @@ export class ClaudeBackend implements Backend {
 
   private async schedule(): Promise<void> {
     if (this.authFailed || this.stopping || this.limited()) return;
+    // the design queue first: the goal loop below returns early when the workers are at the cap
+    this.designs.kick();
     for (const goal of this.fm.goals().filter((g) => g.status === 'active')) {
       for (const t of this.fm.tasks.ready(goal.id)) {
         if (this.workersRunning() >= this.maxWorkers()) return;
@@ -1141,15 +1158,7 @@ export class ClaudeBackend implements Backend {
         env: { ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) },
         // we spawn the CLI ourselves (same as the SDK's local spawn) so its pid is known: a stopped
         // turn's whole process tree can then be ended before its worktree is handed on
-        spawnClaudeCodeProcess: (o) => {
-          const child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
-          child.stderr?.setEncoding('utf8');
-          child.stderr?.on('data', (s: string) => this.fm.log.debug(`[${agentId} stderr] ${s.trim().slice(0, 300)}`));
-          child.on('error', (e) => this.fm.log.debug(`[${agentId}] CLI process error: ${e.message}`));
-          entry.child = child;
-          entry.spawnedAt = Date.now();
-          return child;
-        },
+        spawnClaudeCodeProcess: this.spawner(entry, agentId),
         ...(resume ? { resume } : {}),
         ...(this.cfg.maxBudgetUsdPerTurn ? { maxBudgetUsd: this.cfg.maxBudgetUsdPerTurn } : {}),
       };
@@ -1276,6 +1285,148 @@ export class ClaudeBackend implements Backend {
       s.lastResult = stats.subtype;
     }
     this.fm.store.markDirty();
+  }
+
+  /** The CLI is spawned by us (same as the SDK's local spawn) so its pid is known: an aborted turn's whole process tree can be ended. */
+  private spawner(entry: Running, label: string): NonNullable<Options['spawnClaudeCodeProcess']> {
+    return (o) => {
+      const child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
+      child.stderr?.setEncoding('utf8');
+      child.stderr?.on('data', (s: string) => this.fm.log.debug(`[${label} stderr] ${s.trim().slice(0, 300)}`));
+      child.on('error', (e) => this.fm.log.debug(`[${label}] CLI process error: ${e.message}`));
+      entry.child = child;
+      entry.spawnedAt = Date.now();
+      return child;
+    };
+  }
+
+  // ---- turns outside the roster (design jobs) -----------------------------------------------
+
+  /**
+   * A design job's tool calls: the same policy as a worker in `cwd`, but nobody can answer a
+   * permission prompt (there is no avatar to ask through), so whatever the policy would ask
+   * about is refused with a reason the agent can work with.
+   */
+  private auxCanUseTool(logId: string, cwd: string, turn: TurnHandle): CanUseTool {
+    return async (toolName, input): Promise<PermissionResult> => {
+      if (turn.signal.aborted) return { behavior: 'deny', message: 'The job was stopped.', interrupt: true };
+      const v = classifyToolUse(toolName, input, this.policyContext(logId, 'worker', cwd));
+      if (v.action === 'allow') return { behavior: 'allow', updatedInput: input };
+      this.fm.agentLog(logId, 'error', `blocked: ${describeToolCall(toolName, input)} (${v.reason})`);
+      return {
+        behavior: 'deny',
+        message: v.action === 'deny' ? v.reason : `Not allowed in a design job (${v.reason}). Nobody can approve permission prompts here: work only inside ${cwd} with the kit and node, without network access or installs.`,
+      };
+    };
+  }
+
+  /**
+   * One SDK turn for something that is not a roster agent (a building design job): the workers'
+   * permission machinery (policy / auto mode guardrails) without prompts, subagents, web tools,
+   * skills or the user's MCP servers; the same env, CLI process tracking, usage limit reports,
+   * session records and abort/reap as agent turns.
+   */
+  runAuxTurn(spec: AuxTurnSpec): AuxTurn {
+    const abort = new AbortController();
+    const entry: Running = { abort, job: { kind: 'followup', agentId: spec.logId, prompt: spec.prompt, sessionKey: spec.sessionKey } };
+    const done = this.doAuxTurn(spec, entry);
+    const tracked: Promise<void> = done.then(() => undefined).finally(() => this.turnPromises.delete(tracked));
+    this.turnPromises.add(tracked);
+    return { abort: (reason) => this.abortTurn(entry, reason), done };
+  }
+
+  private async doAuxTurn(spec: AuxTurnSpec, entry: Running): Promise<{ stats: TurnStats; reason?: AbortReason }> {
+    const { logId, cwd } = spec;
+    const turn: TurnHandle = { signal: entry.abort.signal, reason: () => entry.reason };
+    const { agents: _subagents, ...perm } = this.permissionOptions(logId, 'worker', cwd, turn);
+    const off = new Set(['Agent', 'Task', 'WebFetch', 'WebSearch', 'Skill']);
+    const options: Options = {
+      cwd,
+      model: spec.model,
+      effort: spec.effort,
+      maxTurns: spec.maxTurns,
+      settingSources: [],
+      ...perm,
+      canUseTool: this.auxCanUseTool(logId, cwd, turn),
+      tools: ((perm.tools as string[] | undefined) ?? []).filter((t) => !off.has(t)),
+      disallowedTools: [...new Set([...(perm.disallowedTools ?? []), 'Agent', 'Task', 'WebFetch', 'WebSearch'])],
+      strictMcpConfig: true,
+      mcpServers: spec.mcpServers,
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: spec.systemAppend },
+      abortController: entry.abort,
+      env: this.env({ agentId: logId, cwd }),
+      spawnClaudeCodeProcess: this.spawner(entry, logId),
+      ...(spec.resume ? { resume: spec.resume } : {}),
+      ...(this.cfg.maxBudgetUsdPerTurn ? { maxBudgetUsd: this.cfg.maxBudgetUsdPerTurn } : {}),
+    };
+    const mapper = new StreamMapper(this.fm, logId, cwd, 'worker', (r) => this.onRateLimit(r));
+    this.fm.agentLog(logId, 'text', `${spec.resume ? 'Resuming' : 'Starting'} ${spec.sessionKey} (${spec.model})`);
+    let stats: TurnStats;
+    const timer = setTimeout(() => this.abortTurn(entry, 'timeout'), spec.timeoutMs);
+    timer.unref?.();
+    try {
+      const q = this.queryFn({ prompt: spec.prompt, options });
+      this.refreshUsage(q);
+      entry.q = q;
+      const closeQuery = () => {
+        try {
+          q.close();
+        } catch {
+          /* already closed */
+        }
+      };
+      if (entry.abort.signal.aborted) closeQuery();
+      else entry.abort.signal.addEventListener('abort', closeQuery, { once: true });
+      for await (const msg of q) {
+        if (entry.abort.signal.aborted) break;
+        mapper.handle(msg);
+        try {
+          spec.onMessage?.(msg);
+        } catch (e) {
+          this.fm.log.warn(`${logId}: ${(e as Error).message}`);
+        }
+        if (mapper.stats.sessionId && this.fm.store.data.sessions[spec.sessionKey]?.sessionId !== mapper.stats.sessionId) this.recordSession(spec.sessionKey, mapper.stats.sessionId, spec.model);
+      }
+      stats = mapper.stats;
+      if (stats.sessionId) this.recordSession(spec.sessionKey, stats.sessionId, spec.model, stats);
+      if (stats.authFailed) this.markAuthFailed(`Claude authentication failed (${stats.authFailed}). Run \`claude\` and /login, then restart the Foreman.`);
+    } catch (e) {
+      stats = { ...mapper.stats };
+      if (!entry.abort.signal.aborted) {
+        const msg = (e as Error).message ?? String(e);
+        this.fm.log.error(`${logId} ${spec.sessionKey} failed: ${msg}`);
+        this.fm.agentLog(logId, 'error', `session error: ${truncate(msg, 400)}`);
+        if (/auth|login|credential|401/i.test(msg)) {
+          stats.authFailed = truncate(msg, 160);
+          this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
+        }
+        stats.isError = true;
+        stats.errors = [...stats.errors, msg];
+        const l = limitFromText(msg);
+        if (l.limited) {
+          stats.limited = true;
+          if (l.resetsAt) stats.rateLimit = { status: 'rejected', resetsAt: l.resetsAt };
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    if (entry.reason) void this.reap(entry);
+    else if (!stats.isError) this.limitBackoffMs = LIMIT_BACKOFF_MS;
+    return { stats, ...(entry.reason ? { reason: entry.reason } : {}) };
+  }
+
+  onDesignRequest(d: Design): void {
+    if (this.authFailed) {
+      this.fm.designFailed(d.id, `Claude is not available: ${this.fm.status.message ?? 'auth failed'}`);
+      return;
+    }
+    this.designs.enqueue(d.id);
+    this.tick();
+  }
+
+  onDesignCancel(id: string): void {
+    this.designs.cancel(id);
   }
 
   // ---- after a turn -------------------------------------------------------------------------

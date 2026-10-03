@@ -185,7 +185,8 @@ export class StreamMapper {
             fm.agentLog(id, 'tool', act.label);
             const diff = diffFromInput(b.name, input, this.cwd);
             if (diff) fm.agentLog(id, 'diff', diff);
-            fm.setAgent(id, { state: act.state, station: act.station, activity: act.activity });
+            // (a design job's turn has no avatar: only roster agents get a state)
+            if (fm.agent(id)) fm.setAgent(id, { state: act.state, station: act.station, activity: act.activity });
             if ((act.state === 'editing' || act.state === 'running' || act.state === 'testing') && this.role === 'worker') {
               const repoId = fm.agent(id)?.repoId;
               if (repoId) fm.repos.scheduleRefresh(repoId, 1500);
@@ -251,7 +252,7 @@ export class StreamMapper {
           }
           if (info?.status === 'rejected') {
             fm.agentLog(id, 'error', `rate limited (${info.rateLimitType ?? 'limit'}); waiting...`);
-            fm.setAgent(id, { state: 'blocked', activity: 'rate limited - waiting' });
+            if (fm.agent(id)) fm.setAgent(id, { state: 'blocked', activity: 'rate limited - waiting' });
           } else if (info?.status === 'allowed_warning') {
             fm.agentLog(id, 'text', `usage warning: ${info.rateLimitType ?? 'limit'} ${info.utilization !== undefined ? `${Math.round(info.utilization * 100)}%` : ''}`.trim());
           }
