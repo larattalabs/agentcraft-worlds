@@ -18,7 +18,10 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>A building key is {@code "<worldId>/<buildingId>"}, worldId = the save folder name, so two worlds
  * on one Foreman never collide. Marlow leads home, repos without a building and anything not tied to a
- * repo; he is never assigned a building.
+ * repo; he is never assigned a building. <b>The home building is always Marlow's</b> (docs/HUB.md "Repos
+ * and Goals tabs"): the mod never asks a lead for it ({@link #leadBuildings} leaves it out of
+ * {@code lead.assign}/{@code lead.sync}), and an assignment to it (stale, before the Foreman processed the
+ * sync that followed a home change) is ignored by every routing rule here.
  */
 public final class LeadRouting {
 	/** The home lead (never assigned a building). */
@@ -77,6 +80,20 @@ public final class LeadRouting {
 	// ------------------------------------------------------------------ sync
 
 	/**
+	 * Building id -> repos of the buildings that get a lead: every building except the home one (Marlow's).
+	 * {@code all} in placement order; {@code homeBuilding} null = none is home.
+	 */
+	public static Map<String, List<String>> leadBuildings(Map<String, List<String>> all, @Nullable String homeBuilding) {
+		Map<String, List<String>> out = new java.util.LinkedHashMap<>();
+		for (var e : all.entrySet()) {
+			if (!e.getKey().equals(homeBuilding)) {
+				out.put(e.getKey(), e.getValue());
+			}
+		}
+		return out;
+	}
+
+	/**
 	 * Building id -> repos before and after a change of the same world: buildings that are new or whose
 	 * repos changed are (re)assigned, buildings that are gone are released. Placement order is kept.
 	 */
@@ -104,13 +121,19 @@ public final class LeadRouting {
 	 * whose building is gone).
 	 */
 	public static @Nullable String leadBuilding(String agentId, List<Lead> leads, @Nullable String worldId, Collection<String> buildingIds) {
+		return leadBuilding(agentId, leads, worldId, buildingIds, null);
+	}
+
+	/** {@link #leadBuilding(String, List, String, Collection)}, ignoring an assignment to the home building (Marlow's). */
+	public static @Nullable String leadBuilding(String agentId, List<Lead> leads, @Nullable String worldId, Collection<String> buildingIds,
+		@Nullable String homeBuilding) {
 		if (MARLOW.equals(agentId) || worldId == null) {
 			return null;
 		}
 		for (Lead l : leads) {
 			if (l.leadId().equals(agentId)) {
 				Key k = parse(l.building());
-				if (k != null && k.worldId().equals(worldId) && buildingIds.contains(k.buildingId())) {
+				if (k != null && k.worldId().equals(worldId) && buildingIds.contains(k.buildingId()) && !k.buildingId().equals(homeBuilding)) {
 					return k.buildingId();
 				}
 			}
@@ -120,9 +143,15 @@ public final class LeadRouting {
 
 	/** Lead id -> its building id, for every lead assigned to an existing building of {@code worldId} (Marlow never). */
 	public static Map<String, String> assignedHere(List<Lead> leads, @Nullable String worldId, Collection<String> buildingIds) {
+		return assignedHere(leads, worldId, buildingIds, null);
+	}
+
+	/** {@link #assignedHere(List, String, Collection)} without the home building (always Marlow's). */
+	public static Map<String, String> assignedHere(List<Lead> leads, @Nullable String worldId, Collection<String> buildingIds,
+		@Nullable String homeBuilding) {
 		Map<String, String> out = new HashMap<>();
 		for (Lead l : leads) {
-			String b = leadBuilding(l.leadId(), leads, worldId, buildingIds);
+			String b = leadBuilding(l.leadId(), leads, worldId, buildingIds, homeBuilding);
 			if (b != null) {
 				out.put(l.leadId(), b);
 			}
@@ -132,7 +161,12 @@ public final class LeadRouting {
 
 	/** The lead of a building of {@code worldId}, or null when it has none (then Marlow leads it from home). */
 	public static @Nullable String leadOfBuilding(String buildingId, List<Lead> leads, @Nullable String worldId) {
-		if (worldId == null) {
+		return leadOfBuilding(buildingId, leads, worldId, null);
+	}
+
+	/** {@link #leadOfBuilding(String, List, String)}; the home building's lead is always null (Marlow). */
+	public static @Nullable String leadOfBuilding(String buildingId, List<Lead> leads, @Nullable String worldId, @Nullable String homeBuilding) {
+		if (worldId == null || buildingId.equals(homeBuilding)) {
 			return null;
 		}
 		String key = key(worldId, buildingId);
@@ -146,9 +180,17 @@ public final class LeadRouting {
 
 	/** The lead whose building has {@code repoId}, else Marlow (the Foreman's {@code leadForRepo}). */
 	public static String leadForRepo(@Nullable String repoId, List<Lead> leads) {
+		return leadForRepo(repoId, leads, null);
+	}
+
+	/**
+	 * {@link #leadForRepo(String, List)}, ignoring an assignment to {@code homeKey} (the home building's key
+	 * {@code "<worldId>/<buildingId>"}, null = none): the home building's repos are Marlow's.
+	 */
+	public static String leadForRepo(@Nullable String repoId, List<Lead> leads, @Nullable String homeKey) {
 		if (repoId != null) {
 			for (Lead l : leads) {
-				if (!MARLOW.equals(l.leadId()) && l.building() != null && l.repos().contains(repoId)) {
+				if (!MARLOW.equals(l.leadId()) && l.building() != null && !l.building().equals(homeKey) && l.repos().contains(repoId)) {
 					return l.leadId();
 				}
 			}

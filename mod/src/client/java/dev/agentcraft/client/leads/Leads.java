@@ -37,14 +37,14 @@ public final class Leads {
 			return assignedHere.get(agentId);
 		}
 
-		/** This world's building's lead, or null (Marlow leads it from home). */
+		/** This world's building's lead, or null (Marlow leads it from home; the home building is always his). */
 		public @Nullable String leadOf(String buildingId) {
-			return LeadRouting.leadOfBuilding(buildingId, leads, worldId);
+			return LeadRouting.leadOfBuilding(buildingId, leads, worldId, homeBuilding);
 		}
 
-		/** The lead of a repo (Foreman-wide), Marlow when none. */
+		/** The lead of a repo (Foreman-wide), Marlow when none or when it is in this world's home building. */
 		public String leadForRepo(@Nullable String repoId) {
-			return LeadRouting.leadForRepo(repoId, leads);
+			return LeadRouting.leadForRepo(repoId, leads, worldId == null || homeBuilding == null ? null : LeadRouting.key(worldId, homeBuilding));
 		}
 
 		/** Whether the podium of {@code podiumBuilding} (null = outside any building) shows a decision of {@code agentId}. */
@@ -104,7 +104,7 @@ public final class Leads {
 				home = s.buildingId();
 			}
 		}
-		Map<String, String> here = LeadRouting.assignedHere(leads, world, ids);
+		Map<String, String> here = LeadRouting.assignedHere(leads, world, ids, home);
 		return new View(world, st.leadsKnown(), List.copyOf(leads), Map.copyOf(here), Map.copyOf(LeadRouting.podiumOwners(here, podiums)), home);
 	}
 

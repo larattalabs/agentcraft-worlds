@@ -102,10 +102,35 @@ class LeadRoutingTest {
 		// a podium outside any building (the HQ studio) is a home podium
 		assertTrue(LeadRouting.podiumShows(null, null, "marlow", owners));
 		assertFalse(LeadRouting.podiumShows(null, "b1", "ines", owners));
-		// a lead of the home building: the home podium shows both its lead's and marlow's
-		Map<String, String> homeLed = LeadRouting.podiumOwners(Map.of("bram", "b1"), Set.of("b1"));
-		assertTrue(LeadRouting.podiumShows("b1", "b1", "bram", homeLed));
+		// a (stale) lead of the home building is ignored: the home building is marlow's, its podium shows his
+		List<LeadRouting.Lead> stale = List.of(new LeadRouting.Lead("bram", W + "/b1", List.of("alpha")));
+		Map<String, String> hereWithHome = LeadRouting.assignedHere(stale, W, buildings, "b1");
+		assertEquals(Map.of(), hereWithHome);
+		Map<String, String> homeLed = LeadRouting.podiumOwners(hereWithHome, Set.of("b1"));
+		assertTrue(LeadRouting.podiumShows("b1", "b1", "bram", homeLed), "bram is not a lead here: his decisions go home");
 		assertTrue(LeadRouting.podiumShows("b1", "b1", "marlow", homeLed));
+	}
+
+	@Test
+	void homeBuildingIsAlwaysMarlows() {
+		Map<String, List<String>> all = new LinkedHashMap<>();
+		all.put("b1", List.of("alpha"));
+		all.put("b2", List.of("beta", "gamma"));
+		all.put("b3", List.of("delta"));
+		// never sent: lead.assign / lead.sync leave the home building out
+		assertEquals(List.of("b2", "b3"), List.copyOf(LeadRouting.leadBuildings(all, "b1").keySet()));
+		assertEquals(List.of("b1", "b2", "b3"), List.copyOf(LeadRouting.leadBuildings(all, null).keySet()));
+		// a home change b1 -> b2: b1 now gets a lead, b2's is released
+		LeadRouting.Diff d = LeadRouting.diff(LeadRouting.leadBuildings(all, "b1"), LeadRouting.leadBuildings(all, "b2"));
+		assertEquals(List.of("b1"), d.assign());
+		assertEquals(List.of("b2"), d.release());
+		// routing ignores a stale assignment to the home building
+		assertNull(LeadRouting.leadBuilding("ines", leads, W, buildings, "b2"));
+		assertEquals("b2", LeadRouting.leadBuilding("ines", leads, W, buildings, "b1"));
+		assertNull(LeadRouting.leadOfBuilding("b2", leads, W, "b2"));
+		assertEquals("ines", LeadRouting.leadOfBuilding("b2", leads, W, "b1"));
+		assertEquals("marlow", LeadRouting.leadForRepo("gamma", leads, W + "/b2"));
+		assertEquals("ines", LeadRouting.leadForRepo("gamma", leads, W + "/b1"));
 	}
 
 	@Test
