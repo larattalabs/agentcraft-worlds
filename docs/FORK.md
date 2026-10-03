@@ -81,6 +81,13 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 - P2.5 Wizard: pick repo or group, then blueprint; translucent ghost near the player, conflicts
   tinted, rotate / nudge, confirm.
 - P2.6 More designs (workshop, studio, campus with wings) via P2.1 + P2.2.
+- P2.8 The AgentCraft Hub (docs/HUB.md): one screen (key H) replacing chat commands / config files /
+  flags for players, tabs Buildings, Repos, Goals, Team, Settings, Status. Wave 1: shell + Buildings +
+  Status; then Repos + Goals; then Team + Settings (config get/set protocol). Hardcore reason: commands
+  need cheats, the hub acts through the integrated server.
+- P2.9 Generated buildings: a guided form (style, materials, features, size or "fit a plot", remix,
+  notes) -> a Foreman design job (Claude design agent in a scratch copy of the kit, checker + offline
+  renderer, iterate) -> blueprint in the user folder -> reviewed as the ghost -> placed on confirm.
 - P2.7 DevBridge token; then a trial in a copy of the Hardcore world; then the real one (fresh backup).
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
