@@ -1,0 +1,424 @@
+{
+  "id": "campus3",
+  "name": "Campus (3 wings)",
+  "description": "A 3-repo campus: a central hall with five desks, meeting room, lounge, library, podium and goal atrium, plus one wing per repo with its own task wall, CI lamp and test bench.",
+  "kind": "group",
+  "wings": 3,
+  "size": {
+    "x": 77,
+    "y": 18,
+    "z": 34
+  },
+  "groundY": 1,
+  "front": "south",
+  "materials": "agentcraft",
+  "walk": {
+    "minX": 2,
+    "minY": 1,
+    "minZ": 2,
+    "maxX": 74,
+    "maxY": 8,
+    "maxZ": 24
+  },
+  "anchors": {
+    "desk_juniper": {
+      "x": 33.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_juniper": {
+      "x": 33.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_juniper": {
+      "x": 34.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_kit": {
+      "x": 39.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_kit": {
+      "x": 39.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_kit": {
+      "x": 40.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_wren": {
+      "x": 45.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_wren": {
+      "x": 45.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_wren": {
+      "x": 46.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_rowan": {
+      "x": 51.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_rowan": {
+      "x": 51.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_rowan": {
+      "x": 52.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_tove": {
+      "x": 57.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_tove": {
+      "x": 57.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_tove": {
+      "x": 58.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "library": {
+      "x": 31.5,
+      "y": 1,
+      "z": 6.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "library_2": {
+      "x": 31.5,
+      "y": 1,
+      "z": 7.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "library_3": {
+      "x": 31.5,
+      "y": 1,
+      "z": 8.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "library_4": {
+      "x": 31.5,
+      "y": 1,
+      "z": 9.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "terminal": {
+      "x": 31.5,
+      "y": 1,
+      "z": 12.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "goal_atrium": {
+      "x": 45.5,
+      "y": 1,
+      "z": 11.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "decision_podium": {
+      "x": 50.5,
+      "y": 1.95,
+      "z": 11.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "user": {
+      "x": 51.5,
+      "y": 1,
+      "z": 11.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "user_2": {
+      "x": 51.5,
+      "y": 1,
+      "z": 9.5,
+      "yaw": 26.565,
+      "pitch": 0
+    },
+    "user_3": {
+      "x": 51.5,
+      "y": 1,
+      "z": 13.5,
+      "yaw": 153.435,
+      "pitch": 0
+    },
+    "mergestation": {
+      "x": 59.5,
+      "y": 1,
+      "z": 7.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "mergestation_2": {
+      "x": 59.5,
+      "y": 1,
+      "z": 6.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "mergestation_3": {
+      "x": 59.5,
+      "y": 1,
+      "z": 8.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "meeting": {
+      "x": 33.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "meeting_2": {
+      "x": 35.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "meeting_3": {
+      "x": 34.5,
+      "y": 1,
+      "z": 22.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "meeting_4": {
+      "x": 36.5,
+      "y": 1,
+      "z": 22.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "meeting_5": {
+      "x": 32.5,
+      "y": 1,
+      "z": 21.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "meeting_6": {
+      "x": 37.5,
+      "y": 1,
+      "z": 21.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "lounge": {
+      "x": 51.5,
+      "y": 1,
+      "z": 21.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "lounge_2": {
+      "x": 56.5,
+      "y": 1,
+      "z": 21.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "lounge_3": {
+      "x": 53.5,
+      "y": 1,
+      "z": 19.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "lounge_4": {
+      "x": 54.5,
+      "y": 1,
+      "z": 19.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "lounge_5": {
+      "x": 53.5,
+      "y": 1,
+      "z": 23.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "lounge_6": {
+      "x": 54.5,
+      "y": 1,
+      "z": 23.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "entrance": {
+      "x": 45.5,
+      "y": 1,
+      "z": 24.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "spawn": {
+      "x": 44.5,
+      "y": 1,
+      "z": 23.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "task_wall@1": {
+      "x": 16.127,
+      "y": 4,
+      "z": 8.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "testbench": {
+      "x": 22.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "testbench_2": {
+      "x": 21.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "cam_wing1": {
+      "x": 27.5,
+      "y": 4.2,
+      "z": 19.5,
+      "yaw": 135,
+      "pitch": 2.944
+    },
+    "task_wall@2": {
+      "x": 74.873,
+      "y": 4,
+      "z": 8.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "testbench_3": {
+      "x": 68.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "testbench_4": {
+      "x": 67.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "cam_wing2": {
+      "x": 63.5,
+      "y": 4.2,
+      "z": 19.5,
+      "yaw": -135,
+      "pitch": 2.944
+    },
+    "task_wall@3": {
+      "x": 2.127,
+      "y": 4,
+      "z": 8.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "testbench_5": {
+      "x": 8.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "testbench_6": {
+      "x": 7.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "cam_wing3": {
+      "x": 13.5,
+      "y": 4.2,
+      "z": 19.5,
+      "yaw": 135,
+      "pitch": 2.944
+    },
+    "cam_overview": {
+      "x": -13,
+      "y": 18,
+      "z": 49,
+      "yaw": -124.955,
+      "pitch": 12.561
+    },
+    "cam_desks": {
+      "x": 45.5,
+      "y": 4.5,
+      "z": 23,
+      "yaw": -180,
+      "pitch": 4.289
+    },
+    "cam_hall": {
+      "x": 31.5,
+      "y": 5,
+      "z": 23.5,
+      "yaw": -126.634,
+      "pitch": 8.196
+    }
+  }
+}

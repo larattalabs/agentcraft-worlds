@@ -90,6 +90,12 @@ export class Blueprint {
     this.materials = o.materials ?? 'agentcraft';
     this.cells = new Map(); // "x,y,z" -> { state:{name,props}, nbt }
     this.anchors = {};
+    // `origin` shifts every design coordinate (set/get/anchor/walk) so a design can be written relative to its
+    // main walls while the template keeps a margin for overhangs, porches and paths.
+    const og = o.origin ?? [0, 0, 0];
+    this.ox = og[0];
+    this.oy = og[1];
+    this.oz = og[2];
     this.walk = null;
     if (o.walk) this.setWalk(o.walk);
   }
@@ -98,28 +104,30 @@ export class Blueprint {
   get feet() { return this.groundY; }
 
   setWalk(w) {
-    this.walk = Array.isArray(w)
+    const o = Array.isArray(w)
       ? { minX: w[0], minY: w[1], minZ: w[2], maxX: w[3], maxY: w[4], maxZ: w[5] }
       : { minX: w.minX, minY: w.minY, minZ: w.minZ, maxX: w.maxX, maxY: w.maxY, maxZ: w.maxZ };
+    this.walk = { minX: o.minX + this.ox, minY: o.minY + this.oy, minZ: o.minZ + this.oz, maxX: o.maxX + this.ox, maxY: o.maxY + this.oy, maxZ: o.maxZ + this.oz };
     return this;
   }
 
   // ------------------------------------------------------------------ cells
 
   inBounds(x, y, z) {
+    x += this.ox; y += this.oy; z += this.oz;
     return x >= 0 && y >= 0 && z >= 0 && x < this.size.x && y < this.size.y && z < this.size.z;
   }
 
   /** Place one block. `props` may be partial (the rest is filled with defaults); `nbt` is a block-entity compound as a plain object. */
   set(x, y, z, block, props = {}, nbtData = null) {
-    if (!this.inBounds(x, y, z)) throw new Error(`${this.id}: set(${x},${y},${z}) outside size ${this.size.x}x${this.size.y}x${this.size.z}`);
-    this.cells.set(key(x, y, z), { state: normalize(block, props), nbt: nbtData });
+    if (!this.inBounds(x, y, z)) throw new Error(`${this.id}: set(${x},${y},${z}) outside size ${this.size.x}x${this.size.y}x${this.size.z} (origin ${this.ox},${this.oy},${this.oz})`);
+    this.cells.set(key(x + this.ox, y + this.oy, z + this.oz), { state: normalize(block, props), nbt: nbtData });
     return this;
   }
 
   air(x, y, z) { return this.set(x, y, z, B.air); }
 
-  get(x, y, z) { return this.cells.get(key(x, y, z)) ?? null; }
+  get(x, y, z) { return this.cells.get(key(x + this.ox, y + this.oy, z + this.oz)) ?? null; }
 
   nameAt(x, y, z) { return this.get(x, y, z)?.state.name ?? null; }
 
@@ -217,28 +225,92 @@ export class Blueprint {
   }
 
   /**
-   * A gabled (sloped) roof: stairs rise from both long eaves to the ridge, full blocks at the ridge,
-   * gable ends closed with `gable` below the slope. ridge: 'x' = ridge line runs east-west.
-   * Rises one row per cell, so it needs (width/2) rows above `y`.
+   * A gabled (sloped) roof over the rectangle (x0,z0)-(x1,z1) (may overhang the walls), starting on row y.
+   * ridge: 'x' = the ridge line runs east-west (eaves on the north/south edges).
+   * pitch 1: one row per cell (stairs, ridge cap `full`); pitch 0.5 (default): half a row per cell, alternating
+   * stairs / top slabs (shallow, so wide halls do not get a barn-high roof), ridge = a bottom slab.
+   * The attic is left hollow. Gable ends: pass `gableInset` (cells in from the rectangle's end, normally the overhang)
+   * to close each end with `gable` up to the slope at that wall plane; `gable: null` leaves them open.
+   * Stairs `facing` is their tall side, so it points up the slope (towards the ridge).
    */
-  roofGable(x0, z0, x1, z1, y, { ridge = 'x', stairs = 'minecraft:dark_oak_stairs', full = 'minecraft:dark_oak_planks', gable = B.plaster } = {}) {
+  roofGable(x0, z0, x1, z1, y, {
+    ridge = 'x', pitch = 0.5, stairs = 'minecraft:dark_oak_stairs', slab = 'minecraft:dark_oak_slab', full = 'minecraft:dark_oak_planks',
+    gable = B.plaster, gableInset = 0, gableFrom = null,
+  } = {}) {
+    if (pitch !== 1 && pitch !== 0.5) throw new Error('roofGable: pitch must be 1 or 0.5');
     const alongX = ridge === 'x';
     const a0 = alongX ? z0 : x0;
     const a1 = alongX ? z1 : x1;
     const b0 = alongX ? x0 : z0;
     const b1 = alongX ? x1 : z1;
-    const mid = (a0 + a1) / 2;
+    const half = (a1 - a0) / 2;
+    const profile = (a) => {
+      const m = Math.min(a - a0, a1 - a);
+      const down = a - a0 < a1 - a ? (alongX ? 'south' : 'east') : alongX ? 'north' : 'west'; // = towards the ridge (a stair's `facing` is its tall side)
+      const mid = Number.isInteger(half) && a - a0 === half;
+      if (pitch === 1) return mid ? { dy: m, kind: 'ridge', down } : { dy: m, kind: 'stair', down };
+      if (mid) return { dy: Math.ceil(m / 2), kind: 'ridgeSlab', down };
+      return m % 2 === 0 ? { dy: m / 2, kind: 'stair', down } : { dy: (m - 1) / 2, kind: 'topSlab', down };
+    };
     for (let a = a0; a <= a1; a++) {
-      const rise = Math.min(a - a0, a1 - a);
-      const towardRidge = a <= mid ? (alongX ? 'south' : 'east') : alongX ? 'north' : 'west';
-      const isRidge = Number.isInteger(mid) && a === mid;
+      const p = profile(a);
       for (let b = b0; b <= b1; b++) {
         const [x, z] = alongX ? [b, a] : [a, b];
-        if (isRidge) this.set(x, y + rise, z, full);
-        else this.set(x, y + rise, z, stairs, { facing: towardRidge, half: 'bottom', shape: 'straight' });
-        for (let yy = y; yy < y + rise; yy++) if (b === b0 || b === b1) this.set(x, yy, z, gable);
+        if (p.kind === 'ridge') this.set(x, y + p.dy, z, full);
+        else if (p.kind === 'ridgeSlab') this.set(x, y + p.dy, z, slab, { type: 'bottom' });
+        else if (p.kind === 'topSlab') this.set(x, y + p.dy, z, slab, { type: 'top' });
+        else this.set(x, y + p.dy, z, stairs, { facing: p.down, half: 'bottom', shape: 'straight' });
+      }
+      if (gable) {
+        const top = y + p.dy - 1; // last row to fill (the roof block itself sits at y+dy)
+        for (const b of [b0 + gableInset, b1 - gableInset]) {
+          const [x, z] = alongX ? [b, a] : [a, b];
+          for (let yy = gableFrom ?? y; yy <= top; yy++) this.set(x, yy, z, gable);
+        }
       }
     }
+    return this;
+  }
+
+  /**
+   * A hip roof with a flat top: stairs rise one row per cell from all four edges for `rise` rows (corners use
+   * outer-corner stairs, the slope is backed with plaster), then a full-block plateau `top` at y+rise, with
+   * optional `skylights = [[x0,z0,x1,z1],...]` replaced by glass. The footprint must be wider than 2*rise.
+   */
+  roofHip(x0, z0, x1, z1, y, { rise = 3, stairs = 'minecraft:dark_oak_stairs', top = B.tile, skylights = [], glass = B.glass, under = B.plaster } = {}) {
+    if (x1 - x0 + 1 <= 2 * rise || z1 - z0 + 1 <= 2 * rise) throw new Error('roofHip: footprint too small for the rise');
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        const dN = z - z0;
+        const dS = z1 - z;
+        const dW = x - x0;
+        const dE = x1 - x;
+        const m = Math.min(dW, dE, dN, dS);
+        if (m >= rise) { this.set(x, y + rise, z, top); continue; }
+        const sides = [dN === m && 'north', dS === m && 'south', dW === m && 'west', dE === m && 'east'].filter(Boolean);
+        let facing = { north: 'south', south: 'north', west: 'east', east: 'west' }[sides[0]]; // tall side faces the plateau
+        let shape = 'straight';
+        if (sides.length > 1) {
+          const ns = sides.find((q) => q === 'north' || q === 'south');
+          const we = sides.find((q) => q === 'west' || q === 'east');
+          facing = ns === 'north' ? 'south' : 'north';
+          shape = { 'north,west': 'outer_left', 'north,east': 'outer_right', 'south,east': 'outer_left', 'south,west': 'outer_right' }[`${ns},${we}`];
+        }
+        this.set(x, y + m, z, stairs, { facing, half: 'bottom', shape });
+        if (under) for (let yy = y; yy < y + m; yy++) this.set(x, yy, z, under);
+      }
+    }
+    for (const [sx0, sz0, sx1, sz1] of skylights) this.fill([sx0, y + rise, sz0, sx1, y + rise, sz1], glass);
+    return this;
+  }
+
+  /** A vertical post of `block` from y0..y1 at (x,z). */
+  post(x, z, y0, y1, block = B.walnut) { return this.fill([x, y0, z, x, y1, z], block); }
+
+  /** A flat awning/porch roof of slabs on row y over (x0,z0)-(x1,z1) with posts (feet row up to y-1) at `posts` = [[x,z],...]. */
+  awning(x0, z0, x1, z1, y, { deck = 'minecraft:dark_oak_slab', posts = [], post = B.walnut, feetY = this.feet } = {}) {
+    for (const [x, z] of cellsOf(x0, z0, x1, z1)) this.slab(x, y, z, 'bottom', deck);
+    for (const [px, pz] of posts) this.fill([px, feetY, pz, px, y - 1, pz], post);
     return this;
   }
 
@@ -271,7 +343,7 @@ export class Blueprint {
 
   /** Raw anchor (world-relative template coordinates; spots = feet position). */
   anchor(name, x, y, z, yaw = 0, pitch = 0) {
-    this.anchors[name] = { x: r3(x), y: r3(y), z: r3(z), yaw: r3(yaw), pitch: r3(pitch) };
+    this.anchors[name] = { x: r3(x + this.ox), y: r3(y + this.oy), z: r3(z + this.oz), yaw: r3(yaw), pitch: r3(pitch) };
     return this;
   }
 

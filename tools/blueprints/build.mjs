@@ -16,7 +16,7 @@ export const JSON_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft/
 const DESIGNS = path.join(HERE, 'designs');
 
 export function listDesigns() {
-  return fs.readdirSync(DESIGNS).filter((f) => f.endsWith('.mjs')).map((f) => f.slice(0, -4)).sort();
+  return fs.readdirSync(DESIGNS).filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).map((f) => f.slice(0, -4)).sort();
 }
 
 export async function buildDesign(name, { nbtDir = NBT_DIR, jsonDir = JSON_DIR } = {}) {

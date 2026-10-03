@@ -60,7 +60,7 @@ test('written structure file: valid gzipped template with id/properties palette'
   assert.deepEqual([...bindings].sort(), ['juniper', 'kit', 'rowan', 'tove', 'wren']);
   const side = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
   assert.equal(side.id, 'workshop');
-  assert.deepEqual(side.size, { x: 27, y: 10, z: 21 });
+  assert.deepEqual(side.size, { x: 29, y: 15, z: 32 });
   assert.equal(side.anchors.desk_kit.yaw, 90); // west-wall desk: the agent looks west at its monitor
 });
 
@@ -143,4 +143,52 @@ test('kit: block states are complete; desk writes its anchors; unknown blocks/pr
   assert.equal(bp.anchors.cam_x.yaw, 0); // looking south
   bp.camera('y', [0, 2, 0], [-5, 2, 0]);
   assert.equal(bp.anchors.cam_y.yaw, 90); // looking west
+});
+
+test('kit: origin offsets blocks, anchors and walk; roofGable stairs rise towards the ridge', () => {
+  const bp = new Blueprint({ id: 'o', size: [9, 8, 9], origin: [1, 0, 1], walk: [0, 0, 0, 1, 1, 1] });
+  bp.set(0, 0, 0, B.plaster);
+  assert.equal(bp.get(0, 0, 0).state.name, 'agentcraft:plaster_panel');
+  assert.equal(bp.cells.has('1,0,1'), true);
+  bp.anchor('a', 0.5, 1, 0.5);
+  assert.deepEqual([bp.anchors.a.x, bp.anchors.a.z], [1.5, 1.5]);
+  assert.equal(bp.walk.minX, 1);
+  assert.throws(() => bp.set(-2, 0, 0, B.plaster));
+  bp.roofGable(0, 0, 6, 6, 1, { ridge: 'x', pitch: 1, gable: null });
+  assert.equal(bp.get(3, 1, 0).state.props.facing, 'south'); // north eave: tall side towards the ridge
+  assert.equal(bp.get(3, 1, 6).state.props.facing, 'north');
+  assert.equal(bp.nameAt(3, 4, 3), 'minecraft:dark_oak_planks'); // ridge cap
+  const half = new Blueprint({ id: 'h', size: [8, 10, 12] });
+  half.roofGable(0, 0, 7, 10, 0, { ridge: 'x', pitch: 0.5, gable: B.plaster });
+  assert.equal(half.get(2, 0, 0).state.props.facing, 'south');
+  assert.equal(half.get(2, 0, 1).state.props.type, 'top');
+  assert.equal(half.get(2, 3, 5).state.name, 'minecraft:dark_oak_slab');
+  assert.equal(half.get(0, 0, 0).state.name, 'minecraft:dark_oak_stairs');
+});
+
+test('kit: roofHip builds a stair ring and a plateau; awning places slabs and posts', () => {
+  const bp = new Blueprint({ id: 'p', size: [12, 8, 12] });
+  bp.roofHip(0, 0, 11, 11, 0, { rise: 2, skylights: [[5, 5, 6, 6]] });
+  assert.equal(bp.nameAt(5, 2, 5), 'minecraft:glass');
+  assert.equal(bp.nameAt(3, 2, 3), 'agentcraft:terracotta_tile');
+  assert.equal(bp.get(5, 0, 0).state.props.facing, 'south');
+  assert.equal(bp.get(0, 0, 0).state.props.shape, 'outer_left');
+  assert.throws(() => bp.roofHip(0, 0, 3, 3, 0, { rise: 2 }));
+  bp.awning(1, 1, 2, 2, 5, { posts: [[1, 1]], feetY: 1 });
+  assert.equal(bp.get(2, 5, 2).state.props.type, 'bottom');
+  assert.equal(bp.nameAt(1, 3, 1), 'agentcraft:walnut_panel');
+});
+
+test('designs: studio and campus2..4 build and pass the checker', async () => {
+  const { default: studio } = await import('../blueprints/designs/studio.mjs');
+  const { buildCampus } = await import('../blueprints/lib/campus.mjs');
+  assert.ok(checkBlueprint(studio()).ok);
+  for (const n of [2, 3, 4]) {
+    const bp = buildCampus(n);
+    const r = checkBlueprint(bp);
+    assert.deepEqual(r.errors, []);
+    assert.equal(bp.kind, 'group');
+    for (let k = 1; k <= n; k++) assert.ok(bp.anchors[`task_wall@${k}`]);
+  }
+  assert.throws(() => buildCampus(1));
 });
