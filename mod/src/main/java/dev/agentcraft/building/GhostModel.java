@@ -3,6 +3,7 @@ package dev.agentcraft.building;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The placement wizard's ghost of a template, free of Minecraft types so it is unit-tested without a
@@ -176,6 +177,210 @@ public final class GhostModel {
 	/** Exposed faces over all visible cells (what the ghost draws). */
 	public int faceCount() {
 		return faceCount;
+	}
+
+	// ------------------------------------------------------------------ outline
+
+	/**
+	 * A straight outline segment in rotated-local block-corner coordinates: the box spans
+	 * {@code 0..sizeX} x {@code 0..sizeY} x {@code 0..sizeZ}, so cell (x, y, z) fills x..x+1 etc.
+	 */
+	public record Edge(int x0, int y0, int z0, int x1, int y1, int z1) {
+	}
+
+	private volatile int @Nullable [] heights;
+	private volatile @Nullable List<Edge> outline;
+	@SuppressWarnings("unchecked")
+	private final List<Edge>[] frontEdges = new List[4];
+
+	/**
+	 * Per column (index {@code z * sizeX + x}) the top of its highest visible cell ({@code y + 1}),
+	 * 0 for a column the ghost draws nothing in. The footprint is the columns above 0.
+	 */
+	public int[] columnHeights() {
+		int[] h = heights;
+		if (h == null) {
+			h = new int[sizeX * sizeZ];
+			for (int i = 0; i < count(); i++) {
+				if (visible(i) && x(i) >= 0 && z(i) >= 0 && x(i) < sizeX && z(i) < sizeZ) {
+					int idx = z(i) * sizeX + x(i);
+					h[idx] = Math.max(h[idx], y(i) + 1);
+				}
+			}
+			heights = h;
+		}
+		return h;
+	}
+
+	private boolean in(int[] h, int x, int z) {
+		return x >= 0 && z >= 0 && x < sizeX && z < sizeZ && h[z * sizeX + x] > 0;
+	}
+
+	private int height(int[] h, int x, int z) {
+		return in(h, x, z) ? h[z * sizeX + x] : 0;
+	}
+
+	/**
+	 * The outline of what the ghost draws (not of the template's box: a template need not write every
+	 * cell of its box, e.g. the studio's porch is 7 of its 37 columns wide, and the box corners beside it
+	 * stay terrain). Around the footprint's perimeter: an edge at the bottom (y 0) and one at each
+	 * column's top, plus vertical edges at the perimeter's corners (0 to the taller side) and where the
+	 * top steps along a straight wall. Collinear pieces at the same height are merged, so a full box
+	 * gives exactly its 12 edges. Cached.
+	 */
+	public List<Edge> outline() {
+		List<Edge> o = outline;
+		if (o == null) {
+			o = List.copyOf(computeOutline());
+			outline = o;
+		}
+		return o;
+	}
+
+	private List<Edge> computeOutline() {
+		int[] h = columnHeights();
+		// unit edges keyed by (axis, line, y): x-edges lie on a z line, z-edges on an x line
+		java.util.Map<Long, List<Integer>> runs = new java.util.HashMap<>();
+		for (int z = 0; z < sizeZ; z++) {
+			for (int x = 0; x < sizeX; x++) {
+				if (!in(h, x, z)) {
+					continue;
+				}
+				int top = height(h, x, z);
+				for (int y : new int[] {0, top}) {
+					if (!in(h, x, z - 1)) {
+						addRun(runs, 0, z, y, x);
+					}
+					if (!in(h, x, z + 1)) {
+						addRun(runs, 0, z + 1, y, x);
+					}
+					if (!in(h, x - 1, z)) {
+						addRun(runs, 1, x, y, z);
+					}
+					if (!in(h, x + 1, z)) {
+						addRun(runs, 1, x + 1, y, z);
+					}
+				}
+			}
+		}
+		List<Edge> out = new ArrayList<>();
+		runs.keySet().stream().sorted().forEach(key -> {
+			int axis = (int) (key >>> 62);
+			int line = (int) ((key >>> 31) & 0x7FFFFFFF) - (1 << 30);
+			int y = (int) (key & 0x7FFFFFFF) - (1 << 30);
+			List<Integer> starts = runs.get(key);
+			starts.sort(null);
+			int i = 0;
+			while (i < starts.size()) {
+				int a = starts.get(i);
+				int b = a + 1;
+				i++;
+				while (i < starts.size() && starts.get(i) <= b) {
+					b = Math.max(b, starts.get(i) + 1);
+					i++;
+				}
+				out.add(axis == 0 ? new Edge(a, y, line, b, y, line) : new Edge(line, y, a, line, y, b));
+			}
+		});
+		// vertical edges at the perimeter's vertices
+		for (int vz = 0; vz <= sizeZ; vz++) {
+			for (int vx = 0; vx <= sizeX; vx++) {
+				// perimeter edges leaving this vertex: +x, -x, +z, -z, each with the inside column's height (-1 = none)
+				int px = perimeter(h, vx, vz - 1, vx, vz);
+				int nx = perimeter(h, vx - 1, vz - 1, vx - 1, vz);
+				int pz = perimeter(h, vx - 1, vz, vx, vz);
+				int nz = perimeter(h, vx - 1, vz - 1, vx, vz - 1);
+				int n = (px >= 0 ? 1 : 0) + (nx >= 0 ? 1 : 0) + (pz >= 0 ? 1 : 0) + (nz >= 0 ? 1 : 0);
+				if (n == 0) {
+					continue;
+				}
+				int max = Math.max(Math.max(px, nx), Math.max(pz, nz));
+				boolean straight = n == 2 && (px >= 0 && nx >= 0 || pz >= 0 && nz >= 0);
+				if (!straight) {
+					out.add(new Edge(vx, 0, vz, vx, max, vz));
+				} else {
+					int a = px >= 0 ? px : pz;
+					int b = px >= 0 ? nx : nz;
+					if (a != b) {
+						out.add(new Edge(vx, Math.min(a, b), vz, vx, Math.max(a, b), vz));
+					}
+				}
+			}
+		}
+		return out;
+	}
+
+	/** The height of the inside column when exactly one of the two columns is in the footprint, else -1. */
+	private int perimeter(int[] h, int ax, int az, int bx, int bz) {
+		boolean a = in(h, ax, az);
+		boolean b = in(h, bx, bz);
+		return a == b ? -1 : a ? height(h, ax, az) : height(h, bx, bz);
+	}
+
+	private static void addRun(java.util.Map<Long, List<Integer>> runs, int axis, int line, int y, int start) {
+		long key = ((long) axis << 62) | ((long) (line + (1 << 30)) << 31) | (y + (1 << 30));
+		runs.computeIfAbsent(key, k -> new ArrayList<>()).add(start);
+	}
+
+	/**
+	 * The entrance side of the outline at the ground row: the footprint's perimeter edges facing
+	 * {@code front} (rotated direction, north/east/south/west) on its front-most line (for the studio
+	 * only the porch, not the hall's front wall beside it). Merged, at {@code y = groundY}. Cached.
+	 */
+	public List<Edge> frontEdges(String front) {
+		int d = BlueprintTransform.directionIndex(front);
+		if (d < 0) {
+			throw new IllegalArgumentException("bad front " + front);
+		}
+		List<Edge> f = frontEdges[d];
+		if (f != null) {
+			return f;
+		}
+		int[] h = columnHeights();
+		// outward step of the front direction (north = -z, east = +x, south = +z, west = -x)
+		int dx = d == 1 ? 1 : d == 3 ? -1 : 0;
+		int dz = d == 2 ? 1 : d == 0 ? -1 : 0;
+		boolean alongX = dz != 0;
+		int best = 0;
+		boolean any = false;
+		List<int[]> pieces = new ArrayList<>(); // {line, start}
+		for (int z = 0; z < sizeZ; z++) {
+			for (int x = 0; x < sizeX; x++) {
+				if (!in(h, x, z) || in(h, x + dx, z + dz)) {
+					continue;
+				}
+				// the line of the face on the outward side
+				int line = alongX ? (dz > 0 ? z + 1 : z) : (dx > 0 ? x + 1 : x);
+				int start = alongX ? x : z;
+				// front-most: largest line for south/east, smallest for north/west
+				int rank = (dx + dz) > 0 ? line : -line;
+				if (!any || rank > best) {
+					best = rank;
+					any = true;
+					pieces.clear();
+				}
+				if (rank == best) {
+					pieces.add(new int[] {line, start});
+				}
+			}
+		}
+		pieces.sort((p, q) -> Integer.compare(p[1], q[1]));
+		List<Edge> out = new ArrayList<>();
+		int i = 0;
+		while (i < pieces.size()) {
+			int line = pieces.get(i)[0];
+			int a = pieces.get(i)[1];
+			int b = a + 1;
+			i++;
+			while (i < pieces.size() && pieces.get(i)[1] <= b) {
+				b = Math.max(b, pieces.get(i)[1] + 1);
+				i++;
+			}
+			out.add(alongX ? new Edge(a, groundY, line, b, groundY, line) : new Edge(line, groundY, a, line, groundY, b));
+		}
+		f = List.copyOf(out);
+		frontEdges[d] = f;
+		return f;
 	}
 
 	// ------------------------------------------------------------------ placement

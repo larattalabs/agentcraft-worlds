@@ -179,7 +179,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.displays` | `look?` = `paper` / `dark` / `split`, `reset?` | Monitor look (default dark; split alternates per monitor for comparisons), every laid-out monitor screen `{pos, agent, mode, style, size, ppb, rows, ageMs}`, and `stats` = display CPU cost per frame since the last reset (`monitor`/`board`: `usPerFrame`, `callsPerFrame`, `rebuilds`) |
 | `dev.taskwall` | `open?` (task id), `press?` (button id), `aim?` (task id), `board?` ("x y z" origin for `aim`), `lightFloor?` (0-15), `ppb?` (0-256, 0 = auto), `relayout?` | Task Wall boards and their cards (column counts, widths and cards per row, hidden ids, card positions, size full/brief/compact, title lines, state dot, glowing, `layoutUs` of the last re-plan). `lightFloor`/`ppb` override the block-light floor and the pixel density for A/B shots, `relayout` forces a re-plan. `open` opens that task's screen, `press` presses a button in the open task screen (`prev next retry prioritize reassign cancel to:<agent>`), `aim` returns the world point of a card and an eye 2.5 blocks in front (then `dev.camera` + `dev.key {mapping:"key.use"}` clicks it the real way; use `mode:"creative"`, spectators cannot click) |
 
-Registered screens (`dev.screen {open}`): `creative_agentcraft` (creative inventory on the AgentCraft tab), `agent` (agent card: last clicked agent, else whoever needs you), `task` (task detail: the last task opened, else the first doing one). Phase 3 features add theirs (see mod/FEATURES.md).
+Registered screens (`dev.screen {open}`): `creative_agentcraft` (creative inventory on the AgentCraft tab), `agent` (agent card: last clicked agent, else whoever needs you), `task` (task detail: the last task opened, else the first doing one), `hub`, `hub_<tab>`, `hub_blueprints` (see "Hub"). Phase 3 features add theirs (see mod/FEATURES.md).
 
 ### Extending it from other mod code (client side)
 
@@ -440,8 +440,13 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   `addVertex` + `setColor`; cubes inflated 0.005 against z-fighting; camera-relative on a fresh
   PoseStack), `PlacementHud`, `KeyboardHandlerMixin` (placement keys before vanilla, so Esc does not
   pause). The pure parts are `building.GhostModel` (rotated cells, checked against vanilla
-  `StructureTemplate.transform`; exposed faces; conflict classes; `place`'s refusals), tested in
-  `GhostModelTest`. Template cells come from `StructureTemplate.save` (palettes are private), cached
+  `StructureTemplate.transform`; exposed faces; conflict classes; `place`'s refusals; the outline),
+  tested in `GhostModelTest`. The outline (`GhostModel.outline()`) traces the drawn columns' perimeter
+  (bottom edges, per-column top edges, verticals at corners and height steps, merged: a full box is its
+  12 edges), not the template box: templates need not write every cell (the studio, 37x14x36, leaves
+  7010 cells unwritten, both front corners beside its 7-wide porch), and outlining the box made the
+  outline stand out past the building there. `frontEdges(front)` is the brass entrance bar (front-most
+  face only). The reserved box is drawn faintly only for an overlap / player-inside / block-entity refusal. Template cells come from `StructureTemplate.save` (palettes are private), cached
   per `Blueprints.Entry`. Render cost: the workshop (27x10x21, 2583 visible cells) draws 3750 faces
   (15k vertices) per frame; conflict cells draw only the outline of each blob; `dev.build.state`
   reports `render.faces`, `conflictFaces`, `lastFrameMicros`, `maxFrameMicros`. Placement is refused
@@ -451,10 +456,57 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   `dev.build.rotate {turns?}`, `dev.build.nudge {forward?, right?, up?}`, `dev.build.lock {on?}`,
   `dev.build.confirm {force?}` (replies with the server's result), `dev.build.cancel`; screens
   `build_repos`, `build_blueprints` for `dev.screen`.
+- Wizard screens draw buttons with `UiBits.button` (the clay primary is tinted for contrast).
+  `Panels.button`'s primary label used `palette.ui.highlight`, which is the clay itself: the label was
+  invisible ("Place…" in the blueprint step, TaskScreen's primary buttons); it is `panel_hi` now. The
+  blueprint step's detail column is up to 200 px wide; facts and description wrap in it and the
+  description scrolls (wheel). The top-down plan is `building.BlueprintPreview` (shared with the hub).
+  `RepoPickScreen` has a fixed-blueprint mode (hub "Place"): Next checks the repo count
+  (`RepoPickScreen.fits`) and starts placement; `BuildingWizardFeature.openFor(id)` / `placeNow(id,
+  repos)` are the entry points.
 - Trying it without a bundled blueprint: save a structure with a structure block (it lands in
   `<world>/generated/<ns>/structure/<name>.nbt`), copy it to `run/agentcraft/blueprints/<id>.nbt`,
   write `<id>.blueprint.json` next to it (size = the structure block's size), then
   `/agentcraft blueprints reload`.
+
+### Hub (`H`, `/hub [tab]`)
+The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
+- `HubScreen` (not pausing): tabs from `HubTab` (Buildings, Repos, Goals, Team, Settings, Status; the
+  unbuilt ones draw a "coming next" panel from `HubTab.comingNext`). Tab / Shift+Tab cycle tabs, Left /
+  Right switch buildings/blueprints, Up / Down select, Esc or the hub key close. Selection and the armed
+  remove are kept by **id** (a removed building never hands its armed confirm to its neighbour); an
+  armed remove expires after 6 s.
+- Actions: `HubActions` through `ServerTasks.callAsPlayer((level, player) -> ...)` (integrated server,
+  the player's own level and ServerPlayer, completes on the client thread), calling `Buildings` directly,
+  so no operator permission is needed (Hardcore). `Building` has no dimension field and
+  `Buildings.remove` pastes the snapshot into whatever level it is given, so remove and teleport first
+  require `Buildings.stationCount(level, box) > 0` (AgentCraft station block entities in the box in the
+  player's dimension; loads those chunks). Remove refuses with the player in the box. Teleport goes to
+  the `entrance` anchor (else `spawn`, else the box centre), tries y+0, +1, -1, +2..+4 for a spot with no
+  collision, no lava and a floor, dismounts, `teleportTo` in the same level, resets fall distance, and
+  closes the hub. Every result is a toast and `HubActions.last()`.
+- Blueprint browser: the plan (`BlueprintPreview`) and rendered previews (`PreviewImages`):
+  `<id>.preview-{iso,top,front,cutaway}.png` from `Blueprints.userDir()` first, then (bundled
+  blueprints) the class-path resource `/data/<ns>/blueprints/`. Discovery is cached 2 s per blueprint;
+  bytes are read on `Util.ioPool()`, decoded and registered as `DynamicTexture`s
+  (`agentcraft:hub_preview/<n>`) on the client thread, only for the view shown; max 2048 px a side,
+  LRU-evicted beyond 8 textures / 48 MB, all released when the hub closes; keyed by path + mtime + size
+  so a regenerated PNG shows. Missing previews just leave the Plan chip. "Design new…" is disabled
+  until a feature sets `HubFeature.designNew` (a `Consumer<Screen>` called with the hub as parent).
+- Status: `Foreman.link().status()` (phase, url, attempt, last error, since), `ForemanState.status()`
+  (backend, auth, account, user, message, `usage.windows` with progress bars and reset times, spend,
+  version), the mod version and `DevBridge.status()`.
+- DevBridge: `dev.hub.open {tab?, sub?: buildings|blueprints, buildingId?, blueprint?, view?:
+  plan|iso|top|front|cutaway}` (cancels a placement, opens, selects); `dev.hub.state` (`open, tab, sub,
+  selectedBuilding, selectedBlueprint, armedRemove, busy, view, lastAction, buildings[], blueprints[]
+  (with preview counts), previews{tried[], found[{kind, where, path, state, width, height, error}]}` for
+  the selected blueprint, `previewTextures`, `buttons[{id, label, state}]` drawn last frame,
+  `description{rows, lines}`); `dev.hub.action {action, ...}` with `tab {tab}`, `select {buildingId |
+  blueprint}`, `view {view}`, `home|teleport {buildingId}`, `remove {buildingId, confirm?}` (without
+  confirm the first call arms and a second confirms; replies with `result`), `place_new`, `place
+  {blueprint, repos?}` (with repos: straight to placement mode, else the fixed-blueprint repo step),
+  `design_new`. Server actions reply after the server answered. Screens for `dev.screen`: `hub`,
+  `hub_<tab>`, `hub_blueprints`.
 
 ### Blocks
 All 16 blocks of the assets-src block contract are registered (`block.ModBlocks`) with block items

@@ -385,6 +385,22 @@ public final class Buildings {
 		return out;
 	}
 
+	/**
+	 * AgentCraft station block entities in {@code box} of {@code level}: a building placed in that level has
+	 * them, the same box in another dimension almost never does. Buildings do not record their dimension,
+	 * so the hub uses this before removing (which pastes the snapshot into the given level) or teleporting.
+	 * Loads the box's chunks. Server thread.
+	 */
+	public static int stationCount(ServerLevel level, Anchors.Bounds box) {
+		int[] n = {0};
+		forEachBlockEntity(level, box, be -> {
+			if (be instanceof StationBlockEntity) {
+				n[0]++;
+			}
+		});
+		return n[0];
+	}
+
 	private static void forEachBlockEntity(ServerLevel level, Anchors.Bounds box, Consumer<BlockEntity> action) {
 		for (int cx = box.minX() >> 4; cx <= box.maxX() >> 4; cx++) {
 			for (int cz = box.minZ() >> 4; cz <= box.maxZ() >> 4; cz++) {

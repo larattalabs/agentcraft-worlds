@@ -1,7 +1,9 @@
 package dev.agentcraft.client.building;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import dev.agentcraft.building.Blueprint;
 import dev.agentcraft.building.BlueprintTransform;
+import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.building.Building;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.console.TextFieldView;
@@ -25,6 +27,10 @@ import org.jspecify.annotations.Nullable;
  * Wizard step 1: pick one repo (a single building) or several (a group building; wing n = the n-th
  * repo picked) from the Foreman's repos. Repos that already have a building are shown, disabled, with
  * the building's id. With the Foreman offline (or with Tab) the repo ids are typed instead.
+ *
+ * <p>With a fixed blueprint (the hub's "Place" on a blueprint) this is the only step: Next checks the
+ * repo count against the blueprint (single: one repo; group: up to its wings) and goes straight to
+ * placement mode.
  */
 final class RepoPickScreen extends WizardScreen {
 	private static final int ROW = 18;
@@ -33,6 +39,9 @@ final class RepoPickScreen extends WizardScreen {
 	}
 
 	private final List<String> preselect;
+	/** The blueprint chosen up front (hub), or null for the normal two-step wizard. */
+	private final @Nullable String fixedBlueprint;
+	private @Nullable String error;
 	private final List<Row> rows = new ArrayList<>();
 	/** Picked repo ids in pick order (= wing order). */
 	private final List<String> picked = new ArrayList<>();
@@ -47,8 +56,21 @@ final class RepoPickScreen extends WizardScreen {
 	private int fieldY;
 
 	RepoPickScreen(List<String> preselect) {
+		this(preselect, null);
+	}
+
+	RepoPickScreen(List<String> preselect, @Nullable String fixedBlueprint) {
 		super("New building: repos");
 		this.preselect = List.copyOf(preselect);
+		this.fixedBlueprint = fixedBlueprint;
+	}
+
+	@Nullable String fixedBlueprint() {
+		return fixedBlueprint;
+	}
+
+	@Nullable String error() {
+		return error;
 	}
 
 	@Override
@@ -109,6 +131,7 @@ final class RepoPickScreen extends WizardScreen {
 	}
 
 	private void toggle(int i) {
+		error = null;
 		if (i < 0 || i >= rows.size()) {
 			return;
 		}
@@ -121,11 +144,36 @@ final class RepoPickScreen extends WizardScreen {
 		}
 	}
 
-	private void next() {
+	void next() {
 		List<String> c = chosen();
-		if (!c.isEmpty()) {
-			minecraft.gui.setScreen(new BlueprintPickScreen(c));
+		if (c.isEmpty()) {
+			return;
 		}
+		if (fixedBlueprint == null) {
+			minecraft.gui.setScreen(new BlueprintPickScreen(c));
+			return;
+		}
+		Blueprint bp = Blueprints.get(fixedBlueprint);
+		error = bp == null ? "Blueprint " + fixedBlueprint + " is no longer loaded" : fits(bp, c.size());
+		if (error != null) {
+			return;
+		}
+		try {
+			BuildPlacement.start(bp.id(), c);
+		} catch (IllegalArgumentException e) {
+			error = e.getMessage();
+		}
+	}
+
+	/** Why {@code bp} cannot take {@code n} repos (null = it can): a single blueprint takes one, a group up to its wings. */
+	static @Nullable String fits(Blueprint bp, int n) {
+		if (!bp.isGroup() && n != 1) {
+			return bp.name() + " is a single building: pick exactly one repo";
+		}
+		if (bp.isGroup() && n > bp.wings()) {
+			return bp.name() + " has " + bp.wings() + " wings: pick at most " + bp.wings() + " repos";
+		}
+		return null;
 	}
 
 	// ------------------------------------------------------------------ input
@@ -210,7 +258,8 @@ final class RepoPickScreen extends WizardScreen {
 		visibleRows = Math.max(1, Math.min(rows.size(), (maxBody - 40) / ROW));
 		int fieldH = textMode ? typedView.height(font, typed, Math.min(MAX_W, width - 24) - 24, fieldStyle) : 0;
 		int bodyH = 22 + (textMode ? 14 + fieldH + 4 : visibleRows * ROW) + 14;
-		int y = frame(g, "1/2  Choose repos", bodyH);
+		Blueprint fixed = fixedBlueprint == null ? null : Blueprints.get(fixedBlueprint);
+		int y = frame(g, fixed != null ? "Repos for " + fixed.name() : "1/2  Choose repos", bodyH);
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
 		g.text(font, "One repo: a single building. Several: a group building,", cx, y, muted, false);
@@ -254,8 +303,14 @@ final class RepoPickScreen extends WizardScreen {
 		List<String> c = chosen();
 		String summary = c.isEmpty() ? "Nothing picked yet" : c.size() == 1 ? "Single building for " + c.get(0)
 			: "Group building, " + c.size() + " wings: " + String.join(", ", c);
-		g.text(font, TextUtil.ellipsize(font, summary, cw), cx, y + 2, c.isEmpty() ? muted : ink, false);
+		if (fixed != null && !c.isEmpty()) {
+			summary = fixed.name() + " for " + String.join(", ", c);
+		}
+		String problem = error != null ? error : fixed != null && !c.isEmpty() ? fits(fixed, c.size()) : null;
+		g.text(font, TextUtil.ellipsize(font, problem != null ? problem : summary, cw), cx, y + 2,
+			problem != null ? UiBits.errorText() : c.isEmpty() ? muted : ink, false);
 		String[] hints = textMode ? new String[] {"Enter", "next", "Esc", "close"} : new String[] {"Space", "pick", "Tab", "type ids", "Enter", "next"};
-		footer(g, mouseX, mouseY, hints, btn("Next ›", 72, true, c.isEmpty(), this::next), btn("Cancel", 64, false, false, this::onClose));
+		footer(g, mouseX, mouseY, hints, btn(fixed != null ? "Place \u203a" : "Next \u203a", 72, true, c.isEmpty(), this::next),
+			btn("Cancel", 64, false, false, this::onClose));
 	}
 }

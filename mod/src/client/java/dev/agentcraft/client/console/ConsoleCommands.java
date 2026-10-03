@@ -32,6 +32,7 @@ import org.jspecify.annotations.Nullable;
  * /task &lt;id&gt; cancel|retry|prioritize [n]|reassign @x
  * /diff [worktree|@agent]          diff review screen (or a summary)
  * /status /help /decide /clear /sound on|off
+ * /hub [tab]                       the hub screen (buildings, repos, goals, team, settings, status)
  * </pre>
  */
 public final class ConsoleCommands {
@@ -41,7 +42,7 @@ public final class ConsoleCommands {
 	// ------------------------------------------------------------------ intents
 
 	public sealed interface Intent permits Goal, Message, Answer, RepoAdd, Repos, AgentAction, TaskAction, ShowDiff, Status, Help, Decide, Clear,
-		Sound, Invalid, Empty {
+		Sound, Hub, Invalid, Empty {
 	}
 
 	/** {@code repoId} null = the Foreman's default; {@code choices} non-empty = ask which repo first. */
@@ -85,6 +86,10 @@ public final class ConsoleCommands {
 	public record Sound(@Nullable Boolean on) implements Intent {
 	}
 
+	/** Open the hub at {@code tab} (a {@code HubTab} id; null = the default tab). */
+	public record Hub(@Nullable String tab) implements Intent {
+	}
+
 	public record Invalid(String error) implements Intent {
 	}
 
@@ -98,6 +103,7 @@ public final class ConsoleCommands {
 	public static final List<Command> COMMANDS = List.of(
 		new Command("answer", "/answer [d4] <n|option> [text]", "answer an open decision (n = button number)"),
 		new Command("decide", "/decide", "open the decision queue (J)"),
+		new Command("hub", "/hub [buildings|repos|goals|team|settings|status]", "open the hub (H)"),
 		new Command("diff", "/diff [worktree|@agent]", "review a worktree's diff"),
 		new Command("pause", "/pause @agent", "pause an agent (keeps its task)"),
 		new Command("resume", "/resume @agent", "resume a paused or stopped agent"),
@@ -186,9 +192,26 @@ public final class ConsoleCommands {
 			case "decide", "decisions", "d" -> new Decide(args.isEmpty() ? null : args.get(0));
 			case "clear", "cls" -> new Clear();
 			case "sound", "sounds", "mute" -> parseSound(cmd, args);
+			case "hub" -> parseHub(args);
 			case "goal" -> rest.isEmpty() ? new Invalid("type the goal after /goal") : goal(rest, s);
 			default -> new Invalid("unknown command /" + cmd + " (/help lists them)");
 		};
+	}
+
+	/** Hub tab ids, in order (mirrors {@code client.hub.HubTab}; this class stays free of screen code). */
+	public static final List<String> HUB_TABS = List.of("buildings", "repos", "goals", "team", "settings", "status");
+
+	private static Intent parseHub(List<String> args) {
+		if (args.isEmpty()) {
+			return new Hub(null);
+		}
+		String a = args.get(0).toLowerCase(Locale.ROOT);
+		for (String t : HUB_TABS) {
+			if (t.equals(a) || a.length() >= 3 && t.startsWith(a)) {
+				return new Hub(t);
+			}
+		}
+		return new Invalid("no hub tab " + args.get(0) + " (" + String.join(", ", HUB_TABS) + ")");
 	}
 
 	private static Intent parseSound(String cmd, List<String> args) {
@@ -489,6 +512,7 @@ public final class ConsoleCommands {
 			case Status st -> "show status";
 			case Help h -> "show help";
 			case Decide d -> "open decisions";
+			case Hub hub -> hub.tab() == null ? "open the hub" : "open the hub: " + hub.tab();
 			case Clear c -> "clear console";
 			case Sound so -> so.on() == null ? "sound status" : so.on() ? "sound on" : "sound off";
 			case Invalid i -> null;
@@ -583,6 +607,15 @@ public final class ConsoleCommands {
 										null));
 								}
 							}
+						}
+					}
+				}
+			}
+			case "/hub" -> {
+				if (argIndex == 1) {
+					for (String t : HUB_TABS) {
+						if (t.startsWith(lower)) {
+							out.add(new Completion(ts, cursor, t, t, null, null, null));
 						}
 					}
 				}
@@ -795,6 +828,7 @@ public final class ConsoleCommands {
 			case Help h -> m.put("topic", h.topic());
 			case Decide d -> m.put("decisionId", d.decisionId());
 			case Sound so -> m.put("on", so.on());
+			case Hub hub -> m.put("tab", hub.tab());
 			case Invalid i -> m.put("error", i.error());
 			default -> {
 			}

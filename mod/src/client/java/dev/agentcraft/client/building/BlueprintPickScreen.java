@@ -2,21 +2,18 @@ package dev.agentcraft.client.building;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.agentcraft.building.Blueprint;
-import dev.agentcraft.building.BlueprintTransform;
 import dev.agentcraft.building.Blueprints;
-import dev.agentcraft.building.GhostModel;
 import dev.agentcraft.client.console.TextKeys;
 import dev.agentcraft.client.foreman.Protocol.Notify;
 import dev.agentcraft.client.foreman.Protocol.NotifyLevel;
 import dev.agentcraft.client.hud.Toasts;
 import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -32,11 +29,11 @@ import org.jspecify.annotations.Nullable;
 final class BlueprintPickScreen extends WizardScreen {
 	private static final int ROW = 22;
 	private static final int PREVIEW = 116;
+	/** Widest the detail column grows (the description wraps to it). */
+	private static final int DETAIL_MAX = 200;
 
 	private final List<String> repos;
 	private final List<Blueprint> list = new ArrayList<>();
-	private final Map<String, int[]> previews = new HashMap<>();
-	private final Map<String, GhostModel> previewModels = new HashMap<>();
 	private boolean initialized;
 	private int selected;
 	private int scroll;
@@ -44,6 +41,13 @@ final class BlueprintPickScreen extends WizardScreen {
 	private int listW;
 	private int visibleRows;
 	private @Nullable String error;
+	/** Description rows shown, first row shown, and where the description is (the wheel scrolls it there). */
+	private int descRows;
+	private int descScroll;
+	private @Nullable String descFor;
+	private int descX;
+	private int descY;
+	private int descW;
 
 	BlueprintPickScreen(List<String> repos) {
 		super("New building: blueprint");
@@ -148,43 +152,48 @@ final class BlueprintPickScreen extends WizardScreen {
 
 	@Override
 	public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
+		if (descRows > 0 && x >= descX && x < descX + descW && y >= descY && y < descY + descRows * 10) {
+			descScroll = Math.max(0, descScroll + (scrollY > 0 ? -1 : 1));
+			return true;
+		}
 		scroll = Math.max(0, Math.min(Math.max(0, list.size() - visibleRows), scroll + (scrollY > 0 ? -1 : 1)));
 		return true;
-	}
-
-	private @Nullable GhostModel previewModel(Blueprint bp) {
-		GhostModel m = previewModels.get(bp.id());
-		if (m == null) {
-			GhostModel.Cells c = TemplateCells.of(bp.id());
-			if (c == null) {
-				return null;
-			}
-			// entrance at the bottom of the preview: front turned to face south
-			m = GhostModel.of(c, BlueprintTransform.turnsToFace(bp.front(), "south"));
-			previewModels.put(bp.id(), m);
-			previews.put(bp.id(), TemplateCells.topDown(m));
-		}
-		return m;
 	}
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float a) {
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
-		int maxBody = height - 110;
+		int maxBody = Math.max(PREVIEW + 60, height - 110);
+		// the right column: preview, facts, description (wrapped to the column, scrolled when long)
+		int panelW = Math.min(MAX_W, width - 24);
+		int contentW = panelW - Kit.padding("panel_paper").left() - Kit.padding("panel_paper").right();
+		int rw = Math.max(PREVIEW, Math.min(DETAIL_MAX, contentW - 150));
+		Blueprint cur = current();
+		List<String> facts = cur == null ? List.of() : TextUtil.wrapPlain(font, "Entrance at the bottom \u2193 \u00b7 ground row " + cur.groundY(), rw);
+		List<String> desc = cur == null ? List.of()
+			: TextUtil.wrapPlain(font, cur.description().isEmpty() ? cur.id() : cur.description(), rw - 8);
+		int factsH = facts.size() * 10 + 3;
+		int descRoom = Math.max(3, (maxBody - 18 - PREVIEW - 4 - factsH) / 10);
+		descRows = Math.min(desc.size(), descRoom);
+		descScroll = Math.max(0, Math.min(descScroll, desc.size() - descRows));
+		int detailH = PREVIEW + 4 + factsH + descRows * 10;
 		visibleRows = Math.max(1, Math.min(Math.max(1, list.size()), (maxBody - 30) / ROW));
-		int bodyH = 14 + Math.max(PREVIEW + 52, visibleRows * ROW) + 4;
+		int bodyH = 14 + Math.max(detailH, visibleRows * ROW) + 14;
 		int y = frame(g, "2/2  Choose a blueprint", bodyH);
 		String forWhat = repos.size() == 1 ? "Single building for " + repos.get(0) : "Group building for " + String.join(", ", repos);
 		g.text(font, TextUtil.ellipsize(font, forWhat, cw), cx, y, muted, false);
 		y += 14;
-		listW = Math.max(120, cw - PREVIEW - 12);
+		listW = Math.max(100, cw - rw - 12);
 		listY = y;
 		if (list.isEmpty()) {
 			String need = repos.size() == 1 ? "No single blueprint is loaded." : "No group blueprint with " + repos.size() + "+ wings is loaded.";
-			g.text(font, need, cx, y + 2, UiBits.errorText(), false);
-			g.text(font, "/agentcraft blueprints lists them; yours go in", cx, y + 14, muted, false);
-			g.text(font, "<game dir>/agentcraft/blueprints.", cx, y + 24, muted, false);
+			int ly = y + 2;
+			for (String line : TextUtil.wrapPlain(font, need + " /agentcraft blueprints lists them; yours go in <game dir>/agentcraft/blueprints.",
+				listW)) {
+				g.text(font, line, cx, ly, ly == y + 2 ? UiBits.errorText() : muted, false);
+				ly += 10;
+			}
 		}
 		if (selected < scroll) {
 			scroll = selected;
@@ -202,66 +211,54 @@ final class BlueprintPickScreen extends WizardScreen {
 				g.fill(cx - 2, ry - 1, cx + listW, ry + ROW - 2, 0x18000000);
 			}
 			g.text(font, TextUtil.ellipsize(font, (r < 9 ? (r + 1) + "  " : "") + bp.name(), listW - 4), cx, ry + 1, ink, false);
-			String meta = (bp.isGroup() ? "group · " + bp.wings() + " wings" : "single") + " · " + size(bp);
-			g.text(font, TextUtil.ellipsize(font, meta, listW - 4), cx + (r < 9 ? 12 : 0), ry + 11, muted, false);
+			String meta = (bp.isGroup() ? "group \u00b7 " + bp.wings() + " wings" : "single") + " \u00b7 " + size(bp);
+			g.text(font, TextUtil.ellipsize(font, meta, listW - 4 - (r < 9 ? 12 : 0)), cx + (r < 9 ? 12 : 0), ry + 11, muted, false);
 		}
-		Blueprint cur = current();
-		int pxl = cx + cw - PREVIEW;
+		int pxl = cx + cw - rw;
 		if (cur != null) {
-			Panels.inset(g, pxl, y, PREVIEW, PREVIEW);
-			GhostModel m = previewModel(cur);
-			int[] top = previews.get(cur.id());
-			if (m != null && top != null) {
-				drawPreview(g, m, top, pxl + 4, y + 4, PREVIEW - 8);
+			if (!cur.id().equals(descFor)) {
+				descFor = cur.id();
+				descScroll = 0;
 			}
+			int px0 = pxl + (rw - PREVIEW) / 2;
+			Panels.inset(g, px0, y, PREVIEW, PREVIEW);
+			BlueprintPreview.draw(g, cur.id(), px0 + 4, y + 4, PREVIEW - 8);
 			int dy = y + PREVIEW + 4;
-			g.text(font, "entrance ↓  ·  ground row " + cur.groundY(), pxl, dy, muted, false);
-			dy += 11;
-			for (String line : TextUtil.wrapPlain(font, cur.description().isEmpty() ? cur.id() : cur.description(), PREVIEW)) {
-				if (dy > y + PREVIEW + 52) {
-					break;
-				}
-				g.text(font, line, pxl, dy, ink, false);
+			for (String line : facts) {
+				g.text(font, line, pxl, dy, muted, false);
 				dy += 10;
 			}
+			dy += 3;
+			descX = pxl;
+			descY = dy;
+			descW = rw;
+			for (int r = 0; r < descRows; r++) {
+				g.text(font, desc.get(descScroll + r), pxl, dy + r * 10, ink, false);
+			}
+			if (desc.size() > descRows) {
+				// a thin scrollbar on the column's right edge (the wheel over the text scrolls it)
+				int trackH = descRows * 10;
+				int thumbH = Math.max(6, trackH * descRows / desc.size());
+				int ty = dy + (trackH - thumbH) * descScroll / Math.max(1, desc.size() - descRows);
+				Panels.sprite(g, Kit.SCROLL_TRACK, pxl + rw - 4, dy, 4, trackH);
+				Panels.sprite(g, Kit.SCROLL_THUMB, pxl + rw - 4, ty, 4, thumbH);
+			}
+		} else {
+			descRows = 0;
 		}
 		if (error != null) {
-			g.text(font, TextUtil.ellipsize(font, error, cw), cx, y + Math.max(PREVIEW + 52, visibleRows * ROW) - 8, UiBits.errorText(), false);
+			g.text(font, TextUtil.ellipsize(font, error, cw), cx, y + Math.max(detailH, visibleRows * ROW) + 2, UiBits.errorText(), false);
 		}
-		footer(g, mouseX, mouseY, new String[] {"Enter", "place", "Bksp", "back"}, btn("Place…", 72, true, cur == null, this::place),
-			btn("‹ Back", 64, false, false, this::back));
+		footer(g, mouseX, mouseY, new String[] {"Enter", "place", "Bksp", "back"}, btn("Place \u203a", 72, true, cur == null, this::place),
+			btn("\u2039 Back", 64, false, false, this::back));
+	}
+
+	/** Description lines in total for the selected blueprint (DevBridge: whether it all fits or scrolls). */
+	int descriptionRowsShown() {
+		return descRows;
 	}
 
 	private static String size(Blueprint bp) {
 		return String.format(Locale.ROOT, "%d×%d×%d", bp.sizeX(), bp.sizeY(), bp.sizeZ());
-	}
-
-	/** The top-down colours scaled into a {@code box}-px square (integer pixel scale when it fits, centred). */
-	private static void drawPreview(GuiGraphicsExtractor g, GhostModel m, int[] top, int x, int y, int box) {
-		int sx = m.sizeX;
-		int sz = m.sizeZ;
-		double s = Math.min((double) box / sx, (double) box / sz);
-		if (s >= 1) {
-			s = Math.floor(s);
-		}
-		int w = (int) Math.round(sx * s);
-		int h = (int) Math.round(sz * s);
-		int ox = x + (box - w) / 2;
-		int oy = y + (box - h) / 2;
-		for (int z = 0; z < sz; z++) {
-			int y0 = oy + (int) Math.round(z * s);
-			int y1 = oy + (int) Math.round((z + 1) * s);
-			for (int xx = 0; xx < sx; xx++) {
-				int c = top[z * sx + xx];
-				if ((c >>> 24) == 0) {
-					continue;
-				}
-				int x0 = ox + (int) Math.round(xx * s);
-				int x1 = ox + (int) Math.round((xx + 1) * s);
-				if (x1 > x0 && y1 > y0) {
-					g.fill(x0, y0, x1, y1, c);
-				}
-			}
-		}
 	}
 }

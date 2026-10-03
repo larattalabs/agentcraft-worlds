@@ -5,6 +5,7 @@ import dev.agentcraft.client.console.ConsoleCommands.Answer;
 import dev.agentcraft.client.console.ConsoleCommands.Clear;
 import dev.agentcraft.client.console.ConsoleCommands.Command;
 import dev.agentcraft.client.console.ConsoleCommands.Decide;
+import dev.agentcraft.client.console.ConsoleCommands.Hub;
 import dev.agentcraft.client.console.ConsoleCommands.Empty;
 import dev.agentcraft.client.console.ConsoleCommands.Goal;
 import dev.agentcraft.client.console.ConsoleCommands.Help;
@@ -140,6 +141,12 @@ public final class ConsoleActions {
 				ConsoleLog.add(Tone.INFO, "Decision bell and done chime: " + state + why);
 				clearFeedback();
 				return After.CLEAR;
+			}
+			case Hub hub -> {
+				ConsoleLog.remember(raw);
+				clearFeedback();
+				dev.agentcraft.client.hub.HubFeature.open(dev.agentcraft.client.hub.HubTab.parse(hub.tab()));
+				return After.CLOSE;
 			}
 			case Decide d -> {
 				ConsoleLog.remember(raw);

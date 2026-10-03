@@ -12,6 +12,7 @@ Shots: `tools/scenes/console.json` (showcase busy state).
 | `Enter` while looking at a console terminal | open the console (a right-click on the terminal does too) |
 | `J` | open the decision queue (a right-click on the Decision Podium does too) |
 | `B` | open the building wizard (docs/BUILDINGS.md "Wizard") |
+| `H` | open the hub (docs/HUB.md): buildings, blueprints, status |
 
 Neither screen pauses the game: agents keep walking and working behind it.
 
@@ -38,6 +39,7 @@ back the next time it opens (this session), and the console terminal shows it on
 | `/task <id> cancel\|retry\|prioritize [n]\|reassign @x` | `task.action` |
 | `/diff [worktree\|@agent\|task]` | opens the diff screen (`diff`, owned by the diff feature); without one, prints a file summary from `diff.request` |
 | `/status`, `/help`, `/decide`, `/clear`, `/sound on\|off` | local |
+| `/hub [buildings\|repos\|goals\|team\|settings\|status]` | opens the hub at that tab (default Buildings; 3+ letters are enough, Tab completes) |
 
 Tab completes agent names (also after `/pause` etc.), commands, decision ids and options, task ids
 and worktrees; repeated Tab cycles, Up/Down move in the popup. Up/Down otherwise walk the history

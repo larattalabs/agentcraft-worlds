@@ -9,13 +9,14 @@ import net.minecraft.client.input.KeyEvent;
 /**
  * AgentCraft key mappings (Options > Controls > Key Binds > AgentCraft, rebindable like any vanilla
  * key): the console ({@code `}), the console from a terminal you look at (Enter), the decision
- * queue ({@code J}) and the building wizard ({@code B}). Registered once, from whichever feature initialises first.
+ * queue ({@code J}), the building wizard ({@code B}) and the hub ({@code H}). Registered once, from whichever feature initialises first.
  */
 public final class Keys {
 	public static KeyMapping console;
 	public static KeyMapping terminal;
 	public static KeyMapping decisions;
 	public static KeyMapping build;
+	public static KeyMapping hub;
 	private static boolean registered;
 
 	private Keys() {
@@ -40,6 +41,8 @@ public final class Keys {
 		decisions = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.decisions", InputConstants.Type.KEYBOARD, InputConstants.KEY_J, cat,
 			3));
 		build = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.build", InputConstants.Type.KEYBOARD, InputConstants.KEY_B, cat, 4));
+		// H: vanilla only uses it as F3+H (advanced tooltips), never on its own
+		hub = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.hub", InputConstants.Type.KEYBOARD, InputConstants.KEY_H, cat, 5));
 	}
 
 	/**
