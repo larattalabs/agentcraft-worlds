@@ -6,6 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parsePs, isForemanCommand, planKill, selectProfile, staleReasons } from './lib/macprocs.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tools = path.join(root, 'tools');
@@ -24,11 +25,15 @@ function usage(code = 0) {
   node tools/mac.mjs launch [--backend sim|claude] [--repo PATH] [--use-claude-login]
                             [--home PATH] [--profile NAME] [--port N] [--dev-port N]
                             [--dev] [--showcase busy|late] [--reset]
-                            [--no-game] [--no-foreman] [--no-wait]
+                            [--no-game] [--no-foreman] [--no-wait] [--restart-foreman]
                             [--summary-json PATH]
                             [--foreman-arg VALUE] (repeatable)
-  node tools/mac.mjs stop [--game] [--foreman] [--profile NAME] [--stop-daemon]
+  node tools/mac.mjs stop [--game] [--foreman] [--profile NAME] [--stop-daemon] [--dry-run]
 
+stop: --game and --foreman can be combined; with neither, both are stopped. Without
+--profile it acts on the profile of the newest launcher run file. --dry-run prints what
+would be signalled and changes nothing. launch --restart-foreman replaces a running Foreman
+(launch warns when the running one came from another checkout or an older commit).
 Default: Claude backend, ~/.agentcraft, ports 7878/7879. --dev mutes the game,
 keeps it from taking focus, and disables desktop notifications.`);
   process.exit(code);
@@ -37,7 +42,7 @@ keeps it from taking focus, and disables desktop notifications.`);
 function options(argv) {
   const out = { action: argv.shift(), repo: [], foremanArgs: [] };
   const values = new Set(['backend', 'repo', 'home', 'profile', 'port', 'dev-port', 'showcase', 'summary-json', 'foreman-arg']);
-  const switches = new Set(['use-claude-login', 'dev', 'reset', 'no-game', 'no-foreman', 'no-wait', 'game', 'foreman', 'stop-daemon']);
+  const switches = new Set(['use-claude-login', 'dev', 'reset', 'no-game', 'no-foreman', 'no-wait', 'game', 'foreman', 'stop-daemon', 'restart-foreman', 'dry-run']);
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i].replace(/^--/, '');
     if (!argv[i].startsWith('--')) throw new Error(`unexpected argument: ${argv[i]}`);
@@ -58,6 +63,7 @@ function options(argv) {
     out.profile ??= out.showcase === 'late' ? 'showcase-late' : 'showcase';
   }
   if (!['sim', 'claude'].includes(out.backend)) throw new Error('backend must be sim or claude');
+  out.profileExplicit = out.profile;
   out.profile ??= out.backend;
   if (!/^[\w-]+$/.test(out.profile)) throw new Error('profile must contain only letters, digits, _ or -');
   out.home = path.resolve(out.home ?? process.env.AGENTCRAFT_HOME ?? path.join(os.homedir(), '.agentcraft'));
@@ -131,6 +137,16 @@ function start(command, args, cwd, log, env = {}) {
   return { pid: child.pid, stamp: processStamp(child.pid), log, startedAt: new Date().toISOString() };
 }
 
+function gitHead() {
+  const result = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function psTable() {
+  const result = spawnSync('ps', ['-ax', '-o', 'pid,ppid,pgid,command'], { encoding: 'utf8', maxBuffer: 64 << 20 });
+  return result.status === 0 ? parsePs(result.stdout) : [];
+}
+
 function runCli(script, args, timeout = 30000) {
   const result = spawnSync(process.execPath, [path.join(tools, script), ...args], { cwd: root, encoding: 'utf8', timeout });
   if (result.status !== 0) throw new Error(`${script}: ${result.stdout || result.stderr}`.trim());
@@ -180,7 +196,23 @@ async function launch(opt, summary) {
   let fm = readJson(fmFile);
   let fmPort = opt.port;
   if (!opt['no-foreman']) {
-    if (owned(fm) && await portOpen(fm.port)) {
+    const running = owned(fm) && await portOpen(fm.port);
+    const stale = running ? staleReasons(fm, { root, commit: gitHead() }) : [];
+    if (running && stale.length) {
+      const text = `Foreman ${fm.pid} on :${fm.port} is running OLD CODE: ${stale.join('; ')}.`;
+      if (!opt['restart-foreman']) {
+        console.warn(`\n!!! ${text}\n!!! Reusing it anyway. Re-run with --restart-foreman to replace it.\n`);
+      } else {
+        console.warn(`${text} Restarting it.`);
+        await stopForeman(opt.profile, opt, false);
+        fm = null;
+      }
+    } else if (running && opt['restart-foreman']) {
+      console.log('--restart-foreman: restarting the running Foreman.');
+      await stopForeman(opt.profile, opt, false);
+      fm = null;
+    }
+    if (fm && running) {
       fmPort = fm.port;
       summary.foreman.port = fmPort;
       console.log(`Reusing Foreman ${fm.pid} on :${fmPort}`);
@@ -197,7 +229,7 @@ async function launch(opt, summary) {
       if (opt.showcase) args.push('--showcase', opt.showcase);
       if (opt.reset || opt.showcase) args.push('--reset');
       args.push(...opt.foremanArgs);
-      fm = { ...start(process.execPath, args, path.join(root, 'foreman'), path.join(logDir, `mac-foreman-${opt.profile}.log`)), backend: opt.backend, port: fmPort, home: opt.home };
+      fm = { ...start(process.execPath, args, path.join(root, 'foreman'), path.join(logDir, `mac-foreman-${opt.profile}.log`)), backend: opt.backend, port: fmPort, home: opt.home, root, cwd: path.join(root, 'foreman'), commit: gitHead(), script: 'src/main.ts' };
       saveJson(fmFile, fm);
       summary.foreman.started = true;
       await waitPort(fmPort, 120000, fm, 'Foreman');
@@ -244,29 +276,100 @@ async function launch(opt, summary) {
   console.log(`Ready. Stop with: node tools/mac.mjs stop --profile ${opt.profile}`);
 }
 
-async function stop(opt) {
-  const kinds = opt.game ? ['game'] : opt.foreman ? ['foreman'] : ['game', 'foreman'];
-  for (const kind of kinds) {
-    const file = runFile(kind, opt.profile);
-    const info = readJson(file);
-    if (!owned(info)) { console.log(`${kind}: no launcher-owned process running`); continue; }
-    if (kind === 'game' && await portOpen(info.devPort)) {
-      try { console.log(runCli('devcli.mjs', ['quit', '--port', String(info.devPort), '--timeout', '20'])); }
-      catch (error) { console.warn(error.message); }
-    } else if (kind === 'foreman') {
-      process.kill(info.pid, 'SIGTERM');
-    }
-    for (let i = 0; i < 40 && owned(info); i++) await sleep(250);
-    if (owned(info)) {
-      // launch made this PID a separate process group; only touch the recorded group.
-      try { process.kill(-info.pid, 'SIGTERM'); } catch {}
-      await sleep(1000);
-      if (owned(info)) try { process.kill(-info.pid, 'SIGKILL'); } catch {}
-    }
-    fs.rmSync(file, { force: true });
-    console.log(`${kind}: stopped`);
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const signal = (target, sig) => { try { process.kill(target, sig); } catch {} };
+
+/** Stop the Foreman for `profile`: find it by launcher + own run files, verify, SIGTERM the group, then SIGKILL. */
+async function stopForeman(profile, opt, announce = true) {
+  const dry = opt['dry-run'];
+  const say = (m) => console.log(dry ? `[dry-run] ${m}` : m);
+  const launcherFile = runFile('foreman', profile);
+  const launcher = readJson(launcherFile);
+  const ownFiles = [path.join(opt.home, profile, 'foreman.json')];
+  if (launcher?.home) ownFiles.push(path.join(path.resolve(launcher.home), profile, 'foreman.json'));
+  const ownInfos = [...new Set(ownFiles)].map((file) => ({ file, info: readJson(file) }));
+  let table = psTable();
+  const command = (pid) => table.find((r) => r.pid === pid)?.command;
+  const candidates = new Map();
+  if (launcher?.pid && isForemanCommand(command(launcher.pid), profile)) candidates.set(launcher.pid, 'launcher run file');
+  for (const { file, info } of ownInfos) {
+    if (info?.pid && isForemanCommand(command(info.pid), profile) && !candidates.has(info.pid)) candidates.set(info.pid, path.relative(root, file) || file);
   }
-  if (opt['stop-daemon'] && kinds.includes('game')) {
+  const staleFiles = [launcherFile, ...ownInfos.map((o) => o.file)]
+    .filter((file) => fs.existsSync(file) && !candidates.has(readJson(file)?.pid));
+  if (!candidates.size) {
+    if (announce || launcher) console.log(`foreman[${profile}]: no running Foreman found${staleFiles.length ? ' (stale run files)' : ''}`);
+  } else {
+    const selfPgid = table.find((r) => r.pid === process.pid)?.pgid ?? 0;
+    const plan = planKill(table, [...candidates.keys()], selfPgid);
+    say(`foreman[${profile}]: found via ${[...candidates].map(([pid, why]) => `${why} (pid ${pid})`).join(', ')}`);
+    for (const pid of plan.pids) say(`  ${dry ? 'would signal' : 'signalling'} ${pid} ${(command(pid) ?? '').slice(0, 90)}`);
+    for (const group of plan.groups) say(`  ${dry ? 'would signal' : 'signalling'} process group ${group}`);
+    if (!dry) {
+      for (const group of plan.groups) signal(-group, 'SIGTERM');
+      for (const pid of plan.pids) signal(pid, 'SIGTERM');
+      for (let i = 0; i < 20 && plan.pids.some(alive); i++) await sleep(250);
+      const left = plan.pids.filter(alive);
+      if (left.length) {
+        console.warn(`foreman[${profile}]: still running after 5 s, sending SIGKILL to ${left.join(', ')}`);
+        for (const group of plan.groups) signal(-group, 'SIGKILL');
+        for (const pid of left) signal(pid, 'SIGKILL');
+        await sleep(500);
+      }
+      const survivors = plan.pids.filter(alive);
+      if (survivors.length) throw new Error(`could not stop Foreman process(es): ${survivors.join(', ')}`);
+    }
+  }
+  if (dry) {
+    if (staleFiles.length) say(`  would remove stale run files: ${staleFiles.map((f) => path.relative(root, f)).join(', ')}`);
+    return;
+  }
+  fs.rmSync(launcherFile, { force: true });
+  for (const { file, info } of ownInfos) if (info && !alive(info.pid)) fs.rmSync(file, { force: true });
+  if (candidates.size || staleFiles.length) console.log(`foreman[${profile}]: stopped`);
+}
+
+async function stopGame(profile, opt) {
+  const dry = opt['dry-run'];
+  const file = runFile('game', profile);
+  const info = readJson(file);
+  if (!owned(info)) {
+    console.log(`game[${profile}]: no launcher-owned process running`);
+    if (info && !dry) fs.rmSync(file, { force: true });
+    return;
+  }
+  if (dry) { console.log(`[dry-run] game[${profile}]: would quit via DevBridge :${info.devPort}, then SIGTERM/SIGKILL process group ${info.pid}`); return; }
+  if (await portOpen(info.devPort)) {
+    try { console.log(runCli('devcli.mjs', ['quit', '--port', String(info.devPort), '--timeout', '20'])); }
+    catch (error) { console.warn(error.message); }
+  }
+  for (let i = 0; i < 40 && owned(info); i++) await sleep(250);
+  if (owned(info)) {
+    // launch made this PID a separate process group; only touch the recorded group.
+    signal(-info.pid, 'SIGTERM');
+    await sleep(1000);
+    if (owned(info)) signal(-info.pid, 'SIGKILL');
+  }
+  fs.rmSync(file, { force: true });
+  console.log(`game[${profile}]: stopped`);
+}
+
+async function stop(opt) {
+  const files = fs.existsSync(runDir)
+    ? fs.readdirSync(runDir).map((name) => ({ name, mtimeMs: fs.statSync(path.join(runDir, name)).mtimeMs }))
+    : [];
+  const { profile, others } = selectProfile(files, opt.profileExplicit);
+  const kinds = [];
+  if (opt.game || !opt.foreman) kinds.push('game');
+  if (opt.foreman || !opt.game) kinds.push('foreman');
+  if (!profile) {
+    console.log(`No launcher run files in ${path.relative(root, runDir)}/; nothing to stop (use --profile NAME to look for a Foreman anyway).`);
+  } else {
+    if (!opt.profileExplicit) console.log(`Using profile "${profile}" (newest launcher run file)${others.length ? `; other profiles with run files: ${others.join(', ')} (use --profile)` : ''}`);
+    if (kinds.includes('game')) await stopGame(profile, opt);
+    if (kinds.includes('foreman')) await stopForeman(profile, opt);
+  }
+  if (opt['stop-daemon'] && kinds.includes('game') && !opt['dry-run']) {
     const localGradleHome = path.join(root, '.gradle-home');
     if (process.env.GRADLE_USER_HOME && path.resolve(process.env.GRADLE_USER_HOME) !== localGradleHome) {
       throw new Error('--stop-daemon requires this checkout\'s .gradle-home to avoid stopping other projects');

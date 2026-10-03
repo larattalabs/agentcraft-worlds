@@ -10,6 +10,8 @@ node tools/mac.mjs launch --backend sim             # free simulated team
 node tools/mac.mjs stop --profile sim
 node tools/mac.mjs launch --repo /path/to/repo --use-claude-login
 node tools/mac.mjs stop                            # save/quit game, stop Foreman
+node tools/mac.mjs stop --dry-run                  # print what would be killed, change nothing
+node tools/mac.mjs launch --restart-foreman        # replace a Foreman running old code
 ```
 
 The launcher installs npm dependencies on first use, runs the Fabric development client,
