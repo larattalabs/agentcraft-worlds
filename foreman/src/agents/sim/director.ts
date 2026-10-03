@@ -147,7 +147,7 @@ export class SimDirector {
   }
 
   say(from: string, to: string, text: string): void {
-    this.fm.bus.send(from, to, text);
+    this.fm.bus.send(from, to, text, { goalId: this.st.goalId });
   }
 
   // ---- tools (real) -------------------------------------------------------------------------
@@ -253,7 +253,7 @@ export class SimDirector {
     this.log(agentId, res.pass ? 'result' : 'error', `${res.pass ? 'tests passed' : 'tests FAILED'} (${(res.durationMs / 1000).toFixed(1)}s)${summary ? ` - ${summary}` : ''}${failing.length ? '\n' + failing.join('\n') : ''}`);
     if (task) this.fm.tasks.update(task.id, { ci: res.pass ? 'pass' : 'fail' });
     this.fm.repos.setCi(this.repoId, res.pass ? 'pass' : 'fail');
-    this.fm.bus.feed('ci', `${this.fm.nameOf(agentId)}: ${res.pass ? 'tests pass' : 'tests fail'}${task ? ` on ${task.id}` : ''}${summary ? ` (${summary})` : ''}`, { agentId });
+    this.fm.bus.feed('ci', `${this.fm.nameOf(agentId)}: ${res.pass ? 'tests pass' : 'tests fail'}${task ? ` on ${task.id}` : ''}${summary ? ` (${summary})` : ''}`, { agentId, goalId: this.st.goalId });
     this.act(agentId, 'testing', 'testbench', res.pass ? 'tests pass' : `${failing.length || 'some'} failing`);
     await this.sleep(700);
     return res.pass;
@@ -332,7 +332,7 @@ export class SimDirector {
     this.act(agentId, 'running', 'terminal', `starting ${t.id}`);
     this.log(agentId, 'tool', `$ git worktree add -b ${wt.branch}`);
     this.log(agentId, 'result', `Preparing worktree (new branch '${wt.branch}') from ${wt.base}`);
-    this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId });
+    this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId, taskId: t.id });
     await this.sleep(700);
     return wt;
   }
@@ -340,7 +340,7 @@ export class SimDirector {
   /** Worker finished a task: off to review. */
   finishTask(agentId: string, key: string, summary: string): void {
     const t = this.setTask(key, 'review', { summary });
-    this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} finished ${t.id} -> review`, { agentId });
+    this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} finished ${t.id} -> review`, { agentId, taskId: t.id });
   }
 
   doneNoCode(key: string, summary: string): void {
@@ -350,7 +350,9 @@ export class SimDirector {
   memory(agentId: string, scope: string, title: string, body: string, mode: 'replace' | 'append' = 'replace', slug?: string): void {
     const e = this.fm.memory.write({ scope, title, body, author: agentId, mode, ...(slug ? { slug } : {}) });
     this.log(agentId, 'tool', `write_memory "${e.title}"`);
-    this.fm.bus.feed('memory', `${this.fm.nameOf(agentId)} wrote memory: ${e.title}`, { agentId });
+    this.fm.bus.feed('memory', `${this.fm.nameOf(agentId)} wrote memory: ${e.title}`, { agentId, goalId: this.st.goalId });
+    // the lead's shared "Plan: ..." note is the goal's plan (Goal.planId)
+    if (this.st.goalId && e.scope === 'shared' && /^plan\b/i.test(e.title) && this.fm.isLead(agentId)) this.fm.recordPlan(this.st.goalId, e.id);
   }
 
   // ---- decisions ----------------------------------------------------------------------------
@@ -362,7 +364,8 @@ export class SimDirector {
       this.maybeAutoAnswer(existing, false);
       return existing;
     }
-    const d = this.fm.createDecision(make());
+    const input = make();
+    const d = this.fm.createDecision({ ...(this.st.goalId ? { goalId: this.st.goalId } : {}), ...input });
     this.vars[`dec:${key}`] = d.id;
     this.persist();
     this.maybeAutoAnswer(d, false);

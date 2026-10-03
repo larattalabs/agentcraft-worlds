@@ -96,7 +96,10 @@ export class TaskGraph {
       createdAt: now,
       updatedAt: now,
     };
-    if (input.description) task.description = input.description;
+    // the goal's standing instructions go with every task created for it (goal.instructions)
+    const standing = input.goalId ? this.ctx.store.data.goals.find((g) => g.id === input.goalId)?.instructions : undefined;
+    const description = [input.description, standing?.length ? `Standing instructions:\n${standing.map((i) => `- ${i}`).join('\n')}` : ''].filter(Boolean).join('\n\n');
+    if (description) task.description = description;
     if (input.assignee) task.assignee = input.assignee;
     if (input.repoId) task.repoId = input.repoId;
     if (input.goalId) task.goalId = input.goalId;

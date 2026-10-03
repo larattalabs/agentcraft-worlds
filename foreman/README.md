@@ -379,6 +379,38 @@ pool every lead assigns from.
   another building's lead runs as a short side flow (that lead plans one task, a free worker does
   it, that lead reviews it).
 
+### Goals and repos for the hub (Goals and Repos tabs, docs/HUB.md)
+
+- Goals carry their thread: feed items and decisions about a goal have `goalId` (its tasks, its
+  lead's turns for it, its PRs, goal messages). `Goal.repos` lists every repository it touches
+  (`repoId` first, then each task's repository), `Goal.prs` its tasks' pull requests,
+  `Goal.planId` the plan note (the lead's shared `Plan: ...` memory, or the one you write),
+  `Goal.branch` the branch it continues.
+- `goal.submit` takes `repos` (the first is `repoId` and picks the lead), `branch` (same as the
+  `on <branch>:` prefix) and `instructions`.
+- `goal.message {goalId, text}` is a turn of the goal's lead session (`<lead>:<goal>`), queued on
+  that lead's queue, also for done or cancelled goals (a released lead's goals: Marlow). One queued
+  turn per goal takes every unread message when it starts; unread goal messages are queued again
+  after a restart, `/resume` or an assignment. What the lead sends you in that turn is the reply;
+  if it sends nothing, its final text is. Goal messages never ride along with other turns.
+- `goal.instructions` (standing instructions) are in the lead's prompt for the goal and in every
+  worker prompt for its tasks (a section, read each turn), and are appended to task descriptions
+  created afterwards. A change is sent to the lead as a goal message.
+- `goal.plan {goalId, body}` writes the plan note as you (`plan-<goal>` when there was none) and
+  sends the lead the unified diff as a goal message.
+- `goal.cancel` cancels the goal's open tasks (workers stop, worktrees kept), withdraws its open
+  decisions, stops the lead's planning/review/triage turns for it; goal messages still work. A
+  cancelled goal re-opens only when it gets open work again.
+- `goal.digest {goalId?, since}` ("since you were away") is computed from the feed, tasks and
+  decisions (src/digest.ts): task added/done/blocked, decisions waiting/answered, merges, PRs
+  opened/commented/merged, the lead's messages to you, goal done; at most 30 lines per goal.
+- `repo.remove` unregisters a repository unless it has open tasks or a goal still being planned
+  (worktrees, branches and lead assignments stay; a `--repo`/`config.repos` entry adds it again at
+  the next start). Every `Repo` carries `settings`, a read-only view of its `repoSettings` (env
+  values never leave the Foreman: only `envKeys`).
+- The sim backend does all of this too: its script tags its feed and decisions with the goal,
+  records its plan note, answers goal messages from the goal's lead, and stops on `goal.cancel`.
+
 ### Steering
 
 | | |

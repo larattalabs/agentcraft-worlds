@@ -62,13 +62,13 @@ export async function closeIfNoChanges(fm: Foreman, taskId: string): Promise<boo
   if (t.pr) {
     // review fixes that changed nothing: the pull request stays open and watched
     fm.tasks.setStatus(t.id, 'pr', { force: true });
-    fm.bus.feed('task', `${t.id}: the review fixes changed no files; PR #${t.pr.id} stays as it is`, { agentId: t.assignee ?? fm.leadOfTask(t) });
+    fm.bus.feed('task', `${t.id}: the review fixes changed no files; PR #${t.pr.id} stays as it is`, { agentId: t.assignee ?? fm.leadOfTask(t), taskId: t.id });
     if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} PR open`, taskId: null, worktree: null });
     fm.backend?.onPrPush?.(fm.tasks.require(t.id), 'empty');
     return true;
   }
   fm.tasks.setStatus(t.id, 'done', { force: true, summary: t.summary ?? 'no changes' });
-  fm.bus.feed('task', `${t.id} changed no files (report only): closed as done, nothing to merge`, { agentId: t.assignee ?? fm.leadOfTask(t) });
+  fm.bus.feed('task', `${t.id} changed no files (report only): closed as done, nothing to merge`, { agentId: t.assignee ?? fm.leadOfTask(t), taskId: t.id });
   if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} done`, taskId: null, worktree: null });
   return true;
 }
@@ -106,7 +106,8 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
           target = id;
         }
         if (target === agentId) return fail('you cannot message yourself');
-        fm.bus.send(agentId, target, text);
+        // tagged with the goal: a lead's turn for a goal, a worker's task
+        fm.bus.send(agentId, target, text, role === 'lead' ? { goalId: turn?.goalId } : { taskId: fm.agent(agentId)?.taskId });
         // A worker reads messages only while it works on a task: one with no task would read this
         // whenever its next task starts, so a request sent this way silently never happens.
         if (role === 'lead' && !['all', 'user'].includes(target) && !fm.agent(target)?.taskId) {
@@ -133,7 +134,7 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
         const home = role === 'lead' ? 'meeting' : 'desk';
         const waiting = prev?.state === 'waiting_user' || prev?.station === 'user';
         const prevState = { state: waiting ? 'thinking' : (prev?.state ?? 'thinking'), station: waiting ? home : (prev?.station ?? home), activity: prev?.activity ?? '' };
-        const d = fm.createDecision({ agentId, kind: 'question', question, options: options ?? [], ...(context ? { context } : {}), ...(prev?.taskId ? { taskId: prev.taskId } : {}) });
+        const d = fm.createDecision({ agentId, kind: 'question', question, options: options ?? [], ...(context ? { context } : {}), ...(prev?.taskId ? { taskId: prev.taskId } : {}), ...(role === 'lead' && turn?.goalId ? { goalId: turn.goalId } : {}) });
         fm.setAgent(agentId, { state: 'waiting_user', station: 'user', activity: 'waiting for your answer' });
         hooks.onWaiting(agentId, true);
         // If the turn is aborted (stop, pause, task cancelled, timeout) nobody will read the answer:
@@ -166,7 +167,7 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
       async ({ title, body, scope, mode }) => {
         const e = fm.memory.write({ scope: scope === 'private' ? agentId : 'shared', title, body, author: agentId, mode: mode ?? 'replace' });
         if (role === 'lead' && turn?.goalId && e.scope === 'shared' && /^plan\b/i.test(e.title)) hooks.onPlanWritten?.(turn.goalId, e.id);
-        fm.bus.feed('memory', `${fm.nameOf(agentId)} wrote memory: ${e.title}`, { agentId });
+        fm.bus.feed('memory', `${fm.nameOf(agentId)} wrote memory: ${e.title}`, { agentId, ...(role === 'lead' ? { goalId: turn?.goalId } : { taskId: fm.agent(agentId)?.taskId }) });
         return withInbox(`Saved memory ${e.id}.`);
       },
     ),
@@ -230,7 +231,7 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
           if (a.status && a.status !== t.status) {
             const prev = t.status;
             fm.tasks.setStatus(t.id, a.status as TaskStatus, { force: role === 'lead' || a.status === 'review', ...(a.blocked_reason ? { reason: a.blocked_reason } : {}), ...(a.summary ? { summary: a.summary } : {}) });
-            fm.bus.feed('task', `${fm.nameOf(agentId)}: ${t.id} ${prev} -> ${a.status}`, { agentId });
+            fm.bus.feed('task', `${fm.nameOf(agentId)}: ${t.id} ${prev} -> ${a.status}`, { agentId, taskId: t.id });
             if (a.status === 'review' && role === 'worker') hooks.onReview(agentId, t.id);
             if (a.status === 'doing' && prev === 'review' && role === 'lead') hooks.onChangesRequested(t.id, a.summary ?? 'see review comments');
           }
@@ -342,7 +343,7 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
                 return fail(`cannot build on ${base}: ${(e as Error).message}`);
               }
             }
-            fm.bus.feed('task', `${fm.nameOf(agentId)} created ${t.id}: ${t.title}`, { agentId });
+            fm.bus.feed('task', `${fm.nameOf(agentId)} created ${t.id}: ${t.title}`, { agentId, taskId: t.id });
             hooks.onTasksChanged();
             // the workers are shared: one busy on another lead's task is never taken off it
             const busy = who ? fm.tasks.list().find((x) => x.assignee === who && x.status === 'doing' && x.id !== t.id) : undefined;

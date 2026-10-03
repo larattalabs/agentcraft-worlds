@@ -20,6 +20,8 @@ export interface CreateDecisionInput {
   repoId?: string;
   worktree?: string;
   tool?: string;
+  /** the goal it is about (default: the task's goal) */
+  goalId?: string;
 }
 
 type Waiter = { resolve: (d: Decision) => void };
@@ -70,6 +72,8 @@ export class DecisionQueue {
     if (input.repoId) d.repoId = input.repoId;
     if (input.worktree) d.worktree = input.worktree;
     if (input.tool) d.tool = input.tool;
+    const goalId = input.goalId ?? (input.taskId ? this.ctx.store.data.tasks.find((t) => t.id === input.taskId)?.goalId : undefined);
+    if (goalId) d.goalId = goalId;
     this.all.push(d);
     this.trim();
     this.touch(d);

@@ -69,6 +69,12 @@ interface Job {
   nudges?: number;
   /** continuing an interrupted job (restart, pause): log the prompt */
   resumed?: boolean;
+  /** goal.message: the prompt is built from the goal's unread messages when the turn starts */
+  pendingGoalMessage?: boolean;
+  /** a goal message turn: the lead's reply goes to the goal's thread (see afterTurn) */
+  goalReply?: boolean;
+  /** when the goal message turn started (epoch ms) */
+  startedAt?: number;
 }
 
 interface Inflight {
@@ -239,6 +245,7 @@ export class ClaudeBackend implements Backend {
       onPlanWritten: (goalId, memoryId) => {
         this.st.plans[goalId] = memoryId;
         this.fm.store.markDirty();
+        this.fm.recordPlan(goalId, memoryId);
       },
       onTaskSize: (taskId, size) => {
         this.st.taskSize[taskId] = size;
@@ -325,7 +332,12 @@ export class ClaudeBackend implements Backend {
     this.fm.store.markDirty();
     if (!before) return '';
     const goal = this.fm.goal(goalId);
-    return `You take over this goal from ${this.fm.nameOf(before)}, who no longer leads its building. ${this.fm.nameOf(before)}'s plan (shared memory):\n${planText(this.fm, goal, this.st.plans[goalId])}\n\nTask board for the goal:\n${boardSummary(this.fm, goalId)}\n\nContinue from here: the tasks, reviews and pull requests of this goal are yours now.`;
+    return `You take over this goal from ${this.fm.nameOf(before)}, who no longer leads its building. ${this.fm.nameOf(before)}'s plan (shared memory):\n${planText(this.fm, goal, this.planIdOf(goalId))}\n\nTask board for the goal:\n${boardSummary(this.fm, goalId)}\n\nContinue from here: the tasks, reviews and pull requests of this goal are yours now.`;
+  }
+
+  /** The goal's plan note: Goal.planId, else the one recorded before goals carried it. */
+  private planIdOf(goalId: string): string | undefined {
+    return this.fm.goal(goalId)?.planId ?? this.st.plans[goalId];
   }
 
   private isStopped(agentId: string): boolean {
@@ -362,8 +374,11 @@ export class ClaudeBackend implements Backend {
     this.armLimitTimer();
     this.prs.start();
     if (this.prs.active) this.fm.log.info(`PR watching: ${this.prs.mode} (every ${this.cfg.prPollSeconds}s)`);
+    // plans recorded before goals carried their plan id
+    for (const [goalId, memoryId] of Object.entries(this.st.plans)) if (!this.fm.goal(goalId)?.planId && this.fm.memory.get(memoryId)) this.fm.recordPlan(goalId, memoryId);
     // the user's messages that no agent read before the restart
     for (const id of [...this.leadsOnDuty(), ...this.team]) this.deliverPending(id);
+    for (const id of this.leadsOnDuty()) this.queueGoalMessages(id);
     void this.fm.repos.sweepPendingRemovals().catch((e) => this.fm.log.debug(`sweep: ${(e as Error).message}`));
     this.tick();
   }
@@ -828,16 +843,18 @@ export class ClaudeBackend implements Backend {
     }
     for (const w of [lead, ...this.team]) if (!this.isStopped(w)) this.fm.setAgent(w, { active: true });
     this.fm.setAgent(lead, { state: 'thinking', station: 'meeting', activity: 'reading the goal', repoId: repo.id });
-    // "on <branch>: ..." continues one of the user's branches (e.g. one started in Claude Desktop)
-    const on = /^\s*on\s+([\w./-]+)\s*:\s*/i.exec(goal.text);
-    if (on) {
+    // Goal.branch ("on <branch>: ..." or goal.submit branch) continues one of the user's branches
+    // (e.g. one started in Claude Desktop)
+    const want = goal.branch;
+    if (want) {
       try {
-        const b = await this.fm.repos.useBranch(repo.id, on[1]!);
+        const b = await this.fm.repos.useBranch(repo.id, want);
         this.st.goalBranch[goal.id] = { repoId: repo.id, ...b };
         this.fm.store.markDirty();
-        this.fm.bus.feed('goal', `This goal continues your branch ${b.branch} in ${repo.name}: tasks start from it and approved work is added to it${b.onRemote ? ' (and pushed)' : ''}`, { agentId: lead });
+        this.fm.bus.feed('goal', `This goal continues your branch ${b.branch} in ${repo.name}: tasks start from it and approved work is added to it${b.onRemote ? ' (and pushed)' : ''}`, { agentId: lead, goalId: goal.id });
       } catch (e) {
-        this.fm.bus.feed('error', `Not building on "${on[1]}": ${(e as Error).message}. Planning it as a normal goal on ${repo.branch}.`, { agentId: lead });
+        this.fm.clearGoalBranch(goal.id);
+        this.fm.bus.feed('error', `Not building on "${want}": ${(e as Error).message}. Planning it as a normal goal on ${repo.branch}.`, { agentId: lead, goalId: goal.id });
       }
     }
     const gb = this.st.goalBranch[goal.id];
@@ -850,7 +867,7 @@ export class ClaudeBackend implements Backend {
       });
       if (found.length) {
         earlier = `\n\nEarlier Claude sessions that worked on ${gb.branch} (best match first):\n${found.map(sessionLine).join('\n')}\nRead the most relevant with read_session before planning (where it stopped, what was decided, what is left), and put what matters and the session id into the task descriptions.`;
-        this.fm.bus.feed('goal', `Found ${found.length} earlier session${found.length === 1 ? '' : 's'} on ${gb.branch} for ${this.fm.nameOf(lead)} to read`, { agentId: lead });
+        this.fm.bus.feed('goal', `Found ${found.length} earlier session${found.length === 1 ? '' : 's'} on ${gb.branch} for ${this.fm.nameOf(lead)} to read`, { agentId: lead, goalId: goal.id });
       }
     }
     this.enqueue({ kind: 'plan', agentId: lead, goalId: goal.id, sessionKey: `${lead}:${goal.id}`, fresh: true, prompt: `${planPrompt(this.fm, goal, repo.path, gb?.branch ?? repo.branch)}${earlier}` });
@@ -861,7 +878,7 @@ export class ClaudeBackend implements Backend {
     const n = this.fm.tasks.forGoal(goal.id).length;
     this.fm.setGoal(goal.id, { status: 'active' });
     const lead = this.fm.leadOf(goal);
-    this.fm.bus.feed('plan', `${this.fm.nameOf(lead)} planned the goal into ${n} task${n === 1 ? '' : 's'}${why === 'recovered' ? ' (picked up after a restart)' : ''}`, { agentId: lead });
+    this.fm.bus.feed('plan', `${this.fm.nameOf(lead)} planned the goal into ${n} task${n === 1 ? '' : 's'}${why === 'recovered' ? ' (picked up after a restart)' : ''}`, { agentId: lead, goalId: goal.id });
     this.tick();
   }
 
@@ -931,7 +948,7 @@ export class ClaudeBackend implements Backend {
       // review fixes by another worker: continue the branch the pull request was pushed from
       startPoint = prev.branch;
       continuesFrom = prev.agentId;
-      this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} makes the review fixes for ${t.id} on ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId });
+      this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} makes the review fixes for ${t.id} on ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId, taskId: t.id });
     } else if (prev && prev.agentId !== agentId && prev.status !== 'merged') {
       if (prev.status === 'active') {
         // nobody prepared the hand-off (e.g. reconciled after a restart): finish it here
@@ -941,7 +958,7 @@ export class ClaudeBackend implements Backend {
       if ((await this.fm.repos.commitsAhead(t.repoId!, prev.branch, prev.base)) > 0) {
         startPoint = prev.branch;
         continuesFrom = prev.agentId;
-        this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} continues ${t.id} from ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId });
+        this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} continues ${t.id} from ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId, taskId: t.id });
       }
     }
     const base = this.baseFor(t);
@@ -949,9 +966,9 @@ export class ClaudeBackend implements Backend {
     this.fm.tasks.update(t.id, { branch: wt.branch, worktree: wt.id });
     this.fm.tasks.setStatus(t.id, 'doing');
     this.fm.setAgent(agentId, { taskId: t.id, repoId: t.repoId!, worktree: wt.id, state: 'thinking', station: 'desk', activity: `starting ${t.id}` });
-    this.fm.bus.feed('task', fold ? `${this.fm.nameOf(agentId)} started the review fixes for ${t.id}${t.pr ? ` (PR #${t.pr.id})` : ''}` : `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId });
+    this.fm.bus.feed('task', fold ? `${this.fm.nameOf(agentId)} started the review fixes for ${t.id}${t.pr ? ` (PR #${t.pr.id})` : ''}` : `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId, taskId: t.id });
     const inbox = formatInbox(this.fm.bus.inbox(agentId, { markRead: true }), (id) => this.fm.nameOf(id));
-    const prompt = fold ? foldInPrompt(this.fm, t, goal, wt, fold.notes, inbox, continuesFrom) : workPrompt(this.fm, t, goal, wt, inbox, continuesFrom, this.st.plans[goal.id]);
+    const prompt = fold ? foldInPrompt(this.fm, t, goal, wt, fold.notes, inbox, continuesFrom) : workPrompt(this.fm, t, goal, wt, inbox, continuesFrom, this.planIdOf(goal.id));
     this.enqueue({ kind: 'work', agentId, taskId: t.id, goalId: goal.id, sessionKey: `${agentId}:${t.id}`, fresh: !this.fm.store.data.sessions[`${agentId}:${t.id}`]?.sessionId, prompt });
   }
 
@@ -976,7 +993,13 @@ export class ClaudeBackend implements Backend {
     // leads run in parallel, one queue each; under a usage warning they take turns one at a time
     if (lead && this.throttled() && this.leadTurnsRunning() >= 1) return;
     if (this.turnCapReached()) return;
-    const job = q.shift()!;
+    let job = q.shift()!;
+    // goal.message: the goal's unread messages make the prompt (none left: nothing to do)
+    while (job.pendingGoalMessage && !this.fillGoalMessage(job)) {
+      const next = q.shift();
+      if (!next) return;
+      job = next;
+    }
     const p = this.runJob(job).finally(() => {
       this.turnPromises.delete(p);
     });
@@ -997,7 +1020,8 @@ export class ClaudeBackend implements Backend {
     if (this.fm.isLead(job.agentId)) {
       const goal = job.goalId ? this.fm.goal(job.goalId) : this.fm.currentGoalOf(job.agentId);
       const own = this.fm.leads.record(job.agentId)?.repos.map((id) => this.fm.repos.get(id)).find(Boolean);
-      const repo = goal?.repoId ? this.fm.repos.get(goal.repoId) : (own ?? this.fm.repos.defaultRepo());
+      // (a goal whose repository was removed since: the lead reads its own / the default one)
+      const repo = (goal?.repoId ? this.fm.repos.get(goal.repoId) : undefined) ?? own ?? this.fm.repos.defaultRepo();
       if (!repo) throw new Error('no repo for the lead');
       // read-only views of every repository's base: the lead plans against what workers start from
       const gb = goal ? this.st.goalBranch[goal.id] : undefined;
@@ -1069,7 +1093,7 @@ export class ClaudeBackend implements Backend {
         question: `${this.fm.nameOf(agentId)} wants to run ${truncate(describeToolCall(toolName, input), 160)}`,
         options: [...PERMISSION_OPTIONS],
         context: `${verdict.reason}\ncwd: ${cwd}\n"${PERMISSION_OPTIONS[1]}" covers: ${[...new Set(verdict.ruleKeys.map(describeRuleKey))].join('; ')}${opts.title ? `\n${opts.title}` : ''}`,
-        ...(t ? { taskId: t } : {}),
+        ...(t ? { taskId: t } : turn.goalId ? { goalId: turn.goalId } : {}),
       });
       this.fm.setAgent(agentId, { state: 'waiting_user', station: 'user', activity: 'asking permission' });
       this.fm.agentLog(agentId, 'tool', `permission? ${describeToolCall(toolName, input)}`);
@@ -1118,7 +1142,7 @@ export class ClaudeBackend implements Backend {
         return '';
       }
       this.fm.agentLog(agentId, 'error', `worktree setup FAILED: ${res.setup.command} (${secs}s)\n${res.setup.output.split('\n').slice(-6).join('\n')}`);
-      this.fm.bus.feed('error', `${this.fm.nameOf(agentId)}: worktree setup failed for ${t.id} (${res.setup.command})`, { agentId });
+      this.fm.bus.feed('error', `${this.fm.nameOf(agentId)}: worktree setup failed for ${t.id} (${res.setup.command})`, { agentId, taskId: t.id });
       return `Note: the worktree setup command \`${res.setup.command}\` failed before you started:\n${res.setup.output}\nLook into it before relying on the dependencies it installs.`;
     } catch (e) {
       this.fm.log.warn(`worktree setup for ${t.id}: ${(e as Error).message}`);
@@ -1218,10 +1242,16 @@ export class ClaudeBackend implements Backend {
           .filter(Boolean)
           .join('\n\n');
         systemAppend = `${leadSystemPrompt(this.fm, this.team, roleOf, agentId)}${where ? `\n\n${where}` : ''}`;
+        // the goal's standing instructions, read fresh every turn
+        const standing = this.fm.instructionsSection(job.goalId, `# Standing instructions for goal ${job.goalId}`);
+        if (standing) systemAppend += `\n\n${standing}\nCarry them into the tasks you create (they are appended to new task descriptions automatically) and hold the workers' results to them in reviews.`;
       }
       else {
         const t = this.fm.tasks.require(job.taskId!);
         systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!), roleOf(agentId), this.fm.leadOfTask(t));
+        // the goal's standing instructions, read fresh every turn (edits apply to running work)
+        const standing = this.fm.instructionsSection(t.goalId);
+        if (standing) systemAppend += `\n\n${standing}\nThey win over anything older in your task description.`;
       }
       if (this.history) {
         systemAppend +=
@@ -1327,6 +1357,9 @@ export class ClaudeBackend implements Backend {
       } else this.enqueue(next);
     } else if (reason === 'stop') {
       if (this.isStopped(agentId)) this.fm.setAgent(agentId, { state: 'idle', station: 'lounge', activity: 'stopped - off shift', taskId: null, worktree: null });
+    } else if (reason === 'cancel' && this.fm.isLead(agentId)) {
+      // goal.cancel stopped the lead's turn for that goal
+      this.fm.setAgent(agentId, { state: 'idle', station: 'meeting', activity: 'goal cancelled' });
     } else if (reason === 'cancel') {
       const a = this.fm.agent(agentId);
       if (a?.taskId === job.taskId) this.fm.setAgent(agentId, { state: 'idle', station: 'lounge', activity: 'task cancelled', taskId: null, worktree: null });
@@ -1537,6 +1570,7 @@ export class ClaudeBackend implements Backend {
     if (this.fm.isLead(job.agentId)) {
       const lead = job.agentId;
       this.fm.setAgent(lead, failed ? { state: 'error', station: 'meeting', activity: `turn failed: ${this.failure(stats)}` } : { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
+      if (job.goalReply && job.goalId && !failed) this.replyToGoal(lead, job, stats);
       // any lead turn for a goal that is still planning (plan, or a plan resumed after a
       // restart / an answer) settles the goal: tasks -> active
       const goal = job.goalId ? this.fm.goal(job.goalId) : undefined;
@@ -1545,12 +1579,12 @@ export class ClaudeBackend implements Backend {
         if (n > 0) this.promoteGoal(goal, 'planned');
         else if (failed) {
           this.fm.setGoal(goal.id, { status: 'failed' });
-          this.fm.bus.feed('error', `${this.fm.nameOf(lead)}'s planning turn ended without tasks${stats?.errors.length ? `: ${stats.errors.join('; ')}` : ''}`, { agentId: lead });
+          this.fm.bus.feed('error', `${this.fm.nameOf(lead)}'s planning turn ended without tasks${stats?.errors.length ? `: ${stats.errors.join('; ')}` : ''}`, { agentId: lead, goalId: goal.id });
         } else if (job.kind === 'plan') {
           // nothing to do (e.g. the user said "ignore it"): close the goal instead of leaving it
           // "active" at 0% forever; a task the lead adds to it later makes it active again
           this.fm.setGoal(goal.id, { status: 'cancelled', progress: 0 });
-          this.fm.bus.feed('goal', `${this.fm.nameOf(lead)} planned no tasks: goal closed (${truncate(goal.text, 80)})`, { agentId: lead });
+          this.fm.bus.feed('goal', `${this.fm.nameOf(lead)} planned no tasks: goal closed (${truncate(goal.text, 80)})`, { agentId: lead, goalId: goal.id });
         }
       }
       if (job.kind === 'triage' && job.taskId && this.prs.pendingItems(job.taskId).length) this.prs.triageTurnEnded(job.taskId);
@@ -1589,7 +1623,7 @@ export class ClaudeBackend implements Backend {
         this.fm.tasks.setStatus(t.id, 'blocked', { reason: failed ? `session ended: ${stats?.subtype ?? stats?.errors.join('; ') ?? 'error'}` : 'worker stopped without changes', force: true });
         // a failed turn is an error (red); a worker that gave up is blocked
         this.fm.setAgent(job.agentId, failed ? { state: 'error', station: 'desk', activity: `${t.id}: ${this.failure(stats)}` } : { state: 'blocked', station: 'desk', activity: `${t.id} blocked` });
-        this.fm.bus.send(job.agentId, this.fm.leadOfTask(t), `${t.id} is blocked: ${this.fm.tasks.get(t.id)?.blockedReason}`);
+        this.fm.bus.send(job.agentId, this.fm.leadOfTask(t), `${t.id} is blocked: ${this.fm.tasks.get(t.id)?.blockedReason}`, { taskId: t.id });
         this.fm.notify('warn', `${this.fm.nameOf(job.agentId)}: ${t.id} ${failed ? 'failed' : 'is blocked'} (${this.fm.tasks.get(t.id)?.blockedReason ?? ''}) - /task ${t.id} retry when ready`);
       }
       return;
@@ -1641,7 +1675,7 @@ export class ClaudeBackend implements Backend {
       this.fm.tasks.update(t.id, { ci: ci.pass ? 'pass' : 'fail' });
       this.fm.repos.setCi(t.repoId, ci.pass ? 'pass' : 'fail');
       if (worker) this.fm.agentLog(worker, ci.pass ? 'result' : 'error', `CI ${ci.pass ? 'passed' : 'FAILED'} (${(ci.durationMs / 1000).toFixed(1)}s)\n${ci.output.split('\n').slice(-6).join('\n')}`);
-      this.fm.bus.feed('ci', `${t.id}: tests ${ci.pass ? 'pass' : 'fail'} (${ci.command})`, { ...(worker ? { agentId: worker } : {}) });
+      this.fm.bus.feed('ci', `${t.id}: tests ${ci.pass ? 'pass' : 'fail'} (${ci.command})`, { ...(worker ? { agentId: worker } : {}), taskId: t.id });
     } catch (e) {
       this.fm.log.warn(`CI for ${t.id}: ${(e as Error).message}`);
     }
@@ -1751,7 +1785,7 @@ export class ClaudeBackend implements Backend {
     delete this.st.ciFixes[`protect:${t.id}`];
     this.fm.store.markDirty();
     this.fm.tasks.setStatus(t.id, 'todo', { force: true });
-    this.fm.bus.feed('task', `${t.id} goes back to ${this.fm.nameOf(t.assignee ?? 'the next free worker')} for review fixes on PR #${t.pr?.id}`, { agentId: this.fm.leadOfTask(t) });
+    this.fm.bus.feed('task', `${t.id} goes back to ${this.fm.nameOf(t.assignee ?? 'the next free worker')} for review fixes on PR #${t.pr?.id}`, { agentId: this.fm.leadOfTask(t), taskId: t.id });
     this.tick();
     return true;
   }
@@ -1761,7 +1795,7 @@ export class ClaudeBackend implements Backend {
     const g = t.goalId ? this.fm.goal(t.goalId) : undefined;
     if (g && this.fm.tasks.goalComplete(g.id)) {
       const lead = this.fm.leadOf(g);
-      this.fm.bus.send(lead, 'user', `Every pull request for "${truncate(g.text, 80)}" is merged. Nice working with you.`);
+      this.fm.bus.send(lead, 'user', `Every pull request for "${truncate(g.text, 80)}" is merged. Nice working with you.`, { goalId: g.id });
       for (const w of this.team) if (!this.isStopped(w) && !this.running.has(w)) this.fm.setAgent(w, { state: 'done', station: 'lounge', activity: 'goal done' });
       if (!this.isStopped(lead) && !this.running.has(lead)) this.fm.setAgent(lead, { state: 'done', station: 'meeting', activity: 'goal done' });
     }
@@ -1819,6 +1853,70 @@ export class ClaudeBackend implements Backend {
     this.enqueue({ kind: 'followup', agentId: id, taskId: t.id, ...(t.goalId ? { goalId: t.goalId } : {}), sessionKey: `${id}:${t.id}`, prompt });
   }
 
+  // ---- goals (Goals tab) ----------------------------------------------------------------------
+
+  /** goal.message: a turn of the lead's session for the goal (queued behind its other work). */
+  onGoalMessage(goal: Goal, leadId: string): void {
+    if (this.isStopped(leadId)) {
+      // stays unread: queued again when the lead is resumed
+      this.fm.bus.send(leadId, 'user', `(${this.fm.nameOf(leadId)} is off shift - /resume @${leadId} to bring them back; your message about ${goal.id} is queued.)`, { goalId: goal.id });
+      return;
+    }
+    this.enqueueGoalMessage(leadId, goal.id);
+  }
+
+  /** One goal-message job per (lead, goal) waiting at a time: it takes every unread message when it starts. */
+  private enqueueGoalMessage(leadId: string, goalId: string): void {
+    if (this.hasQueued(leadId, (j) => !!j.pendingGoalMessage && j.goalId === goalId)) return;
+    this.enqueue({ kind: 'followup', agentId: leadId, goalId, sessionKey: `${leadId}:${goalId}`, prompt: '', pendingGoalMessage: true });
+  }
+
+  /** Unread goal messages to a lead (after a restart, a resume, an assignment): queue their turns. */
+  private queueGoalMessages(leadId: string): void {
+    if (this.stopping || this.isStopped(leadId) || !this.fm.isLead(leadId)) return;
+    for (const goalId of new Set(this.fm.bus.goalInbox(leadId).map((m) => m.goalId!))) this.enqueueGoalMessage(leadId, goalId);
+  }
+
+  /** Build a goal-message job's prompt from the goal's unread messages (marked read). False: none left. */
+  private fillGoalMessage(job: Job): boolean {
+    const goal = job.goalId ? this.fm.goal(job.goalId) : undefined;
+    const msgs = goal ? this.fm.bus.goalInbox(job.agentId, goal.id) : [];
+    if (!goal || !msgs.length) return false;
+    this.fm.bus.markRead(job.agentId, msgs.map((m) => m.id));
+    const state =
+      goal.status === 'done'
+        ? ` This goal is done: answer questions about it; if ${userName()} asks for more work on it, create tasks for it (that re-opens it).`
+        : goal.status === 'cancelled' || goal.status === 'failed'
+          ? ` This goal is ${goal.status}: answer questions about it; create tasks for it only if ${userName()} clearly asks for the work (that re-opens it).`
+          : goal.status === 'planning'
+            ? ' You are still planning this goal: take this into the plan.'
+            : '';
+    job.prompt = `Message from ${userName()} about goal ${goal.id} "${truncate(goal.text.replace(/\s+/g, ' '), 200)}":\n${msgs.map((m) => m.text).join('\n\n')}\n\n${state ? `${state.trim()}\n` : ''}Answer with send_message(to "user") (short; it is shown in the goal's thread) and act on it if needed: create, update or cancel this goal's tasks.`;
+    job.pendingGoalMessage = false;
+    job.goalReply = true;
+    job.startedAt = Date.now();
+    return true;
+  }
+
+  /** A goal-message turn ended: when the lead sent the user nothing, its final text is the reply. */
+  private replyToGoal(lead: string, job: Job, stats: TurnStats | undefined): void {
+    const since = job.startedAt ?? 0;
+    const replied = this.fm.store.data.messages.some((m) => m.from === lead && m.to === 'user' && m.ts >= since);
+    const text = stats?.resultText?.trim();
+    if (!replied && text) this.fm.bus.send(lead, 'user', truncate(text, 1500), { goalId: job.goalId });
+  }
+
+  /** goal.cancel: the lead stops planning / reviewing / triaging that goal (its goal messages still run). */
+  onGoalCancel(goal: Goal): void {
+    const mine = (j: Job) => j.goalId === goal.id && (j.kind === 'plan' || j.kind === 'review' || j.kind === 'triage');
+    for (const [id, r] of this.running) if (this.fm.isLead(id) && mine(r.job)) this.abortTurn(r, 'cancel');
+    for (const [id, q] of this.queues) if (this.fm.isLead(id)) this.queues.set(id, q.filter((j) => !mine(j)));
+    for (const [id, j] of this.pausedJobs) if (mine(j)) this.pausedJobs.delete(id);
+    for (const [id, inf] of Object.entries(this.st.inflight)) if (inf.goalId === goal.id && (inf.kind === 'plan' || inf.kind === 'review' || inf.kind === 'triage') && !this.running.has(id)) delete this.st.inflight[id];
+    this.fm.store.markDirty();
+    this.tick();
+  }
+
   onDecisionSettled(d: Decision): void {
     if (this.prs.owns(d.id)) {
       // the PR watcher's own decisions (post replies, fold in?): never an agent's question
@@ -1860,7 +1958,7 @@ export class ClaudeBackend implements Backend {
         if (!this.isStopped(lead)) this.fm.setAgent(lead, { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
         const g = t.goalId ? this.fm.goal(t.goalId) : undefined;
         if (g && this.fm.tasks.goalComplete(g.id)) {
-          this.fm.bus.send(lead, 'user', `Everything for "${truncate(g.text, 80)}" is merged. Nice working with you.`);
+          this.fm.bus.send(lead, 'user', `Everything for "${truncate(g.text, 80)}" is merged. Nice working with you.`, { goalId: g.id });
           for (const w of this.team) if (!this.isStopped(w)) this.fm.setAgent(w, { state: 'done', station: 'lounge', activity: 'goal done' });
           if (!this.isStopped(lead)) this.fm.setAgent(lead, { state: 'done', station: 'meeting', activity: 'goal done' });
         }
@@ -1927,6 +2025,7 @@ export class ClaudeBackend implements Backend {
       if (this.fm.isLead(agentId) && wasStopped) this.reconcile();
       // messages the user sent while the agent was off shift or paused
       this.deliverPending(agentId);
+      this.queueGoalMessages(agentId);
     } else if (action === 'stop') {
       this.setStopped(agentId, true);
       if (r) this.abortTurn(r, 'stop');
@@ -1940,7 +2039,7 @@ export class ClaudeBackend implements Backend {
           // the next worker then continues from this branch
           this.fm.tasks.setStatus(t.id, 'todo', { force: true });
           this.fm.tasks.update(t.id, { assignee: null });
-          this.fm.bus.feed('task', `${t.id} is back on the board (${name} was stopped)`, { agentId: 'user' });
+          this.fm.bus.feed('task', `${t.id} is back on the board (${name} was stopped)`, { agentId: 'user', taskId: t.id });
           this.handOff(t.id, agentId, `${name} was stopped`);
         }
       }
@@ -1955,6 +2054,7 @@ export class ClaudeBackend implements Backend {
     // a newly assigned lead starts on shift (a stop from an earlier assignment does not carry over)
     if (this.isStopped(leadId)) this.setStopped(leadId, false);
     this.deliverPending(leadId);
+    this.queueGoalMessages(leadId);
     this.tick();
   }
 

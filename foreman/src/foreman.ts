@@ -19,12 +19,14 @@ import type {
   ClientMessage,
   Decision,
   Design,
+  Digest,
   DesignRequest,
   ForemanStatus,
   Goal,
   GoalStatus,
   LogEntry,
   LogKind,
+  MemoryEntry,
   Outbound,
   Station,
   Task,
@@ -35,6 +37,8 @@ import { Store } from './store.js';
 import { TaskError, TaskGraph } from './taskgraph.js';
 import { setUserName, userName } from './user.js';
 import { truncate } from './util/text.js';
+import { unifiedDiff } from './util/udiff.js';
+import { buildDigest } from './digest.js';
 
 export interface Backend {
   readonly name: 'sim' | 'claude';
@@ -80,6 +84,35 @@ export interface Backend {
    * end, and `goals` (its open goals) are marlow's now.
    */
   onLeadReleased?(leadId: string, goals: Goal[]): void;
+  /**
+   * goal.message: the user's message (unread in bus.goalInbox(leadId, goal.id)) to `leadId` about
+   * `goal`: answer it in a turn of the lead's session for the goal, replies tagged with the goal.
+   */
+  onGoalMessage?(goal: Goal, leadId: string): void;
+  /** goal.cancel (the goal and its open tasks are cancelled already): stop the lead's work on it */
+  onGoalCancel?(goal: Goal): void;
+}
+
+export interface GoalOptions {
+  /** the repositories the goal is for (repoId first) */
+  repos?: string[];
+  /** the user's branch it continues */
+  branch?: string;
+  /** standing instructions */
+  instructions?: string[];
+}
+
+/** "on <branch>: ..." at the start of a goal's text */
+export const GOAL_BRANCH_RE = /^\s*on\s+([\w./-]+)\s*:\s*/i;
+
+/** Trimmed, non-empty instruction lines. */
+export function cleanInstructions(list: string[] | undefined): string[] {
+  return (list ?? []).map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+
+/** A goal for the wire (arrays copied). */
+export function goalCopy(g: Goal): Goal {
+  return { ...g, ...(g.repos ? { repos: [...g.repos] } : {}), ...(g.instructions ? { instructions: [...g.instructions] } : {}), ...(g.prs ? { prs: g.prs.map((p) => ({ ...p })) } : {}) };
 }
 
 export type Reply = (msg: Outbound) => void;
@@ -319,18 +352,165 @@ export class Foreman {
     return this.store.data.goals.find((g) => g.id === id);
   }
 
-  createGoal(text: string, repoId?: string): Goal {
+  createGoal(text: string, repoId?: string, opts: GoalOptions = {}): Goal {
     const now = this.ctx.now();
     const goal: Goal = { id: this.store.nextId('g'), text: text.trim(), progress: 0, status: 'planning', createdAt: now, updatedAt: now };
     if (repoId) goal.repoId = repoId;
+    const repos = [...new Set([...(repoId ? [repoId] : []), ...(opts.repos ?? [])])];
+    if (repos.length) goal.repos = repos;
+    const instructions = cleanInstructions(opts.instructions);
+    if (instructions.length) goal.instructions = instructions;
+    if (opts.branch) goal.branch = opts.branch;
     // the lead of the building that has the repository (absent = marlow)
     const lead = this.leads.leadForRepo(repoId);
     if (lead !== HOME_LEAD) goal.leadId = lead;
     this.store.data.goals.push(goal);
     this.store.markDirty();
-    this.emit({ type: 'goal.upsert', goal: { ...goal } });
-    this.bus.feed('goal', `New goal: ${goal.text}`, { agentId: 'user' });
+    this.emit({ type: 'goal.upsert', goal: goalCopy(goal) });
+    this.bus.feed('goal', `New goal: ${goal.text}`, { agentId: 'user', goalId: goal.id });
     return goal;
+  }
+
+  /** Broadcast a goal after a direct change of its fields. */
+  touchGoal(g: Goal): void {
+    g.updatedAt = this.ctx.now();
+    this.store.markDirty();
+    this.emit({ type: 'goal.upsert', goal: goalCopy(g) });
+  }
+
+  /** The goal's plan note id (Goal.planId) was written: record it. */
+  recordPlan(goalId: string, memoryId: string): void {
+    const g = this.goal(goalId);
+    if (!g || g.planId === memoryId) return;
+    g.planId = memoryId;
+    this.touchGoal(g);
+  }
+
+  /** The user's branch a goal continues could not be used: the goal is a normal one. */
+  clearGoalBranch(goalId: string): void {
+    const g = this.goal(goalId);
+    if (!g?.branch) return;
+    delete g.branch;
+    this.touchGoal(g);
+  }
+
+  /** Standing instructions of a goal as a prompt section ('' without any). */
+  instructionsSection(goalId: string | undefined, heading = '# Standing instructions'): string {
+    const list = goalId ? this.goal(goalId)?.instructions : undefined;
+    if (!list?.length) return '';
+    return `${heading}\n${userName()}'s standing instructions for goal ${goalId} (they apply to all of its work and can change between turns; this list is the current one):\n${list.map((i) => `- ${i}`).join('\n')}`;
+  }
+
+  /** The lead that takes a goal's messages now: its lead, or marlow when that lead is off duty. */
+  goalLead(goal: Goal): string {
+    const lead = this.leadOf(goal);
+    return this.leads.onDuty(lead) ? lead : HOME_LEAD;
+  }
+
+  requireGoal(id: string): Goal {
+    const g = this.goal(id);
+    if (!g) throw new ClientError(`no goal "${id}"`);
+    return g;
+  }
+
+  /**
+   * goal.message: the user's message to the goal's lead about it. Runs in the lead's session for the
+   * goal (backend.onGoalMessage), also for done/cancelled goals.
+   */
+  goalMessage(goalId: string, text: string): { goalId: string; leadId: string } {
+    const g = this.requireGoal(goalId);
+    const body = text.trim();
+    if (!body) throw new ClientError('the message is empty');
+    if (!this.backend) throw new ClientError('no backend running');
+    const lead = this.goalLead(g);
+    this.bus.send('user', lead, body, { goalId: g.id, goalMessage: true });
+    try {
+      this.backend.onGoalMessage?.(g, lead);
+    } catch (e) {
+      this.log.error(`backend.onGoalMessage: ${(e as Error).message}`);
+    }
+    return { goalId: g.id, leadId: lead };
+  }
+
+  /** goal.instructions: replace the standing instructions; a change goes to the lead as a goal message. */
+  setGoalInstructions(goalId: string, instructions: string[]): { goalId: string; changed: boolean } {
+    const g = this.requireGoal(goalId);
+    const next = cleanInstructions(instructions);
+    const prev = g.instructions ?? [];
+    if (JSON.stringify(prev) === JSON.stringify(next)) return { goalId: g.id, changed: false };
+    if (next.length) g.instructions = next;
+    else delete g.instructions;
+    this.touchGoal(g);
+    const list = next.length ? next.map((i) => `- ${i}`).join('\n') : '(none any more)';
+    if (this.backend) this.goalMessage(g.id, `The user changed the standing instructions for this goal:\n${list}\n\nThey apply to all of its work from now on: new tasks get them, and workers see them at their next turn. Adjust the open tasks if they need it.`);
+    return { goalId: g.id, changed: true };
+  }
+
+  /**
+   * goal.plan: write the goal's plan note as the user (created when missing), then send the lead a
+   * goal message with the diff.
+   */
+  editGoalPlan(goalId: string, body: string): { goalId: string; planId: string; changed: boolean } {
+    const g = this.requireGoal(goalId);
+    const prev = g.planId ? this.memory.get(g.planId) : undefined;
+    const slug = prev ? prev.id.slice(prev.id.indexOf('/') + 1) : `plan-${g.id}`;
+    const scope = prev?.scope ?? 'shared';
+    const oldBody = prev?.body ?? '';
+    if (prev && oldBody === body) return { goalId: g.id, planId: prev.id, changed: false };
+    let e: MemoryEntry;
+    try {
+      e = this.memory.write({ scope, slug, title: prev?.title ?? `Plan: ${truncate(g.text.replace(/\s+/g, ' '), 60)}`, body, author: 'user' });
+    } catch (err) {
+      if (err instanceof MemoryError) throw new ClientError(err.message);
+      throw err;
+    }
+    this.recordPlan(g.id, e.id);
+    this.bus.feed('memory', `${userName()} ${prev ? 'edited' : 'wrote'} the plan for ${g.id}: ${e.title}`, { agentId: 'user', goalId: g.id });
+    const diff = unifiedDiff(oldBody, body, { from: `${e.id} (before)`, to: `${e.id} (${userName()})` });
+    if (this.backend) this.goalMessage(g.id, `The user ${prev ? 'edited' : 'wrote'} the plan for this goal (shared memory ${e.id}). The change:\n\`\`\`diff\n${diff}\n\`\`\`\nAdjust the tasks to the plan where they no longer match (create, update or cancel tasks), and tell ${userName()} briefly what you changed.`);
+    return { goalId: g.id, planId: e.id, changed: true };
+  }
+
+  /**
+   * goal.cancel: every open task is cancelled (running workers stop, worktrees kept), open
+   * decisions about the goal are withdrawn, the goal is cancelled. All synchronous, so the goal is
+   * already cancelled when the task updates are looked at.
+   */
+  cancelGoal(goalId: string): string[] {
+    const g = this.requireGoal(goalId);
+    if (g.status === 'done') throw new ClientError(`goal ${g.id} is already done`);
+    if (g.status === 'cancelled') return [];
+    const open = this.tasks.forGoal(g.id).filter((t) => t.status !== 'done' && t.status !== 'cancelled');
+    // the goal first: the task updates below must not re-open or close it on their own
+    this.setGoal(g.id, { status: 'cancelled' });
+    for (const t of open) this.taskAction(t.id, 'cancel');
+    for (const d of this.decisions.open().filter((x) => x.goalId === g.id)) this.decisions.cancel(d.id, 'goal cancelled');
+    this.bus.feed('goal', `${userName()} cancelled goal ${g.id} "${truncate(g.text, 60)}"${open.length ? ` (${open.length} open task${open.length === 1 ? '' : 's'} cancelled: ${open.map((t) => t.id).join(', ')})` : ''}`, { agentId: 'user', goalId: g.id });
+    try {
+      this.backend?.onGoalCancel?.(g);
+    } catch (e) {
+      this.log.error(`backend.onGoalCancel: ${(e as Error).message}`);
+    }
+    return open.map((t) => t.id);
+  }
+
+  /** goal.digest: what happened since `since` (pure, over the stored feed, tasks and decisions). */
+  digest(since: number, goalId?: string): Digest {
+    if (goalId) this.requireGoal(goalId);
+    const d = this.store.data;
+    return buildDigest({ goals: d.goals, tasks: d.tasks, decisions: d.decisions, feed: d.feed }, { since, until: this.ctx.now(), ...(goalId ? { goalId } : {}), nameOf: (id) => (id === 'user' ? userName() : this.nameOf(id)) });
+  }
+
+  /** repo.remove: refused while it has open tasks or a goal still being planned. */
+  removeRepo(repoId: string): void {
+    const r = this.repos.get(repoId);
+    if (!r) throw new ClientError(`no repo "${repoId}"`);
+    const open = this.tasks.list().filter((t) => t.repoId === repoId && t.status !== 'done' && t.status !== 'cancelled');
+    if (open.length) throw new ClientError(`${r.name} has open tasks (${open.map((t) => `${t.id} ${t.status}`).join(', ')}): finish or cancel them first`);
+    const planning = this.goals().filter((g) => g.repoId === repoId && g.status === 'planning');
+    if (planning.length) throw new ClientError(`${r.name} has goals still being planned (${planning.map((g) => g.id).join(', ')}): wait for the plan or cancel them first`);
+    this.repos.remove(repoId);
+    this.bus.feed('system', `Repo removed: ${r.name} (worktrees and branches are left on disk)`, { agentId: 'user' });
   }
 
   setGoal(id: string, patch: { status?: GoalStatus; progress?: number; text?: string }): Goal {
@@ -352,7 +532,7 @@ export class Foreman {
     if (changed) {
       g.updatedAt = this.ctx.now();
       this.store.markDirty();
-      this.emit({ type: 'goal.upsert', goal: { ...g } });
+      this.emit({ type: 'goal.upsert', goal: goalCopy(g) });
     }
     return g;
   }
@@ -443,8 +623,8 @@ export class Foreman {
       delete g.leadId;
       g.updatedAt = this.ctx.now();
       this.store.markDirty();
-      this.emit({ type: 'goal.upsert', goal: { ...g } });
-      this.bus.feed('goal', `${this.nameOf(HOME_LEAD)} takes over ${g.id} "${truncate(g.text, 60)}" from ${this.nameOf(leadId)}`, { agentId: HOME_LEAD });
+      this.emit({ type: 'goal.upsert', goal: goalCopy(g) });
+      this.bus.feed('goal', `${this.nameOf(HOME_LEAD)} takes over ${g.id} "${truncate(g.text, 60)}" from ${this.nameOf(leadId)}`, { agentId: HOME_LEAD, goalId: g.id });
       moved.push(g);
     }
     this.bus.feed('system', `${this.nameOf(leadId)} no longer leads building ${rec.building.slice(rec.building.indexOf('/') + 1)} (${why})`, { agentId: leadId });
@@ -452,6 +632,22 @@ export class Foreman {
       this.backend?.onLeadReleased?.(leadId, moved);
     } catch (e) {
       this.log.error(`backend.onLeadReleased: ${(e as Error).message}`);
+    }
+    // goal messages it had not read yet go to whoever takes the goal's messages now
+    const unread = this.bus.goalInbox(leadId);
+    for (const m of unread) {
+      const g = m.goalId ? this.goal(m.goalId) : undefined;
+      if (g) m.to = this.goalLead(g);
+    }
+    if (unread.length) this.store.markDirty();
+    for (const goalId of new Set(unread.map((m) => m.goalId!))) {
+      const g = this.goal(goalId);
+      if (!g) continue;
+      try {
+        this.backend?.onGoalMessage?.(g, this.goalLead(g));
+      } catch (e) {
+        this.log.error(`backend.onGoalMessage: ${(e as Error).message}`);
+      }
     }
     if (!opts.quiet) this.emitLeads();
   }
@@ -467,6 +663,23 @@ export class Foreman {
     return out;
   }
 
+  /** Goal.repos (repoId, then each task's repo by first appearance) and Goal.prs from its tasks. */
+  private updateGoalDerived(g: Goal, tasks: Task[]): void {
+    const repos = [...new Set([...(g.repoId ? [g.repoId] : []), ...(g.repos ?? []), ...tasks.map((t) => t.repoId).filter((x): x is string => !!x)])];
+    const prs = tasks.filter((t) => t.pr).map((t) => ({ taskId: t.id, url: t.pr!.url, id: t.pr!.id, status: t.pr!.status }));
+    let changed = false;
+    if (repos.length && JSON.stringify(repos) !== JSON.stringify(g.repos ?? [])) {
+      g.repos = repos;
+      changed = true;
+    }
+    if (JSON.stringify(prs) !== JSON.stringify(g.prs ?? [])) {
+      if (prs.length) g.prs = prs;
+      else delete g.prs;
+      changed = true;
+    }
+    if (changed) this.touchGoal(g);
+  }
+
   private scheduleGoalUpdate(goalId: string): void {
     if (this.goalTimers.has(goalId)) return;
     this.goalTimers.add(goalId);
@@ -475,15 +688,18 @@ export class Foreman {
       const g = this.goal(goalId);
       if (!g) return;
       const all = this.tasks.forGoal(goalId);
+      this.updateGoalDerived(g, all);
       const live = all.filter((t) => t.status !== 'cancelled');
       // every task was cancelled or rejected: the goal is over (it would sit at 0% forever);
       // if the lead adds a new task to it later, it is active again
       if (g.status === 'active' && all.length && !live.length) {
         this.setGoal(goalId, { status: 'cancelled', progress: 0 });
-        this.bus.feed('goal', `Goal closed: every task was cancelled or rejected (${truncate(g.text, 80)})`);
+        this.bus.feed('goal', `Goal closed: every task was cancelled or rejected (${truncate(g.text, 80)})`, { goalId });
         return;
       }
-      if (g.status === 'cancelled' && live.length) this.setGoal(goalId, { status: 'active' });
+      // a cancelled goal is active again once it has open work (the lead added or retried a task);
+      // tasks done before a goal.cancel do not re-open it
+      if (g.status === 'cancelled' && live.some((t) => t.status !== 'done')) this.setGoal(goalId, { status: 'active' });
       // progress stays 0 while the lead is still planning (avoids a jittering ring)
       if (g.status === 'cancelled' || g.status === 'failed' || g.status === 'planning') return;
       const progress = this.tasks.progress(goalId);
@@ -491,7 +707,7 @@ export class Foreman {
       const wasDone = g.status === 'done';
       this.setGoal(goalId, { progress: complete ? 1 : progress, ...(complete ? { status: 'done' as const } : g.status === 'done' ? { status: 'active' as const } : {}) });
       if (complete && !wasDone) {
-        this.bus.feed('goal', `Goal complete: ${g.text}`);
+        this.bus.feed('goal', `Goal complete: ${g.text}`, { goalId });
         this.notify('info', `Goal complete: ${truncate(g.text, 80)}`);
       }
     });
@@ -506,7 +722,7 @@ export class Foreman {
   private onDecisionCreated(d: Decision): void {
     const who = this.nameOf(d.agentId);
     const label = d.kind === 'merge' ? 'merge review' : d.kind === 'permission' ? 'permission' : 'question';
-    this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user' });
+    this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user', goalId: d.goalId });
     this.notify('need_user', `${who}: ${truncate(d.question, 120)}`, d.id);
     this.notifier.needUser(`${who}: ${d.question}`);
   }
@@ -532,7 +748,7 @@ export class Foreman {
       throw e;
     }
     const answerText = [d.answer?.option, d.answer?.text].filter(Boolean).join(' — ');
-    this.bus.feed('decision', `${userName()} answered ${this.nameOf(d.agentId)}: ${answerText}`, { agentId: 'user', to: d.agentId });
+    this.bus.feed('decision', `${userName()} answered ${this.nameOf(d.agentId)}: ${answerText}`, { agentId: 'user', to: d.agentId, goalId: d.goalId });
     if (d.kind === 'merge') await this.applyMergeAnswer(d);
     if (d.status === 'answered' || d.status === 'cancelled') {
       this.decisions.settle(d.id);
@@ -562,7 +778,7 @@ export class Foreman {
         );
         if (task && res.kind === 'merge') this.tasks.setStatus(task.id, 'done', { viaMerge: true, force: task.status !== 'review' });
         if (res.kind === 'merge') {
-          this.bus.feed('merge', `Merged ${res.branch} into ${res.base} (${res.sha}, ${res.files} file${res.files === 1 ? '' : 's'})${res.pushed ? `; ${res.pushed}` : ''}`, { agentId: d.agentId });
+          this.bus.feed('merge', `Merged ${res.branch} into ${res.base} (${res.sha}, ${res.files} file${res.files === 1 ? '' : 's'})${res.pushed ? `; ${res.pushed}` : ''}`, { agentId: d.agentId, goalId: d.goalId });
           this.notify('info', `Merged ${res.branch} into ${res.base}${res.pushed ? ` (${res.pushed})` : ''}`);
         } else {
           // a PR that is watched keeps the task open (status pr) until it is merged
@@ -581,7 +797,7 @@ export class Foreman {
               this.tasks.setStatus(task.id, 'pr', { force: true });
             } else this.tasks.setStatus(task.id, 'done', { viaMerge: true, force: task.status !== 'review' });
           }
-          this.bus.feed('merge', `${task?.id ?? res.branch}: ${what} (${res.remoteBranch} → ${res.base})${watched && !followUp ? '; watching it until it is merged' : ''}`, { agentId: d.agentId });
+          this.bus.feed('merge', `${task?.id ?? res.branch}: ${what} (${res.remoteBranch} → ${res.base})${watched && !followUp ? '; watching it until it is merged' : ''}`, { agentId: d.agentId, goalId: d.goalId });
           this.notify('info', `${task?.id ?? res.branch}: ${what}`);
           if (task && watched) this.prPush(task.id, followUp ? 'landed' : 'opened', res.sha);
         }
@@ -590,7 +806,7 @@ export class Foreman {
           // review fixes that changed nothing: the PR stays as it is
           await this.repos.abandon(d.repoId, d.worktree, `agentcraft: ${task.id} review fixes (no changes)`).catch((err) => this.log.warn(`abandon: ${(err as Error).message}`));
           this.tasks.setStatus(task.id, 'pr', { force: true });
-          this.bus.feed('merge', `Nothing new to push for ${task.id}: PR #${task.pr.id} stays as it is`, { agentId: d.agentId });
+          this.bus.feed('merge', `Nothing new to push for ${task.id}: PR #${task.pr.id} stays as it is`, { agentId: d.agentId, goalId: d.goalId });
           this.prPush(task.id, 'empty');
           return;
         }
@@ -598,7 +814,7 @@ export class Foreman {
           // nothing to merge (a report or investigation): the task is simply done
           await this.repos.abandon(d.repoId, d.worktree, `agentcraft: ${task.id} (no changes)`).catch((err) => this.log.warn(`abandon: ${(err as Error).message}`));
           this.tasks.setStatus(task.id, 'done', { force: true });
-          this.bus.feed('merge', `Nothing to merge for ${task.id} (no file changes): closed as done`, { agentId: d.agentId });
+          this.bus.feed('merge', `Nothing to merge for ${task.id} (no file changes): closed as done`, { agentId: d.agentId, goalId: d.goalId });
           this.notify('info', `${task.id} had no changes: closed as done`);
           return;
         }
@@ -616,7 +832,7 @@ export class Foreman {
           }
           if (handled) {
             this.log.info(`merge for ${d.id} conflicts with ${info.base} (${e.files.join(', ')}): sent back to ${task.assignee}`);
-            this.bus.feed('merge', `${task.id} conflicts with ${info.base} in ${e.files.join(', ') || 'some files'}: ${this.nameOf(task.assignee)} merges ${info.base} and resolves it`, { agentId: task.assignee });
+            this.bus.feed('merge', `${task.id} conflicts with ${info.base} in ${e.files.join(', ') || 'some files'}: ${this.nameOf(task.assignee)} merges ${info.base} and resolves it`, { agentId: task.assignee, goalId: d.goalId });
             this.notify('info', `${task.id} conflicts with ${info.base}: sent back to ${this.nameOf(task.assignee)} to resolve`);
             return;
           }
@@ -624,7 +840,7 @@ export class Foreman {
         this.log.warn(`merge for ${d.id} refused: ${reason}`);
         const base = (d.context ?? '').replace(/\n*Merge refused: [\s\S]*$/, '');
         this.decisions.reopen(d.id, `${base}${base ? '\n\n' : ''}Merge refused: ${reason}`);
-        this.bus.feed('error', `Merge refused: ${reason}`, { agentId: d.agentId });
+        this.bus.feed('error', `Merge refused: ${reason}`, { agentId: d.agentId, goalId: d.goalId });
         this.notify('warn', `Merge refused: ${truncate(reason, 160)}`, d.id);
         // broadcast the repo as it is now (e.g. dirty=true), so the mod can show why
         if (d.repoId && this.repos.get(d.repoId)) await this.repos.refresh(d.repoId).catch((err) => this.log.warn(`refresh ${d.repoId}: ${(err as Error).message}`));
@@ -639,7 +855,7 @@ export class Foreman {
       if (task?.pr && task.pr.status !== 'merged' && task.pr.status !== 'abandoned') {
         // rejected review fixes: the pull request itself stays open and watched
         this.tasks.setStatus(task.id, 'pr', { force: true });
-        this.bus.feed('merge', `Rejected the review fixes for ${task.id} (branch kept); PR #${task.pr.id} stays open`, { agentId: d.agentId });
+        this.bus.feed('merge', `Rejected the review fixes for ${task.id} (branch kept); PR #${task.pr.id} stays open`, { agentId: d.agentId, goalId: d.goalId });
         this.prPush(task.id, 'rejected');
         return;
       }
@@ -649,7 +865,7 @@ export class Foreman {
           if (dep.status === 'todo') this.tasks.setStatus(dep.id, 'blocked', { reason: `depends on rejected ${task.id}`, force: true });
         }
       }
-      this.bus.feed('merge', `Rejected ${d.worktree ?? 'branch'} (branch kept for recovery)`, { agentId: d.agentId });
+      this.bus.feed('merge', `Rejected ${d.worktree ?? 'branch'} (branch kept for recovery)`, { agentId: d.agentId, goalId: d.goalId });
     }
   }
 
@@ -686,10 +902,10 @@ export class Foreman {
       agents: this.agents().map((a) => ({ ...a })),
       tasks: this.tasks.list().map((t) => ({ ...t, deps: [...t.deps] })),
       decisions: [...recent, ...open].sort((a, b) => a.createdAt - b.createdAt),
-      repos: this.repos.list().map((r) => ({ ...r, worktrees: r.worktrees.map((w) => ({ ...w })) })),
+      repos: this.repos.list().map((r) => this.repos.view(r)),
       memory: this.memory.list(),
-      ...(goal ? { goal: { ...goal } } : {}),
-      goals: this.goals().map((g) => ({ ...g })),
+      ...(goal ? { goal: goalCopy(goal) } : {}),
+      goals: this.goals().map(goalCopy),
       feed: this.store.data.feed.slice(-200),
       logs: this.agents().map((a) => ({ agentId: a.id, entries: this.store.logTail(a.id).slice(-60) })),
       designs: this.designs.recent(),
@@ -722,7 +938,20 @@ export class Foreman {
         reply(this.snapshot());
         return undefined;
       case 'goal.submit':
-        return { goalId: (await this.submitGoal(msg.text, msg.repoId)).id };
+        return { goalId: (await this.submitGoal(msg.text, msg.repoId, { ...(msg.repos ? { repos: msg.repos } : {}), ...(msg.branch ? { branch: msg.branch } : {}), ...(msg.instructions ? { instructions: msg.instructions } : {}) })).id };
+      case 'goal.message':
+        return this.goalMessage(msg.goalId, msg.text);
+      case 'goal.instructions':
+        return this.setGoalInstructions(msg.goalId, msg.instructions);
+      case 'goal.plan':
+        return this.editGoalPlan(msg.goalId, msg.body);
+      case 'goal.cancel':
+        return { goalId: msg.goalId, cancelled: this.cancelGoal(msg.goalId) };
+      case 'goal.digest':
+        return this.digest(msg.since, msg.goalId) as unknown as Record<string, unknown>;
+      case 'repo.remove':
+        this.removeRepo(msg.repoId);
+        return { repoId: msg.repoId };
       case 'user.message': {
         const { to, text } = this.routeUserMessage(msg.to, msg.text);
         this.bus.send('user', to, text);
@@ -835,12 +1064,16 @@ export class Foreman {
     this.notify('warn', `Building design ${id} failed: ${truncate(error.split('\n')[0] ?? error, 120)}`);
   }
 
-  async submitGoal(text: string, repoId?: string): Promise<Goal> {
-    const repo = repoId ? this.repos.get(repoId) : this.repos.defaultRepo();
-    if (repoId && !repo) throw new ClientError(`no repo "${repoId}"`);
+  async submitGoal(text: string, repoId?: string, opts: GoalOptions = {}): Promise<Goal> {
+    for (const id of opts.repos ?? []) if (!this.repos.get(id)) throw new ClientError(`no repo "${id}"`);
+    const rid = repoId ?? opts.repos?.[0];
+    const repo = rid ? this.repos.get(rid) : this.repos.defaultRepo();
+    if (rid && !repo) throw new ClientError(`no repo "${rid}"`);
     if (!repo) throw new ClientError('no repo connected yet — add one with /repo add <path>');
     if (!this.backend) throw new ClientError('no backend running');
-    const goal = this.createGoal(text, repo.id);
+    // "on <branch>: ..." continues one of the user's branches; an explicit branch wins
+    const branch = opts.branch ?? GOAL_BRANCH_RE.exec(text)?.[1];
+    const goal = this.createGoal(text, repo.id, { ...opts, ...(branch ? { branch } : {}) });
     await this.backend.submitGoal(goal);
     return goal;
   }
@@ -870,18 +1103,18 @@ export class Foreman {
       case 'cancel':
         this.tasks.setStatus(t.id, 'cancelled', { force: true });
         for (const d of this.decisions.open().filter((d) => d.taskId === t.id)) this.decisions.cancel(d.id, 'task cancelled');
-        this.bus.feed('task', `Task ${t.id} cancelled by ${userName()}: ${t.title}`, { agentId: 'user' });
+        this.bus.feed('task', `Task ${t.id} cancelled by ${userName()}: ${t.title}`, { agentId: 'user', taskId: t.id });
         break;
       case 'retry':
         this.tasks.update(t.id, { ci: 'unknown', blockedReason: null });
         this.tasks.setStatus(t.id, 'todo', { force: true });
-        this.bus.feed('task', `Task ${t.id} queued again: ${t.title}`, { agentId: 'user' });
+        this.bus.feed('task', `Task ${t.id} queued again: ${t.title}`, { agentId: 'user', taskId: t.id });
         break;
       case 'prioritize': {
         const top = Math.max(0, ...this.tasks.list().map((x) => x.priority));
         const p = arg !== undefined && arg !== '' && Number.isFinite(Number(arg)) ? Math.trunc(Number(arg)) : top + 1;
         this.tasks.update(t.id, { priority: p });
-        this.bus.feed('task', `Task ${t.id} priority -> ${p}`, { agentId: 'user' });
+        this.bus.feed('task', `Task ${t.id} priority -> ${p}`, { agentId: 'user', taskId: t.id });
         break;
       }
       case 'reassign': {
@@ -891,7 +1124,7 @@ export class Foreman {
         if (this.agent(id)?.role === 'lead') throw new ClientError('tasks are assigned to workers, not the lead');
         this.tasks.update(t.id, { assignee: id });
         if (t.status === 'doing') this.tasks.setStatus(t.id, 'todo', { force: true });
-        this.bus.feed('task', `Task ${t.id} reassigned to ${this.nameOf(id)}`, { agentId: 'user' });
+        this.bus.feed('task', `Task ${t.id} reassigned to ${this.nameOf(id)}`, { agentId: 'user', taskId: t.id });
         break;
       }
     }

@@ -216,6 +216,39 @@ export class SimBackend implements Backend {
     }
   }
 
+  /** goal.message: the goal's lead answers in the goal's thread (canned, after a short pause). */
+  onGoalMessage(goal: Goal, leadId: string): void {
+    const msgs = this.fm.bus.goalInbox(leadId, goal.id);
+    if (!msgs.length) return;
+    this.fm.bus.markRead(leadId, msgs.map((m) => m.id));
+    const text = msgs[msgs.length - 1]!.text;
+    for (const m of msgs) this.fm.agentLog(leadId, 'text', `Message from ${userName()} about ${goal.id}: ${truncate(m.text, 400)}`);
+    const reply = /standing instructions/i.test(text)
+      ? `Got the new standing instructions for ${goal.id} - the team follows them from the next step.`
+      : /the plan for this goal/i.test(text)
+        ? `Read your plan changes for ${goal.id}. The tasks still fit; I will keep an eye on it.`
+        : goal.status === 'done'
+          ? `${goal.id} is done - ${CANNED_REPLIES[this.replyCount++ % CANNED_REPLIES.length]!}`
+          : `About ${goal.id}: ${CANNED_REPLIES[this.replyCount++ % CANNED_REPLIES.length]!}`;
+    setTimeout(() => {
+      if (this.fm.agent(leadId)) this.fm.bus.send(leadId, 'user', reply, { goalId: goal.id });
+    }, 1200 / this.cfg.speed).unref?.();
+  }
+
+  /** goal.cancel: the goal's scripted flow stops (the main script counts as finished). */
+  onGoalCancel(goal: Goal): void {
+    const st = this.state;
+    const side = this.sides.get(goal.id);
+    if (side) side.director.stop();
+    if (st.side?.[goal.id]) st.side[goal.id]!.finished = true;
+    if (st.goalId === goal.id && !st.finished) {
+      this.director?.stop();
+      st.finished = true;
+      this.fm.setStatus({ message: `Simulated team (speed x${this.cfg.speed}) - goal cancelled` });
+    }
+    this.store();
+  }
+
   onDecisionSettled(_d: Decision): void {
     // the scenario awaits decisions itself (DecisionQueue.wait)
   }
