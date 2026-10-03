@@ -82,6 +82,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--notify` / `--no-notify` / `AGENTCRAFT_NOTIFY` | on for claude, off for sim | Windows or macOS notifications |
 | `--toast-silent` | | toast without sound |
 | `--model`, `--lead-model`, `--worker-model` | lead `opus`, workers `sonnet` | any model id/alias the CLI accepts |
+| `--design-model` / `AGENTCRAFT_DESIGN_MODEL` / `claude.designModel` | the worker model | the building design agent (below) |
 | `--effort low..max` | `medium` | |
 | `--workers 3` or `--workers kit,wren` | `juniper,kit,wren` | team (others stay "off shift") |
 | `--max-concurrent` | `3` | workers running at once |
@@ -429,6 +430,7 @@ spawns git with an empty environment); the policy refuses every command it can s
   memory/shared/*.md     shared notes (hand-editable)
   memory/agents/<id>/*.md
   worktrees/<repo>/<agent>-<task>/
+  designs/<designId>/    scratch dir of a building design job (kept: the source of the design)
 ```
 
 ## Protocol
@@ -438,6 +440,47 @@ tables and a JSON example per message (`npm run gen:protocol-doc`; `npm run chec
 fails if it is stale). Highlights beyond the spec draft: `foreman.status` (backend/auth banner),
 `ack`/`error` replies for messages with an `id`, `snapshot.logs`/`snapshot.goals`,
 `Agent.active/paused/worktree/title`, task status `cancelled`, decision status `cancelled`.
+
+## Building designs (`design.request`)
+
+The hub's "Design new" form (docs/HUB.md) sends `design.request`; the Foreman acks with
+`{designId}` and reports progress as `design.upsert` (also in `snapshot.designs`, the last 20 plus
+any unfinished): `queued -> designing -> checking -> rendering -> done | failed | cancelled`, with
+a one-line `step`. `design.cancel {designId}` stops it. The request is validated strictly: style and
+features from fixed enums, `maxSize` x/z 9..128 and y 6..48, `single` = 1 wing, `group` = 2..8
+wings, and `outDir` must be an absolute `<gameDir>/agentcraft/blueprints` (Windows or POSIX, no
+`.`/`..`; checked again on the real path before writing), so a client cannot make the Foreman write
+anywhere else.
+
+A job (claude backend, `src/agents/claude/design.ts`), one at a time:
+
+1. `<profile>/designs/<id>/` mirrors the repo: a fresh copy of `tools/blueprints` (kit, block table,
+   checker, example designs, the renderer if present), `docs/BUILDINGS.md`, and `BRIEF.md` written
+   from the request (style guide per preset, materials, features, size limits, kind/wings, the
+   anchor contract summary, how to build/check/render). The blueprint id is `gen_<slug of the name,
+   else the style>`, free in `outDir` at that moment. A remix copies the source module (a bundled
+   design, or the module an earlier job wrote).
+2. A design agent turn runs there: `claude_code` preset, `claude.designModel`, worker effort and
+   max turns, cwd = the scratch dir, the workers' permission machinery (policy, or auto mode's
+   guardrails) except that nothing can prompt: whatever the policy would ask about is refused with a
+   reason. No web tools, subagents, skills or the user's MCP servers; one tool, `design_status(step)`,
+   for progress (tool calls are mapped to steps too: writing the design, running the checker,
+   looking at the renders). It logs as `designer` (`logs/designer.jsonl`; not a roster agent).
+3. The Foreman re-checks: it restores a pristine kit (only `designs/<id>.mjs` is the agent's), runs
+   `node tools/blueprints/build.mjs <id>` in a child process with a minimal environment (no keys)
+   and a timeout, and checks the sidecar against the request (size within `maxSize`, kind, wings).
+   A failed check goes back to the same session with the problem; at most 4 turns in all, then
+   `failed` with the checker output.
+4. If the kit has `tools/blueprints/render.mjs`, it renders `<id>.preview-*.png` (a renderer error
+   does not fail the design). Then it copies `<id>.nbt`, the previews and the sidecar (last) into
+   `outDir` under a fresh id: `gen_<slug>`, `gen_<slug>_2`, ... (exclusive copies; nothing is
+   ever overwritten), and reports `done` with `blueprintId`, `size` and `previews` (absolute paths).
+   Feed lines on start / done / failure, a notification on done.
+
+A usage limit puts the job back at the front of the queue (it resumes the same session when the
+limit resets); a Foreman shutdown leaves it unfinished and the next start picks it up. The sim
+backend fakes jobs: a few speed-scaled steps, then a copy of the bundled workshop (group: campus
+with enough wings) as `gen_sim_<n>`, with the request's name; requests it does not fit fail.
 
 ## The sim backend
 
@@ -467,7 +510,7 @@ The repo id is the demo dir name: `sim-demo-showcase` / `sim-demo-showcase-late`
 ```sh
 npm test            # vitest: protocol, task graph, persistence, decisions, repos/merges, policy,
                     #         git push block, WS + full sim run, showcase states, claude
-                    #         orchestration, restart recovery and steering (fake SDK)
+                    #         orchestration, restart recovery and steering, design jobs (fake SDK)
 npx tsc --noEmit
 npm run check       # all of the above + protocol doc freshness
 ```
