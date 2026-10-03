@@ -94,7 +94,7 @@ export class Foreman {
     this.bus = new MessageBus(this.ctx);
     this.memory = new Memory(this.ctx, path.join(opts.config.dataDir, 'memory'));
     this.decisions = new DecisionQueue(this.ctx);
-    this.repos = new RepoManager(this.ctx, path.join(opts.config.dataDir, 'worktrees'), { mergeStyle: opts.config.mergeStyle, signMerges: opts.config.signMerges });
+    this.repos = new RepoManager(this.ctx, path.join(opts.config.dataDir, 'worktrees'), { mergeStyle: opts.config.mergeStyle, signMerges: opts.config.signMerges, settings: opts.config.repoSettings });
     this.notifier =
       opts.notifier ??
       new Notifier({ enabled: opts.config.notify, silent: opts.config.toastSilent, log: this.log, now });

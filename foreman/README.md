@@ -85,8 +85,9 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--effort low..max` | `medium` | |
 | `--workers 3` or `--workers kit,wren` | `juniper,kit,wren` | team (others stay "off shift") |
 | `--max-concurrent` | `3` | workers running at once |
+| `--throttle-concurrent` | `1` | workers at once while your plan (claude.ai login) reports a usage warning; at the limit itself nobody starts a turn until it resets, and interrupted turns resume then |
 | `--max-turns`, `--max-budget <usd>` | 40 lead / 80 worker, none | per turn caps |
-| `--ci "<cmd>"` | detected (`npm test`, `cargo test`, ...) | run after each task |
+| `--ci "<cmd>"` | detected (`npm`/`pnpm`/`yarn`/`bun test` by lockfile, `cargo test`, ...) | run after each task (a repo's `repoSettings` `ci` wins) |
 | `--no-lead-review` | | merge decisions go to you without a lead review turn |
 | `--repo-poll-ms` | `10000` | how often checkouts are checked for head/dirty changes |
 | `--merge-style merge\|squash` / `AGENTCRAFT_MERGE_STYLE` | `merge` | approved merges: a merge commit that keeps the agents' commits, or one squashed commit (see Safety guarantees) |
@@ -94,6 +95,22 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | sim: `--speed`, `--seed`, `--autostart`, `--showcase [late]`, `--auto-answer`, `--no-ambient` | | |
 
 `<home>/config.json` can hold the same settings (`{"backend":"claude","claude":{"workers":["kit","wren"]}}`).
+
+Per-repo settings go under `repoSettings`, keyed by the repository path. They live in your config, not
+in the repo, so an agent cannot change what the Foreman runs by editing its worktree:
+
+```json
+{ "repoSettings": { "~/code/app": {
+    "ci": "pnpm -r test",
+    "setup": "pnpm install --frozen-lockfile",
+    "copy": [".env", ".env.local"],
+    "setupTimeoutMs": 600000 } } }
+```
+
+`copy` brings untracked files from your checkout into each new worker worktree. `setup` runs once per
+new worktree before the worker's first turn (git network access stays off; a failure is shown to the
+worker rather than stopping it). `ci` replaces `--ci` and detection for that repo.
+
 While running, `<home>/<profile>/foreman.json` records `{pid, port, host, backend, profile, version, startedAt}`
 so launch scripts can find it; `<home>/foreman.json` holds the same for the first live Foreman (when
 it exits, another live profile takes its place). A second Foreman on a profile that is already

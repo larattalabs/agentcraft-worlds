@@ -49,8 +49,16 @@ export function boardSummary(fm: Foreman, goalId?: string): string {
     .join('\n');
 }
 
-function planText(fm: Foreman): string {
-  const plan = fm.memory.list().filter((m) => m.scope === 'shared' && /^plan/i.test(m.title)).pop();
+/**
+ * The plan for a goal: the "Plan: ..." note the lead wrote while planning it. Several goals can be
+ * active at once (other repos too), so the newest plan in memory is not necessarily this goal's.
+ * Without a recorded note (planned before plans were recorded, or the note was removed): the newest
+ * plan written since the goal was created.
+ */
+export function planText(fm: Foreman, goal?: Goal, planId?: string): string {
+  const recorded = planId ? fm.memory.get(planId) : undefined;
+  const plans = fm.memory.list().filter((m) => m.scope === 'shared' && /^plan/i.test(m.title));
+  const plan = recorded ?? (goal ? plans.filter((m) => m.updated >= goal.createdAt) : plans).pop();
   return plan ? truncate(plan.body, 3000) : '(no plan in memory)';
 }
 
@@ -75,7 +83,7 @@ export function taskHistory(fm: Foreman, task: Task): string {
   return `\n${userName()} already answered these questions on this task (do not ask them again):\n${lines.join('\n')}\n`;
 }
 
-export function workPrompt(fm: Foreman, task: Task, goal: Goal | undefined, wt: Worktree, inbox: string, continuesFrom?: string): string {
+export function workPrompt(fm: Foreman, task: Task, goal: Goal | undefined, wt: Worktree, inbox: string, continuesFrom?: string, planId?: string): string {
   const handoff = continuesFrom
     ? `\nYou take over this task from ${fm.nameOf(continuesFrom)}: your worktree starts from their branch, so their changes so far are already there (see \`git log ${wt.base}..HEAD\` and \`git diff ${wt.base}\`). Continue from there; do not start over.\n`
     : '';
@@ -85,7 +93,7 @@ Goal: ${goal?.text ?? '(none)'}
 Worktree: ${wt.path} (branch ${wt.branch})
 
 Plan (shared memory):
-${planText(fm)}
+${planText(fm, goal, planId)}
 
 Task board:
 ${boardSummary(fm, task.goalId)}

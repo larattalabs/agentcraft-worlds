@@ -21,16 +21,29 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 | 2026-10-03 | Public fork, so generic fixes can go upstream as PRs. |
 | 2026-10-03 | Hardcore world moves to MC 26.3 via a **new cloned Prism instance**; the 26.2 instance stays untouched as a fallback until the clone has soaked. |
 
+## Branches
+
+`main` is the fork's integration branch: upstream plus every topic branch below, merged. Each topic
+branch is cut from `upstream/main` so it can go upstream as its own PR.
+
+| Branch | What | Upstream PR? |
+|---|---|---|
+| `mod/safe-defaults` | roadmap 7–8 (+ this file) | yes, without `docs/FORK.md` |
+| `foreman/node-test-spec-output` | parse Node 24's `node --test` spec output (upstream test fails on Node 24 without it) | yes |
+| `foreman/plan-per-goal` | roadmap 1 | yes |
+| `foreman/repo-settings` | roadmap 2 | yes |
+| `foreman/rate-limits` | roadmap 3 | yes |
+
 ## Roadmap (ordered)
 
 ### Foreman (orchestration)
 
-1. **Plan per goal** — `prompts.ts` `planText()` picks the newest shared "Plan:" memory across all
+1. ✅ **Plan per goal** (`foreman/plan-per-goal`) — `prompts.ts` `planText()` picks the newest shared "Plan:" memory across all
    goals/repos; scope it to the job's goal. *(upstream PR)*
-2. **Per-repo config** — CI command, setup command run after worktree creation (e.g. `pnpm install`,
+2. ✅ **Per-repo config** (`foreman/repo-settings`; config.json `repoSettings` with `ci`, `setup`, `copy`) — CI command, setup command run after worktree creation (e.g. `pnpm install`,
    copy `.env`), detect pnpm/monorepo test commands. Files: `config.ts`, `repos.ts`
    (`detectTestCommand`, `createWorktree`, `runTests`), `agents/claude/index.ts`. *(upstream PR)*
-3. **Rate-limit aware scheduling** — on `rate_limit_event` `rejected`: global pause until `resetsAt`,
+3. ✅ **Rate-limit aware scheduling** (`foreman/rate-limits`; `getUsage()` windows in the status banner still to do) — on `rate_limit_event` `rejected`: global pause until `resetsAt`,
    requeue instead of marking tasks blocked; throttle `maxConcurrent` on `allowed_warning`; surface
    `getUsage()` windows in `foreman.status`. Files: `agents/claude/stream.ts`, `index.ts`
    (`schedule`/`pump`/`afterTurn`). *(upstream PR)*

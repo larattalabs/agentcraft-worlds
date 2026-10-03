@@ -36,7 +36,7 @@ import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type Pr
 import { truncate } from '../../util/text.js';
 import { leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
-import { StreamMapper, type TurnStats } from './stream.js';
+import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
 
@@ -71,6 +71,12 @@ interface ClaudeState {
   ciFixes: Record<string, number>;
   /** agents the user stopped (off shift until resume/spawn) */
   stopped: string[];
+  /** goal id -> memory id of the plan the lead wrote for it */
+  plans: Record<string, string>;
+  /** a usage limit was hit: no turn starts until `until` (epoch ms) */
+  limit?: { until: number; type?: string };
+  /** the plan warned about usage: fewer workers at once until `until` */
+  throttle?: { until: number; type?: string };
 }
 
 interface Running {
@@ -93,11 +99,23 @@ interface Running {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** "14:05" today, "Tue 14:05" on another day. */
+function clock(ms: number): string {
+  const d = new Date(ms);
+  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? hm : `${d.toLocaleDateString([], { weekday: 'short' })} ${hm}`;
+}
+
 function alive(child: ChildProcess | undefined): child is ChildProcess {
   return !!child && child.exitCode === null && child.signalCode === null;
 }
 
 const TURN_TIMEOUT_MS = 45 * 60_000;
+/** wait after a usage limit that did not say when it resets (doubles per hit, up to LIMIT_BACKOFF_MAX_MS) */
+const LIMIT_BACKOFF_MS = 5 * 60_000;
+const LIMIT_BACKOFF_MAX_MS = 60 * 60_000;
+/** throttle length when a usage warning has no reset time */
+const THROTTLE_DEFAULT_MS = 30 * 60_000;
 const LEAD = 'marlow';
 
 /**
@@ -148,6 +166,9 @@ export class ClaudeBackend implements Backend {
   /** scheduler retry after an error (backoff) */
   private retryTimer: NodeJS.Timeout | undefined;
   private retryDelayMs = 2000;
+  /** fires when a usage limit / throttle window ends */
+  private limitTimer: NodeJS.Timeout | undefined;
+  private limitBackoffMs = LIMIT_BACKOFF_MS;
 
   constructor(
     private fm: Foreman,
@@ -166,6 +187,10 @@ export class ClaudeBackend implements Backend {
         if (waiting) this.waitingUser.add(agentId);
         else this.waitingUser.delete(agentId);
       },
+      onPlanWritten: (goalId, memoryId) => {
+        this.st.plans[goalId] = memoryId;
+        this.fm.store.markDirty();
+      },
     };
   }
 
@@ -173,12 +198,13 @@ export class ClaudeBackend implements Backend {
     const b = this.fm.store.data.backend;
     let s = b.claude as ClaudeState | undefined;
     if (!s) {
-      s = { inflight: {}, ciFixes: {}, stopped: [] };
+      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {} };
       b.claude = s;
     }
     s.inflight ??= {};
     s.ciFixes ??= {};
     s.stopped ??= [];
+    s.plans ??= {};
     return s;
   }
 
@@ -215,6 +241,7 @@ export class ClaudeBackend implements Backend {
     } else {
       this.recover();
     }
+    this.armLimitTimer();
     // the user's messages that no agent read before the restart
     for (const id of [LEAD, ...this.team]) this.deliverPending(id);
     void this.fm.repos.sweepPendingRemovals().catch((e) => this.fm.log.debug(`sweep: ${(e as Error).message}`));
@@ -359,6 +386,7 @@ export class ClaudeBackend implements Backend {
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.tickTimer) clearTimeout(this.tickTimer);
+    if (this.limitTimer) clearTimeout(this.limitTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     const turns = [...this.running.values()];
     for (const r of turns) this.abortTurn(r, 'shutdown');
@@ -445,6 +473,115 @@ export class ClaudeBackend implements Backend {
     this.handoffs.set(taskId, p);
   }
 
+  // ---- usage limits -------------------------------------------------------------------------
+
+  /** A usage limit is in force: no turn starts (queued jobs wait, then resume). */
+  private limited(now = Date.now()): boolean {
+    return !!this.st.limit && now < this.st.limit.until;
+  }
+
+  /** Workers allowed at once: fewer while the plan reports a usage warning. */
+  private maxWorkers(now = Date.now()): number {
+    const t = this.st.throttle;
+    return t && now < t.until ? Math.min(this.cfg.maxConcurrent, this.cfg.throttleConcurrent) : this.cfg.maxConcurrent;
+  }
+
+  private baseStatusMessage(): string {
+    return `Claude (lead ${this.cfg.leadModel}, workers ${this.cfg.workerModel})`;
+  }
+
+  /** A live usage report from a running turn. */
+  private onRateLimit(r: RateLimitReport): void {
+    if (r.status === 'rejected') this.setLimit(r.resetsAt, r.type);
+    else if (r.status === 'allowed_warning') {
+      const until = r.resetsAt ?? Date.now() + THROTTLE_DEFAULT_MS;
+      const prev = this.st.throttle;
+      if (prev && prev.until >= until) return;
+      this.st.throttle = { until, ...(r.type ? { type: r.type } : {}) };
+      this.fm.store.markDirty();
+      if (this.maxWorkers() < this.cfg.maxConcurrent) {
+        const pct = r.utilization !== undefined ? ` (${Math.round(r.utilization * 100)}%)` : '';
+        this.fm.bus.feed('system', `Usage warning${r.type ? ` (${r.type.replace(/_/g, ' ')})` : ''}${pct}: ${this.maxWorkers()} worker(s) at a time until ${clock(until)}`);
+      }
+      this.armLimitTimer();
+    }
+  }
+
+  /** Stop starting turns until the limit resets (or a backoff when it did not say when). */
+  private setLimit(resetsAt: number | undefined, type: string | undefined): void {
+    const until = resetsAt ?? Date.now() + this.limitBackoffMs;
+    if (!resetsAt) this.limitBackoffMs = Math.min(LIMIT_BACKOFF_MAX_MS, this.limitBackoffMs * 2);
+    const prev = this.st.limit;
+    if (prev && prev.until >= until) return;
+    this.st.limit = { until, ...(type ? { type } : {}) };
+    this.fm.store.markDirty();
+    const what = `Usage limit reached${type ? ` (${type.replace(/_/g, ' ')})` : ''}`;
+    this.fm.setStatus({ message: `${what}: agents wait until ${clock(until)}, then resume` });
+    if (!prev || Date.now() >= prev.until) {
+      this.fm.bus.feed('error', `${what}. Nobody starts a new turn until ${clock(until)}; interrupted work resumes then.`);
+      this.fm.notify('warn', `${what}: AgentCraft resumes at ${clock(until)}`);
+    }
+    this.armLimitTimer();
+  }
+
+  /** Wake up when the earliest limit/throttle window ends. */
+  private armLimitTimer(): void {
+    if (this.limitTimer) clearTimeout(this.limitTimer);
+    this.limitTimer = undefined;
+    const now = Date.now();
+    const ends = [this.st.limit?.until, this.st.throttle?.until].filter((t): t is number => typeof t === 'number' && t > now);
+    if (!ends.length) {
+      this.liftExpired();
+      return;
+    }
+    // setTimeout caps at ~24.8 days; re-arm in steps
+    const delay = Math.min(Math.min(...ends) - now + 1000, 2 ** 31 - 1);
+    this.limitTimer = setTimeout(() => {
+      this.limitTimer = undefined;
+      this.liftExpired();
+      this.armLimitTimer();
+    }, delay);
+    this.limitTimer.unref?.();
+  }
+
+  private liftExpired(): void {
+    const now = Date.now();
+    let changed = false;
+    if (this.st.limit && now >= this.st.limit.until) {
+      delete this.st.limit;
+      changed = true;
+      this.fm.setStatus({ message: this.baseStatusMessage() });
+      this.fm.bus.feed('system', 'Usage limit reset: the team picks up where it stopped');
+      for (const id of this.queues.keys()) this.pump(id);
+    }
+    if (this.st.throttle && now >= this.st.throttle.until) {
+      delete this.st.throttle;
+      changed = true;
+    }
+    if (changed) {
+      this.fm.store.markDirty();
+      this.tick();
+    }
+  }
+
+  /**
+   * A turn ended because of the usage limit: keep its task where it is and run the same job again
+   * (resuming its session) once the limit resets, instead of marking the task failed/blocked.
+   */
+  private holdForLimit(job: Job, stats: TurnStats): void {
+    if (!this.limited()) this.setLimit(stats.rateLimit?.resetsAt, stats.rateLimit?.type);
+    const hasSession = !!this.fm.store.data.sessions[job.sessionKey]?.sessionId;
+    const next: Job = hasSession
+      ? { ...job, fresh: false, resumed: true, prompt: 'A usage limit stopped your last turn; it has reset now. Re-check where you were (your worktree, the task board) and continue your current job.' }
+      : job;
+    const until = this.st.limit?.until;
+    this.fm.setAgent(job.agentId, { state: 'blocked', activity: `usage limit - resumes ${until ? clock(until) : 'later'}` });
+    this.fm.agentLog(job.agentId, 'error', `usage limit: this ${job.kind} resumes when it resets${until ? ` (${clock(until)})` : ''}`);
+    const q = this.queues.get(job.agentId) ?? [];
+    q.unshift(next);
+    this.queues.set(job.agentId, q);
+  }
+
   /** Scheduler failed (git error, busy directory...): try again later instead of stalling. */
   private retryLater(): void {
     if (this.retryTimer || this.stopping) return;
@@ -506,10 +643,10 @@ export class ClaudeBackend implements Backend {
   }
 
   private async schedule(): Promise<void> {
-    if (this.authFailed || this.stopping) return;
+    if (this.authFailed || this.stopping || this.limited()) return;
     for (const goal of this.fm.goals().filter((g) => g.status === 'active')) {
       for (const t of this.fm.tasks.ready(goal.id)) {
-        if (this.workersRunning() >= this.cfg.maxConcurrent) return;
+        if (this.workersRunning() >= this.maxWorkers()) return;
         if (this.handoffs.has(t.id)) continue; // the previous worker's turn is still winding down
         let w: string | undefined;
         if (t.assignee && this.team.includes(t.assignee) && !this.isStopped(t.assignee)) {
@@ -559,7 +696,7 @@ export class ClaudeBackend implements Backend {
     this.fm.setAgent(agentId, { taskId: t.id, repoId: t.repoId!, worktree: wt.id, state: 'thinking', station: 'desk', activity: `starting ${t.id}` });
     this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId });
     const inbox = formatInbox(this.fm.bus.inbox(agentId, { markRead: true }), (id) => this.fm.nameOf(id));
-    this.enqueue({ kind: 'work', agentId, taskId: t.id, goalId: goal.id, sessionKey: `${agentId}:${t.id}`, fresh: !this.fm.store.data.sessions[`${agentId}:${t.id}`]?.sessionId, prompt: workPrompt(this.fm, t, goal, wt, inbox, continuesFrom) });
+    this.enqueue({ kind: 'work', agentId, taskId: t.id, goalId: goal.id, sessionKey: `${agentId}:${t.id}`, fresh: !this.fm.store.data.sessions[`${agentId}:${t.id}`]?.sessionId, prompt: workPrompt(this.fm, t, goal, wt, inbox, continuesFrom, this.st.plans[goal.id]) });
   }
 
   // ---- job queue ----------------------------------------------------------------------------
@@ -572,13 +709,13 @@ export class ClaudeBackend implements Backend {
   }
 
   private pump(agentId: string): void {
-    if (this.stopping || this.authFailed) return;
+    if (this.stopping || this.authFailed || this.limited()) return;
     if (this.running.has(agentId)) return;
     const a = this.fm.agent(agentId);
     if (!a || a.paused || !a.active || this.isStopped(agentId)) return;
     const q = this.queues.get(agentId);
     if (!q?.length) return;
-    if (agentId !== LEAD && this.workersRunning() >= this.cfg.maxConcurrent) return;
+    if (agentId !== LEAD && this.workersRunning() >= this.maxWorkers()) return;
     const job = q.shift()!;
     const p = this.runJob(job).finally(() => {
       this.turnPromises.delete(p);
@@ -662,11 +799,42 @@ export class ClaudeBackend implements Backend {
     };
   }
 
+  /**
+   * The repo's configured copy/setup for a new worker worktree (once per worktree). Returns a note
+   * for the worker's prompt when setup failed, else ''.
+   */
+  private async prepareWorktree(agentId: string, taskId: string): Promise<string> {
+    const t = this.fm.tasks.get(taskId);
+    if (!t?.repoId || !t.worktree) return '';
+    const s = this.fm.repos.settingsFor(t.repoId);
+    if (!s.setup && !s.copy?.length) return '';
+    const prev = this.fm.agent(agentId);
+    if (s.setup) this.fm.setAgent(agentId, { state: 'running', station: 'desk', activity: 'setting up worktree' });
+    try {
+      const res = await this.fm.repos.prepareWorktree(t.repoId, t.worktree);
+      if (res.copied.length) this.fm.agentLog(agentId, 'tool', `copied into worktree: ${res.copied.join(', ')}`);
+      if (!res.setup) return '';
+      const secs = (res.setup.durationMs / 1000).toFixed(1);
+      if (res.setup.ok) {
+        this.fm.agentLog(agentId, 'result', `worktree setup ok: ${res.setup.command} (${secs}s)`);
+        return '';
+      }
+      this.fm.agentLog(agentId, 'error', `worktree setup FAILED: ${res.setup.command} (${secs}s)\n${res.setup.output.split('\n').slice(-6).join('\n')}`);
+      this.fm.bus.feed('error', `${this.fm.nameOf(agentId)}: worktree setup failed for ${t.id} (${res.setup.command})`, { agentId });
+      return `Note: the worktree setup command \`${res.setup.command}\` failed before you started:\n${res.setup.output}\nLook into it before relying on the dependencies it installs.`;
+    } catch (e) {
+      this.fm.log.warn(`worktree setup for ${t.id}: ${(e as Error).message}`);
+      return '';
+    } finally {
+      if (prev && this.fm.agent(agentId)?.activity === 'setting up worktree') this.fm.setAgent(agentId, { state: prev.state, station: prev.station, activity: prev.activity });
+    }
+  }
+
   private async runJob(job: Job): Promise<void> {
     const agentId = job.agentId;
     const abort = new AbortController();
     const entry: Running = { abort, job };
-    const turn: TurnHandle = { signal: abort.signal, reason: () => entry.reason };
+    const turn: TurnHandle = { signal: abort.signal, reason: () => entry.reason, ...(job.goalId ? { goalId: job.goalId } : {}) };
     // (pump records this turn as lastTurn right after this synchronous part: this is the previous one)
     const previous = this.lastTurn.get(agentId);
     this.running.set(agentId, entry);
@@ -722,12 +890,15 @@ export class ClaudeBackend implements Backend {
       };
       this.fm.agentLog(agentId, 'text', `${resume ? 'Resuming' : 'Starting'} ${job.kind}${job.taskId ? ` ${job.taskId}` : ''} (${model})`);
       if (job.kind === 'followup' || job.resumed) this.fm.agentLog(agentId, 'text', truncate(job.prompt, 400));
-      const mapper = new StreamMapper(this.fm, agentId, cwd, role);
+      const mapper = new StreamMapper(this.fm, agentId, cwd, role, (r) => this.onRateLimit(r));
+      const setupNote = role === 'worker' && job.taskId ? await this.prepareWorktree(agentId, job.taskId) : '';
+      if (abort.signal.aborted) throw new Error('turn stopped during worktree setup');
       const timer = setTimeout(() => this.abortTurn(entry, 'timeout'), TURN_TIMEOUT_MS);
       timer.unref?.();
       // messages that arrived while the agent was not in a turn ride along with this prompt
       const unread = this.fm.bus.inbox(agentId, { markRead: true });
-      const prompt = unread.length ? `${job.prompt}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : job.prompt;
+      const withSetup = setupNote ? `${setupNote}\n\n${job.prompt}` : job.prompt;
+      const prompt = unread.length ? `${withSetup}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : withSetup;
       try {
         const q = this.queryFn({ prompt, options });
         entry.q = q;
@@ -763,6 +934,11 @@ export class ClaudeBackend implements Backend {
         this.fm.agentLog(agentId, 'error', `session error: ${truncate(msg, 400)}`);
         if (/auth|login|credential|401/i.test(msg)) this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
         stats = { isError: true, errors: [msg] };
+        const l = limitFromText(msg);
+        if (l.limited) {
+          stats.limited = true;
+          if (l.resetsAt) stats.rateLimit = { status: 'rejected', resetsAt: l.resetsAt };
+        }
       }
     } finally {
       this.running.delete(agentId);
@@ -787,10 +963,13 @@ export class ClaudeBackend implements Backend {
     } else if (reason === 'cancel') {
       const a = this.fm.agent(agentId);
       if (a?.taskId === job.taskId) this.fm.setAgent(agentId, { state: 'idle', station: 'lounge', activity: 'task cancelled', taskId: null, worktree: null });
+    } else if (stats?.isError && stats.limited) {
+      this.holdForLimit(job, stats);
     } else if (reason === 'timeout') {
       this.fm.agentLog(agentId, 'error', `turn timed out after ${TURN_TIMEOUT_MS / 60_000} min`);
       await this.afterTurn(job, { isError: true, subtype: 'timeout', errors: ['turn timed out'] }).catch((e) => this.fm.log.error(`afterTurn ${agentId}: ${(e as Error).stack ?? e}`));
     } else {
+      if (stats && !stats.isError) this.limitBackoffMs = LIMIT_BACKOFF_MS;
       await this.afterTurn(job, stats).catch((e) => this.fm.log.error(`afterTurn ${agentId}: ${(e as Error).stack ?? e}`));
     }
     this.pump(agentId);
@@ -927,8 +1106,9 @@ export class ClaudeBackend implements Backend {
     try {
       this.fm.tasks.update(t.id, { ci: 'running' });
       this.fm.repos.setCi(t.repoId, 'running');
-      if (worker) this.fm.agentLog(worker, 'tool', `CI: ${this.cfg.ciCommand ?? this.fm.repos.detectTestCommand(this.fm.repos.requireWorktree(t.repoId, t.worktree).path) ?? '(no tests)'}`);
-      ci = await this.fm.repos.runTests(t.repoId, t.worktree, this.cfg.ciCommand);
+      const ciCommand = this.fm.repos.testCommand(t.repoId, this.fm.repos.requireWorktree(t.repoId, t.worktree).path, this.cfg.ciCommand);
+      if (worker) this.fm.agentLog(worker, 'tool', `CI: ${ciCommand ?? '(no tests)'}`);
+      ci = await this.fm.repos.runTests(t.repoId, t.worktree, ciCommand);
       this.fm.tasks.update(t.id, { ci: ci.pass ? 'pass' : 'fail' });
       this.fm.repos.setCi(t.repoId, ci.pass ? 'pass' : 'fail');
       if (worker) this.fm.agentLog(worker, ci.pass ? 'result' : 'error', `CI ${ci.pass ? 'passed' : 'FAILED'} (${(ci.durationMs / 1000).toFixed(1)}s)\n${ci.output.split('\n').slice(-6).join('\n')}`);
