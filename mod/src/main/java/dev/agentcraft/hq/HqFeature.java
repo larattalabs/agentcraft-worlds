@@ -72,7 +72,37 @@ public final class HqFeature {
 		return v == null || !(v.trim().equals("0") || v.trim().equalsIgnoreCase("false") || v.trim().equalsIgnoreCase("off"));
 	}
 
+	/**
+	 * Building rewrites a large area of terrain and moves the world spawn, so it only runs in the
+	 * AgentCraft HQ world unless AGENTCRAFT_HQ_ANYWORLD=1 (-Dagentcraft.hq.anyworld=1) opts in, and
+	 * never in a Hardcore world.
+	 */
+	private static @Nullable String refusal(CommandSourceStack source) {
+		var server = source.getServer();
+		if (server.getWorldData().isHardcore()) {
+			return "/agentcraft hq never builds in a Hardcore world (it rewrites terrain and moves the spawn)";
+		}
+		if (!HqWorld.isHq(server) && !anyWorld()) {
+			return "/agentcraft hq only builds in the \"" + HqWorld.LEVEL_NAME + "\" world; to build into this world on purpose,"
+				+ " back it up and start the game with -Dagentcraft.hq.anyworld=1";
+		}
+		return null;
+	}
+
+	private static boolean anyWorld() {
+		String v = System.getProperty("agentcraft.hq.anyworld");
+		if (v == null) {
+			v = System.getenv("AGENTCRAFT_HQ_ANYWORLD");
+		}
+		return v != null && (v.trim().equals("1") || v.trim().equalsIgnoreCase("true") || v.trim().equalsIgnoreCase("on"));
+	}
+
 	private static int build(CommandContext<CommandSourceStack> ctx, String id, boolean force) {
+		String refused = refusal(ctx.getSource());
+		if (refused != null) {
+			ctx.getSource().sendFailure(Component.literal(refused));
+			return 0;
+		}
 		HqBuilder builder = HqBuilders.get(id);
 		if (builder == null) {
 			ctx.getSource().sendFailure(Component.literal("Unknown HQ builder '" + id + "' (known: " + HqBuilders.ids() + ")"));

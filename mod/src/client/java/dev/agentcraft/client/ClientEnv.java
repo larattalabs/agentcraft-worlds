@@ -3,6 +3,7 @@ package dev.agentcraft.client;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 
 /**
@@ -11,22 +12,31 @@ import net.minecraft.client.Minecraft;
  *
  * <pre>
  * AGENTCRAFT_DEV_PORT   DevBridge port (default 7879), 127.0.0.1 only
- * AGENTCRAFT_DEV        0 disables the DevBridge (default on)
- * AGENTCRAFT_MUTE       1 (default) forces master+music volume to 0 at startup; 0 keeps your volume
- * AGENTCRAFT_FOCUS      0 (default) = the window opens WITHOUT taking focus; 1 = normal focus
- * AGENTCRAFT_AUTOWORLD  1 (default) = create/load the "AgentCraft HQ" world on startup; 0 = title screen
+ * AGENTCRAFT_DEV        1 enables the DevBridge, 0 disables it
+ * AGENTCRAFT_MUTE       1 forces master+music volume to 0 at startup; 0 keeps your volume
+ * AGENTCRAFT_FOCUS      0 = the window opens WITHOUT taking focus; 1 = normal focus
+ * AGENTCRAFT_AUTOWORLD  1 = create/load the "AgentCraft HQ" world on startup; 0 = title screen
  * AGENTCRAFT_SHOTS_DIR  where dev.screenshot writes PNGs (default &lt;repo&gt;/artifacts/shots)
  * </pre>
+ *
+ * Defaults depend on how the game runs. In a development run ({@code gradlew runClient}) the
+ * DevBridge, mute, no-focus and AutoWorld are on, as the dev tools expect. A built jar installed
+ * in a normal launcher (Prism, the vanilla launcher) is someone's everyday game: all four default
+ * off (focus on), so the mod never opens a world, silences the game or exposes the DevBridge
+ * unless asked to.
  */
 public final class ClientEnv {
 	private ClientEnv() {
 	}
 
+	/** True in {@code gradlew runClient}; false for a jar in a normal launcher. */
+	public static final boolean DEV_RUN = FabricLoader.getInstance().isDevelopmentEnvironment();
+
 	public static final int DEV_PORT = intValue("AGENTCRAFT_DEV_PORT", 7879);
-	public static final boolean DEV_BRIDGE = flag("AGENTCRAFT_DEV", true);
-	public static final boolean MUTE = flag("AGENTCRAFT_MUTE", true);
-	public static final boolean TAKE_FOCUS = flag("AGENTCRAFT_FOCUS", false);
-	public static final boolean AUTO_WORLD = flag("AGENTCRAFT_AUTOWORLD", true);
+	public static final boolean DEV_BRIDGE = flag("AGENTCRAFT_DEV", DEV_RUN);
+	public static final boolean MUTE = flag("AGENTCRAFT_MUTE", DEV_RUN);
+	public static final boolean TAKE_FOCUS = flag("AGENTCRAFT_FOCUS", !DEV_RUN);
+	public static final boolean AUTO_WORLD = flag("AGENTCRAFT_AUTOWORLD", DEV_RUN);
 
 	public static String raw(String envName) {
 		String prop = System.getProperty(envName.toLowerCase(Locale.ROOT).replace('_', '.'));

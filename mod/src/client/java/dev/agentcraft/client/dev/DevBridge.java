@@ -267,6 +267,12 @@ public final class DevBridge extends WebSocketServer {
 				throw new DevException("unknown type '" + t + "' (try dev.help)");
 			}
 			type = t;
+			// The DevBridge runs commands with full permissions and switches game modes; none of that
+			// belongs anywhere near a Hardcore world.
+			Minecraft current = Minecraft.getInstance();
+			if (!t.equals("dev.help") && current != null && current.level != null && current.level.getLevelData().isHardcore()) {
+				throw new DevException("the DevBridge is disabled while a Hardcore world is loaded");
+			}
 			Fields meta = Fields.of(req);
 			long timeout = meta.has("timeoutMs")
 				? meta.integer("timeoutMs", 1, MAX_TIMEOUT_MS)

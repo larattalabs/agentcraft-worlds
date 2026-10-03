@@ -45,8 +45,9 @@ public final class HqWorld {
 		});
 	}
 
+	/** The HQ world: switches players to creative and rewrites game rules, so never a Hardcore world. */
 	public static boolean isHq(MinecraftServer server) {
-		return LEVEL_NAME.equals(server.getWorldData().getLevelName());
+		return LEVEL_NAME.equals(server.getWorldData().getLevelName()) && !server.getWorldData().isHardcore();
 	}
 
 	private static void onServerStarted(MinecraftServer server) {

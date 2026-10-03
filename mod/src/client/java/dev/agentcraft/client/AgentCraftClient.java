@@ -45,10 +45,14 @@ public class AgentCraftClient implements ClientModInitializer {
 			// Runs before the first client tick, so no sound/music ever plays.
 			mc.options.getSoundSourceOptionInstance(SoundSource.MASTER).set(0.0);
 			mc.options.getSoundSourceOptionInstance(SoundSource.MUSIC).set(0.0);
-			AgentCraft.LOGGER.info("Muted (AGENTCRAFT_MUTE=1 default; set AGENTCRAFT_MUTE=0 to keep your volume)");
+			AgentCraft.LOGGER.info("Muted (AGENTCRAFT_MUTE=1; set AGENTCRAFT_MUTE=0 to keep your volume)");
 		}
-		// Never pause because the window is in the background (also enforced via options template).
-		mc.options.pauseOnLostFocus = false;
+		if (ClientEnv.DEV_RUN) {
+			// Dev runs never pause because the window is in the background (also enforced via the
+			// options template). A normal install keeps the player's setting: in survival, a game that
+			// keeps running while alt-tabbed can get the player killed.
+			mc.options.pauseOnLostFocus = false;
+		}
 		DevBridge.startBridge();
 	}
 }
