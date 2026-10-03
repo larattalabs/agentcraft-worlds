@@ -464,8 +464,8 @@ final class ReposTab implements HubPane {
 			if (st.baseBranch() != null) {
 				rows.add(new String[] {"Base", st.baseBranch()});
 			}
-			rows.add(new String[] {"CI command", st.ci() == null ? "none" : st.ci()});
-			rows.add(new String[] {"Setup", st.setup() == null ? "none" : st.setup()});
+			rows.add(new String[] {"CI command", st.ci() == null ? "default (--ci or detected)" : st.ci()});
+			rows.add(new String[] {"Setup", st.setup() == null ? "default" : st.setup()});
 			if (st.pr() != null) {
 				List<String> p = new ArrayList<>();
 				if (st.pr().remote() != null) {

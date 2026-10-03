@@ -91,6 +91,8 @@ public final class HubGoals {
 	/** The goal open in the hub (counts as seen while open), null = none. */
 	private static @Nullable String viewing;
 	private static boolean goalsTabShown;
+	/** The Goals tab's mark from before the current visit (unread fallback for goals never opened), -1 = no visit. */
+	private static long visitBaseline = -1;
 
 	private HubGoals() {
 	}
@@ -131,6 +133,9 @@ public final class HubGoals {
 	/** dev.goals.seen: forget this world's marks (tab = the Goals tab's last look, 0 = never) and the digests. */
 	static void resetSeen(long tab) {
 		seen().resetWorld(world(), tab);
+		// a visit in progress must not overwrite the faked mark when the hub closes
+		goalsTabShown = false;
+		visitBaseline = -1;
 		away = null;
 		GOAL_DIGESTS.clear();
 		flush(true);
@@ -138,11 +143,19 @@ public final class HubGoals {
 
 	/** The Goals tab is (or stops being) on screen: it counts as seen up to now. */
 	static void goalsTabShown(boolean shown) {
-		if (shown || goalsTabShown) {
-			seen().markTab(world(), System.currentTimeMillis());
+		if (shown && !goalsTabShown) {
+			visitBaseline = seen().beginVisit(world());
+		} else if (!shown && goalsTabShown) {
+			seen().endVisit(world(), System.currentTimeMillis());
+			visitBaseline = -1;
 		}
 		goalsTabShown = shown;
 		flush(false);
+	}
+
+	/** When a goal was last looked at, with this visit's fallback for goals never opened. */
+	static long goalSeen(String goalId) {
+		return visitBaseline >= 0 ? seen().goalSeen(world(), goalId, visitBaseline) : seen().goalSeen(world(), goalId);
 	}
 
 	/** Opens (or leaves, null) a goal in the hub: the one left and the one opened count as seen now. */
@@ -192,7 +205,7 @@ public final class HubGoals {
 		if (g.id().equals(viewing)) {
 			return false;
 		}
-		return GoalLogic.unread(activity(g), seen().goalSeen(world(), g.id()));
+		return GoalLogic.unread(activity(g), goalSeen(g.id()));
 	}
 
 	// ------------------------------------------------------------------ queries
@@ -385,7 +398,7 @@ public final class HubGoals {
 
 	/** The goal is being opened: when it had activity since its last view, ask for its own digest. */
 	static void openGoal(Goal g) {
-		long since = seen().goalSeen(world(), g.id());
+		long since = goalSeen(g.id());
 		if (since > 0 && activity(g) > since && Foreman.connected()) {
 			DigestState prev = GOAL_DIGESTS.get(g.id());
 			if (prev == null || prev.since != since) {
@@ -593,7 +606,7 @@ public final class HubGoals {
 		j.addProperty("tasks", tasks(g.id()).size());
 		j.addProperty("thread", thread(g.id()).size());
 		j.addProperty("activity", activity(g));
-		j.addProperty("seen", seen().goalSeen(world(), g.id()));
+		j.addProperty("seen", goalSeen(g.id()));
 		j.addProperty("unread", unread(g));
 		return j;
 	}

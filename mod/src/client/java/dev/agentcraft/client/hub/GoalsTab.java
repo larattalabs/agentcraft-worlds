@@ -88,6 +88,9 @@ final class GoalsTab implements HubPane {
 	private @Nullable HubField focus;
 
 	private @Nullable String selected;
+	/** A goal just submitted, kept selected until its goal.upsert arrives (10 s at most). */
+	private @Nullable String waitingFor;
+	private long waitingSince;
 	private View view = View.THREAD;
 	private boolean detailOpen;
 	private boolean formOpen;
@@ -279,6 +282,9 @@ final class GoalsTab implements HubPane {
 		Goal g = HubGoals.goal(selected);
 		if (g != null) {
 			return g; // filtered out of the list but still open
+		}
+		if (selected != null && selected.equals(waitingFor) && System.currentTimeMillis() - waitingSince < 10_000) {
+			return null; // acked, its upsert not here yet: keep it selected
 		}
 		if (list.isEmpty()) {
 			selected = null;
@@ -478,6 +484,8 @@ final class GoalsTab implements HubPane {
 			formNote = null;
 			formOpen = false;
 			if (goalId != null) {
+				waitingFor = goalId;
+				waitingSince = System.currentTimeMillis();
 				open(goalId, View.THREAD);
 				boolean dropped = (branch != null || !instr.isEmpty()) && HubGoals.goal(goalId) != null
 					&& HubGoals.goal(goalId).instructions() == null && HubGoals.goal(goalId).branch() == null;
@@ -848,6 +856,14 @@ final class GoalsTab implements HubPane {
 			y += dh + 4;
 			h -= dh + 4;
 			needed += dh + 4;
+		}
+		boolean waiting = cur == null && selected != null && selected.equals(waitingFor);
+		if (waiting) {
+			goalList.hide();
+			taskList.hide();
+			Panels.inset(g, x, y, w, h);
+			g.text(font(), "Waiting for " + selected + " from the Foreman…", x + 8, y + 10, UiBits.muted(), false);
+			return;
 		}
 		if (goals.isEmpty() && cur == null) {
 			goalList.hide();

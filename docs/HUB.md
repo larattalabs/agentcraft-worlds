@@ -297,7 +297,7 @@ Details and DevBridge in mod/DEV.md "Hub" -> "Repos and Goals tabs". Notes where
   the message box's text); "Open…" opens the decision screen over the hub.
 - "Since you were away": asked on opening the hub or the Goals tab when the tab was last looked at >= 10
   minutes ago, once per away stretch; the goal's own digest is asked on opening a goal that had activity since
-  its last view. A goal never opened counts as seen when the Goals tab was. `hub-seen.json` is keyed by the save
+  its last view. A goal never opened counts as seen as of the Goals tab's previous visit (the tab is marked when it leaves the screen). `hub-seen.json` is keyed by the save
   folder name ("multiplayer" outside singleplayer).
 - The new goal form's "For" offers each repo and each group building (2+ repos; it sends all of them as
   `repos[]`, wing order). Branch suggestions: the repo's worktree branches and its goals' branches.

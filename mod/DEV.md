@@ -618,7 +618,8 @@ The contract is docs/HUB.md "Repos and Goals tabs" (+ its multi-repo amendment);
     wing order, the first is `repoId`), Continue a branch (field + chips from `HubGoals.branches`: the repo's
     worktree branches and goals' branches). Submit goal / Ctrl+Enter; on the ack the new goal opens.
 - Seen and digests: `<gameDir>/agentcraft/hub-seen.json` (`HubSeen`: per world = `Buildings.worldId()`, else
-  "multiplayer": the Goals tab's last look + each goal's; a goal never opened counts as seen with the tab;
+  "multiplayer": the Goals tab's last look + each goal's; a goal never opened counts as seen as of the tab's previous visit
+  (marked when the tab leaves the screen, so a goal that moved since then has a dot during this visit);
   saved atomically, throttled, and on closing the hub). Opening the hub (or the Goals tab) when the tab was
   last looked at >= 10 minutes ago asks `goal.digest {since}`; the panel (sections by `GoalLogic.sections`,
   one line per goal with `GoalLogic.summary`, click opens the goal) shows at the top of the Goals tab until

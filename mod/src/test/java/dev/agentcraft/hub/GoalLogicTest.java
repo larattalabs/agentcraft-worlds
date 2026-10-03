@@ -125,6 +125,26 @@ class GoalLogicTest {
 	}
 
 	@Test
+	void aGoalThatMovedBetweenVisitsIsUnreadDuringTheNextVisit() {
+		HubSeen s = new HubSeen();
+		// visit 1: 1000..2000
+		long base1 = s.beginVisit("w");
+		assertEquals(0, base1);
+		s.endVisit("w", 2000);
+		// g1 (never opened) has activity at 3000; visit 2 starts at 5000
+		long base2 = s.beginVisit("w");
+		assertEquals(2000, base2, "the fallback is the mark from before this visit");
+		assertTrue(GoalLogic.unread(3000, s.goalSeen("w", "g1", base2)), "unread although the tab is on screen");
+		assertFalse(GoalLogic.unread(1500, s.goalSeen("w", "g1", base2)));
+		// opening it marks it; a goal's own mark wins over the fallback
+		s.markGoal("w", "g1", 5100);
+		assertFalse(GoalLogic.unread(3000, s.goalSeen("w", "g1", base2)));
+		s.endVisit("w", 6000);
+		assertEquals(6000, s.tabSeen("w"));
+		assertFalse(s.away("w", 6000 + HubSeen.AWAY_MS - 1));
+	}
+
+	@Test
 	void seenDropsTheLeastRecentlySeenGoals() {
 		HubSeen s = new HubSeen();
 		for (int i = 0; i < HubSeen.MAX_GOALS + 3; i++) {

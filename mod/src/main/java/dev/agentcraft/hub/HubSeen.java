@@ -61,6 +61,30 @@ public final class HubSeen {
 		return t != null ? t : w.tab;
 	}
 
+	/**
+	 * {@link #goalSeen(String, String)} during a visit of the Goals tab: a goal never opened falls back to
+	 * {@code tabFallback} (the tab's mark from before this visit began, see {@link #beginVisit}), so a goal
+	 * that moved since the last visit shows as unread although the tab is on screen now.
+	 */
+	public long goalSeen(String world, String goalId, long tabFallback) {
+		World w = worlds.get(world);
+		Long t = w == null ? null : w.goals.get(goalId);
+		return t != null ? t : tabFallback;
+	}
+
+	/**
+	 * The Goals tab comes on screen: returns its mark from before (the fallback for {@link #goalSeen(String,
+	 * String, long)} during this visit). Nothing is marked: {@link #endVisit} marks it when the tab goes.
+	 */
+	public long beginVisit(String world) {
+		return tabSeen(world);
+	}
+
+	/** The Goals tab leaves the screen at {@code now}: it counts as seen up to then. */
+	public void endVisit(String world, long now) {
+		markTab(world, now);
+	}
+
 	/** Whether the goal's own mark exists (it was opened at least once). */
 	public boolean opened(String world, String goalId) {
 		World w = worlds.get(world);
