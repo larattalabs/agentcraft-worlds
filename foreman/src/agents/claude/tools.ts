@@ -62,13 +62,13 @@ export async function closeIfNoChanges(fm: Foreman, taskId: string): Promise<boo
   if (t.pr) {
     // review fixes that changed nothing: the pull request stays open and watched
     fm.tasks.setStatus(t.id, 'pr', { force: true });
-    fm.bus.feed('task', `${t.id}: the review fixes changed no files; PR #${t.pr.id} stays as it is`, { agentId: t.assignee ?? 'marlow' });
+    fm.bus.feed('task', `${t.id}: the review fixes changed no files; PR #${t.pr.id} stays as it is`, { agentId: t.assignee ?? fm.leadOfTask(t) });
     if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} PR open`, taskId: null, worktree: null });
     fm.backend?.onPrPush?.(fm.tasks.require(t.id), 'empty');
     return true;
   }
   fm.tasks.setStatus(t.id, 'done', { force: true, summary: t.summary ?? 'no changes' });
-  fm.bus.feed('task', `${t.id} changed no files (report only): closed as done, nothing to merge`, { agentId: t.assignee ?? 'marlow' });
+  fm.bus.feed('task', `${t.id} changed no files (report only): closed as done, nothing to merge`, { agentId: t.assignee ?? fm.leadOfTask(t) });
   if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} done`, taskId: null, worktree: null });
   return true;
 }
@@ -95,7 +95,11 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
       { to: z.string().describe('agent id/name, "lead", "all" or "user"'), text: z.string().describe('the message (1-3 sentences)') },
       async ({ to, text }) => {
         let target = to.trim().toLowerCase();
-        if (target === 'lead') target = 'marlow';
+        // "lead": the lead of the sender's task (its goal's lead), else marlow
+        if (target === 'lead') {
+          const lead = fm.leadOfTask(fm.tasks.get(fm.agent(agentId)?.taskId ?? ''));
+          target = fm.leads.onDuty(lead) ? lead : 'marlow';
+        }
         if (!['all', 'user'].includes(target)) {
           const id = fm.resolveAgentId(target);
           if (!id) return fail(`no teammate "${to}". Team: ${fm.agents().filter((a) => a.active).map((a) => a.id).join(', ')}`);
@@ -202,15 +206,23 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
         if (role === 'worker') {
           const current = fm.agent(agentId)?.taskId;
           if (t.assignee !== agentId) return fail(`${t.id} is not your task`);
-          if (current && t.id !== current) return fail(`you are working on ${current}; you can only update that task. Tell Marlow (send_message to "lead") if ${t.id} is already covered.`);
+          if (current && t.id !== current) return fail(`you are working on ${current}; you can only update that task. Tell ${fm.nameOf(fm.leadOfTask(fm.tasks.get(current)))} (send_message to "lead") if ${t.id} is already covered.`);
           if (a.status && !['review', 'blocked', 'doing'].includes(a.status)) return fail('workers can set status review, blocked or doing');
           if (a.assignee || a.title || a.description) return fail('only the lead can change assignee/title/description');
+        } else {
+          // every lead changes only its own goals' tasks (the workers are shared, the tasks are not)
+          const owner = fm.leadOfTask(t);
+          if (owner !== agentId) return fail(`${t.id} belongs to ${fm.nameOf(owner)}'s goal; leave it to them (send_message to "${owner}" if it matters for your work).`);
         }
         try {
           if (a.assignee) {
             const id = fm.resolveAgentId(a.assignee);
             if (!id) return fail(`no agent ${a.assignee}`);
-            fm.tasks.update(t.id, { assignee: id });
+            if (role === 'lead' && fm.agent(id)?.role === 'lead') return fail('assign tasks to workers, not to a lead');
+            if (role === 'lead' && t.status === 'doing' && t.assignee && t.assignee !== id) {
+              // a task in progress changes hands properly: the old turn ends, the new worker continues its branch
+              fm.taskAction(t.id, 'reassign', id);
+            } else fm.tasks.update(t.id, { assignee: id });
           }
           if (a.title) fm.tasks.update(t.id, { title: a.title });
           if (a.description) fm.tasks.update(t.id, { description: a.description });
@@ -330,8 +342,12 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
                 return fail(`cannot build on ${base}: ${(e as Error).message}`);
               }
             }
-            fm.bus.feed('task', `Marlow created ${t.id}: ${t.title}`, { agentId });
+            fm.bus.feed('task', `${fm.nameOf(agentId)} created ${t.id}: ${t.title}`, { agentId });
             hooks.onTasksChanged();
+            // the workers are shared: one busy on another lead's task is never taken off it
+            const busy = who ? fm.tasks.list().find((x) => x.assignee === who && x.status === 'doing' && x.id !== t.id) : undefined;
+            const other = busy ? fm.leadOfTask(busy) : undefined;
+            if (busy && other && other !== agentId) return withInbox(`Created ${t.id}. ${fm.nameOf(who!)} is busy on ${busy.id} for ${fm.nameOf(other)}; ${t.id} waits until they are free (update_task assignee to pick another worker).`);
             return withInbox(`Created ${t.id}.`);
           } catch (e) {
             return fail((e as Error).message);
