@@ -209,7 +209,9 @@ Client -> Foreman (all ack; errors as `ok:false` with a message):
 - The user's goal message is a feed item `kind: "message"`, `agentId: "user"`, `to: <lead>`, with
   `goalId` (plain `user.message` stays `kind: "user"`). The lead's reply is what it sends to the
   user in that turn, else its final text. A done/cancelled goal whose building lead was released
-  is answered by marlow. A stopped lead: the feed says so; the message runs at `/resume`.
+  is answered by marlow. A stopped lead: the feed says so; the message runs at `/resume`. Unread
+  goal messages of a lead that is released go to marlow. Goal-tagged `message` feed items keep up
+  to 2000 characters (other feed items: 400).
 - `goal.instructions` / `goal.plan` messages to the lead come from the user, text "The user changed
   the standing instructions for this goal: ..." / "The user edited the plan ... ```diff ...```".
   Unchanged input: nothing is sent (`changed: false`). `goal.plan` on a goal without a plan

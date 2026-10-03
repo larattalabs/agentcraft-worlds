@@ -633,6 +633,22 @@ export class Foreman {
     } catch (e) {
       this.log.error(`backend.onLeadReleased: ${(e as Error).message}`);
     }
+    // goal messages it had not read yet go to whoever takes the goal's messages now
+    const unread = this.bus.goalInbox(leadId);
+    for (const m of unread) {
+      const g = m.goalId ? this.goal(m.goalId) : undefined;
+      if (g) m.to = this.goalLead(g);
+    }
+    if (unread.length) this.store.markDirty();
+    for (const goalId of new Set(unread.map((m) => m.goalId!))) {
+      const g = this.goal(goalId);
+      if (!g) continue;
+      try {
+        this.backend?.onGoalMessage?.(g, this.goalLead(g));
+      } catch (e) {
+        this.log.error(`backend.onGoalMessage: ${(e as Error).message}`);
+      }
+    }
     if (!opts.quiet) this.emitLeads();
   }
 

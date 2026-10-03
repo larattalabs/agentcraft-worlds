@@ -1020,7 +1020,8 @@ export class ClaudeBackend implements Backend {
     if (this.fm.isLead(job.agentId)) {
       const goal = job.goalId ? this.fm.goal(job.goalId) : this.fm.currentGoalOf(job.agentId);
       const own = this.fm.leads.record(job.agentId)?.repos.map((id) => this.fm.repos.get(id)).find(Boolean);
-      const repo = goal?.repoId ? this.fm.repos.get(goal.repoId) : (own ?? this.fm.repos.defaultRepo());
+      // (a goal whose repository was removed since: the lead reads its own / the default one)
+      const repo = (goal?.repoId ? this.fm.repos.get(goal.repoId) : undefined) ?? own ?? this.fm.repos.defaultRepo();
       if (!repo) throw new Error('no repo for the lead');
       // read-only views of every repository's base: the lead plans against what workers start from
       const gb = goal ? this.st.goalBranch[goal.id] : undefined;

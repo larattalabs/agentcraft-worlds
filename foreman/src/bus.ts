@@ -13,6 +13,9 @@ export interface FeedExtra {
   taskId?: string;
 }
 
+/** feed text limit of a goal-tagged message (other feed items: 400) */
+export const GOAL_MESSAGE_MAX = 2000;
+
 export class MessageBus {
   private listeners: Array<(m: BusMessage) => void> = [];
 
@@ -23,7 +26,9 @@ export class MessageBus {
    * `taskId` is a hint only (not sent): the item gets that task's goal.
    */
   feed(kind: FeedKind, text: string, extra: FeedExtra = {}): FeedItem {
-    const item: FeedItem = { ts: this.ctx.now(), kind, text: truncate(text, 400) };
+    // a goal's thread (goal messages and the lead's replies) keeps longer messages
+    const max = kind === 'message' && this.goalOf(extra) ? GOAL_MESSAGE_MAX : 400;
+    const item: FeedItem = { ts: this.ctx.now(), kind, text: truncate(text, max) };
     if (extra.agentId) item.agentId = extra.agentId;
     if (extra.to) item.to = extra.to;
     const goalId = this.goalOf(extra);

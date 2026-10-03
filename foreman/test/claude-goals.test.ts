@@ -219,4 +219,41 @@ describe('Goals tab, claude backend', () => {
     expect(planPrompt(h.fm, { ...base, repos: ['api', 'web'] }, '/x/api', 'main')).toContain('This goal is for the repositories api (primary), web: give each task the one repository it changes (create_task repo)');
     expect(planPrompt(h.fm, { ...base, repos: ['api'] }, '/x/api', 'main')).not.toContain('This goal is for');
   });
+
+  it('a done goal whose repository was removed still gets answers', async () => {
+    const repo2 = await demoRepo();
+    try {
+      const r2 = await h.fm.repos.add(repo2);
+      const g = h.fm.createGoal('omega', r2.id);
+      h.fm.setGoal(g.id, { status: 'done' });
+      expect((await send({ type: 'repo.remove', repoId: r2.id })).ok).toBe(true);
+      await send({ type: 'goal.message', goalId: g.id, text: 'Remember omega?' });
+      await until(() => h.fm.store.data.feed.some((f) => f.goalId === g.id && f.agentId === 'marlow' && f.to === 'user'));
+    } finally {
+      rmrf(path.dirname(repo2));
+    }
+  });
+
+  it("a released lead's unread goal messages go to marlow", async () => {
+    expect(h.fm.assignLead('w/b1', [repoId()]).leadId).toBe('ines');
+    let release!: () => void;
+    holds.set('delta', new Promise<void>((r) => (release = r)));
+    const g = await h.fm.submitGoal('delta', repoId());
+    expect(g.leadId).toBe('ines');
+    await until(() => turns.some((t) => t.who === 'ines' && t.prompt.includes('"delta"')));
+    // queued behind ines's planning turn, unread
+    expect((await send({ type: 'goal.message', goalId: g.id, text: 'Long message about delta' })).result).toMatchObject({ leadId: 'ines' });
+    h.fm.releaseBuilding('w/b1');
+    release();
+    await until(() => turns.some((t) => t.prompt.includes('Long message about delta')));
+    expect(turns.find((t) => t.prompt.includes('Long message about delta'))!.who).toBe('marlow');
+    expect(h.fm.store.data.messages.find((m) => m.text === 'Long message about delta')!.to).toBe('marlow');
+  });
+
+  it('keeps long goal messages whole in the feed (up to 2000 chars)', async () => {
+    const g = h.fm.goals().find((x) => x.text === 'alpha')!;
+    const long = 'x'.repeat(1200);
+    await send({ type: 'goal.message', goalId: g.id, text: long });
+    expect(h.fm.store.data.feed.some((f) => f.text === long)).toBe(true);
+  });
 });
