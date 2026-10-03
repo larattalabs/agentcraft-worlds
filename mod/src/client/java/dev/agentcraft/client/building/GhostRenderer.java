@@ -69,6 +69,65 @@ final class GhostRenderer {
 		});
 	}
 
+	/**
+	 * The plot being marked ({@link PlotMarker}): before the first corner, the looked-at cell; then a
+	 * translucent rectangle on the ground from the first corner to the looked-at one, its outline (brass
+	 * along the entrance side) and faint posts and a top outline at the height limit.
+	 */
+	static void submitPlot(LevelRenderContext ctx) {
+		PlotMarker.View v = PlotMarker.view();
+		Vec3 cam = ctx.levelState().cameraRenderState.pos;
+		if (v == null || cam == null) {
+			return;
+		}
+		dev.agentcraft.building.DesignSpec.Plot p = v.plot(PlotMarker.dimension());
+		boolean single = v.first() == null;
+		float x0 = (float) (p.minX() - cam.x);
+		float z0 = (float) (p.minZ() - cam.z);
+		float x1 = x0 + p.dx();
+		float z1 = z0 + p.dz();
+		float y = (float) (p.y() - cam.y);
+		float top = y + p.height();
+		boolean odd = p.tooSmall() || p.tooLarge();
+		int fill = UiStyle.withAlpha(odd ? 0xFFE0782A : UiStyle.SAGE, single ? 0x70 : 0x48);
+		int edge = UiStyle.withAlpha(odd ? 0xFFE0782A : UiStyle.SAGE, 0xE0);
+		int faint = UiStyle.withAlpha(UiStyle.SAGE, 0x50);
+		int brass = UiStyle.withAlpha(UiStyle.BRASS, 0xF0);
+		String front = p.front();
+		ctx.submitNodeCollector().submitCustomGeometry(new PoseStack(), RenderTypes.debugFilledBox(), (pose, vc) -> {
+			float t = EDGE;
+			// the ground rectangle: a thin slab just above the surface
+			cube(pose, vc, x0, y + 0.02f, z0, x1, y + 0.06f, z1, fill, 0x3, false);
+			// outline at ground level
+			cube(pose, vc, x0 - t, y, z0 - t, x1 + t, y + 2 * t, z0 + t, edge, 0x3F, false);
+			cube(pose, vc, x0 - t, y, z1 - t, x1 + t, y + 2 * t, z1 + t, edge, 0x3F, false);
+			cube(pose, vc, x0 - t, y, z0 - t, x0 + t, y + 2 * t, z1 + t, edge, 0x3F, false);
+			cube(pose, vc, x1 - t, y, z0 - t, x1 + t, y + 2 * t, z1 + t, edge, 0x3F, false);
+			if (single) {
+				return;
+			}
+			// the entrance side
+			float b = t * 2.2f;
+			switch (front) {
+				case "north" -> cube(pose, vc, x0, y, z0 - b, x1, y + 2 * b, z0 + b, brass, 0x3F, false);
+				case "south" -> cube(pose, vc, x0, y, z1 - b, x1, y + 2 * b, z1 + b, brass, 0x3F, false);
+				case "west" -> cube(pose, vc, x0 - b, y, z0, x0 + b, y + 2 * b, z1, brass, 0x3F, false);
+				default -> cube(pose, vc, x1 - b, y, z0, x1 + b, y + 2 * b, z1, brass, 0x3F, false);
+			}
+			// the height limit: corner posts and the top outline, faintly
+			float ft = t * 0.6f;
+			for (float px : new float[] {x0, x1}) {
+				for (float pz : new float[] {z0, z1}) {
+					cube(pose, vc, px - ft, y, pz - ft, px + ft, top, pz + ft, faint, 0x3F, false);
+				}
+			}
+			cube(pose, vc, x0 - ft, top - ft, z0 - ft, x1 + ft, top + ft, z0 + ft, faint, 0x3F, false);
+			cube(pose, vc, x0 - ft, top - ft, z1 - ft, x1 + ft, top + ft, z1 + ft, faint, 0x3F, false);
+			cube(pose, vc, x0 - ft, top - ft, z0 - ft, x0 + ft, top + ft, z1 + ft, faint, 0x3F, false);
+			cube(pose, vc, x1 - ft, top - ft, z0 - ft, x1 + ft, top + ft, z1 + ft, faint, 0x3F, false);
+		});
+	}
+
 	private static int draw(PoseStack.Pose pose, VertexConsumer vc, BuildPlacement.View v, float bx, float by, float bz, double cx, double cy,
 		double cz) {
 		GhostModel m = v.model();

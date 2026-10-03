@@ -7,12 +7,12 @@ server (`ServerTasks`), so it needs no operator permission; commands do.
 
 ## Hub screen (mod, client)
 
-**Status (branch `mod/hub`):** implemented: the screen, `H`, `/hub [tab]`, the **Buildings** tab
-(buildings with make home / teleport / remove, blueprint browser with plan + rendered previews, Place;
-Design new is a disabled placeholder with a hook, `HubFeature.designNew`) and the **Status** tab. Repos,
-Goals, Team and Settings show a "coming next" panel. Generated buildings and the offline renderer below
-are not part of this step (previews are shown when the renderer's PNGs exist). Code:
-`mod/src/client/java/dev/agentcraft/client/hub/`, notes in mod/DEV.md "Hub".
+**Status:** implemented: the screen, `H`, `/hub [tab]`, the **Buildings** tab (buildings with make
+home / teleport / remove, blueprint browser with plan + rendered previews, Place, Place on the plot,
+Design new; the Designs list) and the **Status** tab (branch `mod/hub`); the design form, plot marking
+and the design flow (branch `mod/design-form`, see "Generated buildings"). Repos, Goals, Team and
+Settings show a "coming next" panel. Code: `mod/src/client/java/dev/agentcraft/client/hub/` and
+`.../client/design/`, notes in mod/DEV.md "Hub" and "Generated buildings".
 
 - Opened with a key (default `H`, rebindable, AgentCraft category; vanilla binds H only as F3+H) and
   from the console (`/hub [tab]`). *(done)*
@@ -22,10 +22,12 @@ are not part of this step (previews are shown when the renderer's PNGs exist). C
      (the entrance anchor, same dimension, a free spot with a floor); a blueprint browser (bundled +
      user, with the top-down plan and, when present, the rendered previews `<id>.preview-{iso,top,front,
      cutaway}.png` from the user folder, else the mod's `data/<ns>/blueprints/`), Place (repo step with
-     the blueprint fixed, then placement mode) and **Design new** (below; a disabled placeholder until
-     the form exists).
-     Buildings do not record their dimension: remove and teleport refuse unless the box holds
-     AgentCraft stations in the player's dimension; remove also refuses while the player stands in it.
+     the blueprint fixed, then placement mode) and **Design new** (below). *(done)*
+     A third list, **Designs**, shows the building designs (below). *(done)*
+     Buildings record their dimension (`Building.dimension`): remove and teleport refuse, naming both
+     dimensions, when the player is elsewhere; records from before the field fall back to requiring
+     AgentCraft stations in the box in the player's dimension. Remove also refuses while the player
+     stands in the box. *(done)*
   2. **Repos** *(later)*: registered repos and their `repoSettings`.
   3. **Goals** *(later)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the
@@ -52,7 +54,30 @@ are not part of this step (previews are shown when the renderer's PNGs exist). C
 
 ## Generated buildings
 
-### The form (Buildings tab -> Design new)
+### The form (Buildings tab -> Design new) *(done, branch `mod/design-form`)*
+
+As implemented: `DesignScreen`, opened by "Design new…" (blueprint browser, Designs list) and the
+console's `/hub design`. Two columns: For (one repo / a group of 2..8 wings), Style (one line about the
+selected one), Materials, Features (checkboxes, the protocol ids), Size (S / M / L, or "Fit a plot…");
+Remix (‹ none / blueprint ids ›), Name (optional, 40 chars; the blueprint id it will get is shown),
+Notes (multi-line). Every value is checked with the Foreman's own limits (`DesignSpec.validate`: wings,
+style and feature ids, maxSize x/z 9..128, y 6..48, remix id, name 40, notes 2000, the outDir rule) and a
+problem shows in red next to its field. "Design it" (or Ctrl+Enter) sends `design.request` with
+`outDir` = the absolute `<gameDir>/agentcraft/blueprints` (created first) and opens the Designs list.
+The form keeps its content across plot marking and reopening (per session).
+
+Size presets (`DesignSpec.preset`, x × y × z in the template's frame, x along the entrance side):
+single S 24×14×24, M 36×16×36, L 56×18×40; a group of N wings S (24+12N)×16×30, M (35+14N)×18×36 (the
+bundled campus2..4 fit), L (44+18N)×22×48, x capped at 128.
+
+**Fit a plot…** closes the form and enters plot marking (`PlotMarker`, built on placement mode's look
+ray, key capture, HUD slot and renderer): look at a corner, Enter; look at the other, Enter. A
+translucent rectangle follows the look with its size (x by z), the entrance side (the side facing the
+player, brass) and the height limit (PgUp/PgDn, Shift: by 4; default 16) drawn as faint posts. Backspace
+goes back a corner, Esc returns to the form unchanged. The second Enter returns to the form with
+maxSize = the plot (width along the entrance side × height × depth, clamped to the limits; the HUD warns
+when clamped) and remembers the plot (min corner, ground = the lower corner's surface, front, dimension)
+for the design it is sent with.
 
 - **For**: one repo (single) or N repos (group, N wings).
 - **Style preset**: `modern` (glass, plaster, flat/hip roof), `cabin` (logs, stone, gable roof),
@@ -110,11 +135,21 @@ Foreman -> client:
 - The sim backend fakes a job (copies the bundled workshop under a new id) so the UI is testable.
 - One design at a time; queued requests wait. Usage limits apply like any turn.
 
-### Review and place (mod)
+### Review and place (mod) *(done, branch `mod/design-form`)*
 
 - On `design.upsert` done: the mod reloads blueprints (`Blueprints.reload` on the server thread),
   the Buildings tab shows the new blueprint with its previews, and "Place" opens the wizard's
   placement mode with it (ghost = the real review; nothing is placed without confirm).
+
+As implemented: the **Designs** list (Buildings tab, newest first) shows each design's status pill and
+step line; the detail has the request, the result blueprint and size, the error of a failed one, and
+Cancel (queued/running: `design.cancel`). A toast on done and on failed (these replace the Foreman's own
+notify for the same event). On done (seen as a transition, also across a reconnect's snapshot):
+`Blueprints.reload` on the integrated server, then the new blueprint is selected in the browser (iso
+preview) if the hub is open, else when it next opens. Then "Place on the plot" when a plot was marked
+for it (the repo step, then placement mode locked on the plot: rotated so its entrance faces the side
+the plot was marked from, centred on it, ground row on the plot's ground; rotate/nudge/unlock still
+work; refused in another dimension) and "Place…" (the normal repo step + placement).
 
 ## Offline renderer (tools)
 

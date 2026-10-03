@@ -5,6 +5,7 @@ import dev.agentcraft.client.agents.AgentsFeature;
 import dev.agentcraft.client.building.BuildingWizardFeature;
 import dev.agentcraft.client.console.ConsoleFeature;
 import dev.agentcraft.client.decisions.DecisionsFeature;
+import dev.agentcraft.client.design.DesignFeature;
 import dev.agentcraft.client.diff.DiffFeature;
 import dev.agentcraft.client.foreman.ForemanFeature;
 import dev.agentcraft.client.hq.HqClientFeature;
@@ -44,6 +45,7 @@ public final class ClientFeatures {
 		PermissionsFeature.init();
 		BuildingWizardFeature.init(); // /agentcraft build, B: pick repos + blueprint, place a ghost
 		HubFeature.init();       // H, /hub: buildings, blueprints, status (docs/HUB.md)
+		DesignFeature.init();    // the hub's Design new…, /hub design, plot marking, design progress
 		AgentCraft.LOGGER.info("AgentCraft client features initialised");
 	}
 }

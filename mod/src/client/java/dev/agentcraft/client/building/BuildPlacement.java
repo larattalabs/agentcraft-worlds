@@ -129,6 +129,7 @@ public final class BuildPlacement {
 			throw new IllegalArgumentException("Unknown blueprint '" + blueprintId + "' (known: " + Blueprints.ids() + ")");
 		}
 		cancelQuietly();
+		PlotMarker.cancelQuietly();
 		active = true;
 		bp = b;
 		entry = Blueprints.entry(blueprintId);
@@ -355,7 +356,7 @@ public final class BuildPlacement {
 	 * Where the player points: {x, surfaceY, z, gap, facingIndex}. The looked-at block's open
 	 * neighbour, dropped to the ground below it; nothing in reach = the feet, {@code GAP} ahead.
 	 */
-	private static int[] spot(Minecraft mc, Player p) {
+	static int[] spot(Minecraft mc, Player p) {
 		Direction facing = horizontalFacing(p);
 		int fi = BlueprintTransform.directionIndex(facing.getName());
 		HitResult hr = p.pick(REACH, 1f, false);

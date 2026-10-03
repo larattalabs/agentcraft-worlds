@@ -8,10 +8,13 @@ import dev.agentcraft.building.Building;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.building.BlueprintPreview;
 import dev.agentcraft.client.building.BuildingWizardFeature;
+import dev.agentcraft.client.design.DesignFeature;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.LinkStatus;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.foreman.Protocol.Design;
 import dev.agentcraft.client.foreman.Protocol.ForemanStatus;
 import dev.agentcraft.client.foreman.Protocol.UsageWindow;
 import dev.agentcraft.client.hud.Keys;
@@ -40,7 +43,8 @@ import org.jspecify.annotations.Nullable;
  * The AgentCraft hub (docs/HUB.md "Hub screen"): one paper window with tabs for everything a player
  * sets or does in AgentCraft. Built: <b>Buildings</b> (the world's buildings with make home, teleport and
  * a two-step remove; a blueprint browser with the top-down plan, rendered PNG previews when present,
- * Place and the Design new placeholder) and <b>Status</b> (Foreman link, backend, auth, account, plan
+ * Place, Place on the plot and Design new; the building designs with their progress, Cancel and, when
+ * done, the new blueprint) and <b>Status</b> (Foreman link, backend, auth, account, plan
  * usage, versions, DevBridge). The other tabs show what they will hold.
  *
  * <p>Everything acts through {@link HubActions} / the wizard, never chat commands, so it works without
@@ -56,9 +60,9 @@ public final class HubScreen extends Screen {
 	static final long CONFIRM_MS = 6000;
 	private static final DateTimeFormatter RESETS = DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ROOT);
 
-	/** Buildings tab: the world's buildings or the blueprint browser. */
+	/** Buildings tab: the world's buildings, the blueprint browser or the building designs. */
 	public enum Sub {
-		BUILDINGS, BLUEPRINTS
+		BUILDINGS, BLUEPRINTS, DESIGNS
 	}
 
 	private record Btn(String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger, Runnable action) {
@@ -71,6 +75,10 @@ public final class HubScreen extends Screen {
 	private Sub sub = Sub.BUILDINGS;
 	private @Nullable String selectedBuilding;
 	private @Nullable String selectedBlueprint;
+	private @Nullable String selectedDesign;
+	/** The outcome of the last Cancel / Place on the plot pressed here (shown under the buttons). */
+	private @Nullable String designNote;
+	private boolean designNoteError;
 	/** Remove armed for this building id until {@link #armedAt} + {@link #CONFIRM_MS}. */
 	private @Nullable String armedRemove;
 	private long armedAt;
@@ -146,6 +154,32 @@ public final class HubScreen extends Screen {
 
 	public @Nullable String selectedBlueprint() {
 		return selectedBlueprint;
+	}
+
+	public @Nullable String selectedDesign() {
+		return selectedDesign;
+	}
+
+	/** Selects a design by id (kept even when the Foreman has not reported it yet); switches to the designs list. */
+	public void selectDesign(String id) {
+		setTab(HubTab.BUILDINGS);
+		setSub(Sub.DESIGNS);
+		if (!id.equals(selectedDesign)) {
+			designNote = null;
+		}
+		selectedDesign = id;
+	}
+
+	/** The Foreman's designs, newest first. */
+	static List<Design> designs() {
+		ForemanState s = Foreman.state();
+		List<Design> out = s == null ? new ArrayList<>() : new ArrayList<>(s.designs().values());
+		java.util.Collections.reverse(out);
+		return out;
+	}
+
+	@Nullable String designNote() {
+		return designNote;
 	}
 
 	public @Nullable String armedRemove() {
@@ -289,7 +323,36 @@ public final class HubScreen extends Screen {
 		BuildingWizardFeature.openFor(id);
 	}
 
-	/** Design new: the generator form once {@link HubFeature#designNew} is installed (a later wave). */
+	/** Cancel a queued or running design (design.cancel); the outcome shows under the buttons. */
+	public java.util.concurrent.CompletableFuture<String> cancelDesign(String id) {
+		designNote = "Cancelling " + id + "…";
+		designNoteError = false;
+		return DesignFeature.cancel(id).handle((ack, err) -> {
+			if (err != null) {
+				designNote = "Not cancelled: " + err.getMessage();
+				designNoteError = true;
+			} else if (!ack.ok()) {
+				designNote = "Not cancelled: " + ack.error();
+				designNoteError = true;
+			} else {
+				designNote = "Cancelled " + id;
+				designNoteError = false;
+			}
+			return designNote;
+		});
+	}
+
+	/** Place on the plot: the repo step, then placement mode locked on the plot marked for this blueprint's design. */
+	public @Nullable String placeOnPlot(String blueprintId) {
+		String why = DesignFeature.placeOnPlot(blueprintId);
+		if (why != null) {
+			designNote = why;
+			designNoteError = true;
+		}
+		return why;
+	}
+
+	/** Design new: the generator form ({@link HubFeature#designNew}, installed by the design feature). */
 	public boolean designNew() {
 		Consumer<Screen> hook = HubFeature.designNew;
 		if (hook == null) {
@@ -315,7 +378,18 @@ public final class HubScreen extends Screen {
 		}
 		if (tab == HubTab.BUILDINGS && (k == InputConstants.KEY_UP || k == InputConstants.KEY_DOWN)) {
 			int d = k == InputConstants.KEY_UP ? -1 : 1;
-			if (sub == Sub.BUILDINGS) {
+			if (sub == Sub.DESIGNS) {
+				List<Design> list = designs();
+				int i = 0;
+				for (int j = 0; j < list.size(); j++) {
+					if (list.get(j).id().equals(selectedDesign)) {
+						i = j;
+					}
+				}
+				if (!list.isEmpty()) {
+					selectDesign(list.get(Math.max(0, Math.min(list.size() - 1, i + d))).id());
+				}
+			} else if (sub == Sub.BUILDINGS) {
 				List<Building> list = buildings();
 				int i = indexOfBuilding(list, selectedBuilding);
 				if (!list.isEmpty()) {
@@ -337,7 +411,8 @@ public final class HubScreen extends Screen {
 			return true;
 		}
 		if (tab == HubTab.BUILDINGS && (k == InputConstants.KEY_LEFT || k == InputConstants.KEY_RIGHT)) {
-			setSub(k == InputConstants.KEY_LEFT ? Sub.BUILDINGS : Sub.BLUEPRINTS);
+			Sub[] all = Sub.values();
+			setSub(all[Math.max(0, Math.min(all.length - 1, sub.ordinal() + (k == InputConstants.KEY_LEFT ? -1 : 1)))]);
 			return true;
 		}
 		return super.keyPressed(e);
@@ -380,7 +455,9 @@ public final class HubScreen extends Screen {
 			int[] r = rowRects.get(i);
 			if (e.x() >= r[0] && e.x() < r[0] + r[2] && e.y() >= r[1] && e.y() < r[1] + r[3]) {
 				String id = rowIds.get(i);
-				if (sub == Sub.BUILDINGS) {
+				if (sub == Sub.DESIGNS) {
+					selectDesign(id);
+				} else if (sub == Sub.BUILDINGS) {
 					selectBuilding(id);
 				} else {
 					if (!id.equals(selectedBlueprint)) {
@@ -455,7 +532,7 @@ public final class HubScreen extends Screen {
 			case STATUS -> drawStatus(g, cx, y, cw, footerY - 4 - y);
 			default -> drawComingNext(g, cx, y, cw, footerY - 4 - y);
 		}
-		String[] hints = tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "buildings/blueprints", "↑↓", "select",
+		String[] hints = tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "buildings/blueprints/designs", "↑↓", "select",
 			"Esc", "close"} : new String[] {"Tab", "next tab", "Esc", "close"};
 		if (UiBits.hintsWidth(font, hints) <= cw) {
 			UiBits.hints(g, font, cx, footerY, false, hints);
@@ -496,10 +573,15 @@ public final class HubScreen extends Screen {
 	private void drawBuildingsTab(GuiGraphicsExtractor g, int x, int y, int w, int h, int mx, int my) {
 		List<Building> bs = buildings();
 		List<Blueprint> bps = blueprints();
-		// sub switch (left) and Place new (right)
+		List<Design> ds = designs();
+		// sub switch (left) and Place new / Design new (right)
 		int sx = x;
 		for (Sub s : Sub.values()) {
-			String label = (s == Sub.BUILDINGS ? "Buildings " : "Blueprints ") + (s == Sub.BUILDINGS ? bs.size() : bps.size());
+			String label = switch (s) {
+				case BUILDINGS -> "Buildings " + bs.size();
+				case BLUEPRINTS -> "Blueprints " + bps.size();
+				case DESIGNS -> "Designs " + ds.size() + (ds.stream().anyMatch(d -> d.status().isRunning()) ? " ●" : "");
+			};
 			int sw = bw(label);
 			button(g, "sub:" + s.name().toLowerCase(Locale.ROOT), label, sx, y, sw, false, false, false, mx, my, () -> setSub(s));
 			if (s == sub) {
@@ -507,15 +589,20 @@ public final class HubScreen extends Screen {
 			}
 			sx += sw + 4;
 		}
-		String place = "Place new…";
-		button(g, "place_new", place, x + w - bw(place), y, bw(place), true, minecraft.getSingleplayerServer() == null, false, mx, my,
-			this::placeNew);
+		if (sub == Sub.DESIGNS) {
+			String dn = "Design new…";
+			button(g, "design_new", dn, x + w - bw(dn), y, bw(dn), true, HubFeature.designNew == null, false, mx, my, this::designNew);
+		} else {
+			String place = "Place new…";
+			button(g, "place_new", place, x + w - bw(place), y, bw(place), true, minecraft.getSingleplayerServer() == null, false, mx, my,
+				this::placeNew);
+		}
 		y += 26;
 		h -= 26;
-		if (sub == Sub.BUILDINGS) {
-			drawBuildings(g, bs, x, y, w, h, mx, my);
-		} else {
-			drawBlueprints(g, bps, x, y, w, h, mx, my);
+		switch (sub) {
+			case BUILDINGS -> drawBuildings(g, bs, x, y, w, h, mx, my);
+			case BLUEPRINTS -> drawBlueprints(g, bps, x, y, w, h, mx, my);
+			case DESIGNS -> drawDesigns(g, ds, x, y, w, h, mx, my);
 		}
 	}
 
@@ -607,6 +694,7 @@ public final class HubScreen extends Screen {
 			{"Box", box.minX() + ", " + box.minY() + ", " + box.minZ() + "  ..  " + box.maxX() + ", " + box.maxY() + ", " + box.maxZ()},
 			{"Size", (box.maxX() - box.minX() + 1) + " × " + (box.maxY() - box.minY() + 1) + " × " + (box.maxZ() - box.minZ() + 1)},
 			{"Rotation", cur.rotation().replace('_', ' ')},
+			{"Dimension", HubActions.pretty(cur.dimensionOrDefault()) + (cur.dimension() == null ? " (assumed: old record)" : "")},
 			{"Placed", cur.placedAt() > 0 ? UiBits.ago(cur.placedAt()) : "?"}};
 		int labelW = 0;
 		for (String[] f : facts) {
@@ -654,7 +742,7 @@ public final class HubScreen extends Screen {
 			note = last.message();
 			noteColor = last.ok() ? UiBits.okText() : UiBits.errorText();
 		} else {
-			note = "Teleport lands at the entrance (this dimension). Remove asks twice.";
+			note = "Teleport lands at the entrance (in the building's dimension). Remove asks twice.";
 		}
 		for (String line : TextUtil.wrapPlain(font, note, dw)) {
 			if (dy > y + h - 10) {
@@ -770,12 +858,181 @@ public final class HubScreen extends Screen {
 			Panels.sprite(g, Kit.SCROLL_THUMB, dx + dw - 4, sy, 4, thumbH);
 		}
 		String id = cur.id();
+		boolean sp = minecraft.getSingleplayerServer() != null;
 		String pl = "Place…";
-		button(g, "place", pl, dx + dw - bw(pl), buttonsY, bw(pl), true, minecraft.getSingleplayerServer() == null, false, mx, my,
-			() -> placeBlueprint(id));
+		int bx = dx + dw - bw(pl);
+		button(g, "place", pl, bx, buttonsY, bw(pl), DesignFeature.plotForBlueprint(id) == null, !sp, false, mx, my, () -> placeBlueprint(id));
+		if (DesignFeature.plotForBlueprint(id) != null) {
+			String pp = "Place on the plot";
+			bx -= 4 + bw(pp);
+			button(g, "place_plot", pp, bx, buttonsY, bw(pp), true, !sp, false, mx, my, () -> placeOnPlot(id));
+		}
 		String dn = "Design new…";
-		button(g, "design_new", dn, dx + dw - bw(pl) - 4 - bw(dn), buttonsY, bw(dn), false, HubFeature.designNew == null, false, mx, my,
-			this::designNew);
+		if (bx - 4 - bw(dn) >= dx) {
+			button(g, "design_new", dn, bx - 4 - bw(dn), buttonsY, bw(dn), false, HubFeature.designNew == null, false, mx, my, this::designNew);
+		}
+	}
+
+	// ------------------------------------------------------------------ Designs
+
+	/** Status dot family of a design. */
+	static String family(Design d) {
+		return switch (d.status()) {
+			case QUEUED -> "waiting";
+			case DESIGNING, CHECKING, RENDERING -> "working";
+			case DONE -> "done";
+			case FAILED -> "error";
+			default -> "idle";
+		};
+	}
+
+	static String title(Design d) {
+		String n = d.request().name();
+		if (n != null && !n.isBlank()) {
+			return n;
+		}
+		dev.agentcraft.building.DesignSpec.Choice st = dev.agentcraft.building.DesignSpec.style(d.request().style());
+		return (st != null ? st.label() : d.request().style()) + (d.request().kind().equals("group") ? " campus" : " building");
+	}
+
+	private void drawDesigns(GuiGraphicsExtractor g, List<Design> ds, int x, int y, int w, int h, int mx, int my) {
+		int ink = UiBits.ink();
+		int muted = UiBits.muted();
+		Design cur = null;
+		for (Design d : ds) {
+			if (d.id().equals(selectedDesign)) {
+				cur = d;
+			}
+		}
+		if (cur == null && !ds.isEmpty() && (selectedDesign == null || Foreman.state() == null || Foreman.state().design(selectedDesign) == null)
+			&& !(selectedDesign != null && selectedDesign.equals(DesignFeature.lastSent()))) {
+			cur = ds.get(0);
+			selectedDesign = cur.id();
+		}
+		if (ds.isEmpty()) {
+			Panels.inset(g, x, y, w, h);
+			int ty = y + 10;
+			String msg = !Foreman.connected() ? "The Foreman designs buildings: it is not connected. Start it, then \"Design new…\" here."
+				: "No designs yet. \"Design new…\" describes a building (style, size, features, or a plot you mark); the Foreman's design "
+				+ "agent builds it as a blueprint, with previews, and it shows up here and in Blueprints.";
+			for (String line : TextUtil.wrapPlain(font, msg, w - 16)) {
+				g.text(font, line, x + 8, ty, muted, false);
+				ty += 10;
+			}
+			return;
+		}
+		int lw = Math.max(150, Math.min(220, w * 2 / 5));
+		Design sel = cur;
+		drawList(g, x, y, lw, h, ds.size(), sel == null ? -1 : ds.indexOf(sel), mx, my, (i, rx, ry, rw) -> {
+			Design d = ds.get(i);
+			String pill = d.status().wire();
+			int pw = UiBits.dotPillWidth(font, pill);
+			UiBits.dotPill(g, font, family(d), pill, rx + rw - pw + 2, ry - 1, d.status() == Protocol.DesignStatus.DONE ? UiBits.okText() : muted);
+			g.text(font, TextUtil.ellipsize(font, d.id() + "  " + title(d), rw - pw - 4), rx, ry, ink, false);
+			g.text(font, TextUtil.ellipsize(font, d.step(), rw), rx, ry + 10, muted, false);
+			return d.id();
+		});
+		int dx = x + lw + 10;
+		int dw = w - lw - 10;
+		if (cur == null) {
+			g.text(font, TextUtil.ellipsize(font, "Waiting for " + selectedDesign + "…", dw), dx, y, muted, false);
+			return;
+		}
+		Design d = cur;
+		int dy = y;
+		g.text(font, TextUtil.ellipsize(font, d.id() + " · " + title(d), dw), dx, dy, ink, false);
+		dy += 13;
+		int pw = UiBits.dotPill(g, font, family(d), d.status().wire(), dx, dy - 1, ink);
+		for (String line : TextUtil.wrapPlain(font, d.step(), dw - pw - 6)) {
+			g.text(font, line, dx + pw + 6, dy, muted, false);
+			dy += 10;
+			break;
+		}
+		dy += 4;
+		var r = d.request();
+		List<String[]> facts = new ArrayList<>();
+		facts.add(new String[] {"For", r.kind().equals("group") ? "a group, " + r.wings() + " wings" : "one repo"});
+		dev.agentcraft.building.DesignSpec.Choice st = dev.agentcraft.building.DesignSpec.style(r.style());
+		facts.add(new String[] {"Style", (st != null ? st.label() : r.style()) + " · " + (r.materials().equals("vanilla") ? "vanilla allowed"
+			: "AgentCraft first")});
+		facts.add(new String[] {"Features", r.features().isEmpty() ? "none" : String.join(", ", r.features()).replace('_', ' ')});
+		facts.add(new String[] {"Limit", r.maxSize().x() + " × " + r.maxSize().y() + " × " + r.maxSize().z() + (DesignFeature.plotForDesign(d.id())
+			!= null ? " (from your plot)" : "")});
+		if (r.remix() != null) {
+			facts.add(new String[] {"Remix", r.remix()});
+		}
+		if (d.blueprintId() != null) {
+			boolean loaded = Blueprints.get(d.blueprintId()) != null;
+			facts.add(new String[] {"Blueprint", d.blueprintId() + (d.size() != null ? "  " + d.size().x() + " × " + d.size().y() + " × "
+				+ d.size().z() : "") + (loaded ? "" : " (not loaded yet)")});
+		}
+		facts.add(new String[] {"Requested", UiBits.ago(d.createdAt()) + (d.updatedAt() > d.createdAt() ? " · updated " + UiBits.ago(d.updatedAt())
+			: "")});
+		int labelW = 0;
+		for (String[] f : facts) {
+			labelW = Math.max(labelW, font.width(f[0]));
+		}
+		for (String[] f : facts) {
+			g.text(font, f[0], dx, dy, muted, false);
+			g.text(font, TextUtil.ellipsize(font, f[1], dw - labelW - 8), dx + labelW + 8, dy, ink, false);
+			dy += 11;
+		}
+		int buttonsY = y + h - 20;
+		// notes (the request's) and the error, wrapped into what is left above the buttons
+		int room = Math.max(0, (buttonsY - 4 - dy) / 10);
+		List<String> extra = new ArrayList<>();
+		int errFrom = -1;
+		if (d.status() == Protocol.DesignStatus.FAILED && d.error() != null) {
+			errFrom = 0;
+			extra.addAll(TextUtil.wrapPlain(font, "Error: " + d.error().strip(), dw));
+		}
+		if (r.notes() != null && !r.notes().isBlank()) {
+			extra.addAll(TextUtil.wrapPlain(font, "Notes: " + r.notes().strip().replace('\n', ' '), dw));
+		}
+		int errLines = errFrom < 0 ? 0 : TextUtil.wrapPlain(font, "Error: " + d.error().strip(), dw).size();
+		for (int i = 0; i < Math.min(room, extra.size()); i++) {
+			String line = extra.get(i);
+			if (i == room - 1 && extra.size() > room) {
+				line = TextUtil.ellipsize(font, line + " …", dw);
+			}
+			g.text(font, line, dx, dy, i < errLines ? UiBits.errorText() : muted, false);
+			dy += 10;
+		}
+		// buttons
+		boolean sp = minecraft.getSingleplayerServer() != null;
+		int bx = dx + dw;
+		String id = d.id();
+		if (d.status().isRunning()) {
+			String c = "Cancel design";
+			bx -= bw(c);
+			button(g, "cancel_design", c, bx, buttonsY, bw(c), false, !Foreman.connected(), true, mx, my, () -> cancelDesign(id));
+		} else if (d.status() == Protocol.DesignStatus.DONE && d.blueprintId() != null && Blueprints.get(d.blueprintId()) != null) {
+			String bp = d.blueprintId();
+			boolean plot = DesignFeature.plotForBlueprint(bp) != null;
+			String pl = "Place…";
+			bx -= bw(pl);
+			button(g, "place", pl, bx, buttonsY, bw(pl), !plot, !sp, false, mx, my, () -> placeBlueprint(bp));
+			if (plot) {
+				String pp = "Place on the plot";
+				bx -= 4 + bw(pp);
+				button(g, "place_plot", pp, bx, buttonsY, bw(pp), true, !sp, false, mx, my, () -> placeOnPlot(bp));
+			}
+			String show = "Show blueprint";
+			if (bx - 4 - bw(show) >= dx) {
+				bx -= 4 + bw(show);
+				button(g, "show_blueprint", show, bx, buttonsY, bw(show), false, false, false, mx, my, () -> {
+					selectBlueprint(bp);
+					setView("iso");
+				});
+			}
+		} else if (d.status() == Protocol.DesignStatus.DONE && d.blueprintId() != null && sp) {
+			String rl = "Reload blueprints";
+			bx -= bw(rl);
+			button(g, "reload", rl, bx, buttonsY, bw(rl), true, false, false, mx, my, () -> DesignFeature.reloadAndSelect(d.blueprintId()));
+		}
+		if (designNote != null && id.equals(selectedDesign) && buttonsY - 12 > dy) {
+			g.text(font, TextUtil.ellipsize(font, designNote, dw), dx, buttonsY - 12, designNoteError ? UiBits.errorText() : muted, false);
+		}
 	}
 
 	static String kind(Blueprint bp) {

@@ -38,6 +38,29 @@ public final class ServerTasks {
 		return true;
 	}
 
+	/**
+	 * Runs {@code work} on the integrated server thread and completes with its result <b>on the client
+	 * thread</b> (e.g. {@code Blueprints.reload(server)}). Fails with {@link Refused} when not in
+	 * singleplayer. Call from the client thread.
+	 */
+	public static <T> CompletableFuture<T> callOnServer(java.util.function.Function<net.minecraft.server.MinecraftServer, T> work) {
+		Minecraft mc = Minecraft.getInstance();
+		IntegratedServer server = mc.getSingleplayerServer();
+		if (server == null) {
+			return CompletableFuture.failedFuture(new Refused("Singleplayer only: this acts through the integrated server"));
+		}
+		CompletableFuture<T> f = new CompletableFuture<>();
+		server.execute(() -> {
+			try {
+				T result = work.apply(server);
+				mc.execute(() -> f.complete(result));
+			} catch (Throwable t) {
+				mc.execute(() -> f.completeExceptionally(t));
+			}
+		});
+		return f;
+	}
+
 	/** Thrown by {@link #callAsPlayer} work for a refusal meant for the player (the message is shown as is). */
 	public static final class Refused extends RuntimeException {
 		public Refused(String message) {

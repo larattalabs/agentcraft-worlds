@@ -41,6 +41,8 @@ final class RepoPickScreen extends WizardScreen {
 	private final List<String> preselect;
 	/** The blueprint chosen up front (hub), or null for the normal two-step wizard. */
 	private final @Nullable String fixedBlueprint;
+	/** Lock the ghost here after picking: {x, y, z, turns} (the hub's "Place on the plot"), or null. */
+	private final int @Nullable [] lockAt;
 	private @Nullable String error;
 	private final List<Row> rows = new ArrayList<>();
 	/** Picked repo ids in pick order (= wing order). */
@@ -60,9 +62,18 @@ final class RepoPickScreen extends WizardScreen {
 	}
 
 	RepoPickScreen(List<String> preselect, @Nullable String fixedBlueprint) {
+		this(preselect, fixedBlueprint, null);
+	}
+
+	RepoPickScreen(List<String> preselect, @Nullable String fixedBlueprint, int @Nullable [] lockAt) {
 		super("New building: repos");
 		this.preselect = List.copyOf(preselect);
 		this.fixedBlueprint = fixedBlueprint;
+		this.lockAt = lockAt;
+	}
+
+	int @Nullable [] lockAt() {
+		return lockAt;
 	}
 
 	@Nullable String fixedBlueprint() {
@@ -160,6 +171,9 @@ final class RepoPickScreen extends WizardScreen {
 		}
 		try {
 			BuildPlacement.start(bp.id(), c);
+			if (lockAt != null) {
+				BuildPlacement.lockAt(lockAt[0], lockAt[1], lockAt[2], lockAt[3]);
+			}
 		} catch (IllegalArgumentException e) {
 			error = e.getMessage();
 		}
@@ -259,7 +273,7 @@ final class RepoPickScreen extends WizardScreen {
 		int fieldH = textMode ? typedView.height(font, typed, Math.min(MAX_W, width - 24) - 24, fieldStyle) : 0;
 		int bodyH = 22 + (textMode ? 14 + fieldH + 4 : visibleRows * ROW) + 14;
 		Blueprint fixed = fixedBlueprint == null ? null : Blueprints.get(fixedBlueprint);
-		int y = frame(g, fixed != null ? "Repos for " + fixed.name() : "1/2  Choose repos", bodyH);
+		int y = frame(g, fixed != null ? "Repos for " + fixed.name() + (lockAt != null ? " (on the plot)" : "") : "1/2  Choose repos", bodyH);
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
 		g.text(font, "One repo: a single building. Several: a group building,", cx, y, muted, false);

@@ -102,6 +102,20 @@ public final class Protocol {
 		ADD, DEL, CTX, UNKNOWN
 	}
 
+	/** queued -> designing -> checking -> rendering -> done; or failed / cancelled. done, failed, cancelled are final. */
+	public enum DesignStatus implements Wire {
+		QUEUED, DESIGNING, CHECKING, RENDERING, DONE, FAILED, CANCELLED, UNKNOWN;
+
+		public boolean isFinal() {
+			return this == DONE || this == FAILED || this == CANCELLED;
+		}
+
+		/** Still queued or being worked on (cancellable). */
+		public boolean isRunning() {
+			return this == QUEUED || this == DESIGNING || this == CHECKING || this == RENDERING;
+		}
+	}
+
 	/** Exact option labels (protocol.md). */
 	public static final String MERGE = "Merge";
 	public static final String REQUEST_CHANGES = "Request changes";
@@ -263,11 +277,44 @@ public final class Protocol {
 	public record DiffStats(int files, int additions, int deletions) {
 	}
 
+	/** A template size or size limit in blocks. */
+	public record Size3(int x, int y, int z) {
+	}
+
+	/**
+	 * A building design request (hub: Buildings -> Design new). {@code kind} single|group, {@code style}
+	 * modern|cabin|townhouse|workshop|campus|custom, {@code materials} agentcraft|vanilla, {@code features}
+	 * porch|skylights|courtyard|big_windows|garden; limits in {@code dev.agentcraft.building.DesignLimits}.
+	 * Kept as strings (not enums) so a request always echoes back exactly as sent.
+	 */
+	public record DesignRequest(String kind, int wings, String style, String materials, List<String> features, Size3 maxSize,
+		@Nullable String remix, @Nullable String name, @Nullable String notes, String outDir) {
+		public DesignRequest {
+			kind = kind == null ? "single" : kind;
+			style = style == null ? "" : style;
+			materials = materials == null ? "agentcraft" : materials;
+			features = features == null ? List.of() : List.copyOf(features);
+			maxSize = maxSize == null ? new Size3(0, 0, 0) : maxSize;
+			outDir = outDir == null ? "" : outDir;
+		}
+	}
+
+	/** A building design job (Foreman): status, one line of progress, and when done the new blueprint. */
+	public record Design(String id, DesignRequest request, DesignStatus status, String step, @Nullable String blueprintId, @Nullable Size3 size,
+		List<String> previews, @Nullable String error, long createdAt, long updatedAt) {
+		public Design {
+			status = status == null ? DesignStatus.UNKNOWN : status;
+			step = step == null ? "" : step;
+			previews = previews == null ? List.of() : List.copyOf(previews);
+		}
+	}
+
 	// ------------------------------------------------------------------ Foreman -> mod messages
 
 	public record Snapshot(ForemanStatus foreman, List<Agent> agents, List<Task> tasks, List<Decision> decisions, List<Repo> repos,
-		List<MemoryEntry> memory, @Nullable Goal goal, List<Goal> goals, List<FeedItem> feed, List<AgentLogs> logs) {
+		List<MemoryEntry> memory, @Nullable Goal goal, List<Goal> goals, List<FeedItem> feed, List<AgentLogs> logs, List<Design> designs) {
 		public Snapshot {
+			designs = designs == null ? List.of() : List.copyOf(designs);
 			agents = agents == null ? List.of() : List.copyOf(agents);
 			tasks = tasks == null ? List.of() : List.copyOf(tasks);
 			decisions = decisions == null ? List.of() : List.copyOf(decisions);
@@ -310,6 +357,9 @@ public final class Protocol {
 	}
 
 	public record FeedAdd(FeedItem item) {
+	}
+
+	public record DesignUpsert(Design design) {
 	}
 
 	public record Diff(String requestId, String repoId, String worktree, @Nullable String base, @Nullable String branch, List<DiffFile> files,

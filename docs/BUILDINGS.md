@@ -79,8 +79,14 @@ A placed blueprint is a building:
 ```json
 { "id": "b3", "blueprint": "workshop", "repos": ["pocket-api"], "home": false,
   "origin": [120, 64, -40], "rotation": "clockwise_90", "bounds": {...world...},
-  "anchors": { "desk_kit": {...world, rotated...}, "task_wall": {...} }, "placedAt": 1759500000000 }
+  "anchors": { "desk_kit": {...world, rotated...}, "task_wall": {...} }, "placedAt": 1759500000000,
+  "dimension": "minecraft:overworld" }
 ```
+
+- `dimension`: where it was placed. Records written before the field existed have none: they read as
+  the overworld, and the hub's Remove/Teleport fall back to checking that the box in the player's
+  dimension holds AgentCraft stations. `Buildings.remove` (and so `/agentcraft remove`) refuses in
+  another dimension than the recorded one.
 
 - Persisted in `<world>/agentcraft-buildings.json`; one building per repo (a repo in two buildings
   is refused). The first building placed is `home` (idle agents go there) until changed.
