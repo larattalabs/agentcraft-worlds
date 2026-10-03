@@ -345,7 +345,9 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const repoFlag = flags.repo;
   const repos: string[] = [];
   if (typeof repoFlag === 'string') repos.push(...repoFlag.split(',').map((s) => s.trim()).filter(Boolean));
-  else if (Array.isArray(file.repos)) repos.push(...(file.repos as string[]));
+  // config.json repos are the user's real repositories: the scripted sim backend never registers
+  // them (it works on its sandbox demo repo unless a --repo is given explicitly)
+  else if (Array.isArray(file.repos) && backend !== 'sim') repos.push(...(file.repos as string[]));
 
   const workersRaw = str(flags.workers) ?? env.AGENTCRAFT_WORKERS ?? (fileClaude.workers as string[] | string | undefined);
   const workers = Array.isArray(workersRaw)

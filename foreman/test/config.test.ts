@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { rmrf, tempDir } from './helpers.js';
@@ -74,5 +76,15 @@ describe('user name', () => {
     } finally {
       await h.fm.close();
     }
+  });
+});
+
+describe('config.json repos', () => {
+  it('are registered for the claude backend but never by the sim', () => {
+    home = tempDir();
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ repos: ['~/real/repo'] }));
+    expect(loadConfig(['--home', home, '--backend', 'claude'], {}).repos).toEqual(['~/real/repo']);
+    expect(loadConfig(['--home', home, '--backend', 'sim'], {}).repos).toEqual([]);
+    expect(loadConfig(['--home', home, '--backend', 'sim', '--repo', '/x/demo'], {}).repos).toEqual(['/x/demo']);
   });
 });
