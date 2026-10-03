@@ -158,3 +158,71 @@ work; refused in another dimension) and "Place…" (the normal repo step + place
 `<id>.preview-front.png` (front elevation), from block colours (a colour table per block id; textures
 optional later). Dependency-free PNG output (zlib + CRC), fast (< 2 s for 100k blocks). Used by the
 design agent, the Foreman, and tests.
+
+## Repos and Goals tabs (contract, 2026-10-03)
+
+Decision: the home building is always Marlow's. The mod never asks a lead for the home building
+(`lead.assign`/`lead.sync` leave it out); making another building home re-syncs, so the old home gets a
+lead and the new home's lead is released. The home podium shows Marlow's decisions.
+
+### Protocol additions (Foreman)
+Shapes:
+- `Goal` gains `instructions?: string[]` (standing instructions), `planId?: string` (the memory entry id
+  of the goal's plan note, when it exists), `branch?: string` (the "on <branch>:" branch), `prs?:
+  {taskId, url, id, status}[]` (summary of its tasks' PRs).
+- `FeedItem` and `Decision` gain `goalId?` (set whenever the item is about a goal: its tasks, its lead's
+  turns for it, its PRs).
+- `Repo` gains `settings?: RepoSettingsView` = `{ land: "merge"|"pr", baseBranch?, ci?: string,
+  setup?: string, pr?: {remote?, branchPrefix?, draft?, squash?}, protect: string[], roles: {[agentId]:
+  string}, subagents?: string, prReview?: {autoSeverities, maxRounds} }` (read-only view of
+  `repoSettings`; no secrets/env values: `env` shows its keys only as `envKeys: string[]`).
+Client -> Foreman (all ack; errors as `ok:false` with a message):
+- `goal.message { goalId, text }`: a message to the goal's lead about that goal (runs in the goal's lead
+  session; the user's message and the lead's replies are feed items with `goalId`, kind `message`).
+  `user.message` keeps working for free-floating messages.
+- `goal.instructions { goalId, instructions: string[] }`: replaces the goal's standing instructions.
+  They go into the lead's prompts for the goal, every task description created afterwards (appended
+  as "Standing instructions"), and every worker prompt for the goal's tasks (as a section, not baked
+  into the description, so edits apply to running work at the next turn). A change is sent to the lead
+  as a goal message ("The user changed the standing instructions: ...").
+- `goal.plan { goalId, body }`: writes the goal's plan note (creates it if missing, sets `planId`) as
+  the user, then sends the lead a goal message with a unified diff of the change so it can adjust
+  tasks.
+- `goal.cancel { goalId }`: cancels the goal's open tasks (running workers stop, worktrees kept),
+  status `cancelled`.
+- `goal.digest { goalId?, since: Ts }` -> ack result `{ since, until, goals: [{ goalId, text, status,
+  progress, lines: DigestLine[] }] }`, `DigestLine = { ts, kind: "task_done"|"task_blocked"|
+  "task_added"|"decision_waiting"|"decision_answered"|"merged"|"pr_opened"|"pr_merged"|"pr_comments"|
+  "message"|"goal_done", text, taskId?, agentId? }`: built from the feed, tasks and decisions (no
+  model call); at most 30 lines per goal, newest last, routine progress lines dropped.
+- `repo.remove { repoId }`: unregisters a repo (refused while it has open tasks); worktrees and
+  branches are left on disk.
+- `goal.submit` gains `branch?: string` (equivalent to the "on <branch>:" prefix) and `instructions?:
+  string[]`.
+
+### Repos tab (mod)
+- List: each repo with name, branch@head, dirty flag, CI lamp, worktrees, its building (or "no
+  building") and lead, open PRs. Detail: path, the settings view (land mode, base branch, CI/setup
+  commands, PR options, protected files, roles, review defaults), its goals.
+- Actions: Add repo (path field -> `repo.add`), Remove (two-step -> `repo.remove`), Place a building
+  (wizard with this repo preselected), Refresh PRs (`pr.refresh`), New goal (Goals tab form with the
+  repo set). Editing settings waits for the Settings tab (config get/set).
+
+### Goals tab (mod)
+- List: goals newest first with status, progress, repo, lead (portrait), PR summary, and an unread dot
+  when it has activity since the player last opened it.
+- New goal form: text (multi-line), repo, "continue a branch" (free text; offers branches the Foreman
+  knows for that repo when available), standing instructions (lines).
+- Goal detail, sub-views:
+  - **Thread**: the goal's feed items and decisions in order (decisions answerable inline with their
+    options), an input that sends `goal.message`.
+  - **Plan**: the plan note rendered as text; Edit -> multi-line editor -> Save sends `goal.plan`.
+  - **Instructions**: list with add / edit / remove -> `goal.instructions`.
+  - **Tasks**: the goal's tasks with status, assignee, PR link/state; open the existing task screen.
+  - Cancel goal (two-step).
+- "Since you were away": opening the hub (or the Goals tab) after >= 10 minutes away asks
+  `goal.digest {since: lastSeen}` and shows a dismissible digest panel at the top of the Goals tab;
+  each goal's detail shows its own digest since its last view. `lastSeen` per world and goal lives in
+  `<gameDir>/agentcraft/hub-seen.json`.
+- DevBridge: `dev.hub.open {tab: repos|goals, ...}`, `dev.hub.state` (tab state), actions for every
+  button, `dev.goals.*` helpers; screens `hub_repos`, `hub_goals`, `hub_goal_<view>`.
