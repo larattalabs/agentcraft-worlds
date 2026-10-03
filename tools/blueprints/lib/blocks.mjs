@@ -49,6 +49,28 @@ def('minecraft:waxed_cut_copper_slab', { type: ['bottom', 'top', 'double'], wate
 def('minecraft:waxed_cut_copper', {});
 def('minecraft:stripped_dark_oak_log', { axis: ['x', 'y', 'z'] }, 'full', { axis: 'y' });
 def('minecraft:dark_oak_door', { facing: H4, half: ['lower', 'upper'], hinge: ['left', 'right'], open: BOOL, powered: BOOL }, 'door', { facing: 'south', half: 'lower', hinge: 'left', open: 'false', powered: 'false' });
+for (const m of ['brick', 'stone_brick']) {
+  def(`minecraft:${m}_stairs`, { facing: H4, half: ['bottom', 'top'], shape: STAIR_SHAPES, waterlogged: BOOL }, 'stairs', { facing: 'north', half: 'bottom', shape: 'straight', waterlogged: 'false' });
+  def(`minecraft:${m}_slab`, { type: ['bottom', 'top', 'double'], waterlogged: BOOL }, 'slab', { type: 'bottom', waterlogged: 'false' });
+  def(`minecraft:${m}s`);
+}
+def('minecraft:smooth_stone_slab', { type: ['bottom', 'top', 'double'], waterlogged: BOOL }, 'slab', { type: 'bottom', waterlogged: 'false' });
+def('minecraft:polished_andesite');
+for (const c of ['blue', 'green', 'orange', 'purple', 'cyan', 'red', 'yellow', 'white', 'light_blue']) {
+  def(`minecraft:${c}_terracotta`);
+  def(`minecraft:${c}_carpet`, {}, 'low');
+}
+for (const m of ['brick', 'stone_brick']) {
+  def(`minecraft:${m}_stairs`, { facing: H4, half: ['bottom', 'top'], shape: STAIR_SHAPES, waterlogged: BOOL }, 'stairs', { facing: 'north', half: 'bottom', shape: 'straight', waterlogged: 'false' });
+  def(`minecraft:${m}_slab`, { type: ['bottom', 'top', 'double'], waterlogged: BOOL }, 'slab', { type: 'bottom', waterlogged: 'false' });
+  def(`minecraft:${m}s`);
+}
+def('minecraft:smooth_stone_slab', { type: ['bottom', 'top', 'double'], waterlogged: BOOL }, 'slab', { type: 'bottom', waterlogged: 'false' });
+def('minecraft:polished_andesite');
+for (const c of ['blue', 'green', 'orange', 'purple', 'cyan', 'red', 'yellow', 'white', 'light_blue']) {
+  def(`minecraft:${c}_terracotta`);
+  def(`minecraft:${c}_carpet`, {}, 'low');
+}
 def('minecraft:glass');
 def('minecraft:glass_pane', { north: BOOL, east: BOOL, south: BOOL, west: BOOL, waterlogged: BOOL }, 'thin', { north: 'false', east: 'false', south: 'false', west: 'false', waterlogged: 'false' });
 def('minecraft:light', { level: Array.from({ length: 16 }, (_, i) => String(i)), waterlogged: BOOL }, 'none', { level: '15', waterlogged: 'false' });

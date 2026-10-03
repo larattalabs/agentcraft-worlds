@@ -32,7 +32,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!pos[0] || flags.help) {
   console.error(`usage: node tools/blueprints/verify.mjs <id|path/to/id.nbt|ns:vanilla/template> [--port N] [--at x,y,z] [--rotation ${ROTATIONS.join('|')}] [--keep] [--size x,y,z] [--no-clear] [--quick]
-  --at          template origin cell (pre-rotation min corner; /place rotates about it) in the world; default x=80, y=64-groundY, z=0
+  --at          template origin cell (pre-rotation min corner; /place rotates about it) in the world; default x=80, y=65-groundY (floor row replaces the y=64 grass), z=0
   --size        template size when it cannot be read (vanilla templates are looked up in the Minecraft jar)
   --quick       skip the extra orbit-ring views (4 exterior + anchors + top only)`);
   process.exit(pos[0] ? 0 : 2);
@@ -139,7 +139,7 @@ const [sx, sy, sz] = size;
 const groundY = bp.sidecar?.groundY ?? 0;
 const ext = rotatedExtent(sx, sz, rotation);
 const rx = ext.x1 - ext.x0 + 1, rz = ext.z1 - ext.z0 + 1;
-const at = flags.at ? flags.at.split(',').map(Number) : [80, 64 - groundY, 0];
+const at = flags.at ? flags.at.split(',').map(Number) : [80, 65 - groundY, 0];
 if (at.length !== 3 || at.some(Number.isNaN)) die('--at needs x,y,z');
 const [ox, oy, oz] = at;
 const bounds = { minX: ox + ext.x0, minY: oy, minZ: oz + ext.z0, maxX: ox + ext.x1, maxY: oy + sy - 1, maxZ: oz + ext.z1 };

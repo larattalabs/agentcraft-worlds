@@ -12,14 +12,19 @@
 //   z=20  +--win--------------[ door ]--------------win------------+   south wall (front)
 //
 // Rows: y0 floor (parquet, terracotta runner), y1..6 interior (air), y7 ceiling with glow panels,
-// y8 roof deck (terracotta), y9 walnut parapet. Feet row = groundY = 1.
+// y8.. a shallow gable roof (dark oak shingles, ridge east-west) with a 1-cell overhang, hollow attic and
+// triangular gable windows. Outside: oak corner posts under the eaves, window sills, a porch awning over the
+// door and a stone-brick path. Feet row = groundY = 1. Coordinates in the code are relative to the walls
+// (0..W-1 x 0..D-1); the template origin is shifted by (1,0,1) for the overhang / porch margin.
 import { Blueprint, B, lookYaw } from '../lib/kit.mjs';
 
 export const id = 'workshop';
 
 const W = 27;
 const D = 21;
-const H = 10;
+const H = 15;
+const OX = 1;
+const OZ = 1;
 
 export default function build() {
   const bp = new Blueprint({
@@ -28,7 +33,8 @@ export default function build() {
     description: 'A one-repo office: five desks, a task wall, a decision podium, a meeting table, a small lounge, library, terminal, test bench and merge station.',
     kind: 'single',
     wings: 1,
-    size: [W, H, D],
+    size: [W + 2 * OX, H, OZ + D + 10],
+    origin: [OX, 0, OZ],
     groundY: 1,
     front: 'south',
     walk: [1, 1, 1, W - 2, 6, D - 2],
@@ -64,7 +70,38 @@ export default function build() {
   bp.floor(12, 4, 14, Z, 0, B.tile); // runner from the door to the podium
   for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) if (dx * dx + dz * dz <= 5) bp.set(13 + dx, 0, 9 + dz, B.tile); // goal atrium pad
   bp.ceilingLights(7, [5, 13, 21], [3, 8, 13, 18]);
-  bp.roofFlat(0, 0, X, Z, 8, { deck: B.tile, parapet: B.walnutTrim });
+
+  // ---------------------------------------------------------------- roof + exterior
+  bp.roofGable(-1, -1, X + 1, Z + 1, 8, { ridge: 'x', pitch: 0.5, gable: B.plaster, gableInset: 1, stairs: 'minecraft:brick_stairs', slab: 'minecraft:brick_slab', full: 'minecraft:bricks' });
+  // soffit under the overhang
+  for (let x = -1; x <= X + 1; x++) for (const z of [-1, Z + 1]) bp.slab(x, 7, z, 'top', 'minecraft:dark_oak_slab');
+  for (let z = 0; z <= Z; z++) for (const x of [-1, X + 1]) bp.slab(x, 7, z, 'top', 'minecraft:dark_oak_slab');
+  // triangular gable windows
+  for (const x of [0, X]) {
+    bp.window(x, 9, 8, x, 10, 12);
+    bp.window(x, 11, 9, x, 11, 11);
+  }
+  // corner posts carrying the eaves
+  for (const [x, z] of [[-1, -1], [X + 1, -1], [-1, Z + 1], [X + 1, Z + 1]]) bp.post(x, z, 1, 6, 'minecraft:stripped_dark_oak_log');
+  // window sills (dark oak slabs just below each window, on the outside)
+  const sill = (x, y, z) => bp.slab(x, y, z, 'top', 'minecraft:dark_oak_slab');
+  for (const [a, b] of [[2, 7], [19, 24]]) for (let x = a; x <= b; x++) sill(x, 3, -1);
+  for (const [a, b] of [[1, 5], [7, 9], [11, 13], [15, 19]]) for (let z = a; z <= b; z++) sill(-1, 3, z);
+  for (const [a, b] of [[1, 5], [7, 9], [11, 13], [18, 19]]) for (let z = a; z <= b; z++) sill(X + 1, 3, z);
+  for (const [a, b] of [[2, 11], [15, 24]]) for (let x = a; x <= b; x++) sill(x, 1, Z + 1);
+  // porch: awning of slabs on posts, tile deck, hanging lanterns, then a stone-brick path with planters
+  bp.floor(10, Z + 1, 16, Z + 4, 0, B.tile);
+  bp.awning(10, Z + 1, 16, Z + 4, 4, { posts: [[10, Z + 4], [16, Z + 4]], post: B.walnut });
+  bp.fill([10, 4, Z + 4, 16, 4, Z + 4], B.walnutTrim);
+  bp.lantern(12, 3, Z + 3, true);
+  bp.lantern(14, 3, Z + 3, true);
+  bp.glowStrip(13, 5, Z + 1, 'south', 'x');
+  bp.floor(12, Z + 5, 14, Z + 10, 0, 'minecraft:stone_bricks');
+  bp.floor(11, Z + 5, 11, Z + 10, 0, 'minecraft:polished_andesite');
+  bp.floor(15, Z + 5, 15, Z + 10, 0, 'minecraft:polished_andesite');
+  bp.floor(10, Z + 5, 10, Z + 10, 0, 'minecraft:stone_brick_slab');
+  bp.floor(16, Z + 5, 16, Z + 10, 0, 'minecraft:stone_brick_slab');
+  for (const x of [10, 16]) for (const z of [Z + 6, Z + 9]) bp.plant(x, 1, z);
 
   // ---------------------------------------------------------------- task wall, podium, user, goal
   bp.taskWall(9, 1, 17, 1, 'south', 4, 1);

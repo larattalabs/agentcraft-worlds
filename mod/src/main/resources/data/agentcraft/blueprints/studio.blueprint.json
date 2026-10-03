@@ -1,0 +1,382 @@
+{
+  "id": "studio",
+  "name": "Studio",
+  "description": "A premium one-repo office: double-height hall with skylights, a window wall behind five desks, task wall, decision podium, glass meeting room, library, lounge, terminal, test bench and merge station.",
+  "kind": "single",
+  "wings": 1,
+  "size": {
+    "x": 37,
+    "y": 14,
+    "z": 36
+  },
+  "groundY": 1,
+  "front": "south",
+  "materials": "agentcraft",
+  "walk": {
+    "minX": 2,
+    "minY": 1,
+    "minZ": 2,
+    "maxX": 34,
+    "maxY": 8,
+    "maxZ": 26
+  },
+  "anchors": {
+    "desk_juniper": {
+      "x": 5.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_juniper": {
+      "x": 5.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_juniper": {
+      "x": 6.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_kit": {
+      "x": 11.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_kit": {
+      "x": 11.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_kit": {
+      "x": 12.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_wren": {
+      "x": 17.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_wren": {
+      "x": 17.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_wren": {
+      "x": 18.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_rowan": {
+      "x": 23.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_rowan": {
+      "x": 23.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_rowan": {
+      "x": 24.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "desk_tove": {
+      "x": 29.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "seat_tove": {
+      "x": 29.5,
+      "y": 1,
+      "z": 4.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "monitor_tove": {
+      "x": 30.5,
+      "y": 3,
+      "z": 3.252,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "library": {
+      "x": 3.5,
+      "y": 1,
+      "z": 7.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "library_2": {
+      "x": 3.5,
+      "y": 1,
+      "z": 8.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "library_3": {
+      "x": 3.5,
+      "y": 1,
+      "z": 9.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "library_4": {
+      "x": 3.5,
+      "y": 1,
+      "z": 10.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "terminal": {
+      "x": 3.5,
+      "y": 1,
+      "z": 13.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "task_wall@1": {
+      "x": 34.873,
+      "y": 4,
+      "z": 14.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "decision_podium": {
+      "x": 32.5,
+      "y": 1.95,
+      "z": 14.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "user": {
+      "x": 31.5,
+      "y": 1,
+      "z": 14.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "user_2": {
+      "x": 31.5,
+      "y": 1,
+      "z": 12.5,
+      "yaw": -26.565,
+      "pitch": 0
+    },
+    "user_3": {
+      "x": 31.5,
+      "y": 1,
+      "z": 16.5,
+      "yaw": -153.435,
+      "pitch": 0
+    },
+    "goal_atrium": {
+      "x": 18.5,
+      "y": 1,
+      "z": 13.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "testbench": {
+      "x": 33.5,
+      "y": 1,
+      "z": 8.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "testbench_2": {
+      "x": 33.5,
+      "y": 1,
+      "z": 7.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "testbench_3": {
+      "x": 33.5,
+      "y": 1,
+      "z": 9.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "mergestation": {
+      "x": 33.5,
+      "y": 1,
+      "z": 22.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "mergestation_2": {
+      "x": 33.5,
+      "y": 1,
+      "z": 21.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "mergestation_3": {
+      "x": 33.5,
+      "y": 1,
+      "z": 23.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "meeting": {
+      "x": 5.5,
+      "y": 1,
+      "z": 19.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "meeting_2": {
+      "x": 7.5,
+      "y": 1,
+      "z": 19.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "meeting_3": {
+      "x": 6.5,
+      "y": 1,
+      "z": 22.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "meeting_4": {
+      "x": 8.5,
+      "y": 1,
+      "z": 22.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "meeting_5": {
+      "x": 4.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "meeting_6": {
+      "x": 9.5,
+      "y": 1,
+      "z": 21.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "lounge": {
+      "x": 24.5,
+      "y": 1,
+      "z": 22.5,
+      "yaw": -90,
+      "pitch": 0
+    },
+    "lounge_2": {
+      "x": 29.5,
+      "y": 1,
+      "z": 22.5,
+      "yaw": 90,
+      "pitch": 0
+    },
+    "lounge_3": {
+      "x": 26.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "lounge_4": {
+      "x": 27.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "lounge_5": {
+      "x": 26.5,
+      "y": 1,
+      "z": 24.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "lounge_6": {
+      "x": 27.5,
+      "y": 1,
+      "z": 24.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "entrance": {
+      "x": 18.5,
+      "y": 1,
+      "z": 26.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "spawn": {
+      "x": 17.5,
+      "y": 1,
+      "z": 25.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "cam_overview": {
+      "x": -11,
+      "y": 16,
+      "z": 49,
+      "yaw": -140.667,
+      "pitch": 14.457
+    },
+    "cam_desks": {
+      "x": 18.5,
+      "y": 4.5,
+      "z": 22,
+      "yaw": -180,
+      "pitch": 4.514
+    },
+    "cam_task_wall": {
+      "x": 13,
+      "y": 4.5,
+      "z": 7.5,
+      "yaw": -71.4,
+      "pitch": 2.609
+    },
+    "cam_meeting": {
+      "x": 10.2,
+      "y": 3.8,
+      "z": 25.5,
+      "yaw": 136.771,
+      "pitch": 16.249
+    },
+    "cam_lounge": {
+      "x": 20,
+      "y": 4.5,
+      "z": 25.5,
+      "yaw": -116.565,
+      "pitch": 20.973
+    }
+  }
+}

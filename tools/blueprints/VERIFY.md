@@ -13,7 +13,7 @@ node tools/mac.mjs stop --game --foreman                # when done
 | option | meaning |
 |---|---|
 | `--port N` | DevBridge port (default 7879 / `AGENTCRAFT_DEV_PORT`) |
-| `--at x,y,z` | placement origin cell (default `80, 64-groundY, 0`, well east of the studio) |
+| `--at x,y,z` | placement origin cell (default `80, 65-groundY, 0` (the floor row replaces the y=64 grass top), well east of the studio) |
 | `--rotation none\|clockwise_90\|180\|counterclockwise_90` | passed to `/place template`; anchors and bounds are rotated to match (`cam_*` shots only for `none`) |
 | `--keep` | leave the test site in place (default: clear it and restore the grass floor) |
 | `--quick` | skip the eye-level `front` shot |
