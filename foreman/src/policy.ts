@@ -68,6 +68,8 @@ export interface PolicyContext {
   mcpAllow?: string[];
   /** subagents enabled (claude.subagents): the Agent/Task tool is allowed, never with its own worktree */
   subagents?: boolean;
+  /** repo-relative paths that are never committed (repoSettings.protect; a trailing / is a folder) */
+  protectedPaths?: string[];
 }
 
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']);
@@ -2063,6 +2065,11 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
         return always(key) ?? askVerdict(`editing git internals (.git): ${abs}`, key);
       }
       if (!realInside(abs, ctx.cwd)) return askVerdict(`edit through a link that leads outside the worktree: ${abs}`, `${toolName}:link:${dirKey(abs)}`);
+      const rel = path.relative(ctx.cwd, abs).split(path.sep).join('/');
+      if (ctx.protectedPaths?.some((x) => (x.endsWith('/') ? rel.startsWith(x) : rel === x))) {
+        const key = `${toolName}:protected:${rel}`;
+        return always(key) ?? askVerdict(`editing a protected file (never committed in this repository): ${rel}`, key);
+      }
       return { action: 'allow', reason: 'edit inside worktree' };
     }
     if ((ctx.tempDirs ?? [os.tmpdir()]).some((d) => isInsideOrEqual(abs, d))) return { action: 'allow', reason: 'scratch file in the temp dir' };

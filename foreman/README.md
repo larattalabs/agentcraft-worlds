@@ -121,6 +121,23 @@ lead's team list shows the role's description. The file is read from the worker'
 the checkout), so it follows the branch. `"subagents": "repo"` lets agents working there use the
 repository's other agent files as subagents (on top of `claude.subagents`, even if that is off).
 
+For a workspace of several repos with local-only setup, three more per-repo settings:
+
+```json
+{ "repoSettings": { "~/work/api": {
+    "baseBranch": "dev",
+    "protect": ["App/appsettings.json", "local-config/"],
+    "env": { "PATH": "~/.local/share/mise/installs/node/16/bin:$PATH" } } } }
+```
+
+`baseBranch` is what agents start from and land into, whatever your checkout has checked out (the
+local branch is created from `origin/<base>` if needed). `protect` paths are never committed:
+AgentCraft's commits leave them out, editing them asks first, and a branch that commits one goes
+back to the worker before review. `env` applies to the agents' shells, setup and CI (`GIT_*` is
+ignored). `CLAUDE.md` / `AGENTS.md` in the folders above a repository (a workspace holding several
+repos, up to your home folder) are read too, and that folder is readable for agents
+(`claude.context.workspaceInstructions`, default on).
+
 `copy` brings untracked files from your checkout into each new worker worktree. `setup` runs once per
 new worktree before the worker's first turn (git network access stays off; a failure is shown to the
 worker rather than stopping it). `ci` replaces `--ci` and detection for that repo.

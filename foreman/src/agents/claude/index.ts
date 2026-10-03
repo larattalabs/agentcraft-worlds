@@ -19,6 +19,7 @@
 // the worktree busy on Windows and could still write to it) - and the old worktree's work is
 // committed on its branch. The next worker's worktree then starts from that branch.
 import { spawn, type ChildProcess } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { query, type AgentDefinition, type CanUseTool, type EffortLevel, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeConfig } from '../../config.js';
@@ -34,7 +35,7 @@ import { renderDiffText } from '../../diff.js';
 import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
-import { buildSkillsPlugin, instructionsBlock } from './context.js';
+import { buildSkillsPlugin, instructionsBlock, workspaceInstructionDirs } from './context.js';
 import { guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
 import { type RepoRole, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
@@ -310,10 +311,15 @@ export class ClaudeBackend implements Backend {
 
   /** What the AgentCraft policy needs to judge this agent's tool calls. */
   private policyContext(agentId: string, role: 'lead' | 'worker', cwd: string, repoId?: string): PolicyContext {
+    const repo = repoId ? this.fm.repos.get(repoId) : undefined;
+    // a workspace holding several repos: its instructions point at docs in the workspace folder
+    const workspace = repo && this.cfg.context.workspaceInstructions ? workspaceInstructionDirs(repo.path) : [];
+    const protectedPaths = repoId ? this.fm.repos.protectedPaths(repoId) : [];
     return {
       role,
       cwd,
-      readDirs: [this.fm.memory.dir, ...(this.skillsPlugin ? [this.skillsPlugin.path] : [])],
+      readDirs: [this.fm.memory.dir, ...(this.skillsPlugin ? [this.skillsPlugin.path] : []), ...workspace],
+      ...(protectedPaths.length ? { protectedPaths } : {}),
       alwaysAllow: this.fm.store.data.permissionRules[agentId] ?? [],
       mcpServer: MCP_SERVER,
       ...(this.skillsPlugin ? { skills: this.skillsPlugin.ids } : {}),
@@ -1034,7 +1040,7 @@ export class ClaudeBackend implements Backend {
         const t = this.fm.tasks.require(job.taskId!);
         systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!), roleOf(agentId));
       }
-      const extra = instructionsBlock(this.cfg.context, cwd, userName());
+      const extra = instructionsBlock(this.cfg.context, cwd, userName(), os.homedir(), this.fm.repos.get(repoId)?.path);
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
       const { model, effort } = this.modelFor(agentId, role, job.taskId, role === 'worker' ? roleOf(agentId) : undefined);
       const options: Options = {
@@ -1049,7 +1055,8 @@ export class ClaudeBackend implements Backend {
         ...(this.skillsPlugin ? { plugins: [{ type: 'local' as const, path: this.skillsPlugin.path, skipMcpDiscovery: true }], skills: this.skillsPlugin.ids } : {}),
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
         abortController: abort,
-        env: this.env({ agentId, cwd }),
+        // the repository's env (e.g. a PATH for its Node version) on top; GIT_* never comes from it
+        env: { ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) },
         // we spawn the CLI ourselves (same as the SDK's local spawn) so its pid is known: a stopped
         // turn's whole process tree can then be ended before its worktree is handed on
         spawnClaudeCodeProcess: (o) => {
@@ -1278,6 +1285,19 @@ export class ClaudeBackend implements Backend {
     const t = this.fm.tasks.get(taskId);
     if (!t || t.status !== 'review' || !t.repoId || !t.worktree) return;
     const worker = t.assignee;
+    // protected files (repoSettings.protect) must never land: back to the worker, twice at most
+    const leaked = await this.fm.repos.protectedChanges(t.repoId, t.worktree).catch(() => [] as string[]);
+    if (leaked.length) {
+      const n = (this.st.ciFixes[`protect:${t.id}`] ?? 0) + 1;
+      this.st.ciFixes[`protect:${t.id}`] = n;
+      if (n <= 2 && worker && !this.isStopped(worker)) {
+        this.sendBackToWorker(t.id, `Your branch changes files that must never be committed in this repository: ${leaked.join(', ')}. Take those changes off the branch (e.g. \`git checkout ${t.worktree ? this.fm.repos.requireWorktree(t.repoId, t.worktree).base : 'BASE'} -- <file>\` and commit), keep your other work, then update_task("${t.id}", status "review", summary).`);
+      } else {
+        this.fm.tasks.setStatus(t.id, 'blocked', { reason: `changes protected files: ${leaked.join(', ')}`, force: true });
+        this.fm.notify('warn', `${t.id} changes protected files (${leaked.join(', ')}); not offered for landing`);
+      }
+      return;
+    }
     if (worker) this.fm.setAgent(worker, { state: 'idle', station: 'lounge', activity: `${t.id} in review` });
     let ci: TestResult | undefined;
     try {

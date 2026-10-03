@@ -234,6 +234,7 @@ export class RepoManager {
     }
     const existing = this.repos.find((r) => path.resolve(r.path).toLowerCase() === root.toLowerCase());
     if (existing) {
+      await this.applyBase(existing);
       await this.refresh(existing.id);
       return existing;
     }
@@ -245,6 +246,7 @@ export class RepoManager {
     for (let i = 2; this.get(id); i++) id = `${slugify(path.basename(root), 20)}-${i}`;
     const repo: Repo = { id, name: path.basename(root), path: root, branch, dirty: false, worktrees: [], ci: 'unknown' };
     this.repos.push(repo);
+    await this.applyBase(repo);
     await this.refresh(id);
     return repo;
   }
@@ -264,6 +266,7 @@ export class RepoManager {
   /** Update head/dirty and worktree stats, then broadcast. */
   async refresh(repoId: string): Promise<Repo> {
     const r = this.require(repoId);
+    await this.applyBase(r);
     const h = await git(r.path, ['rev-parse', '--short', `refs/heads/${r.branch}`], { allowFail: true });
     if (h.code === 0) r.head = h.stdout.trim();
     r.dirty = await this.isDirty(r.path);
@@ -513,8 +516,14 @@ export class RepoManager {
     if (!v.ok) throw new RepoError(`${TAMPERED} ${w.id}: ${v.reason}`, 'refused');
     const ref = `refs/heads/${w.branch}`;
     const identity = agentIdentity(w.agentId);
+    const keep = this.protectedPaths(repoId);
+    // protected paths stay out of every commit AgentCraft makes (they may be modified in the worktree)
+    const unstage = async (env?: NodeJS.ProcessEnv) => {
+      if (keep.length) await git(w.path, ['reset', '-q', '--', ...keep], { allowFail: true, ...(env ? { env } : {}) });
+    };
     if (v.head === ref) {
       await git(w.path, ['add', '-A']);
+      await unstage();
       const st = await git(w.path, ['diff', '--cached', '--quiet'], { allowFail: true });
       if (st.code === 0) return false;
       await git(w.path, ['commit', '-q', '--no-verify', '-m', message], { env: identity });
@@ -527,6 +536,7 @@ export class RepoManager {
     try {
       await git(w.path, ['read-tree', ref], { env });
       await git(w.path, ['add', '-A'], { env });
+      await unstage(env);
       const tree = await gitOut(w.path, ['write-tree'], { env });
       const tip = await gitOut(w.path, ['rev-parse', ref]);
       if (tree === (await gitOut(w.path, ['rev-parse', `${tip}^{tree}`]))) return false;
@@ -726,6 +736,62 @@ export class RepoManager {
     return res.code === 0 ? Number(res.stdout.trim()) || 0 : 0;
   }
 
+  /**
+   * repoSettings.baseBranch: make it the repo's base (what agents start from and land into),
+   * creating the local branch from origin/<base> when only the remote one exists (no network).
+   */
+  private async applyBase(r: Repo): Promise<void> {
+    const base = this.settingsFor(r.id).baseBranch;
+    if (!base || r.branch === base) return;
+    const has = async (ref: string) => (await git(r.path, ['rev-parse', '--verify', '--quiet', ref], { allowFail: true })).code === 0;
+    if (!(await has(`refs/heads/${base}`))) {
+      if (!(await has(`refs/remotes/origin/${base}`))) {
+        this.ctx.log.warn(`repoSettings baseBranch: ${r.name} has no branch ${base} (nor origin/${base}); staying on ${r.branch}`);
+        return;
+      }
+      await git(r.path, ['branch', base, `refs/remotes/origin/${base}`]);
+      this.ctx.log.info(`${r.name}: created ${base} from origin/${base}`);
+    }
+    this.ctx.log.info(`${r.name}: base branch ${base} (repoSettings; the checkout stays on ${r.branch})`);
+    r.branch = base;
+  }
+
+  /** repoSettings.protect for a repo. */
+  protectedPaths(repoId: string): string[] {
+    return this.settingsFor(repoId).protect ?? [];
+  }
+
+  /** Is `rel` (a repo-relative path) one of the repo's protected paths? */
+  isProtected(repoId: string, rel: string): boolean {
+    const p = rel.replace(/\\/g, '/').replace(/^\.\//, '');
+    return this.protectedPaths(repoId).some((x) => (x.endsWith('/') ? p.startsWith(x) : p === x));
+  }
+
+  /**
+   * Protected files the branch has COMMITTED changes to since its base. Uncommitted edits are fine:
+   * AgentCraft's own commits leave protected paths out (commitAll).
+   */
+  async protectedChanges(repoId: string, worktreeId: string): Promise<string[]> {
+    if (!this.protectedPaths(repoId).length) return [];
+    const r = this.require(repoId);
+    const w = this.requireWorktree(repoId, worktreeId);
+    const mb = await git(r.path, ['merge-base', w.base, `refs/heads/${w.branch}`], { allowFail: true });
+    if (mb.code !== 0) return [];
+    const names = await gitOut(r.path, ['diff', '--name-only', '--no-renames', mb.stdout.trim(), `refs/heads/${w.branch}`]);
+    return names.split('\n').filter(Boolean).filter((f) => this.isProtected(repoId, f));
+  }
+
+  /** repoSettings.env expanded against `base` (~, $VAR, ${VAR}). */
+  envFor(repoId: string | undefined, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+    const env = repoId ? this.settingsFor(repoId).env : undefined;
+    if (!env) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(env)) {
+      out[k] = v.replace(/^~(?=$|[\\/])/, os.homedir()).replace(/\$\{(\w+)\}|\$(\w+)/g, (_m, a: string | undefined, b: string | undefined) => base[(a ?? b)!] ?? '');
+    }
+    return out;
+  }
+
   /** The repo's settings from config.json (matched by path), or {}. */
   settingsFor(repoId: string): RepoSettings {
     const r = this.get(repoId);
@@ -770,7 +836,7 @@ export class RepoManager {
       const t0 = Date.now();
       const timeoutMs = s.setupTimeoutMs ?? 600_000;
       // git transports stay disabled (as for agents and CI); package managers may use the network
-      const res = await runShell(s.setup, { cwd: w.path, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }, { ceiling: path.dirname(path.resolve(w.path)) }) });
+      const res = await runShell(s.setup, { cwd: w.path, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...this.envFor(repoId) }, { ceiling: path.dirname(path.resolve(w.path)) }) });
       const full = `${res.stdout}\n${res.stderr}${res.timedOut ? `\n(timed out after ${Math.round(timeoutMs / 1000)}s; process tree killed)` : ''}`;
       out.setup = { command: s.setup, ok: res.code === 0 && !res.timedOut, output: tailLines(full, 30, 2500), durationMs: Date.now() - t0 };
     }
@@ -788,7 +854,7 @@ export class RepoManager {
     const t0 = Date.now();
     // the worktree's test scripts are agent-editable code: run them with git transports disabled
     // (a `git push` inside a test script fails) and kill the whole process tree on timeout
-    const res = await runShell(cmd, { cwd, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }, { ceiling: path.dirname(path.resolve(cwd)) }) });
+    const res = await runShell(cmd, { cwd, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...this.envFor(repoId) }, { ceiling: path.dirname(path.resolve(cwd)) }) });
     const full = `${res.stdout}\n${res.stderr}${res.timedOut ? `\n(timed out after ${Math.round(timeoutMs / 1000)}s; process tree killed)` : ''}`;
     const output = tailLines(full, 40, 3000);
     return { pass: res.code === 0 && !res.timedOut, code: res.code, command: cmd, output, durationMs: Date.now() - t0, ...parseTestOutput(full) };

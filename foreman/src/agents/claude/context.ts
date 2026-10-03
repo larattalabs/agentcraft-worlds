@@ -22,6 +22,11 @@ export interface AgentContextConfig {
   repoInstructions: boolean;
   /** the user's ~/.claude/CLAUDE.md (default false: it is written for interactive sessions) */
   userInstructions: boolean;
+  /**
+   * CLAUDE.md / AGENTS.md in the folders above a repository's checkout, up to (not including) the
+   * home folder: a workspace that holds several repos (default true, as Claude Code does)
+   */
+  workspaceInstructions: boolean;
   /** more instruction files (absolute or ~ paths) */
   files: string[];
   /** cap on the appended instructions (characters) */
@@ -37,6 +42,7 @@ export interface AgentContextConfig {
 export const DEFAULT_CONTEXT: AgentContextConfig = {
   repoInstructions: true,
   userInstructions: false,
+  workspaceInstructions: true,
   files: [],
   maxChars: 24_000,
   skills: [],
@@ -107,11 +113,37 @@ export function readInstructions(file: string, opts: { home?: string; seen?: Set
     .join('\n');
 }
 
-/** The instruction files for an agent working in `cwd`, as labelled sections. */
-export function instructionSources(cfg: AgentContextConfig, cwd: string, home = os.homedir()): Array<{ label: string; file: string }> {
+/** Folders above `checkout` up to (not including) `home` or the filesystem root, outermost first. */
+export function workspaceDirs(checkout: string, home = os.homedir()): string[] {
+  const out: string[] = [];
+  const stop = path.resolve(home);
+  let d = path.dirname(path.resolve(checkout));
+  while (d !== stop && d !== path.dirname(d) && (d + path.sep).startsWith(stop + path.sep)) {
+    out.unshift(d);
+    d = path.dirname(d);
+  }
+  return out;
+}
+
+/** Workspace folders above `checkout` that hold a CLAUDE.md or AGENTS.md. */
+export function workspaceInstructionDirs(checkout: string, home = os.homedir()): string[] {
+  return workspaceDirs(checkout, home).filter((d) => ['CLAUDE.md', 'AGENTS.md'].some((f) => fs.existsSync(path.join(d, f))));
+}
+
+/**
+ * The instruction files for an agent working in `cwd`, as labelled sections. `checkout` is the
+ * repository's own checkout (a worker's cwd is a worktree elsewhere): workspace files are found
+ * above it.
+ */
+export function instructionSources(cfg: AgentContextConfig, cwd: string, home = os.homedir(), checkout?: string): Array<{ label: string; file: string }> {
   const out: Array<{ label: string; file: string }> = [];
   if (cfg.userInstructions) out.push({ label: 'Your user instructions', file: path.join(home, '.claude', 'CLAUDE.md') });
   for (const f of cfg.files) out.push({ label: 'Instructions', file: path.resolve(expandHome(f, home)) });
+  if (cfg.workspaceInstructions && checkout) {
+    for (const d of workspaceDirs(checkout, home)) {
+      for (const f of ['CLAUDE.md', 'AGENTS.md']) out.push({ label: `Workspace instructions (paths in it are relative to ${d})`, file: path.join(d, f) });
+    }
+  }
   if (cfg.repoInstructions) {
     for (const f of ['CLAUDE.md', path.join('.claude', 'CLAUDE.md'), 'AGENTS.md']) out.push({ label: 'Repository instructions', file: path.join(cwd, f) });
   }
@@ -119,10 +151,10 @@ export function instructionSources(cfg: AgentContextConfig, cwd: string, home = 
 }
 
 /** The block appended to an agent's system prompt ('' when there is nothing to add). */
-export function instructionsBlock(cfg: AgentContextConfig, cwd: string, userName: string, home = os.homedir()): string {
+export function instructionsBlock(cfg: AgentContextConfig, cwd: string, userName: string, home = os.homedir(), checkout?: string): string {
   const seen = new Set<string>();
   const parts: string[] = [];
-  for (const s of instructionSources(cfg, cwd, home)) {
+  for (const s of instructionSources(cfg, cwd, home, checkout)) {
     const body = readInstructions(s.file, { home, seen }).trim();
     if (body) parts.push(`## ${s.label} (${s.file.startsWith(cwd) ? path.relative(cwd, s.file) : s.file})\n\n${body}`);
   }

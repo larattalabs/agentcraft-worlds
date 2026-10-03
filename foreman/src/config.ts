@@ -89,6 +89,12 @@ export interface RepoSettings {
   roles?: Record<string, string>;
   /** "repo": agents working here may use the repository's .claude/agents files as subagents */
   subagents?: 'repo';
+  /** branch agents start from and land into (default: whatever the checkout has checked out) */
+  baseBranch?: string;
+  /** paths (relative to the repo; a trailing / means a folder) that are never committed */
+  protect?: string[];
+  /** environment for agents, setup and CI in this repo ($VAR / ${VAR} and ~ expanded; GIT_* ignored) */
+  env?: Record<string, string>;
 }
 
 export type ShowcaseCheckpoint = 'showcase' | 'showcase-late';
@@ -205,6 +211,7 @@ function contextConfig(v: unknown): AgentContextConfig {
   return {
     repoInstructions: typeof o.repoInstructions === 'boolean' ? o.repoInstructions : DEFAULT_CONTEXT.repoInstructions,
     userInstructions: typeof o.userInstructions === 'boolean' ? o.userInstructions : DEFAULT_CONTEXT.userInstructions,
+    workspaceInstructions: typeof o.workspaceInstructions === 'boolean' ? o.workspaceInstructions : DEFAULT_CONTEXT.workspaceInstructions,
     files: strings(o.files),
     maxChars: typeof o.maxChars === 'number' && o.maxChars > 0 ? o.maxChars : DEFAULT_CONTEXT.maxChars,
     skills: strings(o.skills),
@@ -338,6 +345,13 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
         if (Object.keys(roles).length) s.roles = roles;
       }
       if (o.subagents === 'repo') s.subagents = 'repo';
+      if (str(o.baseBranch) && /^[\w./-]+$/.test(o.baseBranch as string)) s.baseBranch = o.baseBranch as string;
+      if (Array.isArray(o.protect)) s.protect = o.protect.filter((x): x is string => typeof x === 'string' && x.length > 0 && !x.startsWith('/') && !x.split(/[\\/]/).includes('..'));
+      if (o.env && typeof o.env === 'object') {
+        const env: Record<string, string> = {};
+        for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && typeof v === 'string') env[k] = v;
+        if (Object.keys(env).length) s.env = env;
+      }
       repoSettings[path.resolve(k.replace(/^~(?=$|[\\/])/, os.homedir()))] = s;
     }
   }
