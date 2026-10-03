@@ -1,11 +1,24 @@
 // System-prompt appendices and job prompts for the claude backend.
+import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
 import type { Foreman } from '../../foreman.js';
 import type { Goal, Task, Worktree } from '../../protocol.js';
 import { truncate } from '../../util/text.js';
 import { userName } from '../../user.js';
 
-/** What an agent specialises in: its configured prompt, else the cast description. */
-export function specialty(fm: Foreman, agentId: string): { title?: string; text?: string } {
+/** An agent's role from the repository it works in (repoSettings.roles -> an agent file). */
+export interface RepoRole {
+  name: string;
+  description: string;
+  prompt: string;
+  model?: string;
+  effort?: EffortLevel;
+}
+
+export type RoleLookup = (agentId: string) => RepoRole | undefined;
+
+/** What an agent specialises in: its role in the repository, else its configured prompt, else the cast description. */
+export function specialty(fm: Foreman, agentId: string, role?: RepoRole): { title?: string; text?: string } {
+  if (role) return { title: role.name, text: role.description };
   const profile = fm.config.claude.agents[agentId];
   const cast = fm.cast.find((c) => c.id === agentId);
   const title = profile?.title ?? cast?.title;
@@ -13,8 +26,8 @@ export function specialty(fm: Foreman, agentId: string): { title?: string; text?
   return { ...(title && title !== 'Worker' ? { title } : {}), ...(text ? { text } : {}) };
 }
 
-function teamLine(fm: Foreman, w: string): string {
-  const s = specialty(fm, w);
+function teamLine(fm: Foreman, w: string, roles?: RoleLookup): string {
+  const s = specialty(fm, w, roles?.(w));
   const what = [s.title, s.text].filter(Boolean).join(': ');
   return `- ${fm.nameOf(w)} (id "${w}")${what ? `: ${truncate(what.replace(/\s+/g, ' '), 200)}` : ''}`;
 }
@@ -27,8 +40,8 @@ function sizeRule(fm: Foreman): string {
   return `\n- Set create_task size to pick the worker's model: ${what}. "small" for mechanical, well-specified changes; "large" for hard or architectural work; leave it out otherwise.`;
 }
 
-export function leadSystemPrompt(fm: Foreman, workers: string[]): string {
-  const team = `\n${workers.map((w) => teamLine(fm, w)).join('\n')}`;
+export function leadSystemPrompt(fm: Foreman, workers: string[], roles?: RoleLookup): string {
+  const team = `\n${workers.map((w) => teamLine(fm, w, roles)).join('\n')}`;
   return `
 # You are Marlow, lead of an AgentCraft team
 AgentCraft shows your team as characters in a Minecraft HQ. The user is ${userName()}. Your workers:${team}
@@ -46,9 +59,11 @@ Rules
 `.trim();
 }
 
-export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree): string {
+export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree, role?: RepoRole): string {
   const s = specialty(fm, agentId);
-  const focus = s.title || s.text ? `\nYour specialty${s.title ? `: ${s.title}` : ''}.${s.text ? ` ${s.text}` : ''} Bring that expertise to every task; other kinds of work are fine when you are assigned them.\n` : '';
+  const focus = role
+    ? `\n## Your role in this repository: ${role.name}\nThis is how the repository's own agent file describes your role. Follow it, within the AgentCraft rules below (your worktree, no push, hand work back with update_task).\n\n${role.prompt}\n`
+    : s.title || s.text ? `\nYour specialty${s.title ? `: ${s.title}` : ''}.${s.text ? ` ${s.text}` : ''} Bring that expertise to every task; other kinds of work are fine when you are assigned them.\n` : '';
   return `
 # You are ${fm.nameOf(agentId)}, a worker on an AgentCraft team led by Marlow${focus}
 The user is ${userName()}. You work ONLY inside your git worktree:

@@ -82,6 +82,13 @@ export interface RepoSettings {
   copy?: string[];
   /** setup timeout in ms (default 10 minutes) */
   setupTimeoutMs?: number;
+  /**
+   * agent id -> one of the repository's agent files (a name under .claude/agents, or a path): the
+   * agent's role, prompt and model whenever it works in this repository
+   */
+  roles?: Record<string, string>;
+  /** "repo": agents working here may use the repository's .claude/agents files as subagents */
+  subagents?: 'repo';
 }
 
 export type ShowcaseCheckpoint = 'showcase' | 'showcase-late';
@@ -325,6 +332,12 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       if (str(o.setup)) s.setup = o.setup as string;
       if (Array.isArray(o.copy)) s.copy = o.copy.filter((x): x is string => typeof x === 'string' && x.length > 0);
       if (typeof o.setupTimeoutMs === 'number' && o.setupTimeoutMs > 0) s.setupTimeoutMs = o.setupTimeoutMs;
+      if (o.roles && typeof o.roles === 'object') {
+        const roles: Record<string, string> = {};
+        for (const [id, spec] of Object.entries(o.roles as Record<string, unknown>)) if (/^[a-z0-9_-]+$/i.test(id) && str(spec)) roles[id.toLowerCase()] = spec as string;
+        if (Object.keys(roles).length) s.roles = roles;
+      }
+      if (o.subagents === 'repo') s.subagents = 'repo';
       repoSettings[path.resolve(k.replace(/^~(?=$|[\\/])/, os.homedir()))] = s;
     }
   }

@@ -107,6 +107,20 @@ in the repo, so an agent cannot change what the Foreman runs by editing its work
     "setupTimeoutMs": 600000 } } }
 ```
 
+A repository's own Claude Code agent files (`.claude/agents/*.md`) can be used two ways:
+
+```json
+{ "repoSettings": { "~/code/game": {
+    "roles": { "kit": "dg-architect", "juniper": "dg-builder" },
+    "subagents": "repo" } } }
+```
+
+`roles` makes an agent file a worker's role in that repository: its prompt goes into the worker's
+system prompt, its model and effort win over the agent's profile (a sized task still wins), and the
+lead's team list shows the role's description. The file is read from the worker's worktree (the lead:
+the checkout), so it follows the branch. `"subagents": "repo"` lets agents working there use the
+repository's other agent files as subagents (on top of `claude.subagents`, even if that is off).
+
 `copy` brings untracked files from your checkout into each new worker worktree. `setup` runs once per
 new worktree before the worker's first turn (git network access stays off; a failure is shown to the
 worker rather than stopping it). `ci` replaces `--ci` and detection for that repo.

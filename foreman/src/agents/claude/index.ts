@@ -36,8 +36,8 @@ import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type Pr
 import { truncate } from '../../util/text.js';
 import { buildSkillsPlugin, instructionsBlock } from './context.js';
 import { guardrailHook } from './permissions.js';
-import { loadSubagents } from './subagents.js';
-import { leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
+import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
+import { type RepoRole, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
 import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
@@ -181,6 +181,8 @@ export class ClaudeBackend implements Backend {
   private skillsPlugin: { path: string; ids: string[] } | undefined;
   /** subagent definitions from claude.subagents.agents (loaded at start) */
   private subagentDefs: Record<string, AgentDefinition> = {};
+  /** role files that could not be read (warned once each) */
+  private roleProblems = new Set<string>();
 
   constructor(
     private fm: Foreman,
@@ -307,7 +309,7 @@ export class ClaudeBackend implements Backend {
   }
 
   /** What the AgentCraft policy needs to judge this agent's tool calls. */
-  private policyContext(agentId: string, role: 'lead' | 'worker', cwd: string): PolicyContext {
+  private policyContext(agentId: string, role: 'lead' | 'worker', cwd: string, repoId?: string): PolicyContext {
     return {
       role,
       cwd,
@@ -316,7 +318,7 @@ export class ClaudeBackend implements Backend {
       mcpServer: MCP_SERVER,
       ...(this.skillsPlugin ? { skills: this.skillsPlugin.ids } : {}),
       mcpAllow: this.cfg.context.mcpAllow,
-      ...(this.cfg.subagents.enabled ? { subagents: true } : {}),
+      ...(this.subagentsOn(repoId) ? { subagents: true } : {}),
     };
   }
 
@@ -828,23 +830,47 @@ export class ClaudeBackend implements Backend {
     return withAuthMode(agentEnv(process.env, who), this.cfg.useClaudeLogin);
   }
 
-  private cwdFor(job: Job): { cwd: string; role: 'lead' | 'worker' } {
+  private cwdFor(job: Job): { cwd: string; role: 'lead' | 'worker'; repoId: string } {
     if (job.agentId === LEAD) {
       const goal = job.goalId ? this.fm.goal(job.goalId) : this.fm.currentGoal();
       const repo = goal?.repoId ? this.fm.repos.get(goal.repoId) : this.fm.repos.defaultRepo();
       if (!repo) throw new Error('no repo for the lead');
-      return { cwd: repo.path, role: 'lead' };
+      return { cwd: repo.path, role: 'lead', repoId: repo.id };
     }
     const t = job.taskId ? this.fm.tasks.get(job.taskId) : undefined;
     if (!t?.worktree || !t.repoId) throw new Error(`job for ${job.agentId} has no worktree`);
-    return { cwd: this.fm.repos.requireWorktree(t.repoId, t.worktree).path, role: 'worker' };
+    return { cwd: this.fm.repos.requireWorktree(t.repoId, t.worktree).path, role: 'worker', repoId: t.repoId };
   }
 
-  private canUseTool(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle): CanUseTool {
+  /**
+   * An agent's role in a repository (repoSettings.roles): the repository's agent file, read from
+   * `dir` (the worker's worktree, or the checkout for the lead) so it follows the branch.
+   */
+  repoRole(agentId: string, repoId: string, dir: string): RepoRole | undefined {
+    const spec = this.fm.repos.settingsFor(repoId).roles?.[agentId];
+    if (!spec) return undefined;
+    const a = readAgentFile(agentFilePath(spec, path.join(dir, '.claude', 'agents'), dir));
+    if (typeof a === 'string') {
+      const key = `${repoId}:${agentId}:${a}`;
+      if (!this.roleProblems.has(key)) {
+        this.roleProblems.add(key);
+        this.fm.log.warn(`repoSettings roles: ${this.fm.nameOf(agentId)} in ${repoId}: ${a}`);
+      }
+      return undefined;
+    }
+    return { name: a.name, description: a.description, prompt: a.prompt, ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}) };
+  }
+
+  /** Subagents are on for this repository: globally, or the repository's own (repoSettings.subagents "repo"). */
+  private subagentsOn(repoId: string | undefined): boolean {
+    return this.cfg.subagents.enabled || (!!repoId && this.fm.repos.settingsFor(repoId).subagents === 'repo');
+  }
+
+  private canUseTool(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle, repoId?: string): CanUseTool {
     return async (toolName, input, opts): Promise<PermissionResult> => {
       // a stopped/paused/cancelled turn runs nothing more, even if its CLI has not exited yet
       if (turn.signal.aborted) return { behavior: 'deny', message: `Your turn was stopped by ${userName()}.`, interrupt: true };
-      const verdict = classifyToolUse(toolName, input, this.policyContext(agentId, role, cwd));
+      const verdict = classifyToolUse(toolName, input, this.policyContext(agentId, role, cwd, repoId));
       if (verdict.action === 'allow') return { behavior: 'allow', updatedInput: input };
       if (verdict.action === 'deny') {
         this.fm.agentLog(agentId, 'error', `blocked: ${describeToolCall(toolName, input)} (${verdict.reason})`);
@@ -920,13 +946,13 @@ export class ClaudeBackend implements Backend {
   }
 
   /**
-   * Model and effort for a turn: the task's size (claude.taskModels) wins, then the agent's profile
-   * (claude.agents), then the role defaults.
+   * Model and effort for a turn: the task's size (claude.taskModels) wins, then the agent's role in
+   * the repository (repoSettings.roles), then its profile (claude.agents), then the role defaults.
    */
-  modelFor(agentId: string, role: 'lead' | 'worker', taskId?: string): { model: string; effort: EffortLevel } {
+  modelFor(agentId: string, role: 'lead' | 'worker', taskId?: string, repoRole?: RepoRole): { model: string; effort: EffortLevel } {
     const profile = this.cfg.agents[agentId];
-    let model = profile?.model ?? (role === 'lead' ? this.cfg.leadModel : this.cfg.workerModel);
-    const effort = profile?.effort ?? (role === 'lead' ? this.cfg.leadEffort : this.cfg.effort);
+    let model = repoRole?.model ?? profile?.model ?? (role === 'lead' ? this.cfg.leadModel : this.cfg.workerModel);
+    const effort = repoRole?.effort ?? profile?.effort ?? (role === 'lead' ? this.cfg.leadEffort : this.cfg.effort);
     const size = role === 'worker' && taskId ? this.st.taskSize[taskId] : undefined;
     if (size && this.cfg.taskModels[size]) model = this.cfg.taskModels[size]!;
     return { model, effort };
@@ -936,9 +962,13 @@ export class ClaudeBackend implements Backend {
    * Permission mode, tools, guardrail hook and the user's rules for one turn (claude.permissions,
    * claude.subagents). Policy mode keeps upstream's behaviour: every call through canUseTool.
    */
-  private permissionOptions(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle): Partial<Options> {
+  private permissionOptions(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle, repoId?: string): Partial<Options> {
     const p = this.cfg.permissions;
-    const sub = this.cfg.subagents.enabled;
+    const sub = this.subagentsOn(repoId);
+    const settings = repoId ? this.fm.repos.settingsFor(repoId) : {};
+    // the repository's own agent files (read from this agent's checkout), except those used as roles
+    const repoAgents = settings.subagents === 'repo' ? loadRepoAgents(cwd, new Set(Object.values(settings.roles ?? {}).map((r) => r.replace(/\.md$/, '').split(/[\\/]/).pop()!))) : {};
+    const defs = { ...this.subagentDefs, ...repoAgents };
     const tools = role === 'lead' ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite'];
     if (p.webTools) tools.push('WebFetch', 'WebSearch');
     if (sub) tools.push('Agent', 'Task');
@@ -947,11 +977,11 @@ export class ClaudeBackend implements Backend {
     const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : undefined;
     return {
       permissionMode: p.mode === 'auto' ? 'auto' : 'default',
-      canUseTool: this.canUseTool(agentId, role, cwd, turn),
+      canUseTool: this.canUseTool(agentId, role, cwd, turn, repoId),
       tools,
       disallowedTools: disallowed,
       ...(rules ? { settings: rules } : {}),
-      ...(sub && Object.keys(this.subagentDefs).length ? { agents: this.subagentDefs } : {}),
+      ...(sub && Object.keys(defs).length ? { agents: defs } : {}),
       ...(p.mode === 'auto'
         ? {
             hooks: {
@@ -959,7 +989,7 @@ export class ClaudeBackend implements Backend {
                 {
                   hooks: [
                     guardrailHook(
-                      (tool, input) => classifyToolUse(tool, input, this.policyContext(agentId, role, cwd)),
+                      (tool, input) => classifyToolUse(tool, input, this.policyContext(agentId, role, cwd, repoId)),
                       () => this.protectedRoots(),
                       (tool, decision, reason, subagent) =>
                         this.fm.agentLog(agentId, decision === 'deny' ? 'error' : 'tool', `guardrail ${decision === 'deny' ? 'blocked' : 'asks you'}${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
@@ -990,27 +1020,30 @@ export class ClaudeBackend implements Backend {
       const where = this.cwdFor(job);
       cwd = where.cwd;
       const role = where.role;
+      const repoId = where.repoId;
+      const roleDir = cwd;
+      const roleOf = (id: string) => this.repoRole(id, repoId, roleDir);
       const session = this.fm.store.data.sessions[job.sessionKey];
       const resume = !job.fresh && session?.sessionId ? session.sessionId : undefined;
       this.st.inflight[agentId] = { kind: job.kind, sessionKey: job.sessionKey, startedAt: Date.now(), ...(job.taskId ? { taskId: job.taskId } : {}), ...(job.goalId ? { goalId: job.goalId } : {}) };
       this.fm.store.markDirty();
 
       let systemAppend: string;
-      if (role === 'lead') systemAppend = leadSystemPrompt(this.fm, this.team);
+      if (role === 'lead') systemAppend = leadSystemPrompt(this.fm, this.team, roleOf);
       else {
         const t = this.fm.tasks.require(job.taskId!);
-        systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!));
+        systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!), roleOf(agentId));
       }
       const extra = instructionsBlock(this.cfg.context, cwd, userName());
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
-      const { model, effort } = this.modelFor(agentId, role, job.taskId);
+      const { model, effort } = this.modelFor(agentId, role, job.taskId, role === 'worker' ? roleOf(agentId) : undefined);
       const options: Options = {
         cwd,
         model,
         effort,
         maxTurns: role === 'lead' ? this.cfg.maxTurnsLead : this.cfg.maxTurnsWorker,
         settingSources: [],
-        ...this.permissionOptions(agentId, role, cwd, turn),
+        ...this.permissionOptions(agentId, role, cwd, turn, repoId),
         // the user's extra servers first, so the team tools server can never be replaced
         mcpServers: { ...this.cfg.context.mcpServers, [MCP_SERVER]: buildMcpServer(this.fm, agentId, role, this.hooks, turn) },
         ...(this.skillsPlugin ? { plugins: [{ type: 'local' as const, path: this.skillsPlugin.path, skipMcpDiscovery: true }], skills: this.skillsPlugin.ids } : {}),
