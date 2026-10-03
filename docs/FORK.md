@@ -23,6 +23,7 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 | 2026-10-03 | `main` = upstream + every topic branch merged; topic branches stay for upstream PRs. New work: topic branch off `upstream/main`, then merge into `main`. |
 | 2026-10-03 | Build order below. Phase 0 (verification) deferred by choice; Phase 1 starts now. Phase 0 must pass before anything enters the Hardcore world. |
 | 2026-10-03 | Personal setup is relaxed: auto mode (classifier) instead of AgentCraft's ask-everything policy, web tools, subagents (incl. gate-verifier, design-critic), second-opinion skill with `Bash(codex exec:*)` allowed, global CLAUDE.md on, no Haiku. Guardrails kept: policy denies, git internals, writes into registered checkouts / AgentCraft state. Upstream default stays `policy`. |
+| 2026-10-03 | A multi-repo work project on Azure DevOps: five repos registered, PRs into each repo's integration branch (squashed, authored by the user, `feat/` prefix), local-config files protected, per-repo Node versions via `env`, deny rules for direct deploys (tofu/terraform apply, az deployment create, az pipelines run, agents opening PRs). claude.ai connectors not available to agents. |
 | 2026-10-03 | Agent context: repo `CLAUDE.md`/`AGENTS.md` on by default; the user's global `~/.claude/CLAUDE.md` opt-in only (interactive-workflow rules would fight the role prompts); extra files by path. Read by the Foreman and appended, never via `settingSources`. |
 
 ## Branches
@@ -41,6 +42,8 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/agent-roles` | roadmap 5 (`claude.agents`, `claude.taskModels`, notes across tasks) | yes |
 | `foreman/permissions` | `claude.permissions` (policy/auto mode, guardrail hook, Claude Code rules, web tools) + `claude.subagents` | yes |
 | `foreman/repo-agents` | repo `.claude/agents` files as worker roles (`repoSettings.roles`) and subagents (`repoSettings.subagents: "repo"`); stacked on roles/repo-settings/permissions | after those |
+| `foreman/workspace-repos` | workspace instructions above a repo, `baseBranch`, `protect`, repo `env` | after repo-settings |
+| `foreman/cross-repo-pr` | `land: "pr"` (push + `az`/`gh` PR on approval, squash as user), cross-repo goals; stacked on workspace-repos | after workspace-repos |
 | `foreman/usage-banner` | plan usage windows in `foreman.status.usage` + console (stacked on `foreman/rate-limits`) | yes, after rate-limits |
 
 ## Build sequence
