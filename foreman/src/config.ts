@@ -6,6 +6,8 @@ import { readJson } from './util/fsx.js';
 import type { BackendName } from './protocol.js';
 import { defaultUserName } from './user.js';
 import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
+import { DEFAULT_PERMISSIONS, type PermissionsConfig } from './agents/claude/permissions.js';
+import { DEFAULT_SUBAGENTS, type SubagentsConfig } from './agents/claude/subagents.js';
 
 export const FOREMAN_VERSION = '0.1.0';
 
@@ -36,6 +38,10 @@ export interface ClaudeConfig {
    * only: Anthropic does not allow third-party tools to offer claude.ai login (see agents/claude/auth.ts).
    */
   useClaudeLogin: boolean;
+  /** permission mode, guardrails and Claude Code permission rules (config.json claude.permissions) */
+  permissions: PermissionsConfig;
+  /** Claude Code subagents for the agents (config.json claude.subagents) */
+  subagents: SubagentsConfig;
 }
 
 export type ShowcaseCheckpoint = 'showcase' | 'showcase-late';
@@ -131,6 +137,29 @@ function bool(v: unknown, d: boolean): boolean {
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.length ? v : undefined;
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : [];
+}
+
+function permissionsConfig(v: unknown): PermissionsConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const mode = o.mode ?? DEFAULT_PERMISSIONS.mode;
+  if (mode !== 'policy' && mode !== 'auto') throw new Error(`unknown permissions mode "${String(mode)}" (use policy or auto)`);
+  return {
+    mode,
+    allow: stringList(o.allow),
+    deny: stringList(o.deny),
+    ask: stringList(o.ask),
+    webTools: typeof o.webTools === 'boolean' ? o.webTools : DEFAULT_PERMISSIONS.webTools,
+    protectCheckouts: typeof o.protectCheckouts === 'boolean' ? o.protectCheckouts : DEFAULT_PERMISSIONS.protectCheckouts,
+  };
+}
+
+function subagentsConfig(v: unknown): SubagentsConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  return { enabled: typeof o.enabled === 'boolean' ? o.enabled : DEFAULT_SUBAGENTS.enabled, agents: stringList(o.agents) };
 }
 
 function mergeStyle(v: unknown): 'merge' | 'squash' {
@@ -234,6 +263,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       resumeOnStart: bool(flags.resume ?? fileClaude.resumeOnStart, true),
       leadReview: bool(flags['lead-review'] ?? fileClaude.leadReview, true),
       useClaudeLogin: bool(flags['use-claude-login'] ?? env.AGENTCRAFT_USE_CLAUDE_LOGIN ?? fileClaude.useClaudeLogin, false),
+      permissions: permissionsConfig(fileClaude.permissions),
+      subagents: subagentsConfig(fileClaude.subagents),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),
