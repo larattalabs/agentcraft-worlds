@@ -150,7 +150,8 @@ explicit and reversible.
    or above the ground row that would replace a solid block in orange (advisory: placing replaces
    them; floor/foundation rows replacing terrain are not flagged), block entities the mod did not
    place in strong red, the outline of the drawn footprint (red when `place` would refuse; the whole
-   box `place` reserves is added faintly when the refusal is an overlap or the player standing in it)
+   box `place` reserves is added faintly when the refusal is an overlap, block entities or the player
+   standing in it)
    and a brass bar on the front-most entrance face. The outline follows the drawn columns, not the
    template box: a template need not write every cell of its box (the studio's porch is 7 of its 37
    columns wide; the box corners beside it stay terrain). The HUD shows the blueprint, repos, rotation, the verdict (`place`'s refusals, computed on

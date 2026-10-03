@@ -95,9 +95,10 @@ final class GhostRenderer {
 		for (GhostModel.Edge e : m.outline()) {
 			quads += bar(pose, vc, bx, by, bz, e, t, edge);
 		}
-		// the whole box place() reserves, faintly, when a refusal is about the box itself (an overlap or the
-		// player standing in it), so a corner the footprint leaves out still explains the refusal
-		if (refused && v.refusals().stream().anyMatch(r -> r.startsWith("overlaps") || r.equals(BuildPlacement.PLAYER_INSIDE))) {
+		// the whole box place() reserves, faintly, when a refusal is about the box itself (an overlap, the
+		// player standing in it, or block entities, which place() refuses anywhere in the box), so a corner the
+		// footprint leaves out still explains the refusal
+		if (refused && (v.blockedCount() > 0 || v.refusals().stream().anyMatch(r -> r.startsWith("overlaps") || r.equals(BuildPlacement.PLAYER_INSIDE)))) {
 			int faint = UiStyle.withAlpha(0xFFD0402A, 0x60);
 			float w = m.sizeX;
 			float h = m.sizeY;

@@ -446,7 +446,7 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   12 edges), not the template box: templates need not write every cell (the studio, 37x14x36, leaves
   7010 cells unwritten, both front corners beside its 7-wide porch), and outlining the box made the
   outline stand out past the building there. `frontEdges(front)` is the brass entrance bar (front-most
-  face only). The reserved box is drawn faintly only for an overlap / player-inside refusal. Template cells come from `StructureTemplate.save` (palettes are private), cached
+  face only). The reserved box is drawn faintly only for an overlap / player-inside / block-entity refusal. Template cells come from `StructureTemplate.save` (palettes are private), cached
   per `Blueprints.Entry`. Render cost: the workshop (27x10x21, 2583 visible cells) draws 3750 faces
   (15k vertices) per frame; conflict cells draw only the outline of each blob; `dev.build.state`
   reports `render.faces`, `conflictFaces`, `lastFrameMicros`, `maxFrameMicros`. Placement is refused
