@@ -477,7 +477,7 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
   `leadForRepo`) + `Routing.layoutForBuilding` / `siteAt`, unit-tested in `LeadRoutingTest`.
 - `LeadsFeature` is the only sender, from one `Buildings` change listener (every placement path ends in
   `Buildings.place`, every removal in `forget`): world loaded -> `lead.sync {world, buildings:[{building,
-  repos}]}`; new building -> `lead.assign {building, repos}`; building gone -> `lead.release {building}`;
+  repos}]}`; new building -> `lead.assign {building, repos}`; building gone -> `lead.sync` (releases it, then gives the freed lead to an overflowed building);
   link (re)connected -> `lead.sync` (the reconciler for anything done offline); world stopped -> nothing.
   Nothing is sent without a singleplayer world, nor for a world whose `agentcraft-buildings.json` could not
   be read (it loads as "no buildings"; a sync would release every lead of the world; `dev.leads.state`

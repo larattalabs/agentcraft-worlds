@@ -30,7 +30,7 @@ import org.jspecify.annotations.Nullable;
  * {@code Buildings.place}; the hub's remove and {@code /agentcraft remove [forget]} in {@code forget}):
  * <ul>
  *   <li>a world was loaded (the world id changed): {@code lead.sync {world, buildings}};</li>
- *   <li>a building appeared: {@code lead.assign {building, repos}}; one disappeared: {@code lead.release {building}};</li>
+ *   <li>a building appeared: {@code lead.assign {building, repos}}; one disappeared: {@code lead.sync} (releases it, then the freed lead takes a building that overflowed to marlow);</li>
  *   <li>the link (re)connected: {@code lead.sync} (the reconciler: a placement while offline is caught up here);</li>
  *   <li>the world stopped: forgotten, nothing sent (the Foreman keeps its leads for the next load).</li>
  * </ul>
@@ -107,10 +107,11 @@ public final class LeadsFeature {
 			p.add("repos", array(now.get(id)));
 			send("lead.assign", p, id);
 		}
-		for (String id : d.release()) {
-			JsonObject p = new JsonObject();
-			p.addProperty("building", LeadRouting.key(w, id));
-			send("lead.release", p, id);
+		// a removal syncs instead of a bare lead.release: the sync releases the removed building first and
+		// then assigns, so the freed lead goes to a building that overflowed to marlow (the Foreman keeps no
+		// record of overflowed buildings)
+		if (!d.release().isEmpty()) {
+			sync("removed " + String.join(",", d.release()));
 		}
 	}
 

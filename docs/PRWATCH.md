@@ -191,7 +191,7 @@ Foreman -> client:
 - Agents with role `lead` appear in `snapshot.agents` only while assigned (marlow always).
 
 ### Mod
-- Placing a building sends `lead.assign`, removing it `lead.release`, connecting `lead.sync`.
+- Placing a building sends `lead.assign`; removing it and connecting send `lead.sync` (a sync after a removal hands the freed lead to a building that had overflowed to marlow).
 - Routing: a lead's building = its assignment's building (marlow: home). The lead stands at / walks to
   its building's `decision_podium` / `meeting`; a released lead walks home and despawns like an
   off-shift agent.
