@@ -36,6 +36,7 @@ import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type Pr
 import { truncate } from '../../util/text.js';
 import { leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
+import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
@@ -114,6 +115,8 @@ const LIMIT_BACKOFF_MS = 5 * 60_000;
 const LIMIT_BACKOFF_MAX_MS = 60 * 60_000;
 /** throttle length when a usage warning has no reset time */
 const THROTTLE_DEFAULT_MS = 30 * 60_000;
+/** how often the plan's usage windows are re-read from a live session */
+const USAGE_REFRESH_MS = 5 * 60_000;
 const LEAD = 'marlow';
 
 /**
@@ -485,6 +488,8 @@ export class ClaudeBackend implements Backend {
 
   /** A live usage report from a running turn. */
   private onRateLimit(r: RateLimitReport): void {
+    if (r.type && typeof r.utilization === 'number') this.setUsage(withWindow(pruneUsage(this.fm.status.usage), r.type, r.utilization * 100, r.resetsAt));
+    else if (r.type && r.status === 'rejected') this.setUsage(withWindow(pruneUsage(this.fm.status.usage), r.type, 100, r.resetsAt));
     if (r.status === 'rejected') this.setLimit(r.resetsAt, r.type);
     else if (r.status === 'allowed_warning') {
       const until = r.resetsAt ?? Date.now() + THROTTLE_DEFAULT_MS;
@@ -498,6 +503,22 @@ export class ClaudeBackend implements Backend {
       }
       this.armLimitTimer();
     }
+  }
+
+  private setUsage(u: ReturnType<typeof pruneUsage>): void {
+    if (!u) return;
+    const before = usageLine(this.fm.status.usage);
+    this.fm.setStatus({ usage: u });
+    const now = usageLine(u);
+    if (now !== before) this.fm.log.info(`plan usage: ${now}`);
+  }
+
+  /** At most every few minutes, while some agent has a live session: the CLI's /usage windows. */
+  private lastUsageRead = 0;
+  private refreshUsage(q: object): void {
+    if (!this.cfg.useClaudeLogin || Date.now() - this.lastUsageRead < USAGE_REFRESH_MS) return;
+    this.lastUsageRead = Date.now();
+    void readPlanUsage(q, pruneUsage(this.fm.status.usage)).then((u) => this.setUsage(u));
   }
 
   /** Stop starting turns until the limit resets (or a backoff when it did not say when). */
@@ -860,6 +881,7 @@ export class ClaudeBackend implements Backend {
       const prompt = unread.length ? `${job.prompt}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : job.prompt;
       try {
         const q = this.queryFn({ prompt, options });
+        this.refreshUsage(q);
         entry.q = q;
         // the abort signal alone lets a CLI finish what it is doing (seen in a real run: ~6 s of
         // further turns after /stop). close() force-ends the subprocess and its transports.
