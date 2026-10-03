@@ -54,6 +54,19 @@ dependencies {
 	include("org.java-websocket:Java-WebSocket:${project.java_websocket_version}") {
 		exclude group: 'org.slf4j'
 	}
+
+	// Unit tests (src/test/java) for pure logic: blueprint placement math, JSON round trips.
+	testImplementation platform("org.junit:junit-bom:${project.junit_version}")
+	testImplementation "org.junit.jupiter:junit-jupiter"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+	useJUnitPlatform()
+	testLogging {
+		events "failed"
+		exceptionFormat "full"
+	}
 }
 
 processResources {
