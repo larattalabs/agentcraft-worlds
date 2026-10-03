@@ -34,6 +34,7 @@ import { renderDiffText } from '../../diff.js';
 import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
+import { buildSkillsPlugin, instructionsBlock } from './context.js';
 import { leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
 import { StreamMapper, type TurnStats } from './stream.js';
@@ -148,6 +149,8 @@ export class ClaudeBackend implements Backend {
   /** scheduler retry after an error (backoff) */
   private retryTimer: NodeJS.Timeout | undefined;
   private retryDelayMs = 2000;
+  /** the Foreman's skills plugin (built at start from claude.context.skills) */
+  private skillsPlugin: { path: string; ids: string[] } | undefined;
 
   constructor(
     private fm: Foreman,
@@ -210,6 +213,7 @@ export class ClaudeBackend implements Backend {
     const spent = Object.values(this.fm.store.data.sessions).reduce((sum, s) => sum + (s.costUsd || 0), 0);
     if (spent > 0) this.fm.setStatus({ costUsd: Math.round(spent * 1000) / 1000 });
     await this.checkAuth();
+    this.prepareContext();
     if (!this.cfg.resumeOnStart) {
       this.st.inflight = {};
     } else {
@@ -219,6 +223,28 @@ export class ClaudeBackend implements Backend {
     for (const id of [LEAD, ...this.team]) this.deliverPending(id);
     void this.fm.repos.sweepPendingRemovals().catch((e) => this.fm.log.debug(`sweep: ${(e as Error).message}`));
     this.tick();
+  }
+
+  /** Build the skills plugin and report what context the agents get. */
+  private prepareContext(): void {
+    const c = this.cfg.context;
+    const dir = path.join(this.fm.config.dataDir, 'agent-plugin');
+    try {
+      const { ids, problems } = buildSkillsPlugin(c.skills, dir);
+      for (const p of problems) this.fm.log.warn(`claude.context: ${p}`);
+      this.skillsPlugin = ids.length ? { path: dir, ids } : undefined;
+    } catch (e) {
+      this.fm.log.error(`claude.context: could not build the skills plugin: ${(e as Error).message}`);
+      this.skillsPlugin = undefined;
+    }
+    const what = [
+      c.repoInstructions ? 'repo CLAUDE.md/AGENTS.md' : '',
+      c.userInstructions ? '~/.claude/CLAUDE.md' : '',
+      c.files.length ? `${c.files.length} instruction file(s)` : '',
+      this.skillsPlugin ? `skills ${this.skillsPlugin.ids.map((i) => i.split(':')[1]).join(', ')}` : '',
+      Object.keys(c.mcpServers).length ? `MCP ${Object.keys(c.mcpServers).join(', ')}` : '',
+    ].filter(Boolean);
+    this.fm.log.info(`agent context: ${what.join('; ') || 'none'}`);
   }
 
   async checkAuth(): Promise<boolean> {
@@ -615,9 +641,11 @@ export class ClaudeBackend implements Backend {
       const verdict = classifyToolUse(toolName, input, {
         role,
         cwd,
-        readDirs: [this.fm.memory.dir],
+        readDirs: [this.fm.memory.dir, ...(this.skillsPlugin ? [this.skillsPlugin.path] : [])],
         alwaysAllow: this.fm.store.data.permissionRules[agentId] ?? [],
         mcpServer: MCP_SERVER,
+        ...(this.skillsPlugin ? { skills: this.skillsPlugin.ids } : {}),
+        mcpAllow: this.cfg.context.mcpAllow,
       });
       if (verdict.action === 'allow') return { behavior: 'allow', updatedInput: input };
       if (verdict.action === 'deny') {
@@ -690,6 +718,9 @@ export class ClaudeBackend implements Backend {
         const t = this.fm.tasks.require(job.taskId!);
         systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!));
       }
+      const extra = instructionsBlock(this.cfg.context, cwd, userName());
+      if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
+      const baseTools = role === 'lead' ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite'];
       const model = role === 'lead' ? this.cfg.leadModel : this.cfg.workerModel;
       const options: Options = {
         cwd,
@@ -699,10 +730,12 @@ export class ClaudeBackend implements Backend {
         settingSources: [],
         permissionMode: 'default',
         canUseTool: this.canUseTool(agentId, role, cwd, turn),
-        tools: role === 'lead' ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite'],
+        tools: this.skillsPlugin ? [...baseTools, 'Skill'] : baseTools,
         // no allowedTools: every tool call (incl. our MCP tools) goes through canUseTool/policy
         disallowedTools: ['Bash(git push:*)', 'Task', 'Agent', 'WebSearch', 'WebFetch'],
-        mcpServers: { [MCP_SERVER]: buildMcpServer(this.fm, agentId, role, this.hooks, turn) },
+        // the user's extra servers first, so the team tools server can never be replaced
+        mcpServers: { ...this.cfg.context.mcpServers, [MCP_SERVER]: buildMcpServer(this.fm, agentId, role, this.hooks, turn) },
+        ...(this.skillsPlugin ? { plugins: [{ type: 'local' as const, path: this.skillsPlugin.path, skipMcpDiscovery: true }], skills: this.skillsPlugin.ids } : {}),
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
         abortController: abort,
         env: this.env({ agentId, cwd }),

@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { readJson } from './util/fsx.js';
 import type { BackendName } from './protocol.js';
 import { defaultUserName } from './user.js';
-import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
+import type { EffortLevel, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { DEFAULT_CONTEXT, type AgentContextConfig } from './agents/claude/context.js';
 
 export const FOREMAN_VERSION = '0.1.0';
 
@@ -36,6 +37,8 @@ export interface ClaudeConfig {
    * only: Anthropic does not allow third-party tools to offer claude.ai login (see agents/claude/auth.ts).
    */
   useClaudeLogin: boolean;
+  /** Claude Code context for the agents: instruction files, skills, MCP servers (config.json claude.context) */
+  context: AgentContextConfig;
 }
 
 export type ShowcaseCheckpoint = 'showcase' | 'showcase-late';
@@ -131,6 +134,31 @@ function bool(v: unknown, d: boolean): boolean {
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.length ? v : undefined;
+}
+
+function strings(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : [];
+}
+
+/** config.json claude.context; unknown keys are ignored, wrong types fall back to the defaults. */
+function contextConfig(v: unknown): AgentContextConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const servers: Record<string, McpServerConfig> = {};
+  if (o.mcpServers && typeof o.mcpServers === 'object') {
+    for (const [name, def] of Object.entries(o.mcpServers as Record<string, unknown>)) {
+      // "agentcraft" is the team tools server; nothing may replace it
+      if (name !== 'agentcraft' && /^[\w-]+$/.test(name) && def && typeof def === 'object') servers[name] = def as McpServerConfig;
+    }
+  }
+  return {
+    repoInstructions: typeof o.repoInstructions === 'boolean' ? o.repoInstructions : DEFAULT_CONTEXT.repoInstructions,
+    userInstructions: typeof o.userInstructions === 'boolean' ? o.userInstructions : DEFAULT_CONTEXT.userInstructions,
+    files: strings(o.files),
+    maxChars: typeof o.maxChars === 'number' && o.maxChars > 0 ? o.maxChars : DEFAULT_CONTEXT.maxChars,
+    skills: strings(o.skills),
+    mcpServers: servers,
+    mcpAllow: strings(o.mcpAllow).filter((p) => p.startsWith('mcp__') && !p.startsWith('mcp__agentcraft__')),
+  };
 }
 
 function mergeStyle(v: unknown): 'merge' | 'squash' {
@@ -234,6 +262,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       resumeOnStart: bool(flags.resume ?? fileClaude.resumeOnStart, true),
       leadReview: bool(flags['lead-review'] ?? fileClaude.leadReview, true),
       useClaudeLogin: bool(flags['use-claude-login'] ?? env.AGENTCRAFT_USE_CLAUDE_LOGIN ?? fileClaude.useClaudeLogin, false),
+      context: contextConfig(fileClaude.context),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),
