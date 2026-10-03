@@ -10,15 +10,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { DevClient, DevError, DEFAULT_PORT } from '../lib/devclient.mjs';
+import { DevClient, DEFAULT_PORT } from '../lib/devclient.mjs';
 import { contactSheet } from '../lib/contactsheet.mjs';
 import { readNbt } from './nbt.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ROTATIONS = ['none', 'clockwise_90', '180', 'counterclockwise_90'];
 
 // ---- args -------------------------------------------------------------------------------------
@@ -29,7 +27,7 @@ for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (!a.startsWith('--')) { pos.push(a); continue; }
   const k = a.slice(2);
-  if (['port', 'at', 'rotation', 'size', 'world', 'shots-dir'].includes(k)) flags[k] = argv[++i];
+  if (['port', 'at', 'rotation', 'size', 'world'].includes(k)) flags[k] = argv[++i];
   else flags[k] = true;
 }
 if (!pos[0] || flags.help) {
@@ -127,8 +125,8 @@ const t0 = Date.now();
 const bp = resolveBlueprint(pos[0]);
 const port = flags.port ? Number(flags.port) : DEFAULT_PORT;
 const worldDir = path.resolve(flags.world ?? path.join(root, 'mod/run/saves/AgentCraft HQ'));
-const shotsRoot = path.resolve(flags['shots-dir'] ?? process.env.AGENTCRAFT_SHOTS_DIR ?? path.join(root, 'artifacts', 'shots'));
-const outDir = path.join(root, 'artifacts', 'shots', 'blueprints', bp.id);
+// the game writes the PNGs to its shots dir (AGENTCRAFT_SHOTS_DIR, default <repo>/artifacts/shots); the sheet and report go next to them
+const outDir = path.join(path.resolve(process.env.AGENTCRAFT_SHOTS_DIR ?? path.join(root, 'artifacts', 'shots')), 'blueprints', bp.id);
 
 // size
 let size = null;
@@ -277,11 +275,16 @@ try {
 
   // 3. anchor checks
   const rows = [];
-  const STAND = /^(desk_|seat_|meeting|lounge|library|terminal|testbench|mergestation|user|decision_podium|goal_atrium|entrance|spawn|task_wall)/;
+  const STAND = /^(desk_|seat_|meeting|lounge|library|terminal|testbench|mergestation|user|entrance|spawn)/; // task_wall, decision_podium, goal_atrium are block anchors
   if (bp.sidecar?.anchors) {
     const isOpen = async (x, y, z) => {
       // open = block tag #minecraft:replaceable (air, grass, snow layer, ...); everything else counts as solid
       const r = await cmd(`/execute if block ${x} ${y} ${z} #minecraft:replaceable`);
+      return r.success !== false && !/Test failed/i.test((r.messages ?? []).join(' '));
+    };
+    const isSeat = async (x, y, z) => {
+      // seat anchors (desks, meeting chairs, sofas) put the feet inside a stairs block, as in the studio
+      const r = await cmd(`/execute if block ${x} ${y} ${z} #minecraft:stairs`);
       return r.success !== false && !/Test failed/i.test((r.messages ?? []).join(' '));
     };
     for (const [name, a] of Object.entries(bp.sidecar.anchors)) {
@@ -297,11 +300,11 @@ try {
       const inWalk = bp.sidecar.walk ? (a.x >= bp.sidecar.walk.minX && a.x <= bp.sidecar.walk.maxX + 1 && a.z >= bp.sidecar.walk.minZ && a.z <= bp.sidecar.walk.maxZ + 1) : null;
       const problems = [];
       if (!below) problems.push('no solid floor below');
-      const sits = base.startsWith('seat_'); // a seat anchor sits inside the chair block
+      const sits = !feet && (await isSeat(wx, wy, wz)); // a seat anchor sits inside the chair block
       if (!feet && !sits) problems.push('feet cell blocked');
       if (!head) problems.push('head cell blocked');
       if (inWalk === false) problems.push('outside walk');
-      rows.push({ name, cell: `${wx},${wy},${wz}`, below, feet, head, inWalk, ok: problems.length === 0, problems });
+      rows.push({ name, cell: `${wx},${wy},${wz}`, below, feet: feet || sits, head, inWalk, ok: problems.length === 0, problems: sits ? [...problems, 'seat'].filter((p) => p !== 'seat' || problems.length === 0) : problems });
     }
   }
   if (rows.length) {

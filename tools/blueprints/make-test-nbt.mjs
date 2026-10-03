@@ -5,9 +5,8 @@
 // DataVersion is read from the dev world's level.dat when it exists (else a fallback).
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { writeNbt, readNbt, int, str, byte, list, compound } from './nbt.mjs';
+import { writeNbt, readNbt, int, str, list, compound } from './nbt.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const outDir = path.resolve(process.argv[2] ?? path.join(root, 'artifacts', 'blueprint-test'));
