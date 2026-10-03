@@ -14,6 +14,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "gen:protocol-doc": "node --import tsx scripts/gen-protocol-doc.ts",
+    "pr-probe": "node --import tsx scripts/pr-probe.ts",
     "check:protocol-doc": "node --import tsx scripts/gen-protocol-doc.ts --check",
     "check": "tsc --noEmit && vitest run && node --import tsx scripts/gen-protocol-doc.ts --check"
   },
