@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // node tools/blueprints/build.mjs [id...]
-// Builds designs/<id>.mjs (default export = () => Blueprint) into the mod's bundled resources and checks them:
+// Builds designs/<id>.mjs (default export = () => Blueprint) into the mod's bundled resources, checks them and
+// renders the previews (render.mjs) next to the sidecar:
 //   mod/src/main/resources/data/agentcraft/structure/<id>.nbt
 //   mod/src/main/resources/data/agentcraft/blueprints/<id>.blueprint.json
 import fs from 'node:fs';
@@ -8,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeBlueprint } from './lib/write.mjs';
 import { checkFiles } from './lib/check.mjs';
+import { renderStructure } from './render.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -42,7 +44,12 @@ async function main() {
     console.log(`${name}: ${bp.size.x}x${bp.size.y}x${bp.size.z}, ${out.blocks} blocks, ${out.bytes} bytes gz, ${Object.keys(bp.anchors).length} anchors`);
     console.log(`  ${rel(out.nbtPath)}\n  ${rel(out.jsonPath)}`);
     for (const w of result.warnings) console.log(`  warning: ${w}`);
-    if (result.ok) console.log('  check: OK');
+    if (result.ok) {
+      console.log('  check: OK');
+      // previews live next to the sidecar so the mod's hub can show them (<id>.preview-{iso,cutaway,top,front}.png)
+      const r = renderStructure(out.nbtPath, { out: JSON_DIR, sidecar: out.jsonPath });
+      console.log(`  previews: ${Object.keys(r.files).join(', ')} (${r.ms.toFixed(0)} ms)`);
+    }
     else {
       failed = true;
       console.log(`  check: FAILED (${result.errors.length})`);

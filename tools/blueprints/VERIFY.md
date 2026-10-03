@@ -43,3 +43,26 @@ found by `/place template <ns>:<name> x y z [rotation]`; palette entries are `{i
 `Name`/`Properties`: with the old keys `/place` "succeeds" and places nothing); the template manager
 caches lookups by id for the whole session, misses included, hence the unique id per run; `/place`
 rotates about the origin cell, so rotated templates extend to negative offsets from `--at`.
+
+## Offline preview renderer
+
+`render.mjs` draws a structure template to PNG without starting the game (no dependencies, pure JS):
+
+```sh
+node tools/blueprints/render.mjs <path.nbt | bundled id> [--out dir] [--sidecar path] [--no-cutaway] [--cut-y N] [--width N] [--transparent]
+```
+
+Writes `<id>.preview-iso.png` (isometric, ~1200 px wide, camera front-left so the entrance side shows),
+`<id>.preview-cutaway.png` (same, roof removed: rows above the sidecar's `walk.maxY`, and the two near walls
+lowered to sill height), `<id>.preview-top.png` (top-down, highest block, height-shaded) and
+`<id>.preview-front.png` (front elevation, nearest block along the depth axis). The sidecar
+(`<id>.blueprint.json`, found next to the `.nbt` or in the bundled blueprints folder, or `--sidecar`) supplies
+`front` (the view is turned so that side faces the camera) and `walk`. Default `--out` is
+`artifacts/blueprint-preview/`; `build.mjs` renders after a successful check into the bundled blueprints folder
+(`mod/src/main/resources/data/agentcraft/blueprints/`), where the hub picks the previews up.
+
+Colours come from `lib/colors.mjs` (one entry per block id; stairs/slabs/carpets/panes inherit their base
+block). An id missing from the table gets a colour guessed from its name (stone/wood/brick/glass/...) and is
+reported once on the console. Glass and panes are translucent; slabs, stairs, carpets, panes, monitors, task
+boards and small furniture are drawn as partial boxes. Rendering ~25k blocks takes about 0.1-0.3 s for all four
+views.
