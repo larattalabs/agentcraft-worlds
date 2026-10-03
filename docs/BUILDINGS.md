@@ -122,8 +122,22 @@ A placed blueprint is a building:
 
 ## Client (routing)
 
-- An agent's building: the one for its task's repo (`agent.repoId`, else its task's repoId); the
-  lead: its goal's repo; anyone else, or a repo without a building: home.
+- An agent's building: the one for its task's repo (`agent.repoId`, else its task's repoId); anyone
+  else, or a repo without a building: home.
+- Leads (docs/PRWATCH.md "A lead per building"): each building gets a lead from the Foreman. The mod
+  sends `lead.assign {building: "<worldId>/<buildingId>", repos}` when a building is placed (any path),
+  `lead.release` when it is removed or forgotten, and `lead.sync` for the whole world on connect and on
+  world load (worldId = the save folder name). A lead's building = its assignment's (only a building of
+  this world that exists); Marlow and unassigned leads: home. The lead works at its building's
+  `meeting` / `decision_podium` (whatever station the Foreman gives it; no desk -> `meeting`), ignoring
+  its goal's repo. A newly assigned lead walks in from its building's `entrance` (else `spawn`); a
+  released one walks to the home `entrance` and leaves. With a Foreman that does not publish leads the
+  lead follows its goal's repo, as before.
+- Podiums: a building's `decision_podium` shows the decisions whose `agentId` is its lead; the home
+  podium (and the HQ studio's) shows Marlow's and every decision whose agent is not an assigned lead with
+  a podium of its own (workers' questions included). The podium's `open` state, its signal bulbs and
+  `decisions` lamps follow the same filter. The hub's Buildings tab shows each building's lead; a
+  `repo:` task wall's title shows its repo's lead.
 - Station targets, desks, seats, monitors and the pathfinder use that building's layout; moving
   between buildings teleports (for now).
 - Task walls bound `repo:<repoId>` show only that repo's tasks, titled with the repo's name; unbound show
