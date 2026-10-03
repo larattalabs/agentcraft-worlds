@@ -86,7 +86,9 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--effort low..max` | `medium` | |
 | `--workers 3` or `--workers kit,wren` | `juniper,kit,wren` | team (others stay "off shift") |
 | `--max-concurrent` | `3` | workers running at once |
-| `--throttle-concurrent` | `1` | workers at once while your plan (claude.ai login) reports a usage warning; at the limit itself nobody starts a turn until it resets, and interrupted turns resume then |
+| `--throttle-concurrent` | `1` | workers at once while your plan (claude.ai login) reports a usage warning (leads then take turns one at a time); at the limit itself nobody starts a turn until it resets, and interrupted turns resume then |
+| `--leads <ids>` / `AGENTCRAFT_LEADS` / `claude.leads` | `marlow,ines,bram,cass` | leads in use, in assignment order: marlow leads home, repos without a building and anything not tied to a repo; each other lead leads one building the mod assigns it (below). `marlow` alone = one lead for everything |
+| `--max-concurrent-turns` / `claude.maxConcurrentTurns` | no cap | agent turns at once, leads and workers together |
 | `--max-turns`, `--max-budget <usd>` | 40 lead / 80 worker, none | per turn caps |
 | `--ci "<cmd>"` | detected (`npm`/`pnpm`/`yarn`/`bun test` by lockfile, `cargo test`, ...) | run after each task (a repo's `repoSettings` `ci` wins) |
 | `--no-lead-review` | | merge decisions go to you without a lead review turn |
@@ -321,7 +323,7 @@ rejected becomes `cancelled` (it is active again if the lead adds a task to it).
 
 Agent tools (in-process MCP server `agentcraft`): `send_message`, `ask_user` (blocks until you
 answer), `write_memory`, `read_memory`, `update_task`, `report_status`, `list_tasks`, and for the
-lead `create_task`, `request_merge`. Unread messages ride along on every tool result and on the
+leads `create_task`, `request_merge`, `triage`. Unread messages ride along on every tool result and on the
 prompt of the agent's next turn. A message from you that arrives after an agent's last tool call
 (e.g. while it writes its final summary) starts a follow-up turn as soon as that turn ends; one
 sent to an off-shift agent is delivered when you `/resume` it.
@@ -348,6 +350,34 @@ decision gets CI + review again. SDK sessions are isolated from your own Claude 
 
 A failed turn (API error, max turns, timeout) shows the agent as `error` and blocks its task with
 the reason; `/task t3 retry` puts it back on the board.
+
+### A lead per building (docs/PRWATCH.md)
+
+Each building in the world that holds repositories gets its own lead; Marlow leads home,
+repositories without a building and anything not tied to a repository. The workers stay one shared
+pool every lead assigns from.
+
+- The mod sends `lead.assign {building, repos}` when a building is placed, `lead.release {building}`
+  when it is removed and `lead.sync {world, buildings}` on connect. A new building takes the first
+  free lead in `claude.leads` order (default Ines, Bram, Cass); with none free Marlow leads it (the
+  ack says `overflow`, nothing is stored). The same building again only updates its repositories; a
+  repository listed by another building moves there. Assignments live in `state.json` `leads`.
+- A goal belongs to the lead of its repository's building when it is submitted (`Goal.leadId`;
+  absent = Marlow) and keeps that lead, even if repositories move later. Only releasing the lead
+  moves its open goals to Marlow, whose first turn on each gets the plan and the board (a takeover
+  note). Leads not in `claude.leads` any more are released at start.
+- Every lead has its own job queue (plan, review, follow-up, PR triage) and session per goal
+  (`<lead>:<goal>`), and leads run in parallel. Merge decisions, questions, feed lines and PR triage
+  carry the goal's lead (the mod shows them at that building's podium). A plain console message goes
+  to the current goal's lead; `@bram ...` to Bram.
+- A lead's prompt names its building, its repositories and the other leads. A lead changes only its
+  own goals' tasks; naming a worker who is busy on another lead's task is fine (the task waits) and
+  never takes the worker off it.
+- Building leads are in the snapshot's agents (and get `agent.upsert`) only while they are assigned;
+  a released lead gets one last upsert (off shift) so the mod walks it home.
+- The sim backend does the same: the scripted goal is run by its building's lead, and a goal for
+  another building's lead runs as a short side flow (that lead plans one task, a free worker does
+  it, that lead reviews it).
 
 ### Steering
 
@@ -462,7 +492,7 @@ spawns git with an empty environment); the policy refuses every command it can s
 
 ```
 <AGENTCRAFT_HOME>/<profile>/
-  state.json             agents, tasks, decisions, repos, goals, feed, messages, sessions (atomic writes)
+  state.json             agents, tasks, decisions, repos, goals, feed, messages, sessions, leads (atomic writes)
   foreman.json           pid/port of the Foreman running this profile
   logs/<agent>.jsonl     agent logs (snapshots carry the last 60 lines per agent); rotated at 8 MB
                          into <agent>.1.jsonl (one old file kept); start-up reads only their ends
