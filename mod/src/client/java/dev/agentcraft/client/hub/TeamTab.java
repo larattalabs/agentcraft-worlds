@@ -50,6 +50,7 @@ final class TeamTab implements HubPane {
 	private static final List<String> SIZE_KEYS = List.of("claude.taskModels.small", "claude.taskModels.normal", "claude.taskModels.large");
 	private static final List<String> LIMIT_KEYS = List.of("claude.maxConcurrent", "claude.throttleConcurrent", "claude.maxConcurrentTurns");
 	private static final List<String> FIELDS = List.of("title", "prompt", "model", "effort");
+	private static final List<String> FIELD_LABELS = List.of("Title", "Specialty", "Model", "Effort");
 
 	private final HubScreen hub;
 	final SettingsForm form;
@@ -337,7 +338,7 @@ final class TeamTab implements HubPane {
 			List<String> other = new ArrayList<>();
 			for (SettingDef d : sc.view().settings()) {
 				String k = d.key();
-				if (SettingsLogic.isTeamKey(k) && !MODEL_KEYS.contains(k) && !SIZE_KEYS.contains(k) && !LIMIT_KEYS.contains(k) && !k.equals(WORKERS_KEY)
+				if (SettingsLogic.groupOf(d).equals(SettingsLogic.TEAM) && !MODEL_KEYS.contains(k) && !SIZE_KEYS.contains(k) && !LIMIT_KEYS.contains(k) && !k.equals(WORKERS_KEY)
 					&& !k.equals(LEADS_KEY) && SettingsLogic.agentOf(k) == null) {
 					other.add(k);
 				}
@@ -347,8 +348,8 @@ final class TeamTab implements HubPane {
 		}
 		String id = selected;
 		rows.add(new SettingsForm.Section("Profile"));
-		for (String f : FIELDS) {
-			rows.add(new SettingsForm.Setting(sc, "claude.agents." + id + "." + f, null));
+		for (int i = 0; i < FIELDS.size(); i++) {
+			rows.add(new SettingsForm.Setting(sc, "claude.agents." + id + "." + FIELDS.get(i), FIELD_LABELS.get(i)));
 		}
 		rows.add(new SettingsForm.Section("Role per repo (the repo's .claude/agents files)"));
 		ForemanState s = Foreman.state();
@@ -380,6 +381,8 @@ final class TeamTab implements HubPane {
 			}
 		}
 	}
+
+	/** "default" / not set reads as the lead/worker default in the roster. */
 
 	// ------------------------------------------------------------------ draw
 

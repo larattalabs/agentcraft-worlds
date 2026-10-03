@@ -102,42 +102,31 @@ final class ReposTab implements HubPane {
 			}
 			return rows;
 		}
-		List<String> general = new ArrayList<>();
-		List<String> pr = new ArrayList<>();
-		List<String> review = new ArrayList<>();
-		List<String> roles = new ArrayList<>();
-		List<String> env = new ArrayList<>();
+		// the Foreman's repo groups (landing, worktrees, agents, review), in that order, then any other group
+		java.util.LinkedHashMap<String, List<String>> groups = new java.util.LinkedHashMap<>();
+		for (String g : List.of("landing", "worktrees", "agents", "review")) {
+			groups.put(g, new ArrayList<>());
+		}
 		for (dev.agentcraft.hub.SettingDef d : sc.view().settings()) {
-			String k = d.key();
-			if (k.startsWith("prReview.")) {
-				review.add(k);
-			} else if (k.startsWith("pr.")) {
-				pr.add(k);
-			} else if (k.startsWith("roles.")) {
-				roles.add(k);
-			} else if (k.equals("env") || k.startsWith("env.")) {
-				env.add(k);
-			} else if (!k.equals("roles")) {
-				general.add(k);
+			String g = d.group().isBlank() ? d.key().startsWith("prReview.") ? "review" : d.key().startsWith("pr.") || d.key().equals("land")
+				|| d.key().equals("baseBranch") ? "landing" : d.key().startsWith("roles.") || d.key().equals("subagents") ? "agents" : "worktrees"
+				: d.group().toLowerCase(java.util.Locale.ROOT);
+			groups.computeIfAbsent(g, k -> new ArrayList<>()).add(d.key());
+		}
+		// a role row for every roster agent, even when the Foreman lists only some
+		List<String> agentKeys = groups.get("agents");
+		for (String a : TeamTab.roster()) {
+			if (!agentKeys.contains("roles." + a)) {
+				agentKeys.add("roles." + a);
 			}
 		}
-		section(rows, sc, "Landing, checks and worktrees", general, null);
-		section(rows, sc, "Pull requests (land: pr)", pr, null);
-		section(rows, sc, "PR review", review, null);
-		rows.add(new SettingsForm.Section("Roles (one of the repo's .claude/agents files per agent)"));
-		java.util.LinkedHashSet<String> agents = new java.util.LinkedHashSet<>(TeamTab.roster());
-		for (String k : roles) {
-			agents.add(k.substring(6));
-		}
-		for (String a : agents) {
-			rows.add(new SettingsForm.Setting(sc, "roles." + a, UiBits.agentName(a)));
-		}
-		Repo r = Foreman.state() == null ? null : Foreman.state().repo(repoId);
-		List<String> keys = r != null && r.settings() != null ? r.settings().envKeys() : List.of();
-		if (!env.isEmpty() || !keys.isEmpty()) {
-			rows.add(new SettingsForm.Section("Env (read-only: values are never sent; edit config.json)"));
-			rows.add(new SettingsForm.Text(keys.isEmpty() ? "see config.json" : String.join(", ", keys), false));
-		}
+		groups.forEach((g, keys) -> section(rows, sc, switch (g) {
+			case "landing" -> "Landing (merge or pull request)";
+			case "worktrees" -> "Worktrees, setup and tests";
+			case "agents" -> "Agents (roles: one of the repo's .claude/agents files each)";
+			case "review" -> "PR review";
+			default -> Character.toUpperCase(g.charAt(0)) + g.substring(1);
+		}, keys, null));
 		return rows;
 	}
 

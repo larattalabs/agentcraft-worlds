@@ -294,8 +294,8 @@ gives the mod a full (not read-only) connection; an older Foreman never sees the
 (pure, `ClientTokenTest`) runs on **every connect** (a restarted Foreman has a new token): the run file whose
 `port` is the port the mod connects to, looked for in `<home>/<AGENTCRAFT_PROFILE>/foreman.json`, then
 `<home>/foreman.json`, then every `<home>/<dir>/foreman.json` (home = `AGENTCRAFT_HOME`, else `~/.agentcraft`;
-`tools/mac.mjs` passes both); in it the first of the fields `clientTokenFile`, `tokenFile`, `clientTokenPath`,
-`tokenPath`, `clientToken` that names a readable file (relative = to the run file's folder), else `client.token`
+`tools/mac.mjs` passes both); in it the first of the fields `clientTokenFile`, `tokenFile` (the Foreman's),
+`clientTokenPath`, `tokenPath`, `clientToken` that names a readable file (relative = to the run file's folder), else `client.token`
 in `<home>/<runfile.profile>/` or next to the run file. No run file / none of these = an older Foreman (no
 token sent). `AGENTCRAFT_CLIENT_TOKEN` overrides all of it (dev). The token is never logged; `dev.state.foreman`
 has `clientToken{sent, runFile, tokenFile, note}`, `readOnly`, `restartRequired[]`.
@@ -703,8 +703,8 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   taken as current, `restartRequired` added to `ForemanState.restartRequired()`, `overridden` shown as notes, reload.
   A refusal: per-field errors from `result.errors` ([{key, error}] or {key: msg}) else from the error text
   ("key: problem; …", longest key first), shown under each field; the rest goes to the note line.
-- Clearing a value sends `value: null` (e.g. a repo role "not set", an optional int "not set"): the contract does
-  not say how to unset a key; this is the mod's choice.
+- "Not set": `SettingsLogic.unsetValue` = the default when it is "" or "default" (a repo role, per-agent
+  model/effort), else `null` (the Foreman removes the key); `null` always passes the mod's check.
 - Restart banner when `restartRequired` is not empty: "N settings wait for a Foreman restart: keys…" + **Restart
   Foreman** (`foreman.restart`). Then "Restarting the Foreman… reconnecting (attempt n) · s" until the link is synced
   with a newer snapshot than at the restart; an ack lost to the closing socket ("connection lost") counts as
@@ -731,9 +731,10 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   first) or On the team (workers), then the form: Profile (`claude.agents.<id>.title/prompt/model/effort`) and Role
   per repo (one row per repo, each repo's scope). Models: lead/worker/design model + effort, task-size models,
   concurrency, then any other Team key (`claude.leadReview`, …). Apply covers the global scope and every repo scope.
-- Repos tab: **Edit settings…** opens the repo's form in place of the tab (Done / Esc back): landing and checks
-  (every key without a prefix), Pull requests (`pr.*`), PR review (`prReview.*`), Roles (a row per roster agent plus
-  any listed `roles.*`), Env read-only (keys only).
+- Repos tab: **Edit settings…** opens the repo's form in place of the tab (Done / Esc back), in the Foreman's groups:
+  Landing (`land`, `baseBranch`, `pr.*`), Worktrees (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`, `env`
+  read-only), Agents (`subagents`, `roles.<agent>` for every roster agent: chips of the agent file ids), Review
+  (`prReview.*`).
 - Layout: compact under 470 × 200 GUI px like Repos/Goals (Team: list or detail with "‹ Team"); banners collapse to
   one line each; only the form scrolls. `dev.hub.state` `teamTab.layout` / `settingsTab.layout` = `{guiWidth,
   guiHeight, guiScale, compact, needed, available, overflow}` where `needed` is the fixed parts (chips, banners,
@@ -746,12 +747,13 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
     staged, source, live, overriddenBy, problem, editable, y, visible}], chips[]}, config{restartRequired[],
     restarting, restartingForMs, readOnly, …}, layout) and `settingsTab` (group, groups, scope, form, config, layout);
     `reposTab.editing` (+ scope, form, config while editing).
-  - `dev.hub.action`: `settings_set {key, value (JSON, null = not set), repoId?}`, `settings_text {key, text,
+  - `dev.hub.action` (`set`, `apply`, `revert`, `confirm`, `restart` are aliases of `settings_set`, `settings_apply`,
+    `settings_revert`, `settings_confirm`, `foreman_restart`): `settings_set {key, value (JSON, null = not set), repoId?}`, `settings_text {key, text,
     repoId?}` (as typed), `settings_focus {key}`, `settings_apply {confirm?}` (the shown tab's scopes; a widening
     change without confirm replies `ok:false, "confirm needed: …"`), `settings_confirm`, `settings_confirm_back`,
     `settings_revert`, `settings_group {group}`, `settings_reload {repoId?}`, `foreman_restart`, `team_select
     {agentId?}`, `team_back`, `team_on {agentId, on}`, `team_lead {agentId, inUse?, move?: -1|1}`, `repo_settings
-    {repoId?}`, `repo_settings_done`; `press {button}` also presses the forms' chips (`<form>:<key>[:<choice>]`,
+    {repoId?}`, `repo_settings_done`; `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
     `group:<g>`, `team:on_team:<id>`, `team:lead_up:<id>`, …; see `*.form.chips`) and buttons `settings_apply`,
     `settings_revert`, `settings_confirm`, `foreman_restart`, `settings_retry`, `repo_edit_settings`. Foreman actions
     reply after the ack with `result{ok, message, unsupported, result}`.

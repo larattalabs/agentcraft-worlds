@@ -135,8 +135,8 @@ final class ConfigScope {
 			Protocol.Repo r = Foreman.state() == null ? null : Foreman.state().repo(repoId);
 			String cur = r != null && r.settings() != null ? r.settings().roles().get(agent) : null;
 			return new SettingDef(key, "Role of " + dev.agentcraft.client.hud.UiBits.agentName(agent), "One of the repo's .claude/agents files: the "
-				+ "agent's role, prompt and model in this repo.", "roles", SettingDef.STRING, List.of(), null, null, cur == null ? JsonNull.INSTANCE
-					: new JsonPrimitive(cur), JsonNull.INSTANCE, cur == null ? "default" : "file", true, null);
+				+ "agent's role, prompt and model in this repo.", "agents", SettingDef.STRING, List.of(), null, null, new JsonPrimitive(cur == null ? ""
+					: cur), new JsonPrimitive(""), cur == null ? "default" : "file", true, null);
 		}
 		String agent = SettingsLogic.agentOf(key);
 		if (repoId == null && agent != null) {

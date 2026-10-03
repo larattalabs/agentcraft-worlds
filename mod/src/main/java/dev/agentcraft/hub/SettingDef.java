@@ -18,7 +18,7 @@ import org.jspecify.annotations.Nullable;
  * wins over the file. The hub renders a form from these; nothing about a setting is hard-coded in the mod.
  */
 public record SettingDef(String key, String label, String help, String group, String type, List<String> options, @Nullable Double min,
-	@Nullable Double max, JsonElement value, JsonElement def, String source, boolean live, @Nullable String overriddenBy) {
+	@Nullable Double max, JsonElement value, JsonElement def, String source, boolean live, @Nullable String overriddenBy, boolean readOnlyFlag) {
 	public static final String BOOL = "bool";
 	public static final String INT = "int";
 	public static final String ENUM = "enum";
@@ -46,14 +46,20 @@ public record SettingDef(String key, String label, String help, String group, St
 		return TYPES.contains(type);
 	}
 
-	/** Shown but never edited here: maps (MCP servers, env) and types this mod does not know. */
+	/** The same definition without the read-only flag (synthesised settings). */
+	public SettingDef(String key, String label, String help, String group, String type, List<String> options, @Nullable Double min,
+		@Nullable Double max, JsonElement value, JsonElement def, String source, boolean live, @Nullable String overriddenBy) {
+		this(key, label, help, group, type, options, min, max, value, def, source, live, overriddenBy, false);
+	}
+
+	/** Shown but never edited here: marked {@code readOnly} by the Foreman, maps (MCP servers, env) and types this mod does not know. */
 	public boolean readOnly() {
-		return MAP.equals(type) || !knownType();
+		return readOnlyFlag || MAP.equals(type) || !knownType();
 	}
 
 	/** The same setting with another current value (a config.set that applied, a fake for tests). */
 	public SettingDef withValue(JsonElement v, String newSource) {
-		return new SettingDef(key, label, help, group, type, options, min, max, v, def, newSource, live, overriddenBy);
+		return new SettingDef(key, label, help, group, type, options, min, max, v, def, newSource, live, overriddenBy, readOnlyFlag);
 	}
 
 	/** Parses one {@code SettingDef} object; null when it has no key. Unknown fields are ignored. */
@@ -77,7 +83,8 @@ public record SettingDef(String key, String label, String help, String group, St
 		String type = str(o, "type");
 		return new SettingDef(key, str(o, "label"), str(o, "help"), str(o, "group"), type, options, num(o, "min"), num(o, "max"),
 			o.has("value") ? o.get("value") : JsonNull.INSTANCE, o.has("default") ? o.get("default") : JsonNull.INSTANCE, str(o, "source"),
-			o.has("live") && o.get("live").isJsonPrimitive() && o.get("live").getAsBoolean(), str(o, "overriddenBy"));
+			o.has("live") && o.get("live").isJsonPrimitive() && o.get("live").getAsBoolean(), str(o, "overriddenBy"), o.has("readOnly") && o.get(
+				"readOnly").isJsonPrimitive() && o.get("readOnly").getAsBoolean());
 	}
 
 	/** An MCP server as config.get lists it: name and command only (read-only, no env). */

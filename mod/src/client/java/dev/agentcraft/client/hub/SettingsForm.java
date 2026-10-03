@@ -282,8 +282,8 @@ final class SettingsForm {
 					y += textField(g, s, d, x, y, w, editable);
 				} else {
 					y += chips(g, id, choices, v.isJsonPrimitive() ? v.getAsString() : null, x, y, w, editable, mx, my, c -> scope.set(s.key(),
-						new JsonPrimitive(c)), d.def().isJsonNull() && !d.type().equals(SettingDef.ENUM) ? () -> scope.set(s.key(), JsonNull.INSTANCE)
-							: null);
+						new JsonPrimitive(c)), d.def().isJsonNull() && !d.type().equals(SettingDef.ENUM) && !choices.contains("default") ? () -> scope.set(
+							s.key(), JsonNull.INSTANCE) : null);
 				}
 			}
 			case SettingDef.INT -> {
@@ -481,27 +481,32 @@ final class SettingsForm {
 		return y - y0 + CHIP_H + 3;
 	}
 
-	/** A repo's {@code roles.<agent>}: "none" + the repo's .claude/agents files (repo.agents), else a text field. */
+	/**
+	 * A repo's {@code roles.<agent>}: "not set" + the agent file ids (the setting's {@code options}, else the
+	 * repo's {@code repo.agents}), else a text field.
+	 */
 	private int rolePicker(GuiGraphicsExtractor g, Setting s, SettingDef d, int x, int y, int w, boolean editable, int mx, int my) {
 		ConfigScope scope = s.scope();
 		List<Protocol.RepoAgentFile> files = scope.agents();
-		if (files == null || files.isEmpty()) {
+		List<String> ids = new ArrayList<>(d.options());
+		if (ids.isEmpty() && files != null) {
+			for (Protocol.RepoAgentFile f : files) {
+				ids.add(f.id());
+			}
+		}
+		if (ids.isEmpty()) {
 			int h = textField(g, s, d, x, y, w, editable);
 			String why = files == null ? scope.agentsLoading() ? "loading the repo's agent files…" : scope.agentsError() : scope.agentsError() != null
-				? scope.agentsError() : "no .claude/agents files in this repo: type a path";
+				? scope.agentsError() : "no .claude/agents files in this repo";
 			if (why != null) {
 				g.text(font(), TextUtil.ellipsize(font(), why, w), x, y + h, UiBits.muted(), false);
 				h += 10;
 			}
 			return h;
 		}
-		List<String> names = new ArrayList<>();
-		for (Protocol.RepoAgentFile f : files) {
-			names.add(f.name());
-		}
 		JsonElement v = scope.value(s.key());
-		return chips(g, prefix + ":" + s.key(), names, v.isJsonPrimitive() ? v.getAsString() : null, x, y, w, editable, mx, my, c -> scope.set(s.key(),
-			new JsonPrimitive(c)), () -> scope.set(s.key(), JsonNull.INSTANCE));
+		return chips(g, prefix + ":" + s.key(), ids, SettingsLogic.isUnset(d, v) || !v.isJsonPrimitive() ? null : v.getAsString(), x, y, w, editable, mx,
+			my, c -> scope.set(s.key(), new JsonPrimitive(c)), () -> scope.set(s.key(), SettingsLogic.unsetValue(d)));
 	}
 
 	/** Who an agent list may hold: its options, else the cast (leads for a leads list, workers otherwise). */

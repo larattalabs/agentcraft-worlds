@@ -525,10 +525,14 @@ public final class Protocol {
 		}
 	}
 
-	/** One of a repo's {@code .claude/agents} files ({@code repo.agents} ack), for the roles picker. */
-	public record RepoAgentFile(String name, @Nullable String path, @Nullable String description, @Nullable String model) {
+	/**
+	 * One of a repo's {@code .claude/agents} files ({@code repo.agents} ack), for the roles picker: {@code id} = the
+	 * file name without .md (the value {@code roles.<agent>} stores), {@code name} = its front matter name.
+	 */
+	public record RepoAgentFile(String id, String name, @Nullable String path, @Nullable String description, @Nullable String model) {
 		public RepoAgentFile {
-			name = name == null ? "" : name;
+			name = name == null ? id == null ? "" : id : name;
+			id = id == null || id.isBlank() ? name : id;
 		}
 	}
 

@@ -553,8 +553,9 @@ public final class ForemanState {
 				ForemanStatus s = ForemanJson.read(json, ForemanStatusMsg.class).status();
 				if (s != null) {
 					status = s;
+					// the Foreman's full list; absent = none waiting
+					restartRequired.clear();
 					if (s.restartRequired() != null) {
-						restartRequired.clear();
 						restartRequired.addAll(s.restartRequired());
 					}
 					fire(l -> l.onStatus(s));
@@ -562,6 +563,8 @@ public final class ForemanState {
 			}
 			case "config.changed" -> {
 				Protocol.ConfigChanged c = ForemanJson.read(json, Protocol.ConfigChanged.class);
+				// the full list (same as foreman.status.restartRequired)
+				restartRequired.clear();
 				restartRequired.addAll(c.restartRequired());
 				configRevision++;
 				fire(l -> l.onConfigChanged(c));

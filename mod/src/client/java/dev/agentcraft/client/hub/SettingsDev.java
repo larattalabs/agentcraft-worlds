@@ -22,7 +22,10 @@ import org.jspecify.annotations.Nullable;
  * Foreman side exists.
  */
 final class SettingsDev {
-	static final String ACTIONS = "settings_set|settings_text|settings_focus|settings_apply|settings_confirm|settings_confirm_back|settings_revert|"
+	/** The contract's names (docs/HUB.md: "set {key, value}, apply, revert, confirm, restart") -> the actions. */
+	static final java.util.Map<String, String> ALIASES = java.util.Map.of("set", "settings_set", "apply", "settings_apply", "revert",
+		"settings_revert", "confirm", "settings_confirm", "restart", "foreman_restart");
+	static final String ACTIONS = "set|apply|revert|confirm|restart|settings_set|settings_text|settings_focus|settings_apply|settings_confirm|settings_confirm_back|settings_revert|"
 		+ "settings_group|settings_reload|settings_fake|settings_fake_agents|foreman_restart|team_select|team_back|team_on|team_lead|repo_settings|"
 		+ "repo_settings_done";
 	private static final Set<String> NAMES = Set.of(ACTIONS.split("\\|"));
@@ -89,7 +92,8 @@ final class SettingsDev {
 		});
 	}
 
-	static CompletableFuture<JsonObject> act(HubScreen s, String action, Fields f) {
+	static CompletableFuture<JsonObject> act(HubScreen s, String name, Fields f) {
+		String action = ALIASES.getOrDefault(name, name);
 		switch (action) {
 			case "settings_set" -> {
 				ConfigScope sc = scope(f);
@@ -177,7 +181,7 @@ final class SettingsDev {
 				List<Protocol.RepoAgentFile> list = new ArrayList<>();
 				for (JsonElement x : a.getAsJsonArray()) {
 					if (x.isJsonPrimitive()) {
-						list.add(new Protocol.RepoAgentFile(x.getAsString(), null, null, null));
+						list.add(new Protocol.RepoAgentFile(x.getAsString(), x.getAsString(), null, null, null));
 					} else if (x.isJsonObject()) {
 						list.add(dev.agentcraft.client.foreman.ForemanJson.read(x, Protocol.RepoAgentFile.class));
 					}

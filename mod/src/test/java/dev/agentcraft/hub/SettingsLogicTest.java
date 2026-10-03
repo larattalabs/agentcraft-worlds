@@ -96,7 +96,7 @@ class SettingsLogicTest {
 		assertEquals("at most 16", SettingsLogic.validate(n, new JsonPrimitive(17)));
 		assertEquals("at least 1", SettingsLogic.validate(n, new JsonPrimitive(0)));
 		assertEquals("a whole number is needed", SettingsLogic.validate(n, new JsonPrimitive(1.5)));
-		assertEquals("a value is needed", SettingsLogic.validate(n, JsonNull.INSTANCE));
+		assertNull(SettingsLogic.validate(n, JsonNull.INSTANCE), "null removes the key (back to the default)");
 		SettingDef opt = def("{\"key\":\"t\",\"type\":\"int\"}");
 		assertNull(SettingsLogic.validate(opt, JsonNull.INSTANCE), "no default: may be unset");
 		SettingDef e = def("{\"key\":\"e\",\"type\":\"enum\",\"options\":[\"off\",\"on\"],\"default\":\"off\"}");
@@ -184,6 +184,30 @@ class SettingsLogicTest {
 		assertNull(t.get("claude.maxConcurrent"), "the longer key wins");
 		assertEquals("must be a boolean", t.get("pr.draft"));
 		assertEquals("disk full", t.get(""));
+	}
+
+	@Test
+	void unsetValues() {
+		SettingDef role = def("{\"key\":\"roles.kit\",\"type\":\"string\",\"options\":[\"reviewer\"],\"value\":\"\",\"default\":\"\"}");
+		assertEquals(new JsonPrimitive(""), SettingsLogic.unsetValue(role));
+		assertTrue(SettingsLogic.isUnset(role, new JsonPrimitive("")));
+		assertFalse(SettingsLogic.isUnset(role, new JsonPrimitive("reviewer")));
+		SettingDef model = def("{\"key\":\"claude.agents.kit.model\",\"type\":\"model\",\"default\":\"default\"}");
+		assertEquals(new JsonPrimitive("default"), SettingsLogic.unsetValue(model));
+		SettingDef n = def("{\"key\":\"n\",\"type\":\"int\",\"default\":3}");
+		assertEquals(JsonNull.INSTANCE, SettingsLogic.unsetValue(n));
+		SettingDef ro = def("{\"key\":\"env\",\"type\":\"stringList\",\"readOnly\":true}");
+		assertTrue(ro.readOnly(), "the Foreman's readOnly flag");
+	}
+
+	@Test
+	void foremanGroupsLandInATab() {
+		// a key the mod does not know with the Foreman's group "models" or "team" is shown in the Team tab
+		assertEquals(SettingsLogic.TEAM, SettingsLogic.groupOf(def("{\"key\":\"claude.maxTurnsWorker\",\"group\":\"models\",\"type\":\"int\"}")));
+		assertEquals(SettingsLogic.TEAM, SettingsLogic.groupOf(def("{\"key\":\"claude.resumeOnStart\",\"group\":\"team\",\"type\":\"bool\"}")));
+		for (String g : List.of("general", "permissions", "context", "subagents", "prs", "usage")) {
+			assertEquals(g, SettingsLogic.groupOf(def("{\"key\":\"x.y\",\"group\":\"" + g + "\",\"type\":\"bool\"}")));
+		}
 	}
 
 	@Test

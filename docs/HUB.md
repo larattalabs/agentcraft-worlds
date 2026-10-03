@@ -378,17 +378,24 @@ Details and DevBridge in mod/DEV.md "Hub" -> "Team and Settings tabs" and "Forem
 the mod fills gaps in this contract (the Foreman side was built in parallel; align or tell the mod):
 - **Client token**: the mod reads it on every connect from the run file whose `port` is the one it connects to
   (`<home>/<AGENTCRAFT_PROFILE>/foreman.json`, then `<home>/foreman.json`, then any `<home>/*/foreman.json`), field
-  `clientTokenFile` (also accepted: `tokenFile`, `clientTokenPath`, `tokenPath`, `clientToken`; a relative path is
-  relative to the run file), else `client.token` in the run file's profile dir. Sent as `hello.token` only when
+  `tokenFile` (as `foreman/settings` writes it; also accepted: `clientTokenFile`, `clientTokenPath`, `tokenPath`,
+  `clientToken`; a relative path is relative to the run file), else `client.token` in the run file's profile dir. Sent as `hello.token` only when
   found. `AGENTCRAFT_CLIENT_TOKEN` overrides (dev).
 - **Read-only**: any refusal containing "read-only connection" marks the link read-only until it drops; every hub
   tab's footer and every refusal note then say "Foreman did not accept the client token (read-only connection)";
   Team/Settings show it as a banner in place of the form (config.get is refused).
 - `foreman.status.restartRequired` is read from the `ForemanStatus` object (snapshot `foreman` and `foreman.status`
-  `status`); a new snapshot replaces the list; `config.changed.restartRequired` and config.set acks add to it.
+  `status`) as the full list (absent = none); `config.changed.restartRequired` replaces it too; a config.set ack's
+  `restartRequired` is added until the next of those.
 - **config.set** errors: per field from `result.errors` (`[{key, error|message}]` or `{key: message}`), else from the
   error text split on `;`/newlines into `<key>: <problem>`; the rest is shown as the note.
-- **Unsetting** a value (a repo role "not set", an optional int) sends `{key, value: null}`.
+- **Unsetting**: a setting whose default is "" or "default" (a repo role, a per-agent model/effort) is unset by
+  staging that default (so "not set" when nothing is set is no change); any other "not set" sends `value: null`
+  (the Foreman removes the key). A repo role's choices are the setting's `options` (agent file ids), else the
+  `id`s of `repo.agents`.
+- **Groups**: global `team` and `models` go to the Team tab (every key of those groups shows there, known or not),
+  the others to the Settings tab's chips; a repo's `landing`, `worktrees`, `agents`, `review` are the sections of its
+  form. `readOnly: true` (and every `map`) is shown, never edited.
 - **Scopes**: the Team tab's per-repo roles are `config.set {repoId}` per repo; Apply sends one config.set per scope
   with changes (global first, stopping at the first refusal): not atomic across scopes.
 - Keys the mod synthesises when `config.get` does not list them (so they stay editable): a repo's `roles.<agent>`
@@ -400,4 +407,6 @@ the mod fills gaps in this contract (the Foreman side was built in parallel; ali
 - Widening (second confirm): permission mode away from `policy` (strict -> loose: policy, auto; unknown modes count
   as loosest), a deny rule removed, an allow rule added, any change of `claude.useClaudeLogin`.
 - Restart: a `foreman.restart` whose ack is lost to the closing socket counts as restarting; "reconnecting" lasts
-  until the link is synced with a newer snapshot.
+  until the link is synced with a newer snapshot.- DevBridge names: the task's "set {key, value}", "apply", "revert", "confirm", "restart" are `dev.hub.action`
+  aliases of `settings_set`, `settings_apply`, `settings_revert`, `settings_confirm`, `foreman_restart`; "select
+  agent" is `team_select {agentId}` (`select` is the Buildings tab's).

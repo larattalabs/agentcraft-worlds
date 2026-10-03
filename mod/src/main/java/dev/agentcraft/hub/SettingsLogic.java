@@ -198,6 +198,23 @@ public final class SettingsLogic {
 		return v.toString();
 	}
 
+	/**
+	 * The value that means "not set" for {@code d}: its default when that is "" or "default" (a repo role, a
+	 * per-agent model: staging it when nothing is set is then no change), else null (the Foreman removes the key).
+	 */
+	public static JsonElement unsetValue(SettingDef d) {
+		JsonElement def = d.def();
+		if (def.isJsonPrimitive() && def.getAsJsonPrimitive().isString() && (def.getAsString().isEmpty() || def.getAsString().equals("default"))) {
+			return def;
+		}
+		return JsonNull.INSTANCE;
+	}
+
+	/** Whether a value counts as "not set" for {@code d} (null, or its {@link #unsetValue}). */
+	public static boolean isUnset(SettingDef d, @Nullable JsonElement v) {
+		return v == null || v.isJsonNull() || same(v, unsetValue(d)) && !unsetValue(d).isJsonNull();
+	}
+
 	/** A typed field's text as a value (or the problem). */
 	public record Parsed(@Nullable JsonElement value, @Nullable String error) {
 	}
@@ -252,7 +269,7 @@ public final class SettingsLogic {
 			return "read-only here";
 		}
 		if (v == null || v.isJsonNull()) {
-			return d.def().isJsonNull() || SettingDef.MODEL.equals(d.type()) || SettingDef.EFFORT.equals(d.type()) ? null : "a value is needed";
+			return null; // null removes the key from config.json: back to the default
 		}
 		switch (d.type()) {
 			case SettingDef.BOOL -> {
