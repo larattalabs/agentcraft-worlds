@@ -569,16 +569,22 @@ final class SettingsForm {
 				.muted(), false);
 			y += 11;
 		}
+		List<ConfigScope> failed = new ArrayList<>();
 		for (ConfigScope s : scopes) {
 			if (s.phase() == ConfigScope.Phase.FAILED && !s.readOnly()) {
-				String retry = "Retry";
-				int bw = hub.bw(retry);
-				g.text(font(), TextUtil.ellipsize(font(), s.error() == null ? "Settings not loaded" : s.error(), w - bw - 6), x, y + 6, UiBits
-					.errorText(), false);
-				hub.button(g, "settings_retry:" + s.id(), retry, x + w - bw, y, bw, false, !Foreman.connected() || s.unsupported(), false, mx, my,
-					s::load);
-				y += 23;
+				failed.add(s);
 			}
+		}
+		if (!failed.isEmpty()) {
+			// one line (the first failure, e.g. the global settings), not one per repo
+			ConfigScope s = failed.getFirst();
+			String retry = "Retry";
+			int bw = hub.bw(retry);
+			String msg = (s.error() == null ? "Settings not loaded" : s.error()) + (failed.size() > 1 ? " (+" + (failed.size() - 1) + " more)" : "");
+			g.text(font(), TextUtil.ellipsize(font(), msg, w - bw - 6), x, y + 6, UiBits.errorText(), false);
+			hub.button(g, "settings_retry", retry, x + w - bw, y, bw, false, !Foreman.connected() || s.unsupported(), false, mx, my, () -> failed
+				.forEach(ConfigScope::load));
+			y += 23;
 		}
 		List<String> wide = new ArrayList<>();
 		boolean asking = scopes.stream().anyMatch(s -> s.confirm() != null);

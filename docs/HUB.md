@@ -11,8 +11,8 @@ server (`ServerTasks`), so it needs no operator permission; commands do.
 home / teleport / remove, blueprint browser with plan + rendered previews, Place, Place on the plot,
 Design new; the Designs list) and the **Status** tab (branch `mod/hub`); the design form, plot marking
 and the design flow (branch `mod/design-form`, see "Generated buildings"); the **Repos** and **Goals**
-tabs (branch `mod/goals-tabs`, see "Repos and Goals tabs" below). Team and Settings show a "coming next"
-panel. Code: `mod/src/client/java/dev/agentcraft/client/hub/` and
+tabs (branch `mod/goals-tabs`, see "Repos and Goals tabs" below); the **Team** and **Settings** tabs and the Repos
+tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings tabs" below). Code: `mod/src/client/java/dev/agentcraft/client/hub/` and
 `.../client/design/`, notes in mod/DEV.md "Hub" and "Generated buildings".
 
 - Opened with a key (default `H`, rebindable, AgentCraft category; vanilla binds H only as F3+H) and
@@ -44,8 +44,8 @@ panel. Code: `mod/src/client/java/dev/agentcraft/client/hub/` and
        messages), built by the Foreman from the feed and task history (no model call needed for v1).
      Needs Foreman support: goal-scoped messages, goal instructions (stored with the goal, included in
      prompts), plan read/write, and a digest query (`goal.digest {goalId, since}`).
-  4. **Team** *(later)*: agents, roles, models, effort, shift.
-  5. **Settings** *(later)*: permissions, context, connectors, session history, usage.
+  4. **Team** *(done in the mod, branch `mod/settings`)*: agents, roles, models, effort, the team.
+  5. **Settings** *(done in the mod, branch `mod/settings`)*: permissions, context, connectors, session history, usage.
   6. **Status** *(done)*: Foreman connection, backend, auth/account, usage windows (percent, reset
      time), spend, mod and Foreman versions, DevBridge state.
 - Style: the existing UI kit (`ui/Kit`, `ui/Panels`, `gui/ui-style.json`, `palette.json`), like
@@ -372,3 +372,32 @@ decisions, and with config.set loosen its own permissions). From now on:
   allow rule, `useClaudeLogin`) asks a second confirm naming the change.
 - DevBridge: `dev.hub.open {tab: team|settings, group?}`, state for both tabs, actions for every
   control; screens `hub_team`, `hub_settings_<group>`.
+
+### As implemented (mod, branch `mod/settings`)
+Details and DevBridge in mod/DEV.md "Hub" -> "Team and Settings tabs" and "Foreman link" (client token). Notes where
+the mod fills gaps in this contract (the Foreman side was built in parallel; align or tell the mod):
+- **Client token**: the mod reads it on every connect from the run file whose `port` is the one it connects to
+  (`<home>/<AGENTCRAFT_PROFILE>/foreman.json`, then `<home>/foreman.json`, then any `<home>/*/foreman.json`), field
+  `clientTokenFile` (also accepted: `tokenFile`, `clientTokenPath`, `tokenPath`, `clientToken`; a relative path is
+  relative to the run file), else `client.token` in the run file's profile dir. Sent as `hello.token` only when
+  found. `AGENTCRAFT_CLIENT_TOKEN` overrides (dev).
+- **Read-only**: any refusal containing "read-only connection" marks the link read-only until it drops; every hub
+  tab's footer and every refusal note then say "Foreman did not accept the client token (read-only connection)";
+  Team/Settings show it as a banner in place of the form (config.get is refused).
+- `foreman.status.restartRequired` is read from the `ForemanStatus` object (snapshot `foreman` and `foreman.status`
+  `status`); a new snapshot replaces the list; `config.changed.restartRequired` and config.set acks add to it.
+- **config.set** errors: per field from `result.errors` (`[{key, error|message}]` or `{key: message}`), else from the
+  error text split on `;`/newlines into `<key>: <problem>`; the rest is shown as the note.
+- **Unsetting** a value (a repo role "not set", an optional int) sends `{key, value: null}`.
+- **Scopes**: the Team tab's per-repo roles are `config.set {repoId}` per repo; Apply sends one config.set per scope
+  with changes (global first, stopping at the first refusal): not atomic across scopes.
+- Keys the mod synthesises when `config.get` does not list them (so they stay editable): a repo's `roles.<agent>`
+  for every roster agent, and `claude.agents.<id>.{title,prompt,model,effort}` for every roster agent.
+- `model` / `effort` choices come from each setting's `options`; effort without options falls back to low, medium,
+  high, max. `agentList` candidates: `options`, else the cast (leads for `claude.leads`).
+- MCP servers: the ack's `mcpServers` (`[{name, command}]` or `{name: command | {command}}`), else a `map` setting
+  whose key ends in `mcpServers`. Maps are always read-only in the hub.
+- Widening (second confirm): permission mode away from `policy` (strict -> loose: policy, auto; unknown modes count
+  as loosest), a deny rule removed, an allow rule added, any change of `claude.useClaudeLogin`.
+- Restart: a `foreman.restart` whose ack is lost to the closing socket counts as restarting; "reconnecting" lasts
+  until the link is synced with a newer snapshot.
