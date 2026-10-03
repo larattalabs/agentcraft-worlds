@@ -90,6 +90,8 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--max-turns`, `--max-budget <usd>` | 40 lead / 80 worker, none | per turn caps |
 | `--ci "<cmd>"` | detected (`npm`/`pnpm`/`yarn`/`bun test` by lockfile, `cargo test`, ...) | run after each task (a repo's `repoSettings` `ci` wins) |
 | `--no-lead-review` | | merge decisions go to you without a lead review turn |
+| `--pr-watch off\|observe\|on` | `observe` | pull requests of tasks landed as PRs (`land: "pr"`): observe = poll + Marlow's triage, nothing posted or started; on = fold-ins and approved replies too; off = a PR finishes its task (config `claude.prWatch`) |
+| `--pr-poll-seconds` | `180` | how often watched PRs are polled (config `claude.prPollSeconds`) |
 | `--repo-poll-ms` | `10000` | how often checkouts are checked for head/dirty changes |
 | `--merge-style merge\|squash` / `AGENTCRAFT_MERGE_STYLE` | `merge` | approved merges: a merge commit that keeps the agents' commits, or one squashed commit (see Safety guarantees) |
 | `--no-sign-merges` / `AGENTCRAFT_SIGN_MERGES=0` | signed if your git config signs (claude) | never sign approved merge commits; the sim never signs |
@@ -154,6 +156,43 @@ and opens the pull request with the remote's own CLI and your login: `az repos p
 DevOps, `gh pr create` for GitHub (other remotes: pushed only). `squash` pushes one commit authored
 by you, with the agents as Co-authored-by. The push never overwrites a remote branch AgentCraft did
 not push itself. Agents still never push: only the Foreman does, and only after your approval.
+
+#### Watching the pull requests (`claude.prWatch`, docs/PRWATCH.md)
+
+With the claude backend a task landed as a PR is not done yet: it moves to status `pr` ("PR open" on
+the task wall) and the Foreman polls the PR every `claude.prPollSeconds` (default 180, flag
+`--pr-poll-seconds`; `pr.refresh` polls now). Merged: the task is `done` (so a goal finishes when its
+PRs merge, and a task that depends on it starts only then). Abandoned: the task is `cancelled`.
+
+New comment threads (a reviewer's, or the newest automated "Claude Code Review" comment, parsed into
+findings by severity) and checks that turn failing go to Marlow in a `triage` turn, with the PR's
+diff. Marlow answers with the `triage` tool, per item: `fold_in` (fix it in code), `reply` (a drafted
+reply), `ask_user` (your decision), `ignore`. With `claude.prWatch: "on"`:
+
+- all fold-ins of a PR go back to the task's worker as ONE follow-up, continuing the task's branch;
+  CI and Marlow's review see only the follow-up; after your approval it is pushed as an ADDED commit
+  on the PR ("<task>: address review feedback on PR #N"; squash repos: one commit by you on top of
+  the PR's commit, never a re-squash or force-push);
+- replies and thread resolutions wait for ONE decision per PR ("Post 3 replies and resolve 2 threads
+  on PR #612?"); threads fixed by a fold-in are answered ("Addressed in <commit>") and resolved after
+  its push lands. Azure DevOps: `az devops invoke` (thread comments POST, thread status PATCH);
+  GitHub: `gh api` replies (resolving GitHub review threads is not done);
+- loop guard: after `prReview.maxRounds` (default 2) fold-in rounds from automated reviews, or when
+  a round would only address minor items, the next review asks you instead of Marlow. A PASS with
+  nothing above minor ends the automated rounds.
+
+`"observe"` (the default) does all the reading and the triage turns, but posts nothing, asks you
+nothing and starts no fold-in: Marlow's verdicts go to the feed and to a shared memory note
+"PR triage <task> #<n> (observe)". `"off"`: landing a PR finishes the task, nothing is polled.
+
+```json
+{ "claude": { "prWatch": "observe", "prPollSeconds": 180 },
+  "repoSettings": { "~/work/api": { "land": "pr",
+    "prReview": { "autoSeverities": ["critical", "important"], "maxRounds": 2 } } } }
+```
+
+Check what the watcher would see on an existing PR (read-only, your own az/gh login):
+`npm run pr-probe -- https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>`.
 
 The lead reads code in a read-only view of each repository's base (a detached worktree at
 `<profile>/worktrees/<repo>/_lead`, refreshed before every lead turn; PR repos: the freshly fetched

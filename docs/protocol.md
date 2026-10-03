@@ -17,7 +17,7 @@
 - <a id="agentstate"></a>**AgentState**: `idle`, `thinking`, `reading`, `editing`, `running`, `testing`, `waiting_user`, `blocked`, `done`, `error` - What the agent is doing right now; drives nameplate dot color, particles and animation.
 - <a id="station"></a>**Station**: `desk`, `library`, `terminal`, `testbench`, `mergestation`, `meeting`, `lounge`, `user` - Where in the HQ the agent should walk to. `user` = next to the player / Decision Podium.
 - <a id="agentrole"></a>**AgentRole**: `lead`, `worker`
-- <a id="taskstatus"></a>**TaskStatus**: `todo`, `doing`, `review`, `done`, `blocked`, `cancelled` - Task Wall column. `cancelled` tasks are kept for history but should not be shown on the wall.
+- <a id="taskstatus"></a>**TaskStatus**: `todo`, `doing`, `review`, `pr`, `done`, `blocked`, `cancelled` - Task Wall column. `pr` = landed as a pull request that is still open (the Foreman watches it; see Task.pr): shown like review, labelled "PR open"; it becomes `done` when the PR is merged, `cancelled` when it is abandoned. `cancelled` tasks are kept for history but should not be shown on the wall.
 - <a id="cistatus"></a>**CiStatus**: `unknown`, `running`, `pass`, `fail`
 - <a id="logkind"></a>**LogKind**: `text`, `tool`, `result`, `error`, `diff`
 - <a id="decisionkind"></a>**DecisionKind**: `question`, `permission`, `merge`
@@ -31,6 +31,8 @@
 - <a id="designstatus"></a>**DesignStatus**: `queued`, `designing`, `checking`, `rendering`, `done`, `failed`, `cancelled` - queued -> designing (the design agent works) -> checking (the Foreman re-runs the checker) -> rendering (previews) -> done; or failed / cancelled. done, failed and cancelled are final.
 - <a id="designstyle"></a>**DesignStyle**: `modern`, `cabin`, `townhouse`, `workshop`, `campus`, `custom` - style preset of a generated building (docs/HUB.md); `custom` = described only by the notes
 - <a id="designfeature"></a>**DesignFeature**: `porch`, `skylights`, `courtyard`, `big_windows`, `garden`
+- <a id="prstatus"></a>**PrStatus**: `open`, `changes`, `approved`, `merged`, `abandoned` - open: waiting for reviews; changes: a reviewer asked for changes (vote -5/-10, GitHub CHANGES_REQUESTED); approved: approved and nobody objects; merged / abandoned: closed on the host
+- <a id="prchecks"></a>**PrChecks**: `pending`, `passing`, `failing`, `none` - build / status checks on the PR (Azure DevOps build policies, GitHub status checks); none = the PR has no checks
 
 Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; permission decisions use `Allow once`, `Always allow for this agent`, `Deny`. Question decisions use agent-supplied options (may be empty: free text).
 
@@ -71,7 +73,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `id` | string | yes | e.g. "t3" |
 | `title` | string | yes |  |
 | `description` | string | no |  |
-| `status` | [TaskStatus](#taskstatus) | yes | Task Wall column. `cancelled` tasks are kept for history but should not be shown on the wall. |
+| `status` | [TaskStatus](#taskstatus) | yes | Task Wall column. `pr` = landed as a pull request that is still open (the Foreman watches it; see Task.pr): shown like review, labelled "PR open"; it becomes `done` when the PR is merged, `cancelled` when it is abandoned. `cancelled` tasks are kept for history but should not be shown on the wall. |
 | `assignee` | string | no | agent id |
 | `deps` | string[] | yes | task ids that must be done before this one can start |
 | `repoId` | string | no |  |
@@ -82,9 +84,24 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `ci` | [CiStatus](#cistatus) | yes |  |
 | `blockedReason` | string | no |  |
 | `summary` | string | no | worker/lead summary of the result |
+| `pr` | [TaskPr](#taskpr) | no | the pull request this task landed as (repoSettings land "pr"), while it is watched and after it closed |
 | `createdBy` | string | yes | agent id or "user" |
 | `createdAt` | integer | yes | epoch milliseconds |
 | `updatedAt` | integer | yes | epoch milliseconds |
+
+### <a id="taskpr"></a>TaskPr
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `url` | string | yes | the PR's web URL |
+| `id` | integer | yes | PR number on its host |
+| `host` | `ado` \| `github` | yes |  |
+| `branch` | string | yes | source branch on the remote |
+| `target` | string | yes | target branch on the remote |
+| `status` | [PrStatus](#prstatus) | yes | open: waiting for reviews; changes: a reviewer asked for changes (vote -5/-10, GitHub CHANGES_REQUESTED); approved: approved and nobody objects; merged / abandoned: closed on the host |
+| `checks` | [PrChecks](#prchecks) | yes | build / status checks on the PR (Azure DevOps build policies, GitHub status checks); none = the PR has no checks |
+| `threads` | { open: integer, new: integer } | yes |  |
+| `updatedAt` | integer | yes | last successful poll of the host |
 
 ### <a id="decision"></a>Decision
 
@@ -572,23 +589,37 @@ Task created or changed. Replace by `task.id`.
   "v": 1,
   "type": "task.upsert",
   "task": {
-    "id": "t2",
-    "title": "Tag parser module (src/tags.ts)",
+    "id": "t4",
+    "title": "Tag filter in the list view",
     "description": "parseTags/hasTag/normalizeTag with unit tests.",
-    "status": "doing",
-    "assignee": "kit",
+    "status": "pr",
+    "assignee": "wren",
     "deps": [
       "t1"
     ],
     "repoId": "demo-app",
     "goalId": "g1",
     "priority": 2,
-    "branch": "agentcraft/kit/t2-tag-parser-module",
-    "worktree": "kit-t2",
-    "ci": "fail",
+    "branch": "agentcraft/wren/t4-tag-filter",
+    "worktree": "wren-t4",
+    "ci": "pass",
     "createdBy": "marlow",
     "createdAt": 1790850000000,
-    "updatedAt": 1790850060000
+    "updatedAt": 1790850060000,
+    "pr": {
+      "url": "https://dev.azure.com/acme/Notes/_git/pocket-notes/pullrequest/612",
+      "id": 612,
+      "host": "ado",
+      "branch": "feat/t4-tag-filter",
+      "target": "dev",
+      "status": "open",
+      "checks": "passing",
+      "threads": {
+        "open": 2,
+        "new": 1
+      },
+      "updatedAt": 1790850400000
+    }
   }
 }
 ```
@@ -1200,6 +1231,24 @@ Cancel a queued or running design (the design agent's turn is stopped; nothing i
   "type": "design.cancel",
   "id": "c20",
   "designId": "d7"
+}
+```
+
+### `pr.refresh`
+
+Poll the pull request(s) of tasks in status `pr` now instead of at the next interval (claude backend with PR watching on). Changes arrive as `task.upsert`.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `taskId` | string | no | the task whose PR to poll now; omitted = every task in status `pr` |
+
+```json
+{
+  "v": 1,
+  "type": "pr.refresh",
+  "id": "c21",
+  "taskId": "t4"
 }
 ```
 

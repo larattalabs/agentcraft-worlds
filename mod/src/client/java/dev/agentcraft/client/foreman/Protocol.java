@@ -51,7 +51,7 @@ public final class Protocol {
 	}
 
 	public enum TaskStatus implements Wire {
-		TODO, DOING, REVIEW, DONE, BLOCKED, CANCELLED, UNKNOWN
+		TODO, DOING, REVIEW, PR, DONE, BLOCKED, CANCELLED, UNKNOWN
 	}
 
 	public enum CiStatus implements Wire {

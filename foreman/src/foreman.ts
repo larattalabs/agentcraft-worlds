@@ -28,6 +28,7 @@ import type {
   Station,
   Task,
 } from './protocol.js';
+import { parsePrUrl } from './prs.js';
 import { RepoError, RepoManager } from './repos.js';
 import { Store } from './store.js';
 import { TaskError, TaskGraph } from './taskgraph.js';
@@ -59,6 +60,18 @@ export interface Backend {
   onDesignRequest?(design: Design): void;
   /** The user cancelled a design (already marked cancelled): stop its turn, or drop it from the queue. */
   onDesignCancel?(designId: string): void;
+  /**
+   * Pull requests are watched (docs/PRWATCH.md): a task landed as a PR stays in status `pr` until the
+   * PR is merged. Without this (or false) landing a PR finishes the task.
+   */
+  watchesPrs?(): boolean;
+  /**
+   * A task's PR work ended: its first push opened the PR (`opened`), review fixes were pushed to it
+   * (`landed`), or a fold-in ended without a push (`empty`: nothing new, `rejected` by the user).
+   */
+  onPrPush?(task: Task, outcome: 'opened' | 'landed' | 'empty' | 'rejected', sha?: string): void;
+  /** pr.refresh: poll the PR of this task (or of every task in `pr`) now */
+  onPrRefresh?(taskId?: string): void;
 }
 
 export type Reply = (msg: Outbound) => void;
@@ -407,23 +420,46 @@ export class Foreman {
           d,
           task
             ? {
-                commitMessage: `${task.id}: ${task.title}${task.summary ? `\n\n${task.summary}` : ''}`,
+                commitMessage: task.pr ? `${task.id}: address review feedback on PR #${task.pr.id}${task.summary ? `\n\n${task.summary}` : ''}` : `${task.id}: ${task.title}${task.summary ? `\n\n${task.summary}` : ''}`,
                 title: task.title,
                 description: [task.summary, d.context?.split('\n')[0], `Built and reviewed in AgentCraft (${task.id}), approved by ${userName()}.`].filter(Boolean).join('\n\n'),
               }
             : {},
         );
-        if (task) this.tasks.setStatus(task.id, 'done', { viaMerge: true, force: task.status !== 'review' });
+        if (task && res.kind === 'merge') this.tasks.setStatus(task.id, 'done', { viaMerge: true, force: task.status !== 'review' });
         if (res.kind === 'merge') {
           this.bus.feed('merge', `Merged ${res.branch} into ${res.base} (${res.sha}, ${res.files} file${res.files === 1 ? '' : 's'})${res.pushed ? `; ${res.pushed}` : ''}`, { agentId: d.agentId });
           this.notify('info', `Merged ${res.branch} into ${res.base}${res.pushed ? ` (${res.pushed})` : ''}`);
         } else {
-          const what = res.url ? `${res.updated ? 'Updated the pull request' : 'Opened a pull request'} ${res.url}` : `Pushed ${res.remoteBranch} (open the pull request yourself)`;
-          if (task) this.tasks.update(task.id, { summary: `${what}${task.summary ? `\n${task.summary}` : ''}` });
-          this.bus.feed('merge', `${task?.id ?? res.branch}: ${what} (${res.remoteBranch} → ${res.base})`, { agentId: d.agentId });
+          // a PR that is watched keeps the task open (status pr) until it is merged
+          const ref = res.url ? parsePrUrl(res.url) : undefined;
+          const watched = !!ref && !!this.backend?.watchesPrs?.();
+          const followUp = !!task?.pr && res.updated;
+          const what = res.url ? (followUp ? `Pushed the review fixes to the pull request ${res.url} (${res.sha.slice(0, 7)})` : `${res.updated ? 'Updated the pull request' : 'Opened a pull request'} ${res.url}`) : `Pushed ${res.remoteBranch} (open the pull request yourself)`;
+          if (task) {
+            if (!followUp) this.tasks.update(task.id, { summary: `${what}${task.summary ? `\n${task.summary}` : ''}` });
+            if (watched && ref) {
+              const now = this.ctx.now();
+              const prev = task.pr;
+              this.tasks.update(task.id, {
+                pr: prev ? { ...prev, updatedAt: now } : { url: res.url!, id: ref.id, host: ref.host, branch: res.remoteBranch, target: res.base, status: 'open', checks: 'pending', threads: { open: 0, new: 0 }, updatedAt: now },
+              });
+              this.tasks.setStatus(task.id, 'pr', { force: true });
+            } else this.tasks.setStatus(task.id, 'done', { viaMerge: true, force: task.status !== 'review' });
+          }
+          this.bus.feed('merge', `${task?.id ?? res.branch}: ${what} (${res.remoteBranch} → ${res.base})${watched && !followUp ? '; watching it until it is merged' : ''}`, { agentId: d.agentId });
           this.notify('info', `${task?.id ?? res.branch}: ${what}`);
+          if (task && watched) this.prPush(task.id, followUp ? 'landed' : 'opened', res.sha);
         }
       } catch (e) {
+        if (e instanceof RepoError && e.code === 'empty' && task?.pr && d.repoId && d.worktree) {
+          // review fixes that changed nothing: the PR stays as it is
+          await this.repos.abandon(d.repoId, d.worktree, `agentcraft: ${task.id} review fixes (no changes)`).catch((err) => this.log.warn(`abandon: ${(err as Error).message}`));
+          this.tasks.setStatus(task.id, 'pr', { force: true });
+          this.bus.feed('merge', `Nothing new to push for ${task.id}: PR #${task.pr.id} stays as it is`, { agentId: d.agentId });
+          this.prPush(task.id, 'empty');
+          return;
+        }
         if (e instanceof RepoError && e.code === 'empty' && task && d.repoId && d.worktree) {
           // nothing to merge (a report or investigation): the task is simply done
           await this.repos.abandon(d.repoId, d.worktree, `agentcraft: ${task.id} (no changes)`).catch((err) => this.log.warn(`abandon: ${(err as Error).message}`));
@@ -466,6 +502,13 @@ export class Foreman {
       }
     } else if (option === 'Reject') {
       if (d.repoId && d.worktree) await this.repos.abandon(d.repoId, d.worktree).catch((e) => this.log.warn(`abandon: ${(e as Error).message}`));
+      if (task?.pr && task.pr.status !== 'merged' && task.pr.status !== 'abandoned') {
+        // rejected review fixes: the pull request itself stays open and watched
+        this.tasks.setStatus(task.id, 'pr', { force: true });
+        this.bus.feed('merge', `Rejected the review fixes for ${task.id} (branch kept); PR #${task.pr.id} stays open`, { agentId: d.agentId });
+        this.prPush(task.id, 'rejected');
+        return;
+      }
       if (task) {
         this.tasks.setStatus(task.id, 'cancelled', { force: true });
         for (const dep of this.tasks.dependents(task.id)) {
@@ -473,6 +516,16 @@ export class Foreman {
         }
       }
       this.bus.feed('merge', `Rejected ${d.worktree ?? 'branch'} (branch kept for recovery)`, { agentId: d.agentId });
+    }
+  }
+
+  private prPush(taskId: string, outcome: 'opened' | 'landed' | 'empty' | 'rejected', sha?: string): void {
+    const t = this.tasks.get(taskId);
+    if (!t) return;
+    try {
+      this.backend?.onPrPush?.(t, outcome, sha);
+    } catch (e) {
+      this.log.error(`backend.onPrPush: ${(e as Error).message}`);
     }
   }
 
@@ -572,6 +625,12 @@ export class Foreman {
       case 'design.cancel':
         this.cancelDesign(msg.designId);
         return { designId: msg.designId };
+      case 'pr.refresh': {
+        if (!this.backend?.onPrRefresh || !this.backend.watchesPrs?.()) throw new ClientError('pull requests are not watched (claude backend with claude.prWatch "observe" or "on")');
+        if (msg.taskId && this.tasks.get(msg.taskId)?.status !== 'pr') throw new ClientError(`task ${msg.taskId} has no open pull request`);
+        this.backend.onPrRefresh(msg.taskId);
+        return msg.taskId ? { taskId: msg.taskId } : {};
+      }
     }
   }
 

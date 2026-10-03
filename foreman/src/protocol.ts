@@ -31,8 +31,8 @@ export const AgentRole = z.enum(['lead', 'worker']);
 export type AgentRole = z.infer<typeof AgentRole>;
 
 export const TaskStatus = z
-  .enum(['todo', 'doing', 'review', 'done', 'blocked', 'cancelled'])
-  .describe('Task Wall column. `cancelled` tasks are kept for history but should not be shown on the wall.');
+  .enum(['todo', 'doing', 'review', 'pr', 'done', 'blocked', 'cancelled'])
+  .describe('Task Wall column. `pr` = landed as a pull request that is still open (the Foreman watches it; see Task.pr): shown like review, labelled "PR open"; it becomes `done` when the PR is merged, `cancelled` when it is abandoned. `cancelled` tasks are kept for history but should not be shown on the wall.');
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
 export const CiStatus = z.enum(['unknown', 'running', 'pass', 'fail']);
@@ -116,6 +116,32 @@ export const LogEntry = z.object({
 });
 export type LogEntry = z.infer<typeof LogEntry>;
 
+export const PrStatus = z
+  .enum(['open', 'changes', 'approved', 'merged', 'abandoned'])
+  .describe('open: waiting for reviews; changes: a reviewer asked for changes (vote -5/-10, GitHub CHANGES_REQUESTED); approved: approved and nobody objects; merged / abandoned: closed on the host');
+export type PrStatus = z.infer<typeof PrStatus>;
+
+export const PrChecks = z
+  .enum(['pending', 'passing', 'failing', 'none'])
+  .describe('build / status checks on the PR (Azure DevOps build policies, GitHub status checks); none = the PR has no checks');
+export type PrChecks = z.infer<typeof PrChecks>;
+
+export const TaskPr = z.object({
+  url: z.string().describe('the PR\'s web URL'),
+  id: z.number().int().describe('PR number on its host'),
+  host: z.enum(['ado', 'github']),
+  branch: z.string().describe('source branch on the remote'),
+  target: z.string().describe('target branch on the remote'),
+  status: PrStatus,
+  checks: PrChecks,
+  threads: z.object({
+    open: z.number().int().nonnegative().describe('unresolved comment threads (system threads not counted)'),
+    new: z.number().int().nonnegative().describe('threads with comments the lead has not triaged yet'),
+  }),
+  updatedAt: Ts.describe('last successful poll of the host'),
+});
+export type TaskPr = z.infer<typeof TaskPr>;
+
 export const Task = z.object({
   id: Id.describe('e.g. "t3"'),
   title: z.string(),
@@ -131,6 +157,7 @@ export const Task = z.object({
   ci: CiStatus,
   blockedReason: z.string().optional(),
   summary: z.string().optional().describe('worker/lead summary of the result'),
+  pr: TaskPr.optional().describe('the pull request this task landed as (repoSettings land "pr"), while it is watched and after it closed'),
   createdBy: Id.describe('agent id or "user"'),
   createdAt: Ts,
   updatedAt: Ts,
@@ -481,6 +508,10 @@ export const DiffRequestMsg = z.object({
 export const RepoAddMsg = z.object({ ...envelope('repo.add'), path: z.string().min(1) });
 export const DesignRequestMsg = z.object({ ...envelope('design.request'), request: DesignRequest });
 export const DesignCancelMsg = z.object({ ...envelope('design.cancel'), designId: Id });
+export const PrRefreshMsg = z.object({
+  ...envelope('pr.refresh'),
+  taskId: Id.optional().describe('the task whose PR to poll now; omitted = every task in status `pr`'),
+});
 
 export const ClientMessage = z.discriminatedUnion('type', [
   HelloMsg,
@@ -493,6 +524,7 @@ export const ClientMessage = z.discriminatedUnion('type', [
   RepoAddMsg,
   DesignRequestMsg,
   DesignCancelMsg,
+  PrRefreshMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -569,12 +601,14 @@ export const CLIENT_MESSAGES = {
   'repo.add': { schema: RepoAddMsg, doc: 'Register a local git repo (console: `/repo add <path>`).' },
   'design.request': { schema: DesignRequestMsg, doc: 'Design a new building blueprint (hub: Buildings -> Design new). Acked with `{designId}`; progress arrives as `design.upsert`. One design runs at a time; later ones queue.' },
   'design.cancel': { schema: DesignCancelMsg, doc: 'Cancel a queued or running design (the design agent\'s turn is stopped; nothing is written to outDir).' },
+  'pr.refresh': { schema: PrRefreshMsg, doc: 'Poll the pull request(s) of tasks in status `pr` now instead of at the next interval (claude backend with PR watching on). Changes arrive as `task.upsert`.' },
 } as const;
 
 export const ENTITY_SCHEMAS = {
   Agent,
   LogEntry,
   Task,
+  TaskPr,
   Decision,
   DecisionAnswer,
   Repo,

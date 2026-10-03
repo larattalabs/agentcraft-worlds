@@ -84,6 +84,71 @@ When there are new comment threads (from the automated reviewer or a human), or 
 The Foreman never merges or completes a PR, never approves its own PR, never changes reviewers or
 policies. Agents never push or call the PR host; only the Foreman does, after an approval.
 
+### As implemented (branch foreman/pr-watch)
+
+Code: `foreman/src/prwatch.ts` (watcher, triage, decisions), `prs.ts` (host adapters),
+`prreview.ts` (review parser), the `triage` job and fold-ins in `agents/claude/index.ts`, follow-up
+landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-followup.test.ts`,
+`pr-watch.test.ts` (fake host runner; nothing reaches a host).
+
+- **Modes** `claude.prWatch` / `--pr-watch`: `observe` (default) polls, updates `Task.pr`, moves
+  merged/abandoned tasks, runs the lead's triage turns, but posts nothing, opens no decision and
+  starts no fold-in; the verdicts go to the feed and to the shared memory note
+  `PR triage <task> #<id> (observe)`. `on` does everything below. `off` = the old behaviour (a PR
+  finishes its task; started with `off`, tasks still in `pr` are marked done). Status `pr` is only used when a backend watches PRs (claude, not `off`) and the
+  host gave a PR URL; otherwise landing still means `done`.
+- **Tool name**: one call `triage(items: [{ref, verdict, note}])` instead of `triage_thread` per thread.
+  Refs carry the task id (one goal session can triage several PRs): `t3/thread-<threadId>`,
+  `t3/review-<threadId>.<n>` (finding n of the automated review), `t3/checks`. Findings without a
+  verdict count as ignore; human threads without one are left alone.
+- **Commands** (all through an injectable runner):
+  - ADO read: `az repos pr show --id N --org https://dev.azure.com/<org> -o json --only-show-errors`
+    (no `--project`: the command does not take one); threads `az devops invoke --org ... --area git
+    --resource pullRequestThreads --route-parameters project=<p> repositoryId=<repo GUID from pr show>
+    pullRequestId=N --http-method GET --api-version 7.1 -o json --only-show-errors`; checks `az repos
+    pr policy list --id N --org ... -o json --only-show-errors` (only Build/Status policy types count;
+    a failing call means checks `none`).
+  - ADO write (after approval): reply `az devops invoke ... --resource pullRequestThreadComments
+    --route-parameters ... threadId=T --http-method POST --in-file <tmp.json>`
+    (`{"content", "parentCommentId": 1, "commentType": 1}`); status `... --resource pullRequestThreads
+    ... threadId=T --http-method PATCH --in-file <tmp.json>` (`{"status": "fixed" | "closed"}`).
+  - GitHub read: `gh pr view <url> --json state,isDraft,reviewDecision,reviews,comments,
+    statusCheckRollup,mergedAt,headRefOid,mergeStateStatus` + `gh api --paginate --slurp
+    repos/o/r/pulls/N/comments`. Write: `gh api --method POST repos/o/r/pulls/N/comments/<id>/replies
+    -f body=...` (review threads) or `.../issues/N/comments` (others). Resolving GitHub review threads
+    is not done (needs GraphQL).
+- **Review parsing** follows the review pipeline's renderer format: a
+  context-aware review's final block is the one used; refactoring opportunities count as minor;
+  teachable moments never reach the lead. Bot identity: `Project Collection Build Service ...`;
+  the review is recognised by its `**Claude Code Review**` header, the changelog thread by
+  `<!-- changelog-draft -->`; other build-service threads and system threads are ignored.
+- **New**: per thread the count of human comments seen (comments AgentCraft posted are remembered
+  by id and never count); the newest automated review by publish time, once. Items found while a
+  triage is still waiting stay for the poll after it. A triage turn that ends without verdicts is
+  offered once more, then reported in the feed.
+- **Loop guard**: a PASS with nothing above minor (critical/important) never starts a round; after
+  `maxRounds` review-driven fold-ins, or when a later round has nothing at `autoSeverities`, the
+  newest review becomes the user's question "Review round N on PR #612 suggests ...; fold in?".
+- **Fold-ins**: the task goes `pr -> todo`; its worker (or the next free one, continuing the branch)
+  gets the notes; CI, then the lead reviews only the follow-up diff; the merge decision reads "Push the
+  review fixes for t3 to PR #612?". Landing pushes on top of the PR (fast-forward of the branch, or,
+  for squash PRs, a commit by the user whose parent is the pushed commit: 3-way merge with the last
+  landed branch tip as base, so newer base commits never leak in), then the task is back in `pr`.
+  Rejected or empty fold-ins also go back to `pr`. A second fold-in for the same PR waits for the
+  first. If the PR branch has commits AgentCraft did not push (seen twice; ADO: the PR's
+  lastMergeSourceCommit), fold-ins are queued and start on the first poll after that clears.
+  Approved "Addressed in <commit>" replies and `fixed` resolutions belong to the fold-in that
+  carries those fixes (a generation number): posted when exactly that one lands, dropped (with a
+  feed line) when it is rejected or comes back empty.
+- **Decisions** (agent Marlow, kind question, owned by the watcher so they never resume a session):
+  "Post N replies and resolve M threads on PR #612?" [Post, Skip]; ask_user items [Fold in, Leave it];
+  the loop guard [Fold in, Leave it]. Replies to automated-review findings are combined into one
+  comment on the review thread; the review thread is resolved `fixed` after a fold-in landed, else
+  `closed`.
+- **Not done yet**: polling a task's PR while its fold-in runs (a merge during a fold-in is noticed
+  once the task is back in `pr`); lead per building (below).
+- **Probe**: `npm run pr-probe -- <PR url>` prints what the watcher would see (reads only).
+
 ## A lead per building (after PR watching)
 
 - Each building (one repo or a repo group) has a lead; Marlow leads repos without a building and

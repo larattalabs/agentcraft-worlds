@@ -148,7 +148,7 @@ public class StatusLampRenderer extends StationRenderer<StatusLampBlockEntity, S
 				switch (t.status()) {
 					case DONE -> done++;
 					case DOING -> doing++;
-					case REVIEW -> review++;
+					case REVIEW, PR -> review++;
 					default -> {
 					}
 				}

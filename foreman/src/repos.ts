@@ -23,7 +23,7 @@ import { withGitSafety } from './gitsafety.js';
 import { ensureDir, isInsideOrEqual } from './util/fsx.js';
 import { agentGitIdentity, git, gitConfigGet, gitOut, gitRemote, identityEnv, listWorktrees } from './util/git.js';
 import { openPullRequest, parseRemote, type PrHost } from './prs.js';
-import { runShell } from './util/proc.js';
+import { run, runShell } from './util/proc.js';
 import { slugify, tailLines } from './util/text.js';
 
 export class RepoError extends Error {
@@ -63,6 +63,8 @@ export interface PrResult {
   branch: string;
   /** a PR for this task existed already: the branch was updated */
   updated: boolean;
+  /** the commit now at the tip of the remote branch */
+  sha: string;
 }
 
 export type LandResult = ({ kind: 'merge'; pushed?: string } & MergeResult) | ({ kind: 'pr' } & PrResult);
@@ -147,6 +149,8 @@ export interface RepoOptions {
   signMerges?: boolean;
   /** per-repo settings keyed by absolute repo path (config.json repoSettings) */
   settings?: Record<string, RepoSettings>;
+  /** runs `az` / `gh` to open pull requests (tests inject a fake) */
+  prRunFn?: typeof run;
 }
 
 export interface PrepareResult {
@@ -176,6 +180,15 @@ export class RepoManager {
     private opts: RepoOptions = {},
   ) {
     this.worktreeRoot = ensureDir(worktreeRoot);
+  }
+
+  /** the command runner for the PR host CLIs (tests replace it) */
+  get prRunFn(): typeof run {
+    return this.opts.prRunFn ?? run;
+  }
+
+  set prRunFn(fn: typeof run) {
+    this.opts.prRunFn = fn;
   }
 
   private serial<T>(repoId: string, fn: () => Promise<T>): Promise<T> {
@@ -465,8 +478,8 @@ export class RepoManager {
    * .gitignore) against merge-base(base, HEAD). Uses a throwaway index so the agent's own index
    * is untouched.
    */
-  private async rawWorkingDiff(_r: Repo, w: Worktree, extra: string[]): Promise<string> {
-    const mb = await gitOut(w.path, ['merge-base', w.base, 'HEAD']);
+  private async rawWorkingDiff(_r: Repo, w: Worktree, extra: string[], from?: string): Promise<string> {
+    const mb = from ?? (await gitOut(w.path, ['merge-base', w.base, 'HEAD']));
     const tmpIndex = path.join(os.tmpdir(), `agentcraft-index-${process.pid}-${Math.random().toString(36).slice(2)}`);
     const env = { GIT_INDEX_FILE: tmpIndex };
     try {
@@ -480,17 +493,18 @@ export class RepoManager {
     }
   }
 
-  async diff(repoId: string, worktreeId: string): Promise<DiffResult> {
+  /** `from`: diff against this commit instead of the fork point (a PR fold-in: only the follow-up). */
+  async diff(repoId: string, worktreeId: string, opts: { from?: string } = {}): Promise<DiffResult> {
     const r = this.require(repoId);
     const w = this.requireWorktree(repoId, worktreeId);
     let text: string;
     if (w.status === 'active' && fs.existsSync(w.path)) {
       const v = await this.verifyWorktreeGit(r, w);
       if (!v.ok) throw new RepoError(`cannot show the diff of ${w.id}: ${v.reason}`, 'refused');
-      text = await this.rawWorkingDiff(r, w, []);
+      text = await this.rawWorkingDiff(r, w, [], opts.from);
     } else {
       const meta = this.ctx.store.data.worktreeMeta[`${r.id}/${w.id}`];
-      const from = meta?.mergedBaseSha ?? (await gitOut(r.path, ['merge-base', w.base, w.branch]));
+      const from = opts.from ?? meta?.mergedBaseSha ?? (await gitOut(r.path, ['merge-base', w.base, w.branch]));
       text = (await git(r.path, ['diff', '-M', '--no-ext-diff', '--unified=3', from, w.branch])).stdout;
     }
     const parsed = parseUnifiedDiff(text);
@@ -652,32 +666,86 @@ export class RepoManager {
     const target = w.base.startsWith(`${remote}/`) ? w.base.slice(remote.length + 1) : w.base;
     const baseRef = `refs/remotes/${remote}/${target}`;
 
+    // the PR AgentCraft opened for this task: this worktree's, or (a fold-in by another worker) the
+    // task's earlier worktree's
+    const key = `${r.id}/${w.id}`;
+    const meta = (this.ctx.store.data.worktreeMeta[key] ??= { createdAt: this.ctx.now() });
+    if (!meta.prUrl && w.taskId) {
+      const prev = r.worktrees
+        .filter((x) => x.taskId === w.taskId && x.id !== w.id)
+        .map((x) => this.ctx.store.data.worktreeMeta[`${r.id}/${x.id}`])
+        .reverse()
+        .find((m) => m?.prUrl && m.prPushedSha);
+      if (prev) {
+        meta.prUrl = prev.prUrl;
+        meta.prBranch = prev.prBranch;
+        meta.prPushedSha = prev.prPushedSha;
+        if (prev.mergedSha) meta.prevTip = prev.mergedSha;
+      }
+    }
+    const pushed = meta.prUrl ? meta.prPushedSha : undefined;
+    const prevTip = meta.prevTip ?? meta.mergedSha;
+
     // 1. the agent's work committed on its branch; the base as it is on the server now
     await this.commitAll(r.id, w.id, opts.commitMessage ?? `agentcraft: ${w.taskId ?? w.id}`);
     await this.fetchBase({ ...r, branch: target });
-    const ahead = Number(await gitOut(r.path, ['rev-list', '--count', `${baseRef}..refs/heads/${w.branch}`]));
-    if (!ahead) throw new RepoError(`${w.branch} has no changes to land`, 'empty');
-    const mt = await git(r.path, ['merge-tree', '--write-tree', '--name-only', '--no-messages', baseRef, `refs/heads/${w.branch}`], { allowFail: true });
-    if (mt.code === 1) {
-      const files = mt.stdout.trim().split('\n').slice(1).filter(Boolean);
-      throw new RepoError(`the branch conflicts with ${remote}/${target} in: ${files.join(', ') || '(unknown files)'}`, 'conflict', files);
-    }
-    if (mt.code !== 0) throw new RepoError(`merge-tree failed: ${mt.stderr.trim()}`, 'failed');
+    const branchRef = `refs/heads/${w.branch}`;
+    let src = branchRef;
+    if (!pushed) {
+      const ahead = Number(await gitOut(r.path, ['rev-list', '--count', `${baseRef}..${branchRef}`]));
+      if (!ahead) throw new RepoError(`${w.branch} has no changes to land`, 'empty');
+      const mt = await git(r.path, ['merge-tree', '--write-tree', '--name-only', '--no-messages', baseRef, branchRef], { allowFail: true });
+      if (mt.code === 1) {
+        const files = mt.stdout.trim().split('\n').slice(1).filter(Boolean);
+        throw new RepoError(`the branch conflicts with ${remote}/${target} in: ${files.join(', ') || '(unknown files)'}`, 'conflict', files);
+      }
+      if (mt.code !== 0) throw new RepoError(`merge-tree failed: ${mt.stderr.trim()}`, 'failed');
 
-    // 2. what to push: the agents' commits, or one commit authored by the user on top of the base
-    let src = `refs/heads/${w.branch}`;
-    if (s.pr?.squash) {
-      const tree = mt.stdout.trim().split('\n')[0]!.trim();
-      const baseSha = await gitOut(r.path, ['rev-parse', baseRef]);
-      const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseRef}..refs/heads/${w.branch}`])).split('\n').filter(Boolean))];
-      const msg = `${(opts.title ?? opts.commitMessage ?? w.taskId ?? w.id).trim()}${opts.description ? `\n\n${opts.description.trim()}` : ''}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
-      const { env } = await userIdentity(r.path);
-      src = await gitOut(r.path, ['commit-tree', tree, '-p', baseSha, '-m', msg], { env });
+      // 2. what to push: the agents' commits, or one commit authored by the user on top of the base
+      if (s.pr?.squash) {
+        const tree = mt.stdout.trim().split('\n')[0]!.trim();
+        const baseSha = await gitOut(r.path, ['rev-parse', baseRef]);
+        const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseRef}..${branchRef}`])).split('\n').filter(Boolean))];
+        const msg = `${(opts.title ?? opts.commitMessage ?? w.taskId ?? w.id).trim()}${opts.description ? `\n\n${opts.description.trim()}` : ''}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
+        const { env } = await userIdentity(r.path);
+        src = await gitOut(r.path, ['commit-tree', tree, '-p', baseSha, '-m', msg], { env });
+      }
+    } else {
+      // 2'. a follow-up on an open PR (review fixes): an ADDED commit on top of what is on the PR,
+      //     never a rewrite. The branch continues from what was pushed: push it as a fast-forward.
+      //     The PR's commit is a squash (or the history diverged): one new commit whose parent is
+      //     the pushed commit and whose tree is the pushed tree plus what the branch did since it
+      //     last landed (a 3-way merge with the last landed branch tip as the merge base), so newer
+      //     base commits do not leak into it.
+      const has = (await git(r.path, ['cat-file', '-e', `${pushed}^{commit}`], { allowFail: true })).code === 0;
+      if (!has) throw new RepoError(`the commit AgentCraft last pushed to the PR (${pushed.slice(0, 7)}) is not in this repository any more`, 'refused');
+      const ff = (await git(r.path, ['merge-base', '--is-ancestor', pushed, branchRef], { allowFail: true })).code === 0;
+      if (ff) {
+        if (!Number(await gitOut(r.path, ['rev-list', '--count', `${pushed}..${branchRef}`]))) throw new RepoError(`${w.branch} has nothing new for the pull request`, 'empty');
+      } else {
+        const known = !!prevTip && (await git(r.path, ['merge-base', '--is-ancestor', prevTip, branchRef], { allowFail: true })).code === 0;
+        // without the last landed tip: the branch merged onto the PR commit's own parent (its base)
+        const parents = (await gitOut(r.path, ['rev-list', '--parents', '-n', '1', pushed])).split(/\s+/).slice(1);
+        const onto = parents.length === 1 ? parents[0]! : pushed;
+        const mt = known
+          ? await git(r.path, ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${prevTip}`, pushed, branchRef], { allowFail: true })
+          : await git(r.path, ['merge-tree', '--write-tree', '--name-only', '--no-messages', onto, branchRef], { allowFail: true });
+        if (mt.code === 1) {
+          const files = mt.stdout.trim().split('\n').slice(1).filter(Boolean);
+          throw new RepoError(`the review fixes conflict with the pull request's base in: ${files.join(', ') || '(unknown files)'}`, 'conflict', files);
+        }
+        if (mt.code !== 0) throw new RepoError(`merge-tree failed: ${mt.stderr.trim()}`, 'failed');
+        const tree = mt.stdout.trim().split('\n')[0]!.trim();
+        if (tree === (await gitOut(r.path, ['rev-parse', `${pushed}^{tree}`]))) throw new RepoError(`${w.branch} has nothing new for the pull request`, 'empty');
+        const range = known ? `${prevTip}..${branchRef}` : `${onto}..${branchRef}`;
+        const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', range])).split('\n').filter(Boolean))];
+        const msg = `${(opts.commitMessage ?? 'Address review feedback').trim()}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
+        const { env } = await userIdentity(r.path);
+        src = await gitOut(r.path, ['commit-tree', tree, '-p', pushed, '-m', msg], { env });
+      }
     }
 
     // 3. push, never over work AgentCraft did not push itself
-    const key = `${r.id}/${w.id}`;
-    const meta = (this.ctx.store.data.worktreeMeta[key] ??= { createdAt: this.ctx.now() });
     const tail = w.branch.startsWith(BRANCH_PREFIX) ? w.branch.split('/').slice(2).join('/') : w.branch;
     const remoteBranch = meta.prBranch ?? (s.pr?.branchPrefix ? `${s.pr.branchPrefix}${tail}` : w.branch);
     const lease = `--force-with-lease=refs/heads/${remoteBranch}:${meta.prPushedSha ?? ''}`;
@@ -691,18 +759,26 @@ export class RepoManager {
     if (!meta.prUrl) {
       const host: PrHost | undefined = parseRemote(await gitOut(r.path, ['remote', 'get-url', remote]));
       if (host) {
-        meta.prUrl = await openPullRequest(host, { source: remoteBranch, target, title: opts.title ?? `${w.taskId ?? w.id}`, description: opts.description ?? '', draft: !!s.pr?.draft }, r.path);
+        meta.prUrl = await openPullRequest(host, { source: remoteBranch, target, title: opts.title ?? `${w.taskId ?? w.id}`, description: opts.description ?? '', draft: !!s.pr?.draft }, r.path, this.prRunFn);
       } else this.ctx.log.warn(`${r.name}: ${remote} is not an Azure DevOps or GitHub remote; pushed ${remoteBranch}, open the PR yourself`);
     }
 
     // 5. bookkeeping: keep the local branch (the diff stays viewable); remove the worktree directory
-    meta.mergedBaseSha = await gitOut(r.path, ['merge-base', baseRef, `refs/heads/${w.branch}`]);
-    meta.mergedSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.branch}`]);
+    meta.mergedBaseSha = await gitOut(r.path, ['merge-base', baseRef, branchRef]);
+    meta.mergedSha = await gitOut(r.path, ['rev-parse', branchRef]);
+    delete meta.prevTip;
+    // the task's other worktrees (earlier rounds by other workers) follow the PR's new state
+    for (const x of r.worktrees) {
+      const m = x.id !== w.id && x.taskId === w.taskId ? this.ctx.store.data.worktreeMeta[`${r.id}/${x.id}`] : undefined;
+      if (!m?.prUrl || m.prUrl !== meta.prUrl) continue;
+      m.prPushedSha = meta.prPushedSha;
+      m.prevTip = meta.mergedSha;
+    }
     w.status = 'merged';
     this.ctx.store.markDirty();
     await this.removeWorktreeDir(r, w);
     await this.refresh(r.id);
-    return { ...(meta.prUrl ? { url: meta.prUrl } : {}), remoteBranch, base: target, branch: w.branch, updated };
+    return { ...(meta.prUrl ? { url: meta.prUrl } : {}), remoteBranch, base: target, branch: w.branch, updated, sha: meta.prPushedSha };
   }
 
   merge(decision: Decision, opts: { commitMessage?: string; style?: 'merge' | 'squash' } = {}): Promise<MergeResult> {

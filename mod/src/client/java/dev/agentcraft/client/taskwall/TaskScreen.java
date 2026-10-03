@@ -569,6 +569,7 @@ public class TaskScreen extends Screen {
 			case TODO -> "To do";
 			case DOING -> "Doing";
 			case REVIEW -> "In review";
+			case PR -> "PR open";
 			case DONE -> "Done";
 			case BLOCKED -> "Blocked";
 			case CANCELLED -> "Cancelled";

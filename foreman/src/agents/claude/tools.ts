@@ -1,6 +1,6 @@
 // In-process MCP tools exposed to agents (server name "agentcraft"):
 //   send_message, ask_user, write_memory, read_memory, update_task, report_status, list_tasks
-//   lead only: create_task, request_merge
+//   lead only: create_task, request_merge, triage (PR review comments, see prwatch.ts)
 // Every tool result carries any unread messages for the agent (so mid-turn messages arrive).
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -32,6 +32,8 @@ export interface ToolHooks {
   onTaskSize?(taskId: string, size: 'small' | 'normal' | 'large'): void;
   /** the lead put a task on one of the user's branches (create_task base); throws if it cannot be used */
   onTaskBase?(taskId: string, repoId: string, branch: string): Promise<void>;
+  /** the lead's verdicts on PR triage items (tool `triage`); returns the tool's answer */
+  onTriage?(items: Array<{ ref: string; verdict: 'fold_in' | 'reply' | 'ask_user' | 'ignore'; note: string }>): { ok: boolean; text: string };
 }
 
 /** The turn a tool server belongs to: once it is aborted, tools refuse to act. */
@@ -57,6 +59,14 @@ export async function closeIfNoChanges(fm: Foreman, taskId: string): Promise<boo
   const wt = fm.repos.findWorktree(t.repoId, t.worktree);
   if (!wt || wt.status !== 'active' || wt.files > 0) return false;
   await fm.repos.abandon(t.repoId, wt.id, `agentcraft: ${t.id} (no changes)`);
+  if (t.pr) {
+    // review fixes that changed nothing: the pull request stays open and watched
+    fm.tasks.setStatus(t.id, 'pr', { force: true });
+    fm.bus.feed('task', `${t.id}: the review fixes changed no files; PR #${t.pr.id} stays as it is`, { agentId: t.assignee ?? 'marlow' });
+    if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} PR open`, taskId: null, worktree: null });
+    fm.backend?.onPrPush?.(fm.tasks.require(t.id), 'empty');
+    return true;
+  }
   fm.tasks.setStatus(t.id, 'done', { force: true, summary: t.summary ?? 'no changes' });
   fm.bus.feed('task', `${t.id} changed no files (report only): closed as done, nothing to merge`, { agentId: t.assignee ?? 'marlow' });
   if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} done`, taskId: null, worktree: null });
@@ -65,7 +75,7 @@ export async function closeIfNoChanges(fm: Foreman, taskId: string): Promise<boo
 
 export function toolNames(role: 'lead' | 'worker'): string[] {
   const common = ['send_message', 'ask_user', 'write_memory', 'read_memory', 'update_task', 'report_status', 'list_tasks'];
-  const lead = role === 'lead' ? ['create_task', 'request_merge'] : [];
+  const lead = role === 'lead' ? ['create_task', 'request_merge', 'triage'] : [];
   return [...common, ...lead].map((n) => `mcp__${MCP_SERVER}__${n}`);
 }
 
@@ -329,6 +339,20 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
         },
       ),
       tool(
+        'triage',
+        `Your verdicts on pull request review items (from a triage request): one entry per item ref. fold_in = address it in code (note: what to change; all fold-ins of a PR go to its worker as ONE follow-up); reply = no code change (note: the reply to post, polite and short); ask_user = a product decision for ${userName()} (note: the question); ignore = noise or already handled (a human thread is then resolved without a reply, only with ${userName()}'s approval). Nothing is posted to the PR without ${userName()}'s approval.`,
+        {
+          items: z
+            .array(z.object({ ref: z.string().describe('the item ref, e.g. "t3/thread-12" or "t3/review-11.2"'), verdict: z.enum(['fold_in', 'reply', 'ask_user', 'ignore']), note: z.string().describe('fold_in: what to change; reply: the drafted reply; ask_user: the question; ignore: why') }))
+            .min(1),
+        },
+        async ({ items }) => {
+          if (!hooks.onTriage) return fail('PR watching is not running');
+          const res = hooks.onTriage(items);
+          return res.ok ? withInbox(res.text) : fail(res.text);
+        },
+      ),
+      tool(
         'request_merge',
         `After reviewing a task in "review": send ${userName()} a merge decision for its branch. ${userName()} decides; you do not wait.`,
         { task_id: z.string(), summary: z.string().describe(`2-4 lines for ${userName()}: what changed, how it was tested, risks`) },
@@ -347,7 +371,13 @@ export function buildMcpServer(fm: Foreman, agentId: string, role: 'lead' | 'wor
           const d = fm.createDecision({
             agentId,
             kind: 'merge',
-            question: `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
+            question: t.pr
+              ? `Push the review fixes for ${t.id} "${t.title}" to PR #${t.pr.id}?`
+              : fm.repos.isUserBase(t.repoId, wt.base)
+                ? `Add ${t.id} "${t.title}" (${wt.branch}) to your branch ${wt.base}?`
+                : fm.repos.landsAsPr(t.repoId)
+                  ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?`
+                  : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
             options: [...MERGE_OPTIONS],
             context: `${summary}\n${wt.files} files, +${wt.additions} -${wt.deletions} | tests: ${t.ci}`,
             taskId: t.id,
