@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from common import OUT, save_png  # noqa: E402
 
-CAST = ["marlow", "juniper", "kit", "wren", "rowan", "tove"]
+CAST = ["marlow", "juniper", "kit", "wren", "rowan", "tove", "ines", "bram", "cass"]
 
 
 def build(ids=None):

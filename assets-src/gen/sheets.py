@@ -5,6 +5,7 @@ python gen/sheets.py [skins|cast|blocks|gui|portraits|all]
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).parent))
 from common import ART, OUT, PALETTE, PROJECT, ROOT, ensure_dir, hex2rgba, mix, pc, save_png, scale_nearest  # noqa: E402
 
-BLENDER = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
+BLENDER = os.environ.get("AGENTCRAFT_BLENDER", r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe")
 VANILLA_ASSETS = PROJECT / "artifacts" / "art" / "_ref" / "vanilla_assets" / "minecraft"
 CAST = json.load(open(ROOT / "cast.json", encoding="utf-8"))["agents"]
 
@@ -144,10 +145,10 @@ def cast_sheet(rd):
     text_h = 64 + n_lines * 18 + 14
     card_h = ch + text_h + 40
     lineup_h = 370
-    W = 40 + 6 * (cw + 20) + 20
+    W = 40 + len(CAST) * (cw + 20) + 20
     H = 126 + card_h + 30 + lineup_h + 30
     img = paper_canvas(W, H)
-    title_block(img, "AgentCraft cast", "Lead + five workers. Identity colours sit in the blue-violet-magenta arc so they "
+    title_block(img, "AgentCraft cast", "Four leads + five workers. Identity colours sit in the blue-violet-magenta arc so they "
                 "never read as a status colour (status is a separate dot/particle).")
     d = ImageDraw.Draw(img)
     x = 40
@@ -181,7 +182,7 @@ def cast_sheet(rd):
             r = r.resize((int(r.width * 300 / r.height), 300), Image.LANCZOS)
             img.alpha_composite(r, (bx - 44, y + 52))
             bx += 122
-    sx = W - 40 - 6 * 46 - 60
+    sx = W - 40 - len(CAST) * 46 - 60
     for k, hgt in ((0, 96), (1, 34)):
         for i, a in enumerate(CAST):
             r = Image.open(rd / f"{a['id']}_mc_threequarter.png")

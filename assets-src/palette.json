@@ -63,7 +63,10 @@
     "tove":    ["#D6E1F6", "#B9CBEE", "#98B2E2", "#7891C6", "#5B72A3"],
     "juniper": ["#BBA0DA", "#A383CC", "#8E66BF", "#7250A0", "#573C7E"],
     "rowan":   ["#AE5E97", "#974683", "#802F6E", "#642556", "#491A3F"],
-    "wren":    ["#F6D6E3", "#EDBDD2", "#E0A2BF", "#C47F9F", "#A0617F"]
+    "wren":    ["#F6D6E3", "#EDBDD2", "#E0A2BF", "#C47F9F", "#A0617F"],
+    "ines":    ["#FAF7FD", "#F2ECF8", "#E9E0F2", "#C9B9DB", "#A692BF"],
+    "bram":    ["#6A4A80", "#4A2A61", "#2C0E3F", "#1F082D", "#140519"],
+    "cass":    ["#F3A0CF", "#EA73BA", "#E14CA7", "#B93489", "#8E256A"]
   },
   "skin_tones": {
     "fair":   ["#FBE3D3", "#F2CDB8", "#DCAE96", "#BF8F78"],
@@ -79,7 +82,8 @@
     "ginger":   ["#E7A266", "#CC7B44", "#A35A2C", "#78401F"],
     "ink":      ["#514B57", "#34303A", "#221F27", "#151318"],
     "umber":    ["#74513B", "#57392A", "#3D281D", "#291A12"],
-    "flax":     ["#F3DE9A", "#DDBE6C", "#B8964A", "#8C6E33"]
+    "flax":     ["#F3DE9A", "#DDBE6C", "#B8964A", "#8C6E33"],
+    "auburn":   ["#C46A47", "#A04B32", "#7A3624", "#55241A"]
   },
   "details": {
     "marlow":  { "eye": "#3A4466", "frame": "#9E7D1C", "frame_glint": "#F7E39A" },
@@ -87,7 +91,10 @@
     "kit":     { "eye": "#4A6B3A", "lip": "#B87A5C", "freckle": "#C9896A", "cord": "#3A3734" },
     "wren":    { "eye": "#2B2530", "lip": "#C8857A", "cheek": "#E79A93" },
     "rowan":   { "eye": "#2E1E14" },
-    "tove":    { "eye": "#284777", "lip": "#CF8E80", "cheek": "#EBA597" }
+    "tove":    { "eye": "#284777", "lip": "#CF8E80", "cheek": "#EBA597" },
+    "ines":    { "eye": "#1E1620", "lip": "#7A4330" },
+    "bram":    { "eye": "#2A1D17", "brow": "#33261F" },
+    "cass":    { "eye": "#2F4E3A", "lip": "#C97B78", "cheek": "#EE9A9A", "freckle": "#CC8C6E" }
   },
   "ui": {
     "panel": "#F4EFE6",

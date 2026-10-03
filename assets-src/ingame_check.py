@@ -111,7 +111,7 @@ STANDINS = {
 }
 GUI_OVERRIDES = {"widget/button": "kit/button", "widget/button_highlighted": "kit/button_hover",
                  "widget/button_disabled": "kit/button_disabled"}
-CAST = [("marlow", "wide"), ("juniper", "slim"), ("kit", "wide"), ("wren", "slim"), ("rowan", "wide"), ("tove", "slim")]
+CAST = [("marlow", "wide"), ("juniper", "slim"), ("kit", "wide"), ("wren", "slim"), ("rowan", "wide"), ("tove", "slim"), ("ines", "slim"), ("bram", "wide"), ("cass", "slim")]
 
 
 def build_pack(dst: Path):

@@ -101,6 +101,21 @@
       "color": "#98B2E2",
       "text_on_dark": "#98B2E2",
       "text_on_light": "#556176"
+    },
+    "ines": {
+      "color": "#E9E0F2",
+      "text_on_dark": "#E9E0F2",
+      "text_on_light": "#625E63"
+    },
+    "bram": {
+      "color": "#2C0E3F",
+      "text_on_dark": "#AFA3B6",
+      "text_on_light": "#2C0E3F"
+    },
+    "cass": {
+      "color": "#E14CA7",
+      "text_on_dark": "#EB85C3",
+      "text_on_light": "#9D3C77"
     }
   },
   "contrast": {
@@ -130,7 +145,7 @@
     "diff_del": 6.1,
     "diff_ctx": 5.2,
     "attention": 7.2,
-    "agent_names_min": 5.95
+    "agent_names_min": 5.94
   },
   "paper_contrast": {
     "text": [
@@ -187,7 +202,7 @@
       "monitor screen (paper)": "#EDE5D7",
       "monitor scanline": "#E7DECE"
     },
-    "min_text_on_dark": 4.54,
+    "min_text_on_dark": 4.53,
     "min_text_on_light": 4.51
   },
   "metrics": {

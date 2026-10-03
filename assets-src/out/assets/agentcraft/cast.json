@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "palette_rationale": "Identity colours live in the blue-violet-magenta arc (205-330 deg hue), which the status palette leaves empty: status uses brass/gold (thinking), teal (working), clay (waiting), red (error), sage (done) and warm grey (idle). Every identity colour is >= 25 CIEDE2000 from every status colour and >= 18 from every other agent (measured by gen/cast_check.py, see `checks`), and the set alternates value (indigo dark, ice light, cobalt mid, violet mid, mulberry dark, rose light) so pairs also separate by lightness for colour-blind viewers; silhouettes (hair/hat/outfit) differ for every agent, so colour is never the only cue. Accents are neutral trims (cream, silver, ink, walnut), each >= 20 CIEDE2000 from every status colour, so nothing tinted with an accent can read as a state. Use `color` for large masses (garments, desk accents), `text_on_dark` for names on any dark surface (nameplates, tooltips, HUD) and `text_on_light` for names on paper GUI and on lit monitor / console screens (warm e-ink paper); both are derived so that the worst case over every surface they are used on (listed in `checks`) is >= 4.5:1 (and text_on_dark >= 5.5:1 on plain ink); the measured worst case per agent is in `contrast`.",
+  "palette_rationale": "Identity colours live in the blue-violet-magenta arc (205-330 deg hue), which the status palette leaves empty: status uses brass/gold (thinking), teal (working), clay (waiting), red (error), sage (done) and warm grey (idle). Every identity colour is >= 25 CIEDE2000 from every status colour and >= 18 from every other agent (measured by gen/cast_check.py, see `checks`), and the set alternates value (indigo dark, ice light, cobalt mid, violet mid, mulberry dark, rose light; the three later leads take the remaining gaps at the extremes: lilac-white light, aubergine near-black, fuchsia mid-bright; with nine agents in this arc the best achievable minimum spacing is about 18) so pairs also separate by lightness for colour-blind viewers; silhouettes (hair/hat/outfit) differ for every agent, so colour is never the only cue. Accents are neutral trims (cream, silver, ink, walnut), each >= 20 CIEDE2000 from every status colour, so nothing tinted with an accent can read as a state. Use `color` for large masses (garments, desk accents), `text_on_dark` for names on any dark surface (nameplates, tooltips, HUD) and `text_on_light` for names on paper GUI and on lit monitor / console screens (warm e-ink paper); both are derived so that the worst case over every surface they are used on (listed in `checks`) is >= 4.5:1 (and text_on_dark >= 5.5:1 on plain ink); the measured worst case per agent is in `contrast`.",
   "agents": [
     {
       "id": "marlow",
@@ -187,13 +187,106 @@
           "panel shade / inactive tab"
         ]
       }
+    },
+    {
+      "id": "ines",
+      "name": "Ines",
+      "role": "lead",
+      "title": "Lead \u00b7 systems",
+      "color": "#E9E0F2",
+      "accent": "#1F1E1D",
+      "text_on_dark": "#E9E0F2",
+      "model": "slim",
+      "skin": "agentcraft:textures/entity/agent/ines.png",
+      "portrait": "agentcraft:textures/gui/portrait/ines.png",
+      "description": "The systems lead: owns how the pieces of a building fit together. Brown skin, an ink-black undercut with one long fringe swept across the forehead, a small brass hoop. Pale-lilac cropped blazer with notch lapels, a flared peplum and a brass lead badge over an ink turtleneck, ink high-waisted wide-leg trousers pooling over cognac oxfords. Tall and narrow on top, wide at the ankle; a peer of Marlow who plans one building's architecture.",
+      "ramp": [
+        "#FAF7FD",
+        "#F2ECF8",
+        "#E9E0F2",
+        "#C9B9DB",
+        "#A692BF"
+      ],
+      "text_on_light": "#625E63",
+      "contrast": {
+        "text_on_dark_min": [
+          8.57,
+          "nameplate over a bright wall"
+        ],
+        "text_on_light_min": [
+          4.59,
+          "panel shade / inactive tab"
+        ]
+      }
+    },
+    {
+      "id": "bram",
+      "name": "Bram",
+      "role": "lead",
+      "title": "Lead \u00b7 platform",
+      "color": "#2C0E3F",
+      "accent": "#F4EFE6",
+      "text_on_dark": "#AFA3B6",
+      "model": "default",
+      "skin": "agentcraft:textures/entity/agent/bram.png",
+      "portrait": "agentcraft:textures/gui/portrait/bram.png",
+      "description": "The platform lead: keeps a building's foundations, tooling and pipelines running. Tan skin, heavy brows and a thick walrus moustache under a tweed flat cap in deep aubergine with a brass button. Quilted aubergine work jacket with a walnut corduroy collar, brass zip, patch pockets and a brass lead badge over a cream henley, corduroy cuffs rolled at the wrist, khaki work trousers, black work boots with cream laces. Broad and square; a peer of Marlow who runs one building's infrastructure.",
+      "ramp": [
+        "#6A4A80",
+        "#4A2A61",
+        "#2C0E3F",
+        "#1F082D",
+        "#140519"
+      ],
+      "text_on_light": "#2C0E3F",
+      "contrast": {
+        "text_on_dark_min": [
+          4.56,
+          "nameplate over a bright wall"
+        ],
+        "text_on_light_min": [
+          12.21,
+          "panel shade / inactive tab"
+        ]
+      }
+    },
+    {
+      "id": "cass",
+      "name": "Cass",
+      "role": "lead",
+      "title": "Lead \u00b7 product",
+      "color": "#E14CA7",
+      "accent": "#F4EFE6",
+      "text_on_dark": "#EB85C3",
+      "model": "slim",
+      "skin": "agentcraft:textures/entity/agent/cass.png",
+      "portrait": "agentcraft:textures/gui/portrait/cass.png",
+      "description": "The product lead: turns a building's goal into what actually ships. Light skin with freckles and rosy cheeks, auburn hair in a high ponytail with a fuchsia scrunchie (the tail hangs down the back), long side-swept bangs and a fuchsia clip. Cropped fuchsia bomber with a cream chest stripe, ribbed collar, cuffs and hem, brass zip and brass lead badge over a cream tee, ink high-waisted shorts with a brass buckle, cream knee socks with a fuchsia band, chunky ink boots. The only bare knees in the cast; a peer of Marlow who owns one building's scope.",
+      "ramp": [
+        "#F3A0CF",
+        "#EA73BA",
+        "#E14CA7",
+        "#B93489",
+        "#8E256A"
+      ],
+      "text_on_light": "#9D3C77",
+      "contrast": {
+        "text_on_dark_min": [
+          4.53,
+          "nameplate over a bright wall"
+        ],
+        "text_on_light_min": [
+          4.53,
+          "panel shade / inactive tab"
+        ]
+      }
     }
   ],
   "checks": {
     "min_de_vs_status": 25.2,
     "min_de_between_agents": 18.2,
     "min_de_accent_vs_status": 21.3,
-    "min_contrast_text_on_dark": 4.54,
+    "min_contrast_text_on_dark": 4.53,
     "min_contrast_text_on_light": 4.51,
     "dark_surfaces": {
       "nameplate over a bright wall": "#3E3C3B",
