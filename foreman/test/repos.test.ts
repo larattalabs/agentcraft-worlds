@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Decision } from '../src/protocol.js';
 import { MERGE_OPTIONS } from '../src/protocol.js';
+import { parseTestOutput } from '../src/repos.js';
 import { git, gitOut } from '../src/util/git.js';
 import { demoRepo, makeForeman, rmrf, tempDir, type Harness } from './helpers.js';
 
@@ -256,6 +257,18 @@ describe('RepoManager', () => {
     expect(res.pass).toBe(true);
     expect(res.summary).toMatch(/pass \d+/);
     expect(res.failures).toEqual([]);
+  });
+});
+
+describe('parseTestOutput', () => {
+  it('reads TAP output', () => {
+    const out = parseTestOutput('ok 1 - a\nnot ok 2 - b\n# tests 2\n# pass 1\n# fail 1\n');
+    expect(out).toEqual({ failures: ['b'], summary: 'tests 2, pass 1, fail 1' });
+  });
+
+  it('reads the node --test spec reporter', () => {
+    const out = parseTestOutput('✔ a (0.27ms)\n✖ b (0.08ms)\nℹ tests 2\nℹ suites 0\nℹ pass 1\nℹ fail 1\n\n✖ failing tests:\n\ntest at t.test.mjs:3:1\n✖ b (0.08ms)\n  Error: x\n');
+    expect(out).toEqual({ failures: ['b'], summary: 'tests 2, pass 1, fail 1' });
   });
 });
 
