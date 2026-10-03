@@ -108,6 +108,8 @@ final class GoalsTab implements HubPane {
 	private boolean sending;
 	private final TextUtil.Scroll threadScroll = new TextUtil.Scroll();
 	private final TextUtil.Scroll planScroll = new TextUtil.Scroll();
+	/** The plan opens at its top (once per goal; afterwards the wheel decides). */
+	private boolean planTop = true;
 	private int[] threadArea = new int[4];
 	private int[] planArea = new int[4];
 	private final List<int[]> chipRects = new ArrayList<>();
@@ -150,7 +152,8 @@ final class GoalsTab implements HubPane {
 			armedCancel = null;
 			note = null;
 			threadScroll.update(0, 1);
-			planScroll.update(0, 1);
+			threadScroll.scrollBy(1_000_000); // a thread opens at its newest entry (and follows it)
+			planTop = true;
 			taskList.reset();
 		}
 		selected = goalId;
@@ -574,11 +577,7 @@ final class GoalsTab implements HubPane {
 		int k = e.key();
 		if (focus != null) {
 			if (e.isEscape()) {
-				if (focus == planEditor) {
-					cancelPlan();
-				} else {
-					unfocus();
-				}
+				unfocus(); // the text stays (Cancel discards a plan edit)
 				return true;
 			}
 			if (k == InputConstants.KEY_TAB) {
@@ -1296,8 +1295,9 @@ final class GoalsTab implements HubPane {
 		} else {
 			List<String> lines = GoalLogic.wrap(m.body(), w - 16, s -> font().width(s));
 			planScroll.update(lines.size() * 10 + 6, areaH);
-			if (planScroll.following() && planScroll.offset() > 0 && planScroll.content() > 0) {
+			if (planTop) {
 				planScroll.scrollBy(-1_000_000); // a plan reads from the top
+				planTop = false;
 			}
 			g.enableScissor(x + 1, y + 1, x + w - 1, y + areaH - 1);
 			int ly = y + 4 - planScroll.offset();

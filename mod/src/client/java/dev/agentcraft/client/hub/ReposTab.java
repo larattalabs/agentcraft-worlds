@@ -55,6 +55,7 @@ final class ReposTab implements HubPane {
 	private @Nullable String note;
 	private boolean noteError;
 	private final TextUtil.Scroll detailScroll = new TextUtil.Scroll();
+	private boolean detailTop = true;
 	private int[] detailArea = new int[4];
 	private final List<int[]> goalRects = new ArrayList<>();
 	private final List<String> goalIds = new ArrayList<>();
@@ -88,6 +89,7 @@ final class ReposTab implements HubPane {
 			armedRemove = null;
 			note = null;
 			detailScroll.update(0, 1);
+			detailTop = true;
 		}
 		selected = id;
 		detailOpen = true;
@@ -536,8 +538,9 @@ final class ReposTab implements HubPane {
 		int areaH = Math.max(20, buttonsY - 4 - y);
 		detailArea = new int[] {x, y, w, areaH};
 		detailScroll.update(total, areaH);
-		if (detailScroll.following() && detailScroll.offset() > 0) {
+		if (detailTop) {
 			detailScroll.scrollBy(-1_000_000); // details read from the top
+			detailTop = false;
 		}
 		needed += Math.min(total, 120) + 24;
 		g.enableScissor(x, y, x + w, y + areaH);

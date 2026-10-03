@@ -179,7 +179,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.displays` | `look?` = `paper` / `dark` / `split`, `reset?` | Monitor look (default dark; split alternates per monitor for comparisons), every laid-out monitor screen `{pos, agent, mode, style, size, ppb, rows, ageMs}`, and `stats` = display CPU cost per frame since the last reset (`monitor`/`board`: `usPerFrame`, `callsPerFrame`, `rebuilds`) |
 | `dev.taskwall` | `open?` (task id), `press?` (button id), `aim?` (task id), `board?` ("x y z" origin for `aim`), `lightFloor?` (0-15), `ppb?` (0-256, 0 = auto), `relayout?` | Task Wall boards and their cards (column counts, widths and cards per row, hidden ids, card positions, size full/brief/compact, title lines, state dot, glowing, `layoutUs` of the last re-plan). `lightFloor`/`ppb` override the block-light floor and the pixel density for A/B shots, `relayout` forces a re-plan. `open` opens that task's screen, `press` presses a button in the open task screen (`prev next retry prioritize reassign cancel to:<agent>`), `aim` returns the world point of a card and an eye 2.5 blocks in front (then `dev.camera` + `dev.key {mapping:"key.use"}` clicks it the real way; use `mode:"creative"`, spectators cannot click) |
 
-Registered screens (`dev.screen {open}`): `creative_agentcraft` (creative inventory on the AgentCraft tab), `agent` (agent card: last clicked agent, else whoever needs you), `task` (task detail: the last task opened, else the first doing one), `hub`, `hub_<tab>`, `hub_blueprints` (see "Hub"). Phase 3 features add theirs (see mod/FEATURES.md).
+Registered screens (`dev.screen {open}`): `creative_agentcraft` (creative inventory on the AgentCraft tab), `agent` (agent card: last clicked agent, else whoever needs you), `task` (task detail: the last task opened, else the first doing one), `hub`, `hub_<tab>`, `hub_blueprints`, `hub_designs`, `hub_goal_{thread,plan,instructions,tasks}` (see "Hub"). Phase 3 features add theirs (see mod/FEATURES.md).
 
 ### Extending it from other mod code (client side)
 
@@ -475,6 +475,11 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
   `getWorldPath(ROOT)`; set before the listeners hear about a loaded world, null before they hear it stopped).
   Pure rules are `building.LeadRouting` (keys, the assign/release diff, a lead's building, the podium filter,
   `leadForRepo`) + `Routing.layoutForBuilding` / `siteAt`, unit-tested in `LeadRoutingTest`.
+- **The home building is always Marlow's** (docs/HUB.md "Repos and Goals tabs"): `LeadRouting.leadBuildings` leaves it
+  out of everything `LeadsFeature` sends, and a home change (hub "Make home", `/agentcraft home`) sends one `lead.sync`
+  (the old home gets a lead, the new home's lead is released). `leadBuilding`/`assignedHere`/`leadOfBuilding`/`leadForRepo`
+  take the home building and ignore a (stale) assignment to it, so the home podium shows Marlow's decisions even before
+  the Foreman processed the sync. `dev.leads.state` has `syncedHome`.
 - `LeadsFeature` is the only sender, from one `Buildings` change listener (every placement path ends in
   `Buildings.place`, every removal in `forget`): world loaded -> `lead.sync {world, buildings:[{building,
   repos}]}`; new building -> `lead.assign {building, repos}`; building gone -> `lead.sync` (releases it, then gives the freed lead to an overflowed building);
@@ -523,8 +528,11 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
 
 ### Hub (`H`, `/hub [tab]`)
 The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
-- `HubScreen` (not pausing): tabs from `HubTab` (Buildings, Repos, Goals, Team, Settings, Status; the
-  unbuilt ones draw a "coming next" panel from `HubTab.comingNext`). Tab / Shift+Tab cycle tabs, Left /
+- `HubScreen` (not pausing): tabs from `HubTab` (Buildings, Repos, Goals, Team, Settings, Status; Team and
+  Settings draw a "coming next" panel from `HubTab.comingNext`). Repos and Goals are `HubPane`s
+  (`ReposTab`, `GoalsTab`) with their own state: the hub hands them keys, typed characters, clicks and the
+  wheel first; while one of their text fields has focus every key goes to it (typing "h" never closes the hub;
+  `isInputCaptured`, SDL text input on), Esc unfocuses, Tab moves between the view's fields, Ctrl+Enter sends. Tab / Shift+Tab cycle tabs, Left /
   Right switch buildings/blueprints, Up / Down select, Esc or the hub key close. Selection and the armed
   remove are kept by **id** (a removed building never hands its armed confirm to its neighbour); an
   armed remove expires after 6 s.
@@ -563,6 +571,91 @@ The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
   `place_plot {blueprint, repos?}` (Place on the plot; with repos straight to placement locked on the
   plot), `design_new`, `cancel_design {designId}`. Server and Foreman actions reply after they answered.
   Screens for `dev.screen`: `hub`, `hub_<tab>`, `hub_blueprints`, `hub_designs`.
+
+#### Repos and Goals tabs
+The contract is docs/HUB.md "Repos and Goals tabs" (+ its multi-repo amendment); code in `client.hub`
+(`ReposTab`, `GoalsTab`, `HubGoals` = model + sends, `HubField` = a `TextModel`/`TextFieldView` field,
+`PaneList` = a list with its own scroll, `HubDev` = DevBridge) and the pure `dev.agentcraft.hub.GoalLogic` /
+`HubSeen` (unit-tested in `GoalLogicTest`).
+- Protocol mirror: `Goal.instructions/planId/branch/prs/repos` (`allRepos()` falls back to `repoId`),
+  `FeedItem.goalId`, `Decision.goalId`, `Repo.settings` (`RepoSettingsView`, env as `envKeys`), `Task.pr`
+  (`TaskPr`), `Digest/GoalDigest/DigestLine` (the `goal.digest` ack result, `Foreman.digestOf`). Sends in
+  `Foreman`: `submitGoal(text, repos, branch, instructions)`, `goalMessage`, `goalInstructions`, `goalPlan`,
+  `goalCancel`, `goalDigest`, `removeRepo`, `refreshPrs`. **An older Foreman** acks unknown types `ok:false`
+  with its schema error on `type` (`"type: Invalid discriminator value…"`): `Foreman.unsupported(ack)` spots
+  that and every note says "… needs a newer Foreman"; absent fields show "not reported" lines; `goal.submit`'s
+  extra fields are dropped silently by its schema, so the form says so when the goal comes back without them.
+- Repos tab: list (id, branch@head, `*` dirty, CI dot, building + wing, lead, worktrees, open PRs = tasks of the
+  repo with an open `pr`), detail in a scrolled area (path, branch, CI, worktrees, building "<blueprint> · wing
+  n (bN)", lead "(shared by N repos)" / "(home)", settings view, its goals: click opens one in Goals), buttons
+  New goal… / Place a building… (`BuildingWizardFeature.openWithRepos`, only without a building) / two-step
+  Remove…; top: Add repo… (path field, Enter adds) and Refresh PRs.
+- Goals tab: building filter chip (cycles buildings with repos: `GoalLogic.inBuilding` on `allRepos()`), New
+  goal…, the away panel, the list (`GoalLogic.newestFirst`; unread dot = `GoalLogic.unread(activity,
+  seen)`, activity = newest of the goal's `updatedAt`, its feed items, decisions, tasks; the open goal never
+  counts as unread and your own sends mark it seen) and the detail: status, progress, lead, repos, branch,
+  PRs; view chips Thread / Plan / Instructions n / Tasks n (←→ cycles), two-step Cancel goal… (`goal.cancel`).
+  - Thread: `HubGoals.thread` = feed items with that `goalId` + decisions whose `goalId` (else their task's
+    goal) is it + pending messages, in time order, in a scissored, wheel-scrolled area that follows the
+    newest. Only what is in the model's feed tail (200 items, replaced by each snapshot). Open decisions get
+    their options as buttons through `DecisionsFeature.answer` (shared with `DecisionScreen`: mark answering,
+    send, record / unmark) with the decision screen's guards: a decision that just showed up ignores clicks
+    for 350 ms, Reject asks twice, Request changes takes the message box's text as the feedback, a question's
+    option sends the box's text along; "Answer with text" and "Open…" (the decision screen, back to the hub).
+    The message box (multi-line, Enter = newline) sends `goal.message` with Ctrl+Enter or Send: a "You ·
+    sending…" line shows at once and leaves on the ack (the Foreman's own feed item replaces it); a refusal
+    turns it into "not sent: …" and puts the text back. Its own digest ("Since you last looked") on top
+    when it had activity since its last view (`goal.digest {goalId, since}` on opening it).
+  - Plan: the memory entry `planId`, wrapped by `GoalLogic.wrap` (words moved whole, long words broken,
+    list items hang-indented, `#` lines in clay), scrolled; Edit plan / Write a plan -> a multi-line editor,
+    Save plan (Ctrl+Enter) -> `goal.plan`, Cancel.
+  - Instructions: the list with Edit / × per line; the field adds (Enter) or saves the one being edited;
+    every change sends the whole list (`goal.instructions`).
+  - Tasks: the goal's tasks (status, assignee, repo, PR #n state + checks, blocked reason); a click opens the
+    task screen (`TaskScreen.withParent(hub)`: Esc returns to the hub); Refresh PRs.
+  - New goal form (replaces the list): the goal text (multi-line), standing instructions (one per line,
+    `GoalLogic.instructionLines`), For (a chip per repo and per group building: a building sends all its repos,
+    wing order, the first is `repoId`), Continue a branch (field + chips from `HubGoals.branches`: the repo's
+    worktree branches and goals' branches). Submit goal / Ctrl+Enter; on the ack the new goal opens.
+- Seen and digests: `<gameDir>/agentcraft/hub-seen.json` (`HubSeen`: per world = `Buildings.worldId()`, else
+  "multiplayer": the Goals tab's last look + each goal's; a goal never opened counts as seen with the tab;
+  saved atomically, throttled, and on closing the hub). Opening the hub (or the Goals tab) when the tab was
+  last looked at >= 10 minutes ago asks `goal.digest {since}`; the panel (sections by `GoalLogic.sections`,
+  one line per goal with `GoalLogic.summary`, click opens the goal) shows at the top of the Goals tab until
+  Dismiss.
+- Layout: compact when the content area is under 470 × 200 GUI px (GUI scale 4 at 1080p: 448 × ~180): the list
+  or the detail with a "‹ Goals" / "‹ Repos" back button (Esc), shorter labels and fields. `dev.hub.state`
+  `goalsTab.layout` / `reposTab.layout` = `{guiWidth, guiHeight, compact, needed, available, overflow}`.
+- DevBridge:
+  - `dev.hub.open {tab: repos|goals, goalId?, view?: thread|plan|instructions|tasks, repoId?, form?: bool}`.
+  - `dev.hub.state` adds `reposTab` (selected, adding, path, focus, armedRemove, note, layout, `repos[]` with
+    building/wing/lead/leadLabel/openPrs/settings) and `goalsTab` (mode list|detail|list+detail|form, selected,
+    view, filter, focus, fields{message, plan, instruction, goal_text, goal_branch, goal_instructions}, form
+    {target, repos}, note, armedCancel, layout, away digest, `goals[]` with unread/activity/seen, `goal` = the
+    open one with its `thread[]`, plan body, instructions, tasks, digest, and `chips[]` drawn last frame).
+  - `dev.hub.action`: `press {button}` (any button id in `buttons` or chip id in `goalsTab.chips`),
+    `focus {field}`, `goal_open {goalId, view?}`, `goal_view {view, goalId?}`, `goal_back`, `goal_new
+    {repoId?|buildingId?}`, `goal_form {text?, repoId?, buildingId?, branch?, instructions?}`, `goal_submit
+    {same}`, `goal_send {goalId?, text?}`, `goal_answer {decisionId, option?, text?}`, `plan_edit`, `plan_save
+    {body?}`, `plan_cancel`, `instr_add {text}`, `instr_edit {index, text}`, `instr_remove {index}`,
+    `goal_cancel {confirm?}`, `goal_filter {buildingId?}`, `digest_dismiss`, `digest_refresh {since?}`,
+    `repo_select {repoId}`, `repo_add {path}`, `repo_remove {repoId?, confirm?}`, `repo_place {repoId?}`,
+    `repo_new_goal {repoId?}`, `refresh_prs`. Foreman actions reply after the ack with `result{ok, message,
+    unsupported, result}`.
+  - `dev.goals.submit {text, repoId?, repos?, branch?, instructions?}`, `dev.goals.message {goalId, text}`,
+    `dev.goals.plan {goalId, body}`, `dev.goals.instructions {goalId, instructions}`, `dev.goals.digest {since?,
+    goalId?}` (no screen needed; reply after the ack), `dev.goals.seen {reset?, tabAgoMs?}` (hub-seen.json for
+    this world; `tabAgoMs` fakes "away" for the digest panel).
+  - Screens: `hub_repos`, `hub_goals`, `hub_goal_thread|plan|instructions|tasks` (the newest goal in that view).
+- Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`; the sim Foreman of this
+  branch's base does not know the new types, so it shows the "needs a newer Foreman" paths): `dev.goals.submit
+  {text:"Add #tags", repoId:"demo"}` -> `dev.hub.open {tab:"goals", goalId:"<id>", view:"thread"}` + shoot;
+  `dev.hub.action {action:"goal_send", text:"hi"}` (a refused send: "not sent: … needs a newer Foreman");
+  hold the stream (`dev.foreman.hold {on:true}`) and `dev.foreman.inject` a `goal.upsert` with
+  `instructions`/`planId`/`prs`/`repos`, a `memory.upsert` for the plan, `feed.add` items with `goalId` and a
+  `decision.upsert` with `goalId` to see the full views; `dev.goals.seen {tabAgoMs: 900000}` then reopen the hub
+  for the away panel. Shoot each at GUI scale 2, 3 and 4 (`dev.command {cmd:...}` / options) and check
+  `layout.overflow`.
 
 ### Generated buildings (design form, plot marking, design progress)
 The contract is docs/HUB.md "Generated buildings"; code in `dev.agentcraft.client.design` plus
