@@ -159,11 +159,19 @@ export function leadRepoContext(fm: Foreman, goalRepoId: string | undefined, cwd
   return parts.join('\n\n');
 }
 
+/** A goal for several repositories (Goal.repos, e.g. a group building's): which ones, and how to split it. */
+export function goalReposLine(fm: Foreman, goal: Goal): string {
+  const repos = goal.repos ?? [];
+  if (repos.length < 2) return '';
+  const names = repos.map((id) => `${id}${id === goal.repoId ? ' (main)' : ''}`);
+  return `\nThis goal is for the repositories ${names.join(', ')}: give each task the one repository it changes (create_task repo), with deps across repositories for order.\n`;
+}
+
 export function planPrompt(fm: Foreman, goal: Goal, repoPath: string, branch: string): string {
   return `New goal from ${userName()}:
 "${goal.text}"
 
-Repository: ${path.basename(repoPath)} (base branch ${branch}), in your working directory. Explore it read-only (Glob/Grep to find files, Read for a file - Read cannot open a directory), then:
+Repository: ${path.basename(repoPath)} (base branch ${branch}), in your working directory.${goalReposLine(fm, goal)} Explore it read-only (Glob/Grep to find files, Read for a file - Read cannot open a directory), then:
 1. write_memory the plan (title "Plan: ...", scope shared)
 2. create_task for each task (deps + assignee)
 3. send_message to "all" with a two-line briefing
