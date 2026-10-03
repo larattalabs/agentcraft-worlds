@@ -52,7 +52,7 @@ export class MessageBus {
    * (goal.message): feed kind `message` from "user", and it stays out of the lead's ordinary inbox
    * (it runs as its own turn for that goal, see goalInbox).
    */
-  send(from: string, to: string, text: string, opts: { goalId?: string; taskId?: string; goalMessage?: boolean } = {}): BusMessage {
+  send(from: string, to: string, text: string, opts: { goalId?: string; taskId?: string; goalMessage?: boolean; feedText?: string } = {}): BusMessage {
     const goalId = this.goalOf(opts);
     const msg: BusMessage = { id: this.ctx.store.nextId('m'), ts: this.ctx.now(), from, to, text, readBy: [], ...(goalId ? { goalId } : {}), ...(opts.goalMessage && goalId ? { goalMessage: true } : {}) };
     this.ctx.store.pushMessage(msg);
@@ -61,7 +61,8 @@ export class MessageBus {
       this.ctx.emit(say);
       this.feed('message', text, { agentId: from, to, ...(goalId ? { goalId } : {}) });
     } else if (msg.goalMessage) {
-      this.feed('message', text, { agentId: 'user', to, goalId });
+      // feedText: what the player's thread shows when the lead's text is a longer prompt (plan/instruction edits)
+      this.feed('message', opts.feedText ?? text, { agentId: 'user', to, goalId });
     } else {
       this.feed('user', text, { to, ...(goalId ? { goalId } : {}) });
     }

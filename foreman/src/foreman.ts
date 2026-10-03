@@ -417,13 +417,13 @@ export class Foreman {
    * goal.message: the user's message to the goal's lead about it. Runs in the lead's session for the
    * goal (backend.onGoalMessage), also for done/cancelled goals.
    */
-  goalMessage(goalId: string, text: string): { goalId: string; leadId: string } {
+  goalMessage(goalId: string, text: string, feedText?: string): { goalId: string; leadId: string } {
     const g = this.requireGoal(goalId);
     const body = text.trim();
     if (!body) throw new ClientError('the message is empty');
     if (!this.backend) throw new ClientError('no backend running');
     const lead = this.goalLead(g);
-    this.bus.send('user', lead, body, { goalId: g.id, goalMessage: true });
+    this.bus.send('user', lead, body, { goalId: g.id, goalMessage: true, ...(feedText ? { feedText } : {}) });
     try {
       this.backend.onGoalMessage?.(g, lead);
     } catch (e) {
@@ -442,7 +442,7 @@ export class Foreman {
     else delete g.instructions;
     this.touchGoal(g);
     const list = next.length ? next.map((i) => `- ${i}`).join('\n') : '(none any more)';
-    if (this.backend) this.goalMessage(g.id, `The user changed the standing instructions for this goal:\n${list}\n\nThey apply to all of its work from now on: new tasks get them, and workers see them at their next turn. Adjust the open tasks if they need it.`);
+    if (this.backend) this.goalMessage(g.id, `The user changed the standing instructions for this goal:\n${list}\n\nThey apply to all of its work from now on: new tasks get them, and workers see them at their next turn. Adjust the open tasks if they need it.`, `Changed the standing instructions:\n${list}`);
     return { goalId: g.id, changed: true };
   }
 
@@ -467,7 +467,7 @@ export class Foreman {
     this.recordPlan(g.id, e.id);
     this.bus.feed('memory', `${userName()} ${prev ? 'edited' : 'wrote'} the plan for ${g.id}: ${e.title}`, { agentId: 'user', goalId: g.id });
     const diff = unifiedDiff(oldBody, body, { from: `${e.id} (before)`, to: `${e.id} (${userName()})` });
-    if (this.backend) this.goalMessage(g.id, `The user ${prev ? 'edited' : 'wrote'} the plan for this goal (shared memory ${e.id}). The change:\n\`\`\`diff\n${diff}\n\`\`\`\nAdjust the tasks to the plan where they no longer match (create, update or cancel tasks), and tell ${userName()} briefly what you changed.`);
+    if (this.backend) this.goalMessage(g.id, `The user ${prev ? 'edited' : 'wrote'} the plan for this goal (shared memory ${e.id}). The change:\n\`\`\`diff\n${diff}\n\`\`\`\nAdjust the tasks to the plan where they no longer match (create, update or cancel tasks), and tell ${userName()} briefly what you changed.`, `${prev ? 'Edited' : 'Wrote'} the plan:\n\`\`\`diff\n${diff}\n\`\`\``);
     return { goalId: g.id, planId: e.id, changed: true };
   }
 

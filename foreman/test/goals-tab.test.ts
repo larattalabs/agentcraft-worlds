@@ -140,6 +140,11 @@ describe('Goals tab on the sim backend', () => {
     const diffMsg = h.fm.store.data.messages.filter((m) => m.goalMessage && m.goalId === g.id).pop()!;
     expect(diffMsg.text).toContain('-- t2 test it\n+- t2 test it well\n+- t3 docs');
     expect(diffMsg.text).toContain('@@ -1,4 +1,5 @@');
+    // the player's thread shows the change, not the prompt the lead gets
+    const threadLine = h.fm.store.data.feed.filter((f) => f.goalId === g.id && f.agentId === 'user').pop()!;
+    expect(threadLine.text).toMatch(/^Edited the plan:\n```diff\n/);
+    expect(threadLine.text).not.toContain('Adjust the tasks');
+    expect(h.fm.store.data.feed.some((f) => f.goalId === g.id && f.text.startsWith('Changed the standing instructions:\n- No new dependencies'))).toBe(true);
     expect(h.fm.memory.get(`shared/plan-${g.id}`)!.body).toContain('t3 docs');
     expect((await send(h, { type: 'goal.plan', goalId: g.id, body: '# Plan\n\n- t1 wire it\n- t2 test it well\n- t3 docs' })).result).toMatchObject({ changed: false });
     // an existing plan the lead wrote keeps its id and title
