@@ -372,6 +372,7 @@ public final class DesignFeature {
 		fj.addProperty("busy", sending);
 		if (s != null) {
 			fj.add("buttons", s.buttonsJson());
+			fj.add("layout", s.layoutJson());
 		}
 		o.add("form", fj);
 		o.addProperty("foremanConnected", Foreman.connected());

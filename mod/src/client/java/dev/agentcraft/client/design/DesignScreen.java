@@ -34,7 +34,9 @@ import org.jspecify.annotations.Nullable;
  * line about the selected one), Materials, Features, Size (S / M / L or "Fit a plot…"). Right: Remix,
  * Name, Notes, where the files go. Problems show in red next to the field they concern (the Foreman's
  * own limits, {@link DesignSpec#validate}); "Design it" sends {@code design.request} and opens the
- * hub's Designs list. Tab moves between Name and Notes, Ctrl+Enter sends, Esc goes back. Not pausing.
+ * hub's Designs list. Tab moves between Name and Notes, Ctrl+Enter sends (plain Enter never does: the
+ * Enter that ends plot marking reopens this form, and a held key must not send a request), Esc goes
+ * back. On a short window (GUI scale 4 at 1080p) the hint lines are dropped. Not pausing.
  */
 public final class DesignScreen extends Screen {
 	private static final int MAX_W = 600;
@@ -64,6 +66,10 @@ public final class DesignScreen extends Screen {
 	private int notesY;
 	private int notesW;
 	private int notesLines = 4;
+	/** Last frame: the left column's needed and available height, and whether hint lines were dropped. */
+	private int leftNeeded;
+	private int leftAvailable;
+	private boolean compact;
 
 	DesignScreen(DesignForm form, @Nullable Screen back) {
 		super(Component.literal("Design a new building"));
@@ -157,11 +163,11 @@ public final class DesignScreen extends Screen {
 			return true;
 		}
 		if (TextKeys.isEnter(e)) {
-			if (e.hasControlDown() || focus == Focus.NONE) {
+			if (e.hasControlDown()) {
 				submit();
 			} else if (focus == Focus.NAME) {
 				setFocus(Focus.NOTES);
-			} else {
+			} else if (focus == Focus.NOTES) {
 				form.notes.insert("\n");
 			}
 			return true;
@@ -254,7 +260,9 @@ public final class DesignScreen extends Screen {
 		int colW = (cw - 14) / 2;
 		int lx = cx;
 		int rx = cx + colW + 14;
-		drawLeft(g, lx, top, colW, errors, mouseX, mouseY);
+		leftAvailable = footerY - 16 - top;
+		compact = leftAvailable < 236;
+		leftNeeded = drawLeft(g, lx, top, colW, errors, mouseX, mouseY) - top;
 		drawRight(g, rx, top, colW, footerY - 16 - top, errors, mouseX, mouseY);
 		// status line above the footer
 		String status;
@@ -346,7 +354,8 @@ public final class DesignScreen extends Screen {
 		return y + CHIP_H + 5;
 	}
 
-	private void drawLeft(GuiGraphicsExtractor g, int x, int y, int w, Map<String, String> errors, int mx, int my) {
+	/** Draws the left column; returns the y below it. */
+	private int drawLeft(GuiGraphicsExtractor g, int x, int y, int w, Map<String, String> errors, int mx, int my) {
 		int muted = UiBits.muted();
 		// For
 		y = label(g, "For", errors, x, y, w, "kind", "wings");
@@ -363,22 +372,24 @@ public final class DesignScreen extends Screen {
 				() -> form.groupWings = Math.min(DesignSpec.MAX_WINGS, form.groupWings + 1));
 		}
 		y += CHIP_H + 4;
-		g.text(font, TextUtil.ellipsize(font, form.group() ? "One wing per repo; you pick the repos when you place it."
-			: "One repo's office; you pick the repo when you place it.", w), x, y, muted, false);
-		y += 14;
+		if (!compact) {
+			g.text(font, TextUtil.ellipsize(font, form.group() ? "One wing per repo; you pick the repos when you place it."
+				: "One repo's office; you pick the repo when you place it.", w), x, y, muted, false);
+			y += 14;
+		}
 		// Style
 		y = label(g, "Style", errors, x, y, w, "style");
 		y = chips(g, "style:", DesignSpec.STYLES, form.style, x, y, w, mx, my, id -> form.style = id);
 		DesignSpec.Choice st = DesignSpec.style(form.style);
 		if (st != null) {
 			g.text(font, TextUtil.ellipsize(font, st.label() + ": " + st.description(), w), x, y - 1, muted, false);
-			y += 12;
+			y += compact ? 10 : 12;
 		}
-		y += 2;
+		y += compact ? 0 : 2;
 		// Materials
 		y = label(g, "Materials", errors, x, y, w, "materials");
 		y = chips(g, "materials:", DesignSpec.MATERIALS, form.materials, x, y, w, mx, my, id -> form.materials = id);
-		y += 2;
+		y += compact ? 0 : 2;
 		// Features
 		y = label(g, "Features", errors, x, y, w, "features");
 		int fx = x;
@@ -399,7 +410,7 @@ public final class DesignScreen extends Screen {
 			g.text(font, c.label(), fx + 13, y + 2, h.contains(mx, my) ? UiBits.ink() : on ? UiBits.ink() : muted, false);
 			fx += fw;
 		}
-		y += 18;
+		y += compact ? 15 : 18;
 		// Size
 		y = label(g, "Size", errors, x, y, w, "maxSize");
 		cx = x;
@@ -423,11 +434,25 @@ public final class DesignScreen extends Screen {
 		if (p != null && DesignForm.PLOT.equals(form.size)) {
 			String pl = "plot " + p.dx() + " × " + p.dz() + " at " + p.minX() + ", " + p.y() + ", " + p.minZ() + " · entrance " + p.front();
 			g.text(font, TextUtil.ellipsize(font, pl, w), x, y, muted, false);
-		} else if (!form.group()) {
-			g.text(font, TextUtil.ellipsize(font, "S fits a small team, M the workshop, L a big office.", w), x, y, muted, false);
-		} else {
-			g.text(font, TextUtil.ellipsize(font, "Group sizes grow with the wings.", w), x, y, muted, false);
+			y += 10;
+		} else if (!compact) {
+			g.text(font, TextUtil.ellipsize(font, form.group() ? "Group sizes grow with the wings."
+				: "S fits a small team, M the workshop, L a big office.", w), x, y, muted, false);
+			y += 10;
 		}
+		return y;
+	}
+
+	/** DevBridge: the left column's needed vs available height last frame (overflow = it ran into the footer). */
+	JsonObject layoutJson() {
+		JsonObject o = new JsonObject();
+		o.addProperty("guiWidth", width);
+		o.addProperty("guiHeight", height);
+		o.addProperty("leftNeeded", leftNeeded);
+		o.addProperty("leftAvailable", leftAvailable);
+		o.addProperty("compact", compact);
+		o.addProperty("overflow", leftNeeded > leftAvailable);
+		return o;
 	}
 
 	private TextFieldView.Style nameStyle() {

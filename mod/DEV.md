@@ -542,7 +542,8 @@ limits, presets, plot geometry; unit-tested in `DesignSpecTest`).
     error}` + the state; on success the hub's Designs list is open with it selected.
   - `dev.design.state`: `form{open, focus, busy, kind, wings, style, materials, features, size,
     maxSize, plot, remix, name, notes, outDir, errors{field: message}, sendError, request (exactly as
-    sent), buttons[{id, label, state}]}`, `foremanConnected`, `lastSent`, `lastReload`,
+    sent), buttons[{id, label, state}], layout{guiWidth, guiHeight, leftNeeded, leftAvailable, compact,
+    overflow}}`, `foremanConnected`, `lastSent`, `lastReload`,
     `pendingSelect`, `designs[{id, status, step, blueprintId, loaded, size, previews, error, kind,
     wings, style, maxSize, name, hasPlot}]`, `plotsByBlueprint`, `plotsByDesign`, `plotMode`.
   - `dev.design.cancel {designId}` (replies after the ack: `ok`, `ackError`); `dev.design.place
