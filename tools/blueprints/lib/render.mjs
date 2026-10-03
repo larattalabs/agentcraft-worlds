@@ -9,8 +9,6 @@
 import { COLOR_TABLE, resolveMaterial } from './colors.mjs';
 
 const DIRS = ['north', 'east', 'south', 'west'];
-const DX = { north: 0, east: 1, south: 0, west: -1 };
-const DZ = { north: -1, east: 0, south: 1, west: 0 };
 const rotDir = (d, k) => (DIRS.includes(d) ? DIRS[(DIRS.indexOf(d) + k + 4) % 4] : d);
 
 /** Quarter-turns (clockwise from above) that bring `front` to south. */
@@ -64,7 +62,6 @@ function makeSpec(id, props, unknown) {
   const mat = resolveMaterial(id, props, unknown);
   const name = id.replace(/^minecraft:/, '');
   const spec = { mat, opaque: false, invisible: false, boxes: [{ b: U }], name: id };
-  const box = (b, m, extra) => ({ b, mat: m, ...extra });
   switch (mat.shape) {
     case 'none': spec.invisible = true; break;
     case 'cube': spec.opaque = mat.alpha >= 1; break;
@@ -256,7 +253,7 @@ export function renderIso(scene, opts = {}) {
           };
           const unitCube = bx.b === U;
           // top (+y)
-          if (!(unitCube && cullTop) && !(sameGlass && unitCube && sameGlassAt(grid, specs, at, W, D, x, y + 1, z, si))) {
+          if (!(unitCube && cullTop) && !(sameGlass && unitCube && sameGlassAt(grid, at, W, D, x, y + 1, z, si))) {
             const [p0x, p0y] = P(X0, Y1, Z0), [p1x, p1y] = P(X1, Y1, Z0), [p2x, p2y] = P(X0, Y1, Z1);
             cv.quad(p0x, p0y, p1x - p0x, p1y - p0y, p2x - p0x, p2y - p0y, paint('top', m.color), m.alpha, edgeFn('top', m.topFrame));
           }
@@ -278,7 +275,7 @@ export function renderIso(scene, opts = {}) {
   }
   return { width, height, data: cv.d, tw };
 }
-function sameGlassAt(grid, specs, at, W, D, x, y, z, si) {
+function sameGlassAt(grid, at, W, D, x, y, z, si) {
   if (x < 0 || y < 0 || z < 0 || x >= W || z >= D || y >= grid.length / (W * D)) return false;
   return grid[at(x, y, z)] === si;
 }
