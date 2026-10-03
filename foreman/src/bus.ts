@@ -5,34 +5,60 @@ import type { BusMessage } from './store.js';
 import { truncate } from './util/text.js';
 import { userName } from './user.js';
 
+export interface FeedExtra {
+  agentId?: string;
+  to?: string;
+  goalId?: string;
+  /** hint: tag the item with this task's goal */
+  taskId?: string;
+}
+
 export class MessageBus {
   private listeners: Array<(m: BusMessage) => void> = [];
 
   constructor(private ctx: Ctx) {}
 
-  /** Append to the activity feed (persisted + broadcast). */
-  feed(kind: FeedKind, text: string, extra: { agentId?: string; to?: string } = {}): FeedItem {
+  /**
+   * Append to the activity feed (persisted + broadcast). `goalId` tags the item with its goal;
+   * `taskId` is a hint only (not sent): the item gets that task's goal.
+   */
+  feed(kind: FeedKind, text: string, extra: FeedExtra = {}): FeedItem {
     const item: FeedItem = { ts: this.ctx.now(), kind, text: truncate(text, 400) };
     if (extra.agentId) item.agentId = extra.agentId;
     if (extra.to) item.to = extra.to;
+    const goalId = this.goalOf(extra);
+    if (goalId) item.goalId = goalId;
     this.ctx.store.pushFeed(item);
     this.ctx.emit({ type: 'feed.add', item });
     return item;
   }
 
+  /** The goal a feed item / message is about: explicit, else the hinted task's goal. */
+  goalOf(extra: { goalId?: string; taskId?: string }): string | undefined {
+    if (extra.goalId) return extra.goalId;
+    if (!extra.taskId) return undefined;
+    return this.ctx.store.data.tasks.find((t) => t.id === extra.taskId)?.goalId;
+  }
+
   /**
    * Send a message. `from` is an agent id or "user"; `to` is an agent id, "user" or "all".
-   * Agents speak through `agent.say` (speech bubble); every message is also a feed item.
+   * Agents speak through `agent.say` (speech bubble); every message is also a feed item, tagged
+   * with its goal when it is about one. `goalMessage`: the user's message to a goal's lead
+   * (goal.message): feed kind `message` from "user", and it stays out of the lead's ordinary inbox
+   * (it runs as its own turn for that goal, see goalInbox).
    */
-  send(from: string, to: string, text: string): BusMessage {
-    const msg: BusMessage = { id: this.ctx.store.nextId('m'), ts: this.ctx.now(), from, to, text, readBy: [] };
+  send(from: string, to: string, text: string, opts: { goalId?: string; taskId?: string; goalMessage?: boolean } = {}): BusMessage {
+    const goalId = this.goalOf(opts);
+    const msg: BusMessage = { id: this.ctx.store.nextId('m'), ts: this.ctx.now(), from, to, text, readBy: [], ...(goalId ? { goalId } : {}), ...(opts.goalMessage && goalId ? { goalMessage: true } : {}) };
     this.ctx.store.pushMessage(msg);
     if (from !== 'user') {
       const say = { type: 'agent.say' as const, agentId: from, text: truncate(text, 600), ts: msg.ts, ...(to ? { to } : {}) };
       this.ctx.emit(say);
-      this.feed('message', text, { agentId: from, to });
+      this.feed('message', text, { agentId: from, to, ...(goalId ? { goalId } : {}) });
+    } else if (msg.goalMessage) {
+      this.feed('message', text, { agentId: 'user', to, goalId });
     } else {
-      this.feed('user', text, { to });
+      this.feed('user', text, { to, ...(goalId ? { goalId } : {}) });
     }
     for (const l of this.listeners) l(msg);
     return msg;
@@ -48,13 +74,18 @@ export class MessageBus {
   /** Unread messages addressed to `agentId` (directly or via "all"), oldest first. */
   inbox(agentId: string, opts: { markRead?: boolean } = {}): BusMessage[] {
     const out = this.ctx.store.data.messages.filter(
-      (m) => m.from !== agentId && (m.to === agentId || m.to === 'all') && !m.readBy.includes(agentId),
+      (m) => !m.goalMessage && m.from !== agentId && (m.to === agentId || m.to === 'all') && !m.readBy.includes(agentId),
     );
     if (opts.markRead && out.length) {
       for (const m of out) m.readBy.push(agentId);
       this.ctx.store.markDirty();
     }
     return out;
+  }
+
+  /** Unread goal messages (goal.message) to `agentId`, oldest first; optionally for one goal. */
+  goalInbox(agentId: string, goalId?: string): BusMessage[] {
+    return this.ctx.store.data.messages.filter((m) => m.goalMessage && m.to === agentId && !m.readBy.includes(agentId) && (!goalId || m.goalId === goalId));
   }
 
   /** Mark specific messages as consumed by `agentId`. */

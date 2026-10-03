@@ -18,7 +18,8 @@ import path from 'node:path';
 import type { RepoSettings } from './config.js';
 import type { Ctx } from './context.js';
 import { parseUnifiedDiff, type ParsedDiff } from './diff.js';
-import type { CiStatus, Decision, Repo, Worktree } from './protocol.js';
+import type { CiStatus, Decision, Repo, RepoSettingsView, Worktree } from './protocol.js';
+import { DEFAULT_AUTO_SEVERITIES, DEFAULT_MAX_ROUNDS } from './prwatch.js';
 import { withGitSafety } from './gitsafety.js';
 import { ensureDir, isInsideOrEqual } from './util/fsx.js';
 import { agentGitIdentity, git, gitConfigGet, gitOut, gitRemote, identityEnv, listWorktrees } from './util/git.js';
@@ -282,7 +283,49 @@ export class RepoManager {
 
   private emitRepo(r: Repo): void {
     this.ctx.store.markDirty();
-    this.ctx.emit({ type: 'repo.upsert', repo: { ...r, worktrees: r.worktrees.map((w) => ({ ...w })) } });
+    this.ctx.emit({ type: 'repo.upsert', repo: this.view(r) });
+  }
+
+  /** A repo for the wire: a copy with its settings view (computed, never stored). */
+  view(r: Repo): Repo {
+    return { ...r, worktrees: r.worktrees.map((w) => ({ ...w })), settings: this.settingsView(r.id) };
+  }
+
+  /** Read-only view of the repo's repoSettings: nothing secret (env as its keys only). */
+  settingsView(repoId: string): RepoSettingsView {
+    const s = this.settingsFor(repoId);
+    const v: RepoSettingsView = {
+      land: s.land ?? 'merge',
+      protect: [...(s.protect ?? [])],
+      roles: { ...(s.roles ?? {}) },
+      prReview: { autoSeverities: [...(s.prReview?.autoSeverities ?? DEFAULT_AUTO_SEVERITIES)], maxRounds: s.prReview?.maxRounds ?? DEFAULT_MAX_ROUNDS },
+    };
+    if (s.baseBranch) v.baseBranch = s.baseBranch;
+    if (s.ci) v.ci = s.ci;
+    if (s.setup) v.setup = s.setup;
+    if (s.subagents) v.subagents = s.subagents;
+    if (s.pr) {
+      const pr: NonNullable<RepoSettingsView['pr']> = {};
+      if (s.pr.remote) pr.remote = s.pr.remote;
+      if (s.pr.branchPrefix) pr.branchPrefix = s.pr.branchPrefix;
+      if (s.pr.draft !== undefined) pr.draft = s.pr.draft;
+      if (s.pr.squash !== undefined) pr.squash = s.pr.squash;
+      v.pr = pr;
+    }
+    if (s.env && Object.keys(s.env).length) v.envKeys = Object.keys(s.env);
+    return v;
+  }
+
+  /** Unregister a repo (repo.remove): its worktrees and branches stay on disk. */
+  remove(repoId: string): Repo {
+    const r = this.require(repoId);
+    this.ctx.store.data.repos = this.repos.filter((x) => x.id !== repoId);
+    this.views.delete(repoId);
+    const t = this.refreshTimers.get(repoId);
+    if (t) clearTimeout(t);
+    this.refreshTimers.delete(repoId);
+    this.ctx.store.markDirty();
+    return r;
   }
 
   setCi(repoId: string, ci: CiStatus): void {
