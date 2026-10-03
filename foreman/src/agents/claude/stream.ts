@@ -13,6 +13,38 @@ export interface TurnStats {
   numTurns?: number;
   authFailed?: string;
   errors: string[];
+  /** a usage/rate limit refused this turn (rate_limit_event "rejected" or an API rate_limit error) */
+  limited?: boolean;
+  /** the latest rate limit report seen in the turn */
+  rateLimit?: RateLimitReport;
+}
+
+/** A plan usage report from the CLI (claude.ai subscription logins). */
+export interface RateLimitReport {
+  status: 'allowed' | 'allowed_warning' | 'rejected';
+  /** epoch ms */
+  resetsAt?: number;
+  type?: string;
+  /** 0-1 */
+  utilization?: number;
+}
+
+const LIMIT_RE = /usage limit|rate[ _-]?limit/i;
+
+/**
+ * A turn's error text that reports the plan's usage limit ("Claude AI usage limit reached|1759500000",
+ * "rate_limit_error"): whether it is one, and when it resets if the text says.
+ */
+export function limitFromText(text: string): { limited: boolean; resetsAt?: number } {
+  if (!LIMIT_RE.test(text)) return { limited: false };
+  const at = resetsAtMs(Number(/\|(\d{9,13})\b/.exec(text)?.[1]));
+  return at ? { limited: true, resetsAt: at } : { limited: true };
+}
+
+/** resetsAt arrives in epoch seconds; accept ms too. */
+export function resetsAtMs(v: unknown): number | undefined {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return undefined;
+  return v < 1e12 ? v * 1000 : v;
 }
 
 interface Block {
@@ -94,6 +126,8 @@ export class StreamMapper {
     private agentId: string,
     private cwd: string,
     private role: 'lead' | 'worker',
+    /** live usage reports, so the scheduler can react while the turn is still running */
+    private onRateLimit?: (r: RateLimitReport) => void,
   ) {}
 
   handle(msg: SDKMessage): void {
@@ -114,6 +148,7 @@ export class StreamMapper {
           const err = String(msg.error);
           this.stats.errors.push(err);
           if (err === 'authentication_failed' || err === 'oauth_org_not_allowed') this.stats.authFailed = err;
+          if (err === 'rate_limit') this.stats.limited = true;
           fm.agentLog(id, 'error', `API error: ${err}`);
         }
         this.stats.sessionId ??= msg.session_id;
@@ -173,6 +208,13 @@ export class StreamMapper {
           const joined = (msg.errors ?? []).join(' ');
           if (AUTH_RE.test(joined)) this.stats.authFailed = firstLine(joined, 200);
         }
+        if (this.stats.isError) {
+          const l = limitFromText([this.stats.resultText ?? (msg.subtype === 'success' ? msg.result : ''), ...this.stats.errors].join(' '));
+          if (l.limited) {
+            this.stats.limited = true;
+            if (l.resetsAt && !this.stats.rateLimit?.resetsAt) this.stats.rateLimit = { status: 'rejected', resetsAt: l.resetsAt };
+          }
+        }
         const cost = typeof msg.total_cost_usd === 'number' ? ` · $${msg.total_cost_usd.toFixed(3)}` : '';
         fm.agentLog(id, this.stats.isError ? 'error' : 'result', `turn ${msg.subtype === 'success' && !msg.is_error ? 'complete' : `ended: ${msg.subtype}`} (${msg.num_turns} steps${cost})`);
         break;
@@ -180,7 +222,17 @@ export class StreamMapper {
       default: {
         const t = (msg as { type: string; subtype?: string }).type;
         if (t === 'rate_limit_event') {
-          const info = (msg as { rate_limit_info?: { status?: string; utilization?: number; rateLimitType?: string } }).rate_limit_info;
+          const info = (msg as { rate_limit_info?: { status?: string; utilization?: number; rateLimitType?: string; resetsAt?: number } }).rate_limit_info;
+          if (info?.status === 'allowed' || info?.status === 'allowed_warning' || info?.status === 'rejected') {
+            const r: RateLimitReport = { status: info.status };
+            const at = resetsAtMs(info.resetsAt);
+            if (at) r.resetsAt = at;
+            if (info.rateLimitType) r.type = info.rateLimitType;
+            if (typeof info.utilization === 'number') r.utilization = info.utilization;
+            this.stats.rateLimit = r;
+            if (r.status === 'rejected') this.stats.limited = true;
+            this.onRateLimit?.(r);
+          }
           if (info?.status === 'rejected') {
             fm.agentLog(id, 'error', `rate limited (${info.rateLimitType ?? 'limit'}); waiting...`);
             fm.setAgent(id, { state: 'blocked', activity: 'rate limited - waiting' });
