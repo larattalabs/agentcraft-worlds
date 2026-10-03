@@ -65,6 +65,13 @@ export interface ClaudeConfig {
   permissions: PermissionsConfig;
   /** Claude Code subagents for the agents (config.json claude.subagents) */
   subagents: SubagentsConfig;
+  /**
+   * pull requests of tasks landed as PRs (repoSettings land "pr"): "off" = landing finishes the task;
+   * "observe" (default) = watch and triage, post nothing, start no fold-in; "on" = everything
+   */
+  prWatch: 'off' | 'observe' | 'on';
+  /** how often watched PRs are polled (seconds, default 180) */
+  prPollSeconds: number;
 }
 
 /**
@@ -104,6 +111,15 @@ export interface RepoSettings {
   land?: 'merge' | 'pr';
   /** pull request options (land "pr") */
   pr?: PrSettings;
+  /** how review comments on the PRs are triaged (PR watching) */
+  prReview?: PrReviewSettings;
+}
+
+export interface PrReviewSettings {
+  /** automated-review severities folded in by default (default ["critical", "important"]) */
+  autoSeverities?: Array<'critical' | 'important' | 'minor' | 'testing' | 'performance' | 'teachable'>;
+  /** fold-in rounds driven by automated reviews per PR before the user decides (default 2) */
+  maxRounds?: number;
 }
 
 export interface PrSettings {
@@ -300,6 +316,13 @@ function mergeStyle(v: unknown): 'merge' | 'squash' {
   throw new Error(`unknown merge style "${String(v)}" (use merge or squash)`);
 }
 
+function prWatchMode(v: unknown): 'off' | 'observe' | 'on' {
+  if (v === undefined || v === true || v === '') return 'observe';
+  if (v === false) return 'off';
+  if (v === 'off' || v === 'observe' || v === 'on') return v;
+  throw new Error(`unknown PR watch mode "${String(v)}" (use off, observe or on)`);
+}
+
 const EFFORTS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 function effort(v: unknown, d: EffortLevel): EffortLevel {
   if (v === undefined) return d;
@@ -313,7 +336,7 @@ export const KNOWN_FLAGS = new Set([
   'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges',
   'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
-  'ambient',
+  'ambient', 'pr-watch', 'pr-poll-seconds',
 ]);
 
 /**
@@ -388,6 +411,14 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
         if (typeof q.squash === 'boolean') pr.squash = q.squash;
         s.pr = pr;
       }
+      if (o.prReview && typeof o.prReview === 'object') {
+        const q = o.prReview as Record<string, unknown>;
+        const pv: PrReviewSettings = {};
+        const sev = ['critical', 'important', 'minor', 'testing', 'performance', 'teachable'];
+        if (Array.isArray(q.autoSeverities)) pv.autoSeverities = q.autoSeverities.filter((x): x is NonNullable<PrReviewSettings['autoSeverities']>[number] => typeof x === 'string' && sev.includes(x));
+        if (typeof q.maxRounds === 'number' && q.maxRounds >= 0) pv.maxRounds = Math.floor(q.maxRounds);
+        s.prReview = pv;
+      }
       if (o.env && typeof o.env === 'object') {
         const env: Record<string, string> = {};
         for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && typeof v === 'string') env[k] = v;
@@ -442,6 +473,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       taskModels: taskModels(fileClaude.taskModels),
       permissions: permissionsConfig(fileClaude.permissions),
       subagents: subagentsConfig(fileClaude.subagents),
+      prWatch: prWatchMode(flags['pr-watch'] ?? env.AGENTCRAFT_PR_WATCH ?? fileClaude.prWatch),
+      prPollSeconds: Math.max(15, num(flags['pr-poll-seconds'] ?? fileClaude.prPollSeconds, 180)),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),
@@ -506,4 +539,9 @@ usage: npm run start -- [options]
                            per repo: config.json repoSettings.<path>.ci, with setup and copy)
   --no-lead-review         skip the lead's review turn before merge decisions
   --no-resume              do not resume interrupted sessions on start
+  --pr-watch off|observe|on  pull requests of tasks landed as PRs: observe (default) polls them and
+                           has Marlow triage new comments / reviews / failing checks, but posts
+                           nothing and starts no follow-up; on also sends fixes back to the worker
+                           and posts replies after your approval; off = a PR finishes its task
+  --pr-poll-seconds <n>    how often watched PRs are polled (default 180)
 `;

@@ -5,6 +5,9 @@
 //   work    worker implements a task in its own git worktree
 //   review  lead reviews a finished task (diff + CI) -> request_merge or changes
 //   followup resume an agent's session with new input (user message, answer, feedback)
+//   triage  lead triages new comments / an automated review / failing checks on a task's pull
+//           request (prwatch.ts): verdicts with the triage tool; fold-ins send the task back to its
+//           worker (status pr -> todo -> doing, continuing its branch) and land as an added commit
 // Session ids are persisted per (agent, task|goal). A job interrupted by a Foreman restart is
 // resumed with the same session AND the same kind, so what happens after the turn (a planning
 // goal becomes active, a finished task goes to CI + review) is never lost. start() reconciles
@@ -40,14 +43,16 @@ import { buildSkillsPlugin, instructionsBlock, workspaceInstructionDirs } from '
 import { SessionHistory, sessionLine } from '../../history.js';
 import { connectorHook, guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
-import { type RepoRole, leadRepoContext, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
+import { type RepoRole, foldInPrompt, leadRepoContext, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, triagePrompt, workerSystemPrompt, workPrompt } from './prompts.js';
+import { DEFAULT_AUTO_SEVERITIES, DEFAULT_MAX_ROUNDS, PrWatcher, type TriageItem } from '../../prwatch.js';
+import type { RunFn } from '../../prs.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
 import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
 
-type JobKind = 'plan' | 'work' | 'review' | 'followup';
+type JobKind = 'plan' | 'work' | 'review' | 'followup' | 'triage';
 type AbortReason = 'pause' | 'stop' | 'shutdown' | 'cancel' | 'timeout';
 
 interface Job {
@@ -90,6 +95,8 @@ interface ClaudeState {
   goalBranch: Record<string, { repoId: string; branch: string; onRemote: boolean }>;
   /** task id -> a branch the lead put this task on (create_task base) */
   taskBase: Record<string, string>;
+  /** task id -> review fixes for its open PR the worker is making (PR fold-in) */
+  foldIns: Record<string, { notes: string; from?: string; at: number }>;
 }
 
 interface Running {
@@ -157,6 +164,8 @@ export interface ClaudeBackendOptions {
   queryFn?: typeof query;
   /** skip the startup auth probe (tests) */
   skipAuthCheck?: boolean;
+  /** runs `az` / `gh` for pull requests (opening and watching them); tests inject a fake */
+  prRunFn?: RunFn;
 }
 
 export class ClaudeBackend implements Backend {
@@ -194,6 +203,8 @@ export class ClaudeBackend implements Backend {
   private roleProblems = new Set<string>();
   /** building design jobs (design.request), one at a time */
   readonly designs: DesignJobs;
+  /** pull requests of tasks landed as PRs (status pr) */
+  readonly prs: PrWatcher;
 
   constructor(
     private fm: Foreman,
@@ -236,14 +247,27 @@ export class ClaudeBackend implements Backend {
         this.st.taskBase[taskId] = b.branch;
         this.fm.store.markDirty();
       },
+      onTriage: (items) => this.prs.applyTriage(items),
     };
+    if (opts.prRunFn) this.fm.repos.prRunFn = opts.prRunFn;
+    this.prs = new PrWatcher(this.fm, {
+      mode: this.cfg.prWatch ?? 'observe',
+      pollSeconds: this.cfg.prPollSeconds ?? 180,
+      ...(opts.prRunFn ? { runFn: opts.prRunFn } : {}),
+      hooks: {
+        triage: (task, items) => void this.enqueueTriage(task.id, items),
+        foldIn: (task, notes) => this.startFoldIn(task.id, notes),
+        merged: (task) => this.onPrMerged(task),
+        triaging: (taskId) => this.hasQueued(LEAD, (j) => j.kind === 'triage' && j.taskId === taskId) || this.st.inflight[LEAD]?.kind === 'triage' && this.st.inflight[LEAD]?.taskId === taskId,
+      },
+    });
   }
 
   private get st(): ClaudeState {
     const b = this.fm.store.data.backend;
     let s = b.claude as ClaudeState | undefined;
     if (!s) {
-      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {}, taskSize: {}, goalBranch: {}, taskBase: {} };
+      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {}, taskSize: {}, goalBranch: {}, taskBase: {}, foldIns: {} };
       b.claude = s;
     }
     s.inflight ??= {};
@@ -253,6 +277,7 @@ export class ClaudeBackend implements Backend {
     s.taskSize ??= {};
     s.goalBranch ??= {};
     s.taskBase ??= {};
+    s.foldIns ??= {};
     return s;
   }
 
@@ -292,6 +317,8 @@ export class ClaudeBackend implements Backend {
       this.recover();
     }
     this.armLimitTimer();
+    this.prs.start();
+    if (this.prs.active) this.fm.log.info(`PR watching: ${this.prs.mode} (every ${this.cfg.prPollSeconds}s)`);
     // the user's messages that no agent read before the restart
     for (const id of [LEAD, ...this.team]) this.deliverPending(id);
     void this.fm.repos.sweepPendingRemovals().catch((e) => this.fm.log.debug(`sweep: ${(e as Error).message}`));
@@ -424,8 +451,9 @@ export class ClaudeBackend implements Backend {
     if (process.stdout.isTTY) process.stdout.write('\x07');
   }
 
+  /** An agent's own open question (the PR watcher's decisions to the user are not the agent's). */
   private openQuestion(agentId: string): Decision | undefined {
-    return this.fm.decisions.open().find((d) => d.kind === 'question' && d.agentId === agentId);
+    return this.fm.decisions.open().find((d) => d.kind === 'question' && d.agentId === agentId && !this.prs.owns(d.id));
   }
 
   /** A job matching `pred` is queued, running or paused (waiting for /resume) for this agent. */
@@ -509,6 +537,7 @@ export class ClaudeBackend implements Backend {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    this.prs.stop();
     if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.limitTimer) clearTimeout(this.limitTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
@@ -848,7 +877,13 @@ export class ClaudeBackend implements Backend {
     let startPoint: string | undefined;
     let continuesFrom: string | undefined;
     const prev = t.worktree ? this.fm.repos.findWorktree(t.repoId!, t.worktree) : undefined;
-    if (prev && prev.agentId !== agentId && prev.status !== 'merged') {
+    const fold = this.st.foldIns[t.id];
+    if (fold && prev && prev.status === 'merged' && prev.agentId !== agentId) {
+      // review fixes by another worker: continue the branch the pull request was pushed from
+      startPoint = prev.branch;
+      continuesFrom = prev.agentId;
+      this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} makes the review fixes for ${t.id} on ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId });
+    } else if (prev && prev.agentId !== agentId && prev.status !== 'merged') {
       if (prev.status === 'active') {
         // nobody prepared the hand-off (e.g. reconciled after a restart): finish it here
         if (this.lastTurn.get(prev.agentId)?.job.taskId === t.id) await this.quiesce(prev.agentId);
@@ -865,9 +900,10 @@ export class ClaudeBackend implements Backend {
     this.fm.tasks.update(t.id, { branch: wt.branch, worktree: wt.id });
     this.fm.tasks.setStatus(t.id, 'doing');
     this.fm.setAgent(agentId, { taskId: t.id, repoId: t.repoId!, worktree: wt.id, state: 'thinking', station: 'desk', activity: `starting ${t.id}` });
-    this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId });
+    this.fm.bus.feed('task', fold ? `${this.fm.nameOf(agentId)} started the review fixes for ${t.id}${t.pr ? ` (PR #${t.pr.id})` : ''}` : `${this.fm.nameOf(agentId)} started ${t.id}: ${t.title}`, { agentId });
     const inbox = formatInbox(this.fm.bus.inbox(agentId, { markRead: true }), (id) => this.fm.nameOf(id));
-    this.enqueue({ kind: 'work', agentId, taskId: t.id, goalId: goal.id, sessionKey: `${agentId}:${t.id}`, fresh: !this.fm.store.data.sessions[`${agentId}:${t.id}`]?.sessionId, prompt: workPrompt(this.fm, t, goal, wt, inbox, continuesFrom, this.st.plans[goal.id]) });
+    const prompt = fold ? foldInPrompt(this.fm, t, goal, wt, fold.notes, inbox, continuesFrom) : workPrompt(this.fm, t, goal, wt, inbox, continuesFrom, this.st.plans[goal.id]);
+    this.enqueue({ kind: 'work', agentId, taskId: t.id, goalId: goal.id, sessionKey: `${agentId}:${t.id}`, fresh: !this.fm.store.data.sessions[`${agentId}:${t.id}`]?.sessionId, prompt });
   }
 
   // ---- job queue ----------------------------------------------------------------------------
@@ -1458,6 +1494,7 @@ export class ClaudeBackend implements Backend {
           this.fm.bus.feed('goal', `Marlow planned no tasks: goal closed (${truncate(goal.text, 80)})`, { agentId: LEAD });
         }
       }
+      if (job.kind === 'triage' && job.taskId && this.prs.pendingItems(job.taskId).length) this.prs.triageTurnEnded(job.taskId);
       if (job.kind === 'review' && job.taskId) {
         const t = this.fm.tasks.get(job.taskId);
         const hasDecision = this.fm.decisions.open().some((d) => d.kind === 'merge' && d.taskId === job.taskId);
@@ -1556,9 +1593,10 @@ export class ClaudeBackend implements Backend {
       return;
     }
     if (this.cfg.leadReview && !this.isStopped(LEAD)) {
-      const diff = await this.fm.repos.diff(t.repoId, t.worktree);
+      const fold = this.st.foldIns[t.id];
+      const diff = await this.fm.repos.diff(t.repoId, t.worktree, fold?.from ? { from: fold.from } : {}).catch(() => this.fm.repos.diff(t.repoId!, t.worktree!));
       this.fm.setAgent(LEAD, { state: 'reading', station: 'mergestation', activity: `reviewing ${t.id}` });
-      this.enqueue({ kind: 'review', agentId: LEAD, taskId: t.id, ...(t.goalId ? { goalId: t.goalId } : {}), sessionKey: `${LEAD}:${t.goalId ?? 'adhoc'}`, prompt: reviewPrompt(this.fm, this.fm.tasks.require(t.id), renderDiffText(diff.files), diff.stats, ci) });
+      this.enqueue({ kind: 'review', agentId: LEAD, taskId: t.id, ...(t.goalId ? { goalId: t.goalId } : {}), sessionKey: `${LEAD}:${t.goalId ?? 'adhoc'}`, prompt: reviewPrompt(this.fm, this.fm.tasks.require(t.id), renderDiffText(diff.files), diff.stats, ci, fold ? { notes: fold.notes } : undefined) });
     } else {
       this.openMergeDecision(t, t.summary ?? 'Work complete.');
     }
@@ -1568,12 +1606,13 @@ export class ClaudeBackend implements Backend {
     const wt = this.fm.repos.requireWorktree(t.repoId!, t.worktree!);
     const userBase = this.fm.repos.isUserBase(t.repoId!, wt.base);
     const pr = this.fm.repos.landsAsPr(t.repoId!) && !userBase;
+    const fold = !!t.pr && !!this.st.foldIns[t.id];
     this.fm.createDecision({
       agentId: LEAD,
       kind: 'merge',
-      question: userBase ? `Add ${t.id} "${t.title}" (${wt.branch}) to your branch ${wt.base}?` : pr ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?` : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
+      question: fold ? `Push the review fixes for ${t.id} "${t.title}" to PR #${t.pr!.id}?` : userBase ? `Add ${t.id} "${t.title}" (${wt.branch}) to your branch ${wt.base}?` : pr ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?` : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
       options: [...MERGE_OPTIONS],
-      context: `${summary}\n${wt.files} files, +${wt.additions} -${wt.deletions} | tests: ${t.ci}${pr ? `\n"${MERGE_OPTIONS[0]}" pushes the branch and opens the pull request (agents never push).` : ''}`,
+      context: `${summary}\n${wt.files} files, +${wt.additions} -${wt.deletions} | tests: ${t.ci}${fold ? `\n"${MERGE_OPTIONS[0]}" pushes the fixes as an added commit on the pull request (no force-push, no squash of what is there).` : pr ? `\n"${MERGE_OPTIONS[0]}" pushes the branch and opens the pull request (agents never push).` : ''}`,
       taskId: t.id,
       repoId: t.repoId!,
       worktree: wt.id,
@@ -1595,6 +1634,75 @@ export class ClaudeBackend implements Backend {
     if (t.status !== 'doing') this.fm.tasks.setStatus(t.id, 'doing', { force: true });
     this.fm.setAgent(t.assignee, { taskId: t.id, state: 'thinking', station: 'desk', activity: `revising ${t.id}`, ...(t.repoId ? { repoId: t.repoId } : {}), ...(t.worktree ? { worktree: t.worktree } : {}) });
     this.enqueue({ kind: 'followup', agentId: t.assignee, taskId: t.id, ...(t.goalId ? { goalId: t.goalId } : {}), sessionKey: `${t.assignee}:${t.id}`, prompt });
+  }
+
+  // ---- pull requests (prwatch.ts) -------------------------------------------------------------
+
+  watchesPrs(): boolean {
+    return this.prs.active;
+  }
+
+  onPrRefresh(taskId?: string): void {
+    this.prs.refresh(taskId);
+  }
+
+  onPrPush(task: Task, outcome: 'opened' | 'landed' | 'empty' | 'rejected', sha?: string): void {
+    if (outcome === 'opened') return;
+    delete this.st.foldIns[task.id];
+    this.fm.store.markDirty();
+    if (task.assignee && this.fm.agent(task.assignee)?.taskId === task.id) this.fm.setAgent(task.assignee, { state: 'idle', station: 'lounge', activity: `${task.id} PR open`, taskId: null, worktree: null });
+    void this.prs.foldInEnded(task.id, outcome, sha).finally(() => this.tick());
+  }
+
+  /** The lead triages a PR's new items in the goal's session. */
+  private async enqueueTriage(taskId: string, items: TriageItem[]): Promise<void> {
+    const t = this.fm.tasks.get(taskId);
+    if (!t?.pr) return;
+    let diffText = '(diff not available)';
+    if (t.repoId && t.worktree) {
+      try {
+        const d = await this.fm.repos.diff(t.repoId, t.worktree);
+        diffText = truncate(renderDiffText(d.files), 40_000);
+      } catch (e) {
+        this.fm.log.warn(`triage diff for ${t.id}: ${(e as Error).message}`);
+      }
+    }
+    const p = t.repoId ? this.fm.repos.settingsFor(t.repoId).prReview : undefined;
+    const prompt = triagePrompt(this.fm, t, items, diffText, {
+      autoSeverities: p?.autoSeverities ?? DEFAULT_AUTO_SEVERITIES,
+      mode: this.prs.mode === 'on' ? 'on' : 'observe',
+      rounds: this.prs.state(t.id).reviewRounds,
+      maxRounds: p?.maxRounds ?? DEFAULT_MAX_ROUNDS,
+    });
+    if (!this.isStopped(LEAD)) this.fm.setAgent(LEAD, { state: 'reading', station: 'mergestation', activity: `triaging PR #${t.pr.id}` });
+    this.enqueue({ kind: 'triage', agentId: LEAD, taskId: t.id, ...(t.goalId ? { goalId: t.goalId } : {}), sessionKey: `${LEAD}:${t.goalId ?? 'adhoc'}`, prompt });
+  }
+
+  /** Review fixes for a task's open PR: back on the board for its worker, continuing its branch. */
+  private startFoldIn(taskId: string, notes: string): boolean {
+    const t = this.fm.tasks.get(taskId);
+    if (!t || t.status !== 'pr' || !t.repoId || !t.worktree) return false;
+    const from = this.fm.store.data.worktreeMeta[`${t.repoId}/${t.worktree}`]?.mergedSha;
+    this.st.foldIns[t.id] = { notes, at: Date.now(), ...(from ? { from } : {}) };
+    // a fresh CI retry and protect budget for the follow-up
+    delete this.st.ciFixes[t.id];
+    delete this.st.ciFixes[`protect:${t.id}`];
+    this.fm.store.markDirty();
+    this.fm.tasks.setStatus(t.id, 'todo', { force: true });
+    this.fm.bus.feed('task', `${t.id} goes back to ${this.fm.nameOf(t.assignee ?? 'the next free worker')} for review fixes on PR #${t.pr?.id}`, { agentId: LEAD });
+    this.tick();
+    return true;
+  }
+
+  private onPrMerged(t: Task): void {
+    if (t.assignee && this.fm.agent(t.assignee)?.taskId === t.id) this.fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} merged`, taskId: null, worktree: null });
+    const g = t.goalId ? this.fm.goal(t.goalId) : undefined;
+    if (g && this.fm.tasks.goalComplete(g.id)) {
+      this.fm.bus.send(LEAD, 'user', `Every pull request for "${truncate(g.text, 80)}" is merged. Nice working with you.`);
+      for (const w of this.team) if (!this.isStopped(w) && !this.running.has(w)) this.fm.setAgent(w, { state: 'done', station: 'lounge', activity: 'goal done' });
+      if (!this.isStopped(LEAD) && !this.running.has(LEAD)) this.fm.setAgent(LEAD, { state: 'done', station: 'meeting', activity: 'goal done' });
+    }
+    this.tick();
   }
 
   // ---- user intents -------------------------------------------------------------------------
@@ -1645,6 +1753,11 @@ export class ClaudeBackend implements Backend {
   }
 
   onDecisionSettled(d: Decision): void {
+    if (this.prs.owns(d.id)) {
+      // the PR watcher's own decisions (post replies, fold in?): never an agent's question
+      void this.prs.onDecision(d).then(() => this.tick()).catch((e) => this.fm.log.error(`PR decision ${d.id}: ${(e as Error).stack ?? e}`));
+      return;
+    }
     if (d.kind === 'question') {
       // in-process ask_user waiters resolve by themselves; after a restart nobody waits -> resume
       if (!this.waitingUser.has(d.agentId) && !this.running.has(d.agentId) && !this.isStopped(d.agentId)) {
@@ -1671,9 +1784,9 @@ export class ClaudeBackend implements Backend {
     if (d.kind === 'merge' && d.taskId) {
       const t = this.fm.tasks.get(d.taskId);
       if (!t) return;
-      if (d.answer?.option === 'Merge' && t.status === 'done') {
+      if (d.answer?.option === 'Merge' && (t.status === 'done' || t.status === 'pr')) {
         const wtl = t.repoId && t.worktree ? this.fm.repos.findWorktree(t.repoId, t.worktree) : undefined;
-        const landed = wtl && t.repoId && this.fm.repos.isUserBase(t.repoId, wtl.base) ? `added to ${wtl.base}` : t.repoId && this.fm.repos.landsAsPr(t.repoId) ? 'PR opened' : 'merged';
+        const landed = wtl && t.repoId && this.fm.repos.isUserBase(t.repoId, wtl.base) ? `added to ${wtl.base}` : t.status === 'pr' ? `PR #${t.pr?.id ?? '?'} open` : t.repoId && this.fm.repos.landsAsPr(t.repoId) ? 'PR opened' : 'merged';
         if (t.assignee && this.fm.agent(t.assignee)?.taskId === t.id) this.fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} ${landed}`, taskId: null, worktree: null });
         if (!this.isStopped(LEAD)) this.fm.setAgent(LEAD, { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
         const g = t.goalId ? this.fm.goal(t.goalId) : undefined;
@@ -1721,7 +1834,7 @@ export class ClaudeBackend implements Backend {
 
   /** Withdraw an agent's open questions and permission prompts (not merge decisions: those are the user's). */
   private withdrawDecisions(agentId: string, why: string): void {
-    for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge')) this.fm.decisions.cancel(d.id, why);
+    for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge' && !this.prs.owns(x.id))) this.fm.decisions.cancel(d.id, why);
   }
 
   async onAgentAction(agentId: string, action: 'pause' | 'resume' | 'stop' | 'spawn'): Promise<void> {

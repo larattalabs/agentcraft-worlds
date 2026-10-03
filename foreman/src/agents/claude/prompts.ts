@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
 import type { Foreman } from '../../foreman.js';
 import type { Goal, Task, Worktree } from '../../protocol.js';
+import type { TriageItem } from '../../prwatch.js';
 import { truncate } from '../../util/text.js';
 import { userName } from '../../user.js';
 
@@ -183,15 +184,19 @@ export function reviewPrompt(
   diffText: string,
   stats: { files: number; additions: number; deletions: number },
   ci: { pass: boolean; command: string; output: string } | undefined,
+  foldIn?: { notes: string },
 ): string {
   // who worked on it (a task handed over after a stop/reassign has several worktrees)
   const workers = [...new Set(fm.repos.list().flatMap((r) => r.worktrees.filter((w) => w.taskId === task.id)).map((w) => fm.nameOf(w.agentId)))];
   const handedOver = workers.length > 1 ? `\nWorked on by ${workers.join(', then ')} (handed over; the branch continues the earlier work).` : '';
-  return `Review request: ${task.id} "${task.title}" by ${fm.nameOf(task.assignee ?? '?')}.${handedOver}
+  const follow = foldIn && task.pr
+    ? `\nThis is a follow-up on the open pull request #${task.pr.id} (${task.pr.url}): review fixes the worker was asked for:\n${foldIn.notes}\nThe diff below is ONLY the follow-up (what is new since the PR's last push). Approving it pushes it as an added commit on the PR.\n`
+    : '';
+  return `Review request: ${task.id} "${task.title}" by ${fm.nameOf(task.assignee ?? '?')}.${handedOver}${follow}
 ${taskHistory(fm, task)}Worker summary: ${task.summary ?? '(none)'}
 Tests (${ci?.command ?? 'none'}): ${ci ? (ci.pass ? 'PASS' : 'FAIL') : 'not run'}
 ${ci && !ci.pass ? `\nTest output (tail):\n${ci.output}\n` : ''}
-Diff vs base (${stats.files} files, +${stats.additions} -${stats.deletions}):
+Diff ${foldIn ? 'of the follow-up' : 'vs base'} (${stats.files} files, +${stats.additions} -${stats.deletions}):
 ${diffText}
 
 Decide now: request_merge("${task.id}", summary for ${userName()}) if it meets the task, or update_task("${task.id}", status "doing", summary: the concrete changes needed). Then end your turn.`;
@@ -199,3 +204,48 @@ Decide now: request_merge("${task.id}", summary for ${userName()}) if it meets t
 
 export const RESUME_PROMPT =
   'The AgentCraft orchestrator restarted while you were working. Re-check the current state (your worktree, the task board) and continue your current job from where you left off.';
+
+/** A task whose PR got review comments goes back to its worker: the fold-in. */
+export function foldInPrompt(fm: Foreman, task: Task, goal: Goal | undefined, wt: Worktree, notes: string, inbox: string, continuesFrom?: string): string {
+  const pr = task.pr;
+  const from = continuesFrom ? ` (continuing ${fm.nameOf(continuesFrom)}'s branch)` : '';
+  return `Review fixes for ${task.id} "${task.title}": its pull request${pr ? ` #${pr.id} (${pr.url})` : ''} got review comments that should be addressed in code.
+
+Your worktree ${wt.path} is on ${wt.branch}${from}, which already has the work that is on the pull request (\`git log ${wt.base}..HEAD\`). Make ONLY these changes, on top of it:
+${notes}
+
+Keep the rest of the change as it is; do not rebase, squash or rewrite commits (the Foreman adds your fix as a new commit on the pull request). Run the tests, then update_task("${task.id}", status "review", summary: what you changed for each point).
+${task.description ? `\nThe task, for context:\n${truncate(task.description, 1500)}\n` : ''}Goal: ${goal?.text ?? '(none)'}
+${inbox ? `\nMessages for you:\n${inbox}\n` : ''}`;
+}
+
+/** The lead triages new review comments / an automated review / failing checks on a task's PR. */
+export function triagePrompt(
+  fm: Foreman,
+  task: Task,
+  items: TriageItem[],
+  diffText: string,
+  opts: { autoSeverities: string[]; mode: 'observe' | 'on'; rounds: number; maxRounds: number },
+): string {
+  const pr = task.pr;
+  const line = (i: TriageItem) => {
+    const loc = i.file ? ` ${i.file}${i.line ? `:${i.line}` : ''}` : '';
+    const head = `[${i.ref}] ${i.kind === 'finding' ? `automated review, ${i.severity}` : i.kind === 'checks' ? 'checks' : `comment by ${i.author ?? '?'}`}${loc}${i.suggested ? ` (default: ${i.suggested})` : ''}`;
+    return `${head}\n${i.conversation ? `  earlier in the thread:\n${i.conversation.replace(/^/gm, '    ')}\n  new:\n` : ''}${i.text.replace(/^/gm, '  ')}`;
+  };
+  return `Triage request: ${task.id} "${task.title}" (worker ${fm.nameOf(task.assignee ?? '?')}) is a pull request${pr ? ` #${pr.id} (${pr.url}; ${pr.status}, checks ${pr.checks})` : ''}. New items:
+
+${items.map(line).join('\n\n')}
+
+Diff on the pull request:
+${diffText}
+
+Decide each item with ONE call: triage(items: [{ref, verdict, note}, ...]).
+- fold_in: it should be fixed in code; note = exactly what to change. All fold-ins go to ${fm.nameOf(task.assignee ?? '?')} as one follow-up commit on the PR.
+- reply: no code change; note = the reply to post (explain, or decline politely with the reason).
+- ask_user: a product decision that is ${userName()}'s; note = the question.
+- ignore: noise, or already handled; note = why.
+Automated review findings: ${opts.autoSeverities.join(' and ') || 'none'} default to fold_in unless the finding is wrong (then reply with why); testing / performance / minor only when clearly worthwhile and cheap. Check every finding against the diff and the code before you accept it. ${opts.rounds ? `This PR already had ${opts.rounds} fold-in round(s) from automated reviews (at most ${opts.maxRounds}).` : ''}
+Human comments: fold_in what the reviewer asks for unless it is wrong or out of scope (then reply).
+Nothing is posted to the PR without ${userName()}'s approval.${opts.mode === 'observe' ? ` (PR watching is in observe mode: your verdicts are recorded for ${userName()} to read; nothing is posted and no fold-in starts.)` : ''} Then end your turn.`;
+}
