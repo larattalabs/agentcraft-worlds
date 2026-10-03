@@ -40,6 +40,7 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/agent-context` | roadmap 4 (`claude.context`: instructions, skills, MCP) | yes |
 | `foreman/agent-roles` | roadmap 5 (`claude.agents`, `claude.taskModels`, notes across tasks) | yes |
 | `foreman/permissions` | `claude.permissions` (policy/auto mode, guardrail hook, Claude Code rules, web tools) + `claude.subagents` | yes |
+| `foreman/repo-agents` | repo `.claude/agents` files as worker roles (`repoSettings.roles`) and subagents (`repoSettings.subagents: "repo"`); stacked on roles/repo-settings/permissions | after those |
 | `foreman/usage-banner` | plan usage windows in `foreman.status.usage` + console (stacked on `foreman/rate-limits`) | yes, after rate-limits |
 
 ## Build sequence
