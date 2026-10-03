@@ -51,15 +51,21 @@ public final class BuildingWizardFeature {
 		BuildingCommands.wizardOpener = player -> Minecraft.getInstance().execute(BuildingWizardFeature::open);
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			while (Keys.build.consumeClick()) {
-				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active()) {
+				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active() && !PlotMarker.active()) {
 					open();
 				}
 			}
 			BuildPlacement.tick(mc);
+			PlotMarker.tick(mc);
 		});
-		ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(BuildPlacement::cancel));
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(() -> {
+			BuildPlacement.cancel();
+			PlotMarker.cancelQuietly();
+		}));
 		LevelRenderEvents.COLLECT_SUBMITS.register(GhostRenderer::submit);
+		LevelRenderEvents.COLLECT_SUBMITS.register(GhostRenderer::submitPlot);
 		HudElementRegistry.addLast(AgentCraft.id("hud/building_wizard"), new PlacementHud());
+		HudElementRegistry.addLast(AgentCraft.id("hud/plot_marker"), new PlotHud());
 		DevBridge.registerScreen("build_repos", mc -> new RepoPickScreen(List.of()));
 		DevBridge.registerScreen("build_blueprints", mc -> new BlueprintPickScreen(defaultRepos(1)));
 		registerDev();
@@ -87,6 +93,34 @@ public final class BuildingWizardFeature {
 		}
 		BuildPlacement.cancel();
 		mc.gui.setScreen(new RepoPickScreen(List.of(), blueprintId));
+	}
+
+	/**
+	 * The repo step for a blueprint that goes on a known spot (the hub's "Place on the plot"): picking repos
+	 * enters placement mode locked at {@code origin} (rotated box minimum) with {@code turns}; the player can
+	 * still rotate, nudge or unlock it, and nothing is placed without Enter.
+	 */
+	public static void openForSpot(String blueprintId, int[] origin, int turns) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc.player == null) {
+			return;
+		}
+		BuildPlacement.cancel();
+		mc.gui.setScreen(new RepoPickScreen(List.of(), blueprintId, new int[] {origin[0], origin[1], origin[2], turns}));
+	}
+
+	/** What {@code dev.build.state} reports about placement mode. */
+	public static JsonObject placementState() {
+		return BuildPlacement.state();
+	}
+
+	/** {@link #placeNow}, then locks the ghost at {@code origin} with {@code turns}. */
+	public static @Nullable String placeNowAt(String blueprintId, List<String> repos, int[] origin, int turns) {
+		String why = placeNow(blueprintId, repos);
+		if (why == null) {
+			BuildPlacement.lockAt(origin[0], origin[1], origin[2], turns);
+		}
+		return why;
 	}
 
 	/**
@@ -118,7 +152,7 @@ public final class BuildingWizardFeature {
 	 * the key was consumed. Only while placing with no screen open; releases always pass.
 	 */
 	public static boolean onKey(int action, KeyEvent e) {
-		if (action == InputConstants.RELEASE || !BuildPlacement.active()) {
+		if (action == InputConstants.RELEASE || !BuildPlacement.active() && !PlotMarker.active()) {
 			return false;
 		}
 		Minecraft mc = Minecraft.getInstance();
@@ -126,6 +160,9 @@ public final class BuildingWizardFeature {
 			return false;
 		}
 		boolean repeat = action != InputConstants.PRESS;
+		if (PlotMarker.active()) {
+			return plotKey(e, repeat);
+		}
 		switch (e.key()) {
 			case InputConstants.KEY_R -> {
 				if (!repeat) {
@@ -151,6 +188,33 @@ public final class BuildingWizardFeature {
 			case InputConstants.KEY_ESCAPE, InputConstants.KEY_BACKSPACE -> {
 				if (!repeat) {
 					BuildPlacement.cancel();
+				}
+			}
+			default -> {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** Plot-marking keys: Enter corner, PgUp/PgDn height (Shift: 4), Backspace back a corner, Esc cancel. */
+	private static boolean plotKey(KeyEvent e, boolean repeat) {
+		switch (e.key()) {
+			case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> {
+				if (!repeat) {
+					PlotMarker.confirm();
+				}
+			}
+			case InputConstants.KEY_PAGEUP -> PlotMarker.adjustHeight(e.hasShiftDown() ? 4 : 1);
+			case InputConstants.KEY_PAGEDOWN -> PlotMarker.adjustHeight(e.hasShiftDown() ? -4 : -1);
+			case InputConstants.KEY_BACKSPACE -> {
+				if (!repeat) {
+					PlotMarker.back();
+				}
+			}
+			case InputConstants.KEY_ESCAPE -> {
+				if (!repeat) {
+					PlotMarker.cancel();
 				}
 			}
 			default -> {
@@ -342,6 +406,7 @@ public final class BuildingWizardFeature {
 			sc.addProperty("step", "repos");
 			sc.addProperty("textMode", rs.textMode());
 			sc.addProperty("blueprint", rs.fixedBlueprint());
+			sc.addProperty("onPlot", rs.lockAt() != null);
 			sc.addProperty("error", rs.error());
 			JsonArray a = new JsonArray();
 			rs.chosen().forEach(a::add);
