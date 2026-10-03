@@ -38,6 +38,7 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/rate-limits` | roadmap 3 | yes |
 | `foreman/agent-context` | roadmap 4 (`claude.context`: instructions, skills, MCP) | yes |
 | `foreman/agent-roles` | roadmap 5 (`claude.agents`, `claude.taskModels`, notes across tasks) | yes |
+| `foreman/usage-banner` | plan usage windows in `foreman.status.usage` + console (stacked on `foreman/rate-limits`) | yes, after rate-limits |
 
 ## Build sequence
 
@@ -53,8 +54,8 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 **Phase 1: Foreman features**
 4. ✅ Roadmap 4: agent context (instructions, skills, MCP).
 5. ✅ Roadmap 5: roles (per-agent role prompt, model, effort; cheap-task routing; per-agent memory notes).
-6. Usage banner: `getUsage()` 5-hour/7-day windows in `foreman.status` (finishes roadmap 3).
-- *Gate:* about a week of real work on Phase 1.
+6. ✅ Usage banner (`foreman/usage-banner`): 5h/7d windows in `foreman.status.usage`, console status line and `/status`. Not yet in the in-world HUD (roadmap 12). Reads the SDK's experimental usage method best-effort; `rate_limit_event` is the main source.
+- *Gate:* about a week of real work on Phase 1. **Phase 1 code complete 2026-10-03; nothing run against real Claude yet.**
 
 **Phase 2: mod, for the Hardcore office** (independent of Phase 1; can swap order)
 7. Roadmap 9 + DevBridge token. 8. Roadmap 10. 9. Roadmap 11.
@@ -74,7 +75,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 2. ✅ **Per-repo config** (`foreman/repo-settings`; config.json `repoSettings` with `ci`, `setup`, `copy`) — CI command, setup command run after worktree creation (e.g. `pnpm install`,
    copy `.env`), detect pnpm/monorepo test commands. Files: `config.ts`, `repos.ts`
    (`detectTestCommand`, `createWorktree`, `runTests`), `agents/claude/index.ts`. *(upstream PR)*
-3. ✅ **Rate-limit aware scheduling** (`foreman/rate-limits`; `getUsage()` windows in the status banner still to do) — on `rate_limit_event` `rejected`: global pause until `resetsAt`,
+3. ✅ **Rate-limit aware scheduling** (`foreman/rate-limits`; usage windows in `foreman/usage-banner`) — on `rate_limit_event` `rejected`: global pause until `resetsAt`,
    requeue instead of marking tasks blocked; throttle `maxConcurrent` on `allowed_warning`; surface
    `getUsage()` windows in `foreman.status`. Files: `agents/claude/stream.ts`, `index.ts`
    (`schedule`/`pump`/`afterTurn`). *(upstream PR)*
