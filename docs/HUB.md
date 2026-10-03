@@ -7,19 +7,35 @@ server (`ServerTasks`), so it needs no operator permission; commands do.
 
 ## Hub screen (mod, client)
 
-- Opened with a key (default `H`, rebindable, AgentCraft category) and from the console (`/hub`).
+**Status (branch `mod/hub`):** implemented: the screen, `H`, `/hub [tab]`, the **Buildings** tab
+(buildings with make home / teleport / remove, blueprint browser with plan + rendered previews, Place;
+Design new is a disabled placeholder with a hook, `HubFeature.designNew`) and the **Status** tab. Repos,
+Goals, Team and Settings show a "coming next" panel. Generated buildings and the offline renderer below
+are not part of this step (previews are shown when the renderer's PNGs exist). Code:
+`mod/src/client/java/dev/agentcraft/client/hub/`, notes in mod/DEV.md "Hub".
+
+- Opened with a key (default `H`, rebindable, AgentCraft category; vanilla binds H only as F3+H) and
+  from the console (`/hub [tab]`). *(done)*
 - Tabs, in this order (later waves fill the ones marked *later*):
-  1. **Buildings**: the world's buildings (blueprint, repos, home marker, box), actions: place new
-     (opens the existing wizard), make home, remove (confirm), teleport to; a blueprint browser
-     (bundled + user, with the top-down preview and, when present, the rendered previews) and
-     **Design new** (below).
+  1. **Buildings** *(done)*: the world's buildings (blueprint, repos, home marker, box, rotation),
+     actions: place new (opens the existing wizard), make home, remove (two-step confirm), teleport to
+     (the entrance anchor, same dimension, a free spot with a floor); a blueprint browser (bundled +
+     user, with the top-down plan and, when present, the rendered previews `<id>.preview-{iso,top,front,
+     cutaway}.png` from the user folder, else the mod's `data/<ns>/blueprints/`), Place (repo step with
+     the blueprint fixed, then placement mode) and **Design new** (below; a disabled placeholder until
+     the form exists).
+     Buildings do not record their dimension: remove and teleport refuse unless the box holds
+     AgentCraft stations in the player's dimension; remove also refuses while the player stands in it.
   2. **Repos** *(later)*: registered repos and their `repoSettings`.
   3. **Goals** *(later)*: submit a goal (repo, "continue a branch", earlier session), open goals.
   4. **Team** *(later)*: agents, roles, models, effort, shift.
   5. **Settings** *(later)*: permissions, context, connectors, session history, usage.
-  6. **Status**: Foreman connection, auth/account, usage windows, version.
+  6. **Status** *(done)*: Foreman connection, backend, auth/account, usage windows (percent, reset
+     time), spend, mod and Foreman versions, DevBridge state.
 - Style: the existing UI kit (`ui/Kit`, `ui/Panels`, `gui/ui-style.json`, `palette.json`), like
   `DecisionScreen`. Shootable through `DevBridge.registerScreen("hub", ...)` with a tab argument.
+  *(done: screens `hub`, `hub_<tab>`, `hub_blueprints`; `dev.hub.open {tab}`, `dev.hub.state`,
+  `dev.hub.action`, see mod/DEV.md "Hub")*
 
 ## Generated buildings
 

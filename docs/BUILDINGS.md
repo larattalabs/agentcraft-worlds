@@ -128,6 +128,9 @@ A placed blueprint is a building:
 
 ## Wizard (client)
 
+The hub (`H`, docs/HUB.md) also starts it: "Place new" opens step 1, a blueprint's "Place" opens step
+1 with that blueprint fixed (Next checks the repo count and goes straight to placement).
+
 `/agentcraft build` (a server subcommand: the client installs `BuildingCommands.wizardOpener`, so the
 server tree stays the only `agentcraft` root; a dedicated server answers with the `place` usage) or
 the key `B` (Options > Controls > AgentCraft, rebindable) opens it. Singleplayer only. The key is not
@@ -146,8 +149,11 @@ explicit and reversible.
    2 blocks ahead). Drawn: the template's exposed faces in each block's map colour (~35 %), cells at
    or above the ground row that would replace a solid block in orange (advisory: placing replaces
    them; floor/foundation rows replacing terrain are not flagged), block entities the mod did not
-   place in strong red, the box edges (red when `place` would refuse) and a brass bar on the entrance
-   side. The HUD shows the blueprint, repos, rotation, the verdict (`place`'s refusals, computed on
+   place in strong red, the outline of the drawn footprint (red when `place` would refuse; the whole
+   box `place` reserves is added faintly when the refusal is an overlap or the player standing in it)
+   and a brass bar on the front-most entrance face. The outline follows the drawn columns, not the
+   template box: a template need not write every cell of its box (the studio's porch is 7 of its 37
+   columns wide; the box corners beside it stay terrain). The HUD shows the blueprint, repos, rotation, the verdict (`place`'s refusals, computed on
    the client: repo already built, too many repos, build height, overlap, block entities) and counts.
    Keys (consumed before vanilla): `R` rotate (Shift+R back), arrows nudge (relative to the view),
    PgUp/PgDn raise/lower, `L` lock (the ghost stays when looking away; L's advancements screen is
