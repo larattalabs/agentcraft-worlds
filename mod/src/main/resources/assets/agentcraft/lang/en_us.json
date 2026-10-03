@@ -36,5 +36,6 @@
   "key.agentcraft.console": "Open the console",
   "key.agentcraft.console_terminal": "Console (looking at a terminal)",
   "key.agentcraft.decisions": "Answer decisions",
-  "key.agentcraft.build": "Building wizard"
+  "key.agentcraft.build": "Building wizard",
+  "key.agentcraft.hub": "Open the hub"
 }

@@ -5,7 +5,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.agentcraft.AgentCraft;
+import dev.agentcraft.building.Blueprint;
 import dev.agentcraft.building.BlueprintTransform;
+import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.building.BuildingCommands;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.dev.DevBridge;
@@ -22,6 +24,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.input.KeyEvent;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The building wizard (docs/BUILDINGS.md "Wizard (client)"): {@code /agentcraft build} or {@code B}
@@ -71,6 +74,43 @@ public final class BuildingWizardFeature {
 		List<String> keep = BuildPlacement.active() ? BuildPlacement.repos() : List.of();
 		BuildPlacement.cancel();
 		mc.gui.setScreen(new RepoPickScreen(keep));
+	}
+
+	/**
+	 * Opens the repo step for a blueprint chosen up front (the hub's "Place"): picking repos goes straight
+	 * to placement mode with it. Cancels a placement in progress.
+	 */
+	public static void openFor(String blueprintId) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc.player == null) {
+			return;
+		}
+		BuildPlacement.cancel();
+		mc.gui.setScreen(new RepoPickScreen(List.of(), blueprintId));
+	}
+
+	/**
+	 * Enters placement mode with {@code blueprintId} for {@code repos} (closes any screen). Returns why it
+	 * cannot (unknown blueprint, wrong repo count, not singleplayer), or null when placement started.
+	 */
+	public static @Nullable String placeNow(String blueprintId, List<String> repos) {
+		Blueprint bp = Blueprints.get(blueprintId);
+		if (bp == null) {
+			return "Unknown blueprint '" + blueprintId + "'";
+		}
+		if (repos.isEmpty()) {
+			return "Name at least one repo";
+		}
+		String why = RepoPickScreen.fits(bp, repos.size());
+		if (why != null) {
+			return why;
+		}
+		try {
+			BuildPlacement.start(blueprintId, repos);
+			return null;
+		} catch (IllegalArgumentException e) {
+			return e.getMessage();
+		}
 	}
 
 	/**
@@ -301,6 +341,8 @@ public final class BuildingWizardFeature {
 		if (mc.gui.screen() instanceof RepoPickScreen rs) {
 			sc.addProperty("step", "repos");
 			sc.addProperty("textMode", rs.textMode());
+			sc.addProperty("blueprint", rs.fixedBlueprint());
+			sc.addProperty("error", rs.error());
 			JsonArray a = new JsonArray();
 			rs.chosen().forEach(a::add);
 			sc.add("chosen", a);
@@ -310,6 +352,7 @@ public final class BuildingWizardFeature {
 			bs.repos().forEach(a::add);
 			sc.add("repos", a);
 			sc.addProperty("selected", bs.current() == null ? null : bs.current().id());
+			sc.addProperty("descriptionRows", bs.descriptionRowsShown());
 		} else {
 			sc = null;
 		}
