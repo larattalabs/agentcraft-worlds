@@ -75,22 +75,33 @@ A placed blueprint is a building:
   is refused). The first building placed is `home` (idle agents go there) until changed.
 - Anchors are stored in world space, rotated. Per-wing anchors drop the suffix and gain the repo:
   `task_wall@2` -> `task_wall:<repoId>`; for a single building `task_wall@1` -> `task_wall`.
+  A group building also keeps wing 1's anchor under the plain name (`task_wall`), so consumers that
+  only know `task_wall` work in every building. Anchors of wings without a repo are dropped; their
+  `repo:#n` / `ci:#n` bindings stay unrewritten (they match no repo).
+- `origin` is the rotated box's minimum corner (vanilla rotates about the template's origin cell, so
+  placement shifts by the rotated box's minimum). The file also stores `box` (the world box the
+  template and its snapshot cover); ids `b<n>` are never reused (`next` in the file).
 - Before placing, the blocks and block entities in the target box are saved to
   `<world>/agentcraft-buildings/<id>.before.nbt`; removing the building puts them back exactly.
 - Placement refuses to overwrite block entities the mod did not place (chests, spawners, ...)
   unless forced, and is only ever done on an explicit command / wizard confirm.
+  It always refuses a box that overlaps another building (removing the older one would break the
+  newer one), a repo that already has a building and more repos than wings.
 
 ## Server API (mod, `dev.agentcraft.building`)
 
 - `Blueprints`: registry (bundled + user folder), `get(id)`, `all()`, `reload()`.
-- `Buildings`: `all()`, `forRepo(repoId)`, `home()`, `place(level, blueprint, origin, rotation,
-  repos, force) -> Building`, `remove(level, id)`, persistence, change listeners.
+- `Buildings`: `all()`, `get(id)`, `forRepo(repoId)`, `home()`, `layoutFor(repoId)` (that repo's
+  building layout, else `Anchors.current()`), `place(level, blueprint, origin, rotation, repos,
+  force) -> Building`, `remove(level, id)`, `forget(server, id)`, `setHome(server, id)`, persistence,
+  change listeners. Errors are `Buildings.BuildingException` with a player-facing message.
 - Commands (gamemaster): `/agentcraft blueprints [reload]`, `/agentcraft buildings`,
   `/agentcraft place <blueprint> <repo>[,<repo>...] [rotation] [force]` (in front of the player,
-  ground at the player's feet), `/agentcraft remove <buildingId>`, `/agentcraft home <buildingId>`.
+  ground at the player's feet), `/agentcraft remove <buildingId> [forget]`, `/agentcraft home <buildingId>`.
 - `Anchors.current()` keeps working: in the AgentCraft HQ world it is the studio as today; in any
-  world with buildings it is the home building's layout. Per-building lookups go through
-  `Buildings`.
+  world with buildings it is the home building's layout (shown, not saved as
+  `agentcraft-anchors.json`). Per-building lookups go through `Buildings`. Buildings placed in the HQ
+  world (e.g. by the verify loop) never replace the studio there.
 
 ## Client (routing)
 

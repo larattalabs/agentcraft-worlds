@@ -374,6 +374,48 @@ their faces), plus a sample row of all 16 blocks between vanilla reference block
 (`cam_blockrow`). `/agentcraft anchors` and `dev.anchors` list the anchors; `dev.camera {anchor}`
 uses them.
 
+### Buildings (blueprints placed per repo)
+The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.building`.
+- `Blueprints`: bundled sidecars `data/<ns>/blueprints/<id>.blueprint.json` + templates
+  `data/<ns>/structure/<id>.nbt` (via the server's resource + structure template managers), then
+  `<gameDir>/agentcraft/blueprints/<id>.blueprint.json` + `<id>.nbt` (read with NbtIo, data-fixed,
+  `StructureTemplate.load`); same id in the user folder wins. Loaded on server start, data pack reload
+  and `/agentcraft blueprints reload`. A sidecar whose `size` differs from its template, or that
+  doesn't parse, is skipped with a log line (missing required anchors are only warnings).
+- `Buildings`: `<world>/agentcraft-buildings.json` (`{version, next, buildings:[...]}`; ids `b<n>`
+  are never reused), loaded for any world. `place` refuses: a repo that already has a building, more
+  repos than wings, a box leaving the build height, a box overlapping another building (never
+  forceable, removal would break the newer one), and block entities that are not AgentCraft stations
+  (unless `force`). It then saves the box (air included, verified to hold one entry per cell) to
+  `<world>/agentcraft-buildings/<id>.before.nbt`, places with mirror NONE, entities ignored, no
+  waterlogging, flags `UPDATE_CLIENTS | SUPPRESS_DROPS | SKIP_BLOCK_ENTITY_SIDEEFFECTS` (a forced
+  chest is replaced without spilling, so restore doesn't duplicate items), reconnects panels,
+  rewrites `<prefix>:#n` bindings to the n-th repo, clears drops. `remove` places the snapshot back
+  at the same corner and deletes it; `remove <id> forget` only drops the record.
+- Placement math is `BlueprintTransform` (pure; unit tests in `src/test/java`, `gradlew test`, also
+  run by `build`). Vanilla rotates about the template's origin cell (clockwise_90 puts the footprint
+  at x-(sizeZ-1)..x), so `place` shifts the position by the rotated box's minimum: the `origin` is
+  always the rotated box's minimum corner. Anchors use the continuous form of the same map:
+  CW `(x,z) -> (sizeZ - z, x)`, 180 `(sizeX - x, sizeZ - z)`, CCW `(z, sizeX - x)`, yaw + 90 per
+  clockwise turn.
+- Wing anchors: single building `name@1 -> name`; group `name@n -> name:<repo>` plus plain `name`
+  for wing 1 (so `task_wall` exists in every building). Unused wings' anchors are dropped and their
+  `repo:#n` bindings stay as they are (they match no repo).
+- Layouts: in the HQ world `Anchors.current()` stays the studio. In any other world it is the home
+  building's layout (`Anchors.showDerived`, never written to `agentcraft-anchors.json`), EMPTY with
+  no buildings. `Buildings.layoutFor(repoId)` = that repo's building layout (name `building:<id>`,
+  revision `placedAt`), else `Anchors.current()`.
+- Commands (gamemaster, allowed in Hardcore too: explicit and reversible): `/agentcraft blueprints
+  [reload]`, `/agentcraft buildings`, `/agentcraft place <blueprint> <repo>[,<repo>...] [rotation]
+  [force]` (everything after the blueprint is one greedy argument, so repo ids need no quotes;
+  rotation `none|clockwise_90|clockwise_180|counterclockwise_90` or `cw|ccw|90|180|270`, default:
+  entrance facing the player; ground row at the feet, near edge 2 blocks ahead, centred),
+  `/agentcraft remove <id> [forget]`, `/agentcraft home <id>`.
+- Trying it without a bundled blueprint: save a structure with a structure block (it lands in
+  `<world>/generated/<ns>/structure/<name>.nbt`), copy it to `run/agentcraft/blueprints/<id>.nbt`,
+  write `<id>.blueprint.json` next to it (size = the structure block's size), then
+  `/agentcraft blueprints reload`.
+
 ### Blocks
 All 16 blocks of the assets-src block contract are registered (`block.ModBlocks`) with block items
 and the "AgentCraft Studio" creative tab (`block.ModItems`, translation key `itemGroup.agentcraft`).
