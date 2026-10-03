@@ -40,6 +40,17 @@ Where they live:
 - Coordinates are relative to the template's own origin (its minimum corner, `0,0,0`), unrotated.
   `groundY` is the template row that sits on the terrain surface (rows below it are foundation).
   `front` is the direction the entrance faces in the unrotated template.
+- `groundY` is the feet row: the row a player stands in at ground level. Row `groundY - 1` is the
+  floor and replaces the terrain's top block; rows below it are foundation.
+- Seat anchors (`desk_<id>`, `seat_<id>`, `lounge*`, `meeting*`) have their feet cell inside the
+  seat block (stairs), as in the studio: a seat block under the feet, two free cells above, and a
+  free standable neighbour cell to step from.
+- Block-entity NBT is only ever `{"binding": "..."}`; every cell of a multi-block monitor or task
+  board carries the same binding; `memory_catalog` has no block entity; `console_terminal` and
+  `decision_podium` are written unbound.
+- The whole `walk` region is written (interior air included) so placing a building clears it.
+- Front doors are written closed (in Hardcore an open door lets mobs in at night); agents inside a
+  building do not need to path through it, and moving between buildings teleports for now.
 - `kind`: `single` (one repo) or `group` (up to `wings` repos; wing `n` is the n-th repo chosen).
 - `walk`: the walkable region (becomes the building's layout bounds after placement).
 - `anchors`: the names and meanings of `dev.agentcraft.layout.AnchorNames` (spots = feet position,
