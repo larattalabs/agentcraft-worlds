@@ -131,8 +131,7 @@ describe('claude backend design jobs (fake SDK)', () => {
     expect(d.blueprintId).toBe('gen_lakeside_cabin_2');
     expect(fs.readFileSync(path.join(outDir, 'gen_lakeside_cabin.nbt'), 'utf8')).toBe('an older one');
     expect(d.size).toEqual({ x: 29, y: 15, z: 32 });
-    const real = fs.realpathSync(outDir);
-    expect(d.previews).toEqual(['front', 'iso', 'top'].map((v) => path.join(real, `gen_lakeside_cabin_2.preview-${v}.png`)));
+    expect(d.previews).toEqual(['front', 'iso', 'top'].map((v) => path.join(outDir, `gen_lakeside_cabin_2.preview-${v}.png`)));
     for (const p of d.previews!) expect(fs.existsSync(p)).toBe(true);
     const sc = JSON.parse(fs.readFileSync(path.join(outDir, 'gen_lakeside_cabin_2.blueprint.json'), 'utf8')) as Record<string, unknown>;
     expect(sc).toMatchObject({ id: 'gen_lakeside_cabin_2', name: 'Lakeside Cabin', kind: 'single', wings: 1 });
@@ -149,6 +148,7 @@ describe('claude backend design jobs (fake SDK)', () => {
     expect(opts.tools).toEqual(expect.arrayContaining(['Read', 'Write', 'Edit', 'Bash']));
     for (const t of ['WebFetch', 'WebSearch', 'Agent', 'Task']) expect(opts.tools as string[]).not.toContain(t);
     expect(opts.strictMcpConfig).toBe(true);
+    expect(opts.permissionMode).toBe('default');
     expect(Object.keys(opts.mcpServers!)).toEqual(['agentcraft']);
     expect(opts.systemPrompt).toMatchObject({ type: 'preset', preset: 'claude_code' });
     const brief = fs.readFileSync(path.join(scratch, 'BRIEF.md'), 'utf8');
@@ -169,6 +169,29 @@ describe('claude backend design jobs (fake SDK)', () => {
     expect(h.fm.store.data.feed.some((f) => f.text.includes(`Design ${id} started`))).toBe(true);
     expect(h.fm.store.data.feed.some((f) => f.text.includes(`Design ${id} is ready`))).toBe(true);
     expect(h.events.some((e) => e.type === 'notify' && e.text.includes('gen_lakeside_cabin_2'))).toBe(true);
+  });
+
+  it('auto mode is not used for design turns: what the policy asks about (network) is refused', async () => {
+    h.cfg.claude.permissions.mode = 'auto';
+    let curl: unknown;
+    let mode: unknown;
+    script = async function* (prompt, opts) {
+      const s = sid();
+      yield init(s);
+      mode = opts.permissionMode;
+      curl = await opts.canUseTool!('Bash', { command: 'curl https://example.com' }, { signal: new AbortController().signal, toolUseID: 'x', requestId: 'r' } as never);
+      writeDesign(opts.cwd!, bpOf(prompt)!);
+      yield ok(s);
+    };
+    try {
+      const d = h.fm.requestDesign(request(outDir, { name: 'Auto Mode' }));
+      await until(() => ['done', 'failed'].includes(h.fm.designs.get(d.id)!.status), 30_000);
+      expect(mode).toBe('default');
+      expect((curl as { behavior: string }).behavior).toBe('deny');
+      expect(h.fm.decisions.open()).toEqual([]);
+    } finally {
+      h.cfg.claude.permissions.mode = 'policy';
+    }
   });
 
   it('a failed check goes back to the designer in the same session; then it passes', async () => {

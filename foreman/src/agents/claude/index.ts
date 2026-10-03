@@ -1347,6 +1347,9 @@ export class ClaudeBackend implements Backend {
       maxTurns: spec.maxTurns,
       settingSources: [],
       ...perm,
+      // never auto mode: its classifier would decide what the policy asks about (network, ...);
+      // here every such call reaches auxCanUseTool, which refuses it
+      permissionMode: 'default',
       canUseTool: this.auxCanUseTool(logId, cwd, turn),
       tools: ((perm.tools as string[] | undefined) ?? []).filter((t) => !off.has(t)),
       disallowedTools: [...new Set([...(perm.disallowedTools ?? []), 'Agent', 'Task', 'WebFetch', 'WebSearch'])],

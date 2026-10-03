@@ -9,7 +9,7 @@ import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, type Ctx, type Logger } from './context.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
-import { DesignBook, describeRequest, isFinalDesign, type Installed } from './designs.js';
+import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { Memory, MemoryError } from './memory.js';
 import { Notifier } from './notifier.js';
 import type {
@@ -581,6 +581,8 @@ export class Foreman {
     if (!this.backend) throw new ClientError('no backend running');
     if (!this.backend.onDesignRequest) throw new ClientError(`the ${this.backend.name} backend cannot design buildings`);
     if (this.status.auth === 'failed') throw new ClientError(`Claude is not available: ${this.status.message ?? 'auth failed'}`);
+    const bad = outDirProblem(request.outDir);
+    if (bad) throw new ClientError(`outDir ${bad}`);
     const d = this.designs.create(request);
     const queued = this.designs.active().filter((x) => x.id !== d.id).length;
     this.bus.feed('system', `Design ${d.id} requested: ${describeRequest(request)}${queued ? ` (${queued} ahead in the queue)` : ''}`, { agentId: 'user' });

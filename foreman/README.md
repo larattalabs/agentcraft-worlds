@@ -461,9 +461,10 @@ A job (claude backend, `src/agents/claude/design.ts`), one at a time:
    else the style>`, free in `outDir` at that moment. A remix copies the source module (a bundled
    design, or the module an earlier job wrote).
 2. A design agent turn runs there: `claude_code` preset, `claude.designModel`, worker effort and
-   max turns, cwd = the scratch dir, the workers' permission machinery (policy, or auto mode's
-   guardrails) except that nothing can prompt: whatever the policy would ask about is refused with a
-   reason. No web tools, subagents, skills or the user's MCP servers; one tool, `design_status(step)`,
+   max turns, cwd = the scratch dir, the AgentCraft policy as for a worker in that dir (always, also
+   when `claude.permissions.mode` is `auto`: its classifier would decide what the policy asks
+   about, e.g. network), except that nothing can prompt: whatever the policy would ask about is
+   refused with a reason. No web tools, subagents, skills or the user's MCP servers; one tool, `design_status(step)`,
    for progress (tool calls are mapped to steps too: writing the design, running the checker,
    looking at the renders). It logs as `designer` (`logs/designer.jsonl`; not a roster agent).
 3. The Foreman re-checks: it restores a pristine kit (only `designs/<id>.mjs` is the agent's), runs

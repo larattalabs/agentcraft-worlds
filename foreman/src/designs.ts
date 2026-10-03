@@ -133,13 +133,21 @@ export function freeBlueprintId(outDir: string, base: string, taken: ReadonlySet
  * created, then the real path checked again: a link must not lead elsewhere). Returns the real path.
  */
 export function prepareOutDir(outDir: string): string {
-  const e = blueprintOutDirError(outDir);
+  const e = outDirProblem(outDir);
   if (e) throw new Error(`outDir ${e}`);
-  fs.mkdirSync(outDir, { recursive: true });
-  const real = fs.realpathSync(outDir);
-  const segs = real.split(/[\\/]+/).filter(Boolean);
-  if (segs[segs.length - 2] !== 'agentcraft' || segs[segs.length - 1] !== 'blueprints') throw new Error(`outDir resolves to ${real}, not an agentcraft/blueprints folder`);
-  return real;
+  const dir = path.resolve(outDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const real = fs.realpathSync(dir);
+  if (path.basename(real) !== 'blueprints' || path.basename(path.dirname(real)) !== 'agentcraft') throw new Error(`outDir resolves to ${real}, not an agentcraft/blueprints folder`);
+  return dir;
+}
+
+/**
+ * The protocol's outDir rule plus: absolute on THIS machine (a Windows path sent to a Foreman on
+ * macOS would otherwise be a relative path under the Foreman's cwd).
+ */
+export function outDirProblem(outDir: string): string | undefined {
+  return blueprintOutDirError(outDir) ?? (path.isAbsolute(outDir) ? undefined : `must be an absolute path on this machine (${process.platform})`);
 }
 
 // ---- sidecar checks ---------------------------------------------------------------------------
@@ -308,8 +316,11 @@ export interface Installed {
  */
 export function installBlueprint(input: InstallInput): Installed {
   const outDir = prepareOutDir(input.outDir);
+  // ids that collided with some file (e.g. a leftover preview PNG): never tried twice
+  const tried = new Set(input.taken ?? []);
   for (let attempt = 0; attempt < 50; attempt++) {
-    const id = freeBlueprintId(outDir, input.baseId, input.taken);
+    const id = freeBlueprintId(outDir, input.baseId, tried);
+    tried.add(id);
     const created: string[] = [];
     try {
       const nbt = path.join(outDir, `${id}.nbt`);

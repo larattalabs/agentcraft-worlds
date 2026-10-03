@@ -86,8 +86,27 @@ describe('blueprint naming and install', () => {
     expect(fs.readFileSync(path.join(dir, 'gen_cabin.nbt'), 'utf8')).toBe('mine'); // untouched
     const sc = JSON.parse(fs.readFileSync(a.json, 'utf8')) as Sidecar;
     expect(sc).toMatchObject({ id: 'gen_cabin_3', name: 'Cabin', kind: 'single' });
-    expect(a.previews).toEqual([path.join(fs.realpathSync(dir), 'gen_cabin_3.preview-iso.png')]);
+    expect(a.previews).toEqual([path.join(dir, 'gen_cabin_3.preview-iso.png')]);
     expect(installBlueprint({ nbt, sidecar, previews: [], outDir: dir, baseId: 'gen_cabin' }).blueprintId).toBe('gen_cabin_4');
+  });
+
+  it('a leftover preview PNG moves the install on to the next id (and stays untouched)', () => {
+    const nbt = path.join(PROJECT_ROOT, BUILT_NBT_DIR, 'workshop.nbt');
+    fs.writeFileSync(path.join(dir, 'gen_left.preview-iso.png'), 'old');
+    const png = path.join(path.dirname(dir), 'y.preview-iso.png');
+    fs.writeFileSync(png, 'new');
+    const a = installBlueprint({ nbt, sidecar: { id: 'x', kind: 'single', wings: 1, size: { x: 9, y: 6, z: 9 } }, previews: [png], outDir: dir, baseId: 'gen_left' });
+    expect(a.blueprintId).toBe('gen_left_2');
+    expect(fs.readFileSync(path.join(dir, 'gen_left.preview-iso.png'), 'utf8')).toBe('old');
+    expect(fs.existsSync(path.join(dir, 'gen_left.nbt'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a Windows outDir on a POSIX Foreman (it would be relative to the cwd)', () => {
+    const win = 'C:\\Users\\alex\\agentcraft\\blueprints';
+    const nbt = path.join(PROJECT_ROOT, BUILT_NBT_DIR, 'workshop.nbt');
+    const before = fs.readdirSync(process.cwd()).sort();
+    expect(() => installBlueprint({ nbt, sidecar: { id: 'x' }, previews: [], outDir: win, baseId: 'gen_x' })).toThrow(/absolute path on this machine/);
+    expect(fs.readdirSync(process.cwd()).sort()).toEqual(before);
   });
 
   it('refuses an outDir that is not the blueprints folder, even when called directly', () => {
@@ -166,6 +185,16 @@ describe('sim backend design jobs', () => {
     const d = h.fm.requestDesign(request(outDir, { maxSize: { x: 20, y: 16, z: 20 } }));
     await until(() => h.fm.designs.get(d.id)!.status === 'failed');
     expect(h.fm.designs.get(d.id)!.error).toMatch(/exceeds/);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a Windows outDir on a POSIX Foreman right away', async () => {
+    const replies: Array<{ type: string; ok?: boolean; error?: string }> = [];
+    const n = h.fm.designs.list().length;
+    await h.fm.handle({ v: 1, type: 'design.request', id: 'c5', request: request('C:\\Users\\alex\\agentcraft\\blueprints') }, (m) => replies.push(m as never));
+    const ack = replies.find((m) => m.type === 'ack')!;
+    expect(ack.ok).toBe(false);
+    expect(ack.error).toMatch(/absolute path on this machine/);
+    expect(h.fm.designs.list().length).toBe(n);
   });
 
   it('cancel: stops the job, nothing lands in outDir, the design stays cancelled', async () => {
