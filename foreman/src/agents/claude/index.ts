@@ -38,7 +38,7 @@ import { truncate } from '../../util/text.js';
 import { buildSkillsPlugin, instructionsBlock, workspaceInstructionDirs } from './context.js';
 import { connectorHook, guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
-import { type RepoRole, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
+import { type RepoRole, leadRepoContext, leadSystemPrompt, planPrompt, RESUME_PROMPT, reviewPrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
 import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
@@ -837,12 +837,22 @@ export class ClaudeBackend implements Backend {
     return withAuthMode(agentEnv(process.env, who), this.cfg.useClaudeLogin);
   }
 
-  private cwdFor(job: Job): { cwd: string; role: 'lead' | 'worker'; repoId: string } {
+  private async cwdFor(job: Job): Promise<{ cwd: string; role: 'lead' | 'worker'; repoId: string }> {
     if (job.agentId === LEAD) {
       const goal = job.goalId ? this.fm.goal(job.goalId) : this.fm.currentGoal();
       const repo = goal?.repoId ? this.fm.repos.get(goal.repoId) : this.fm.repos.defaultRepo();
       if (!repo) throw new Error('no repo for the lead');
-      return { cwd: repo.path, role: 'lead', repoId: repo.id };
+      // read-only views of every repository's base: the lead plans against what workers start from
+      const views = await Promise.all(
+        this.fm.repos.list().map((r) =>
+          this.fm.repos.leadView(r.id).catch((e) => {
+            this.fm.log.warn(`lead view of ${r.id}: ${(e as Error).message}; the lead reads the checkout`);
+            return undefined;
+          }),
+        ),
+      );
+      const view = views[this.fm.repos.list().indexOf(repo)];
+      return { cwd: view ?? repo.path, role: 'lead', repoId: repo.id };
     }
     const t = job.taskId ? this.fm.tasks.get(job.taskId) : undefined;
     if (!t?.worktree || !t.repoId) throw new Error(`job for ${job.agentId} has no worktree`);
@@ -1021,7 +1031,7 @@ export class ClaudeBackend implements Backend {
       // a paused/stopped turn of this agent may still be winding down: never run two CLIs on one
       // agent (they could share a session)
       if (previous?.reaping) await Promise.race([previous.reaping, sleep(10_000)]);
-      const where = this.cwdFor(job);
+      const where = await this.cwdFor(job);
       cwd = where.cwd;
       const role = where.role;
       const repoId = where.repoId;
@@ -1033,7 +1043,10 @@ export class ClaudeBackend implements Backend {
       this.fm.store.markDirty();
 
       let systemAppend: string;
-      if (role === 'lead') systemAppend = leadSystemPrompt(this.fm, this.team, roleOf);
+      if (role === 'lead') {
+        const where = leadRepoContext(this.fm, repoId, cwd);
+        systemAppend = `${leadSystemPrompt(this.fm, this.team, roleOf)}${where ? `\n\n${where}` : ''}`;
+      }
       else {
         const t = this.fm.tasks.require(job.taskId!);
         systemAppend = workerSystemPrompt(this.fm, agentId, this.fm.repos.requireWorktree(t.repoId!, t.worktree!), roleOf(agentId));

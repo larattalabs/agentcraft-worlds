@@ -875,6 +875,42 @@ export class RepoManager {
     if (res.code !== 0) this.ctx.log.warn(`${r.name}: could not fetch ${remote}/${r.branch} (${(res.stderr || res.stdout).trim().split('\n').pop()}); using the last fetched state`);
   }
 
+  /** repo id -> the lead's read-only view of the base (see leadView) */
+  private views = new Map<string, string>();
+
+  /**
+   * A read-only view of the repository's base for the lead: a detached worktree at the base
+   * (PR repos: the freshly fetched origin/<base>) under <worktrees>/<repo>/_lead, refreshed on every
+   * call. The lead plans and reviews against what workers start from, not against the user's
+   * checkout, which may be on another branch with work in progress. Nothing is ever written there.
+   */
+  leadView(repoId: string): Promise<string> {
+    return this.serial(repoId, async () => {
+      const r = this.require(repoId);
+      const pr = this.landsAsPr(r.id);
+      if (pr) await this.fetchBase(r);
+      const sha = await gitOut(r.path, ['rev-parse', '--verify', pr ? `refs/remotes/${this.remoteOf(r.id)}/${r.branch}` : `refs/heads/${r.branch}`]);
+      const dir = path.join(this.worktreeRoot, r.id, '_lead');
+      const lf = ['-c', 'core.autocrlf=false'];
+      const known = fs.existsSync(dir) && (await listWorktrees(r.path)).some((e) => samePath(e.path, dir));
+      if (known) {
+        await git(dir, [...lf, 'checkout', '-q', '--force', '--detach', sha]);
+      } else {
+        fs.rmSync(dir, { recursive: true, force: true });
+        await git(r.path, ['worktree', 'prune'], { allowFail: true });
+        ensureDir(path.dirname(dir));
+        await git(r.path, [...lf, 'worktree', 'add', '-q', '--detach', dir, sha]);
+      }
+      this.views.set(r.id, dir);
+      return dir;
+    });
+  }
+
+  /** The lead's view of a repository, once leadView made it. */
+  viewPath(repoId: string): string | undefined {
+    return this.views.get(repoId);
+  }
+
   /** repoSettings.protect for a repo. */
   protectedPaths(repoId: string): string[] {
     return this.settingsFor(repoId).protect ?? [];

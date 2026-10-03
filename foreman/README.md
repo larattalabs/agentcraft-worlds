@@ -154,6 +154,11 @@ DevOps, `gh pr create` for GitHub (other remotes: pushed only). `squash` pushes 
 by you, with the agents as Co-authored-by. The push never overwrites a remote branch AgentCraft did
 not push itself. Agents still never push: only the Foreman does, and only after your approval.
 
+The lead reads code in a read-only view of each repository's base (a detached worktree at
+`<profile>/worktrees/<repo>/_lead`, refreshed before every lead turn; PR repos: the freshly fetched
+`origin/<base>`), so it plans and reviews against what workers start from rather than your checkout,
+which may be on another branch with work in progress.
+
 A goal can span registered repositories: the lead sees all of them (with base and landing mode),
 gives each task its repository (`create_task` `repo`), and orders them with deps; every registered
 repository is readable for agents.

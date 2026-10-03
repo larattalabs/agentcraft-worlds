@@ -192,8 +192,11 @@ describe('a goal across repositories', () => {
     await fm.submitGoal('an endpoint and its UI', 'demo-app');
     await until(() => turns.some((t) => t.created));
     const lead = turns.find((t) => t.created)!;
-    expect(lead.prompt).toContain('Registered repositories');
-    expect(lead.prompt).toMatch(/- web-app: .*base main, lands by a local merge/);
+    const append = (lead.options.systemPrompt as { append: string }).append;
+    expect(append).toContain('# Registered repositories');
+    expect(append).toMatch(/- web-app: read it at .*worktrees\/web-app\/_lead; base main, lands by a local merge/);
+    expect(append).toContain('is a read-only view of demo-app');
+    expect(lead.options.cwd).toBe(path.join(h.cfg.dataDir, 'worktrees', 'demo-app', '_lead'));
     expect(lead.created![2]).toMatch(/no repository nope \(registered: demo-app, web-app\)/);
     const [t1, t2] = fm.tasks.list();
     expect(t1!.repoId).toBe('demo-app');
@@ -202,5 +205,41 @@ describe('a goal across repositories', () => {
     // the lead may read both repositories
     const read = await lead.options.canUseTool!('Read', { file_path: path.join(web, 'README.md') }, { signal: new AbortController().signal, toolUseID: 'x', requestId: 'r' } as never);
     expect(read?.behavior).toBe('allow');
+  });
+});
+
+describe("the lead's view of the base", () => {
+  it('follows the base branch, not the checkout, and refreshes on every call', async () => {
+    const home = tempDir();
+    const repo = await demoRepo();
+    try {
+      write(path.join(home, 'config.json'), JSON.stringify({ repoSettings: { [repo]: { baseBranch: 'main' } } }));
+      const h = makeForeman(home, ['--backend', 'sim']);
+      await h.fm.repos.add(repo);
+      // the user is on a feature branch with uncommitted work in progress
+      g(repo, 'checkout', '-qb', 'feature/wip');
+      write(path.join(repo, 'WIP.md'), 'half done\n');
+      g(repo, 'add', '.');
+      g(repo, 'commit', '-qm', 'wip');
+      write(path.join(repo, 'README.md'), 'uncommitted\n');
+      const view = await h.fm.repos.leadView('demo-app');
+      expect(view).toBe(path.join(h.cfg.dataDir, 'worktrees', 'demo-app', '_lead'));
+      expect(fs.existsSync(path.join(view, 'WIP.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(view, 'README.md'), 'utf8')).not.toBe('uncommitted\n');
+      // the base moves on: the next call shows it
+      g(repo, 'checkout', '-q', 'main');
+      g(repo, 'stash', '-q');
+      write(path.join(repo, 'LANDED.md'), 'merged\n');
+      g(repo, 'add', '.');
+      g(repo, 'commit', '-qm', 'landed');
+      expect(await h.fm.repos.leadView('demo-app')).toBe(view);
+      expect(fs.existsSync(path.join(view, 'LANDED.md'))).toBe(true);
+      expect(h.fm.repos.viewPath('demo-app')).toBe(view);
+      expect(h.fm.repos.get('demo-app')!.worktrees).toEqual([]); // not an agent worktree
+      await h.fm.close();
+    } finally {
+      rmrf(home);
+      rmrf(path.dirname(repo));
+    }
   });
 });

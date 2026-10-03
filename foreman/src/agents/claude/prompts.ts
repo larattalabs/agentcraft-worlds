@@ -1,4 +1,5 @@
 // System-prompt appendices and job prompts for the claude backend.
+import path from 'node:path';
 import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
 import type { Foreman } from '../../foreman.js';
 import type { Goal, Task, Worktree } from '../../protocol.js';
@@ -103,23 +104,34 @@ export function planText(fm: Foreman, goal?: Goal, planId?: string): string {
   return plan ? truncate(plan.body, 3000) : '(no plan in memory)';
 }
 
-/** The registered repositories, for goals that span several (create_task repo). */
-function reposSection(fm: Foreman, goal: Goal): string {
+/**
+ * The lead's view of the repositories for one turn: where it reads each one (a read-only view of
+ * the base when there is one, else the user's checkout) and, with several, how to spread a goal.
+ */
+export function leadRepoContext(fm: Foreman, goalRepoId: string | undefined, cwd: string): string {
   const repos = fm.repos.list();
-  if (repos.length < 2) return '';
-  const lines = repos.map((r) => `- ${r.id}${r.id === goal.repoId ? ' (this goal\'s repository, the default)' : ''}: ${r.path}, base ${r.branch}, ${fm.repos.landsAsPr(r.id) ? 'lands as a pull request' : 'lands by a local merge'}`);
-  return `
-Registered repositories (you may read all of them; give every task the one repository it changes with create_task repo):
-${lines.join('\n')}
-A goal can span repositories (e.g. an API change and the UI that uses it): one task per repository change, deps across repositories for order. A dependent task's worker sees another repository's change only once it has landed there.
-`;
+  const where = (id: string, checkout: string) => fm.repos.viewPath(id) ?? checkout;
+  const goalRepo = goalRepoId ? fm.repos.get(goalRepoId) : undefined;
+  const parts: string[] = [];
+  if (goalRepo && cwd !== goalRepo.path) {
+    parts.push(
+      `# Where you read code\nYour working directory ${cwd} is a read-only view of ${goalRepo.name}'s base branch ${goalRepo.branch}${fm.repos.landsAsPr(goalRepo.id) ? ' as it is on the server' : ''}: exactly what workers start from. ${userName()}'s own checkout at ${goalRepo.path} may be on another branch with unrelated work in progress; plan against the view.`,
+    );
+  }
+  if (repos.length >= 2) {
+    const lines = repos.map((r) => `- ${r.id}${r.id === goalRepoId ? ' (this goal\'s repository, the default)' : ''}: read it at ${where(r.id, r.path)}; base ${r.branch}, ${fm.repos.landsAsPr(r.id) ? 'lands as a pull request' : 'lands by a local merge'}`);
+    parts.push(
+      `# Registered repositories\nYou may read all of them; give every task the one repository it changes with create_task repo.\n${lines.join('\n')}\nA goal can span repositories (e.g. an API change and the UI that uses it): one task per repository change, deps across repositories for order. A dependent task's worker sees another repository's change only once it has landed there.`,
+    );
+  }
+  return parts.join('\n\n');
 }
 
 export function planPrompt(fm: Foreman, goal: Goal, repoPath: string, branch: string): string {
   return `New goal from ${userName()}:
 "${goal.text}"
 
-Repository: ${repoPath} (base branch ${branch}).${reposSection(fm, goal)} Explore it read-only (Glob/Grep to find files, Read for a file - Read cannot open a directory), then:
+Repository: ${path.basename(repoPath)} (base branch ${branch}), in your working directory. Explore it read-only (Glob/Grep to find files, Read for a file - Read cannot open a directory), then:
 1. write_memory the plan (title "Plan: ...", scope shared)
 2. create_task for each task (deps + assignee)
 3. send_message to "all" with a two-line briefing

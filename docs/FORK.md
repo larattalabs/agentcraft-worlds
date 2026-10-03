@@ -44,6 +44,7 @@ branch is cut from `upstream/main` so it can go upstream as its own PR.
 | `foreman/repo-agents` | repo `.claude/agents` files as worker roles (`repoSettings.roles`) and subagents (`repoSettings.subagents: "repo"`); stacked on roles/repo-settings/permissions | after those |
 | `foreman/workspace-repos` | workspace instructions above a repo, `baseBranch`, `protect`, repo `env` | after repo-settings |
 | `foreman/cross-repo-pr` | `land: "pr"` (push + `az`/`gh` PR on approval, squash as user), cross-repo goals; stacked on workspace-repos | after workspace-repos |
+| `foreman/lead-view` | the lead reads a read-only view of each repo's base (`_lead` worktree), not the user's checkout | after cross-repo-pr |
 | `foreman/usage-banner` | plan usage windows in `foreman.status.usage` + console (stacked on `foreman/rate-limits`) | yes, after rate-limits |
 
 ## Build sequence

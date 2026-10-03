@@ -169,9 +169,9 @@ describe('claude backend orchestration (fake SDK)', () => {
     expect(kitLog.some((l) => l.startsWith('tool:Edit src/cli.ts'))).toBe(true);
     expect(kitLog.some((l) => l.startsWith('diff:src/cli.ts'))).toBe(true);
     expect(kitLog.some((l) => l.includes('Alex denied'))).toBe(true);
-    // workers never ran in the user checkout; the lead did (read-only)
+    // nobody ran in the user checkout: workers in their worktrees, the lead in a read-only view of the base
     expect(calls.filter((c) => /Your task/.test(c.prompt)).every((c) => c.cwd.includes(path.join('worktrees', 'demo-app')))).toBe(true);
-    expect(fs.realpathSync(calls.find((c) => c.prompt.startsWith('New goal'))!.cwd)).toBe(fs.realpathSync(repoPath));
+    expect(calls.find((c) => c.prompt.startsWith('New goal'))!.cwd).toBe(path.join(h.cfg.dataDir, 'worktrees', 'demo-app', '_lead'));
 
     // each agent's CLI env: its own git identity, no signing, git cannot walk up out of its cwd
     const kitTurn = calls.find((c) => /Your task/.test(c.prompt) && c.cwd.includes('kit-'))!;
