@@ -51,6 +51,7 @@ const decision: Decision = {
   taskId: 't2',
   repoId: 'demo-app',
   worktree: 'kit-t2',
+  goalId: 'g1',
   createdAt: ts + 120_000,
 };
 
@@ -62,6 +63,17 @@ const repo: Repo = {
   head: 'a6cbf49',
   dirty: false,
   ci: 'pass',
+  settings: {
+    land: 'pr',
+    baseBranch: 'dev',
+    ci: 'npm test',
+    setup: 'npm ci',
+    pr: { remote: 'origin', branchPrefix: 'feat/', draft: true },
+    protect: ['.env', 'secrets/'],
+    roles: { kit: 'backend-dev' },
+    prReview: { autoSeverities: ['critical', 'important'], maxRounds: 2 },
+    envKeys: ['NODE_OPTIONS'],
+  },
   worktrees: [
     {
       id: 'kit-t2',
@@ -168,8 +180,26 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
   'decision.upsert': { v: 1, type: 'decision.upsert', decision },
   'repo.upsert': { v: 1, type: 'repo.upsert', repo },
   'memory.upsert': { v: 1, type: 'memory.upsert', entry: memory },
-  'goal.upsert': { v: 1, type: 'goal.upsert', goal: { id: 'g1', text: 'Add #tags to pocket-notes', progress: 0.56, status: 'active', repoId: 'demo-app', leadId: 'ines', createdAt: ts, updatedAt: ts + 200_000 } },
-  'feed.add': { v: 1, type: 'feed.add', item: { ts: ts + 210_000, kind: 'merge', text: 'Merged agentcraft/kit/t2-tag-parser-module into main (7cf1999, 2 files)', agentId: 'marlow' } },
+  'goal.upsert': {
+    v: 1,
+    type: 'goal.upsert',
+    goal: {
+      id: 'g1',
+      text: 'Add #tags to pocket-notes',
+      progress: 0.56,
+      status: 'active',
+      repoId: 'demo-app',
+      leadId: 'ines',
+      repos: ['demo-app', 'notes-api'],
+      instructions: ['No new dependencies', 'Keep the CLI output under 80 columns'],
+      planId: 'shared/plan-tags-for-pocket-notes',
+      branch: 'feature/tags',
+      prs: [{ taskId: 't4', url: 'https://dev.azure.com/acme/Notes/_git/pocket-notes/pullrequest/612', id: 612, status: 'open' }],
+      createdAt: ts,
+      updatedAt: ts + 200_000,
+    },
+  },
+  'feed.add': { v: 1, type: 'feed.add', item: { ts: ts + 210_000, kind: 'merge', text: 'Merged agentcraft/kit/t2-tag-parser-module into main (7cf1999, 2 files)', agentId: 'marlow', goalId: 'g1' } },
   diff: {
     v: 1,
     type: 'diff',
@@ -243,7 +273,13 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
 
 export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
   hello: { v: 1, type: 'hello', modVersion: '0.1.0', protocol: 1, client: 'mod' },
-  'goal.submit': { v: 1, type: 'goal.submit', id: 'c12', text: 'Add a --version flag to the CLI', repoId: 'demo-app' },
+  'goal.submit': { v: 1, type: 'goal.submit', id: 'c12', text: 'Add a --version flag to the CLI', repoId: 'demo-app', repos: ['demo-app', 'notes-api'], branch: 'feature/version-flag', instructions: ['No new dependencies'] },
+  'goal.message': { v: 1, type: 'goal.message', id: 'c25', goalId: 'g1', text: 'Is the tag parser case-insensitive?' },
+  'goal.instructions': { v: 1, type: 'goal.instructions', id: 'c26', goalId: 'g1', instructions: ['No new dependencies', 'Keep the CLI output under 80 columns'] },
+  'goal.plan': { v: 1, type: 'goal.plan', id: 'c27', goalId: 'g1', body: '# Plan: #tags\n\n- t2 Tag parser module - Kit\n- t3 `list --tag` - Juniper\n- t4 docs - Tove' },
+  'goal.cancel': { v: 1, type: 'goal.cancel', id: 'c28', goalId: 'g1' },
+  'goal.digest': { v: 1, type: 'goal.digest', id: 'c29', since: ts },
+  'repo.remove': { v: 1, type: 'repo.remove', id: 'c30', repoId: 'demo-app' },
   'user.message': { v: 1, type: 'user.message', id: 'c13', to: 'all', text: '@kit please also cover #tags with emoji' },
   'decision.answer': { v: 1, type: 'decision.answer', id: 'c14', decisionId: 'd2', option: 'Request changes', text: 'Export TAG_RE so format.ts can reuse it.' },
   'task.action': { v: 1, type: 'task.action', id: 'c15', taskId: 't5', action: 'reassign', arg: 'wren' },

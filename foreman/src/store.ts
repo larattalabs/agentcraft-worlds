@@ -23,6 +23,10 @@ export interface BusMessage {
   text: string;
   /** agent ids that have consumed this message */
   readBy: string[];
+  /** the goal it is about */
+  goalId?: string;
+  /** a goal.message from the user to the goal's lead (runs as its own turn; not in the inbox) */
+  goalMessage?: boolean;
 }
 
 export interface SessionRecord {

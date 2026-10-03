@@ -187,6 +187,7 @@ export const Decision = z.object({
   repoId: Id.optional().describe('merge decisions: repo to request the diff from'),
   worktree: Id.optional().describe('merge decisions: worktree to request the diff for'),
   tool: z.string().optional().describe('permission decisions: tool name, e.g. "Bash"'),
+  goalId: Id.optional().describe('the goal this decision is about (its task\'s goal, or the goal of the lead turn that asked); absent on older decisions and ones not tied to a goal'),
   createdAt: Ts,
 });
 export type Decision = z.infer<typeof Decision>;
@@ -206,6 +207,25 @@ export const Worktree = z.object({
 });
 export type Worktree = z.infer<typeof Worktree>;
 
+const BRANCH_RE = /^[\w./-]+$/;
+
+export const RepoSettingsView = z.object({
+  land: z.enum(['merge', 'pr']).describe('how approved work lands (repoSettings.land, default "merge")'),
+  baseBranch: z.string().optional().describe('configured base branch (repoSettings.baseBranch)'),
+  ci: z.string().optional().describe('configured test command (repoSettings.ci); absent = --ci or detected'),
+  setup: z.string().optional().describe('worktree setup command (repoSettings.setup)'),
+  pr: z
+    .object({ remote: z.string().optional(), branchPrefix: z.string().optional(), draft: z.boolean().optional(), squash: z.boolean().optional() })
+    .optional()
+    .describe('pull request options (repoSettings.pr)'),
+  protect: z.array(z.string()).describe('paths never committed (repoSettings.protect)'),
+  roles: z.record(z.string(), z.string()).describe('agent id -> the repository agent file that is its role here'),
+  subagents: z.string().optional().describe('"repo": the repository\'s .claude/agents files are usable as subagents'),
+  prReview: z.object({ autoSeverities: z.array(z.string()), maxRounds: z.number().int() }).optional().describe('PR review triage (configured values, else the defaults)'),
+  envKeys: z.array(z.string()).optional().describe('names of the repoSettings.env variables (values are never sent)'),
+});
+export type RepoSettingsView = z.infer<typeof RepoSettingsView>;
+
 export const Repo = z.object({
   id: Id.describe('e.g. "demo-app"'),
   name: z.string(),
@@ -215,6 +235,7 @@ export const Repo = z.object({
   dirty: z.boolean().describe('user checkout has uncommitted tracked changes (merges are refused while dirty)'),
   worktrees: z.array(Worktree),
   ci: CiStatus.describe('latest CI/test result across this repo'),
+  settings: RepoSettingsView.optional().describe('read-only view of the repository\'s config.json repoSettings (no secrets: env shows its keys only)'),
 });
 export type Repo = z.infer<typeof Repo>;
 
@@ -228,6 +249,14 @@ export const MemoryEntry = z.object({
 });
 export type MemoryEntry = z.infer<typeof MemoryEntry>;
 
+export const GoalPr = z.object({
+  taskId: Id,
+  url: z.string(),
+  id: z.number().int().describe('PR number on its host'),
+  status: PrStatus,
+});
+export type GoalPr = z.infer<typeof GoalPr>;
+
 export const Goal = z.object({
   id: Id.describe('e.g. "g1"'),
   text: z.string(),
@@ -235,6 +264,11 @@ export const Goal = z.object({
   status: GoalStatus.describe('planning (lead is planning) -> active -> done (every non-cancelled task merged/done); cancelled: every task was cancelled or rejected (back to active if the lead adds a task); failed: planning failed'),
   repoId: Id.optional(),
   leadId: Id.optional().describe('the lead running this goal (set at submit from the goal\'s repository: the lead of the building that has it). Absent = "marlow". Fixed for the goal\'s life, except when its lead is released (lead.release / lead.sync): then marlow takes the goal over'),
+  repos: z.array(Id).optional().describe('every repository the goal touches: repoId first, then each task\'s repository in order of first appearance (kept up to date)'),
+  instructions: z.array(z.string()).optional().describe('standing instructions (goal.instructions): in the lead\'s prompts, appended to new task descriptions, and a section of every worker prompt for its tasks'),
+  planId: Id.optional().describe('memory entry id of the goal\'s plan note, once it exists'),
+  branch: z.string().optional().describe('the user\'s branch the goal continues ("on <branch>:" prefix or goal.submit branch)'),
+  prs: z.array(GoalPr).optional().describe('its tasks\' pull requests (tasks with Task.pr), in task order'),
   createdAt: Ts,
   updatedAt: Ts,
 });
@@ -256,8 +290,37 @@ export const FeedItem = z.object({
   text: z.string(),
   agentId: Id.optional().describe('who it is about / from'),
   to: z.string().optional().describe('message recipient: agent id, "user" or "all"'),
+  goalId: Id.optional().describe('the goal the item is about (its tasks, its lead\'s turns for it, its PRs, goal messages); absent on older items and ones not tied to a goal'),
 });
 export type FeedItem = z.infer<typeof FeedItem>;
+
+export const DigestLineKind = z.enum(['task_done', 'task_blocked', 'task_added', 'decision_waiting', 'decision_answered', 'merged', 'pr_opened', 'pr_merged', 'pr_comments', 'message', 'goal_done']);
+export type DigestLineKind = z.infer<typeof DigestLineKind>;
+
+export const DigestLine = z.object({
+  ts: Ts,
+  kind: DigestLineKind,
+  text: z.string(),
+  taskId: Id.optional(),
+  agentId: Id.optional(),
+});
+export type DigestLine = z.infer<typeof DigestLine>;
+
+export const GoalDigest = z.object({
+  goalId: Id,
+  text: z.string().describe('the goal\'s text'),
+  status: GoalStatus,
+  progress: z.number().min(0).max(1),
+  lines: z.array(DigestLine).describe('at most 30, oldest first (newest last); routine progress left out'),
+});
+export type GoalDigest = z.infer<typeof GoalDigest>;
+
+export const Digest = z.object({
+  since: Ts,
+  until: Ts,
+  goals: z.array(GoalDigest).describe('with goalId: that goal; without: every goal with something in the window'),
+});
+export type Digest = z.infer<typeof Digest>;
 
 export const UsageWindow = z.object({
   id: z.string().describe('"five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "overage"'),
@@ -481,8 +544,21 @@ export const HelloMsg = z.object({
 export const GoalSubmitMsg = z.object({
   ...envelope('goal.submit'),
   text: z.string().min(1),
-  repoId: Id.optional().describe('defaults to the only/most recently added repo'),
+  repoId: Id.optional().describe('defaults to repos[0], else the only/most recently added repo'),
+  repos: z.array(Id).optional().describe('the repositories the goal is for (e.g. a group building\'s); the first becomes repoId when repoId is absent. The goal\'s lead is the lead of repoId'),
+  branch: z.string().regex(BRANCH_RE).optional().describe('continue this branch of the user\'s (same as an "on <branch>:" prefix; wins over it)'),
+  instructions: z.array(z.string()).optional().describe('standing instructions from the start (see goal.instructions)'),
 });
+export const GoalMessageMsg = z.object({ ...envelope('goal.message'), goalId: Id, text: z.string().min(1) });
+export const GoalInstructionsMsg = z.object({ ...envelope('goal.instructions'), goalId: Id, instructions: z.array(z.string()).describe('the full list (replace); blank lines are dropped') });
+export const GoalPlanMsg = z.object({ ...envelope('goal.plan'), goalId: Id, body: z.string().describe('the plan note\'s new markdown body') });
+export const GoalCancelMsg = z.object({ ...envelope('goal.cancel'), goalId: Id });
+export const GoalDigestMsg = z.object({
+  ...envelope('goal.digest'),
+  goalId: Id.optional().describe('one goal; omitted = every goal with activity in the window'),
+  since: Ts,
+});
+export const RepoRemoveMsg = z.object({ ...envelope('repo.remove'), repoId: Id });
 export const UserMessageMsg = z.object({
   ...envelope('user.message'),
   to: z.string().min(1).describe('agent id or "all". With "all", a leading "@name" in text routes to that agent.'),
@@ -553,6 +629,12 @@ export const ClientMessage = z.discriminatedUnion('type', [
   LeadAssignMsg,
   LeadReleaseMsg,
   LeadSyncMsg,
+  GoalMessageMsg,
+  GoalInstructionsMsg,
+  GoalPlanMsg,
+  GoalCancelMsg,
+  GoalDigestMsg,
+  RepoRemoveMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -621,7 +703,13 @@ export const SERVER_MESSAGES = {
 
 export const CLIENT_MESSAGES = {
   hello: { schema: HelloMsg, doc: 'First message after connecting. The Foreman replies with `snapshot`, then streams upserts.' },
-  'goal.submit': { schema: GoalSubmitMsg, doc: 'New goal for the lead (console: plain text).' },
+  'goal.submit': { schema: GoalSubmitMsg, doc: 'New goal for the lead (console: plain text). Acked with `{goalId}`.' },
+  'goal.message': { schema: GoalMessageMsg, doc: 'A message to the goal\'s lead about that goal. It runs as a turn of the lead\'s session for the goal (queued behind its other work; also for done/cancelled goals). The user\'s message and the lead\'s replies arrive as `feed.add` items with kind `message` and `goalId`. Acked with `{goalId, leadId}`.' },
+  'goal.instructions': { schema: GoalInstructionsMsg, doc: 'Replace the goal\'s standing instructions (`Goal.instructions`). A change is sent to the lead as a goal message. Acked with `{goalId, changed}`.' },
+  'goal.plan': { schema: GoalPlanMsg, doc: 'Write the goal\'s plan note as the user (creates it when missing; `memory.upsert`, `Goal.planId`), then send the lead a goal message with a unified diff of the change. Acked with `{goalId, planId, changed}`.' },
+  'goal.cancel': { schema: GoalCancelMsg, doc: 'Cancel every open task of the goal (running workers stop, worktrees and branches kept, open decisions withdrawn) and set it `cancelled`. Refused for a done goal. Acked with `{goalId, cancelled: [taskIds]}`.' },
+  'goal.digest': { schema: GoalDigestMsg, doc: 'What happened since `since` ("since you were away"). Acked with a `Digest` as `result` (`{since, until, goals}`); built from the feed, tasks and decisions, no model call.' },
+  'repo.remove': { schema: RepoRemoveMsg, doc: 'Unregister a repository. Refused while it has open tasks (not done/cancelled) or a goal that is still planning. Worktrees, branches and lead assignments are left alone; there is no removal broadcast: other clients see it in their next snapshot. Acked with `{repoId}`.' },
   'user.message': { schema: UserMessageMsg, doc: 'Message an agent (console: `@name text`) or everyone.' },
   'decision.answer': { schema: DecisionAnswerMsg, doc: 'Answer an open decision. Merge decisions: option "Merge" merges, "Request changes" sends `text` back to the worker, "Reject" abandons the branch.' },
   'task.action': { schema: TaskActionMsg, doc: 'Steer a task from the Task Wall.' },
@@ -647,6 +735,11 @@ export const ENTITY_SCHEMAS = {
   Worktree,
   MemoryEntry,
   Goal,
+  GoalPr,
+  RepoSettingsView,
+  Digest,
+  GoalDigest,
+  DigestLine,
   LeadAssignment,
   FeedItem,
   ForemanStatus,

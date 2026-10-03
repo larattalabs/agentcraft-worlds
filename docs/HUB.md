@@ -201,6 +201,41 @@ Client -> Foreman (all ack; errors as `ok:false` with a message):
 - `goal.submit` gains `branch?: string` (equivalent to the "on <branch>:" prefix) and `instructions?:
   string[]`.
 
+#### As implemented (Foreman, branch foreman/goals-tabs)
+- Every message above, both backends. Acks: `goal.submit {goalId}`, `goal.message {goalId,
+  leadId}`, `goal.instructions {goalId, changed}`, `goal.plan {goalId, planId, changed}`,
+  `goal.cancel {goalId, cancelled: taskIds}`, `goal.digest` -> the digest itself, `repo.remove
+  {repoId}`. `Digest`, `GoalDigest`, `DigestLine`, `GoalPr`, `RepoSettingsView` are in
+  docs/protocol.md.
+- The user's goal message is a feed item `kind: "message"`, `agentId: "user"`, `to: <lead>`, with
+  `goalId` (plain `user.message` stays `kind: "user"`). The lead's reply is what it sends to the
+  user in that turn, else its final text. A done/cancelled goal whose building lead was released
+  is answered by marlow. A stopped lead: the feed says so; the message runs at `/resume`. Unread
+  goal messages of a lead that is released go to marlow. Goal-tagged `message` feed items keep up
+  to 2000 characters (other feed items: 400).
+- `goal.instructions` / `goal.plan` messages to the lead come from the user, text "The user changed
+  the standing instructions for this goal: ..." / "The user edited the plan ... ```diff ...```".
+  Unchanged input: nothing is sent (`changed: false`). `goal.plan` on a goal without a plan
+  creates `shared/plan-<goalId>` titled "Plan: <goal text>".
+- `goal.cancel` refuses a done goal, is a no-op for a cancelled one, also cancels open decisions
+  with that `goalId` and stops the lead's plan/review/triage turn for it. Tasks done before the
+  cancel no longer re-open the goal (a cancelled goal re-opens only for open, non-done work).
+- `goal.digest`: lines from tasks (added = created in the window; done = done with its last change
+  in the window, unless a merged/pr_merged line covers it; blocked = blocked now, changed in the
+  window), decisions (`goalId`; waiting = opened in the window and open; answered = answered in
+  the window) and feed items with `goalId` (merge lines -> merged / pr_opened / pr_comments /
+  pr_merged, "Goal complete" -> goal_done, agent -> user messages). Window: `since < ts <= now`.
+  Without `goalId`: only goals with lines. Feed-based lines older than the feed's last 300 items are
+  gone.
+- `repo.remove` is also refused while a goal of that repo is still `planning`. There is no removal
+  broadcast (no message type for it): the requesting client drops it on the ack, others at their
+  next snapshot. A repo from `--repo`/`config.repos` comes back at the next Foreman start.
+- `Repo.settings` is always present: `land`, `protect`, `roles` and `prReview` (configured values,
+  else defaults) always; the others only when configured.
+- `Goal.branch` is cleared again when the claude backend cannot use the branch (feed error line);
+  the sim records it only. `Goal.planId` for goals planned before this: from the claude backend's
+  recorded plans at start.
+
 ### Repos tab (mod)
 - List: each repo with name, branch@head, dirty flag, CI lamp, worktrees, its building (or "no
   building") and lead, open PRs. Detail: path, the settings view (land mode, base branch, CI/setup
@@ -240,6 +275,12 @@ Client -> Foreman (all ack; errors as `ok:false` with a message):
 - Mod: the new goal form's target is a repo or a building (group buildings list their repos); the
   Goals list shows all of a goal's repos and can be filtered by building; the Repos tab shows each
   repo's building with its wing number ("Notes campus · wing 2") and the building's shared lead.
+
+#### As implemented (Foreman, branch foreman/goals-tabs)
+- `Goal.repos` is set at submit (`repoId`, then `goal.submit repos`) and grows as tasks reach other
+  repositories (order of first appearance); `repos[0]` becomes `repoId` when `repoId` is absent,
+  every listed repo must exist. The claude planning prompt says "This goal is for the repositories
+  a (primary), b: give each task the one repository it changes" for goals with 2+ repos.
 
 ### As implemented (mod, branch `mod/goals-tabs`)
 Details and DevBridge in mod/DEV.md "Hub" -> "Repos and Goals tabs". Notes where the mod fills gaps:
