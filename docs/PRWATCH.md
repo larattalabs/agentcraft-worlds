@@ -140,13 +140,13 @@ landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-f
   Approved "Addressed in <commit>" replies and `fixed` resolutions belong to the fold-in that
   carries those fixes (a generation number): posted when exactly that one lands, dropped (with a
   feed line) when it is rejected or comes back empty.
-- **Decisions** (agent Marlow, kind question, owned by the watcher so they never resume a session):
+- **Decisions** (agent: the task's lead, Marlow unless its goal belongs to a building lead; kind question, owned by the watcher so they never resume a session):
   "Post N replies and resolve M threads on PR #612?" [Post, Skip]; ask_user items [Fold in, Leave it];
   the loop guard [Fold in, Leave it]. Replies to automated-review findings are combined into one
   comment on the review thread; the review thread is resolved `fixed` after a fold-in landed, else
   `closed`.
 - **Not done yet**: polling a task's PR while its fold-in runs (a merge during a fold-in is noticed
-  once the task is back in `pr`); lead per building (below).
+  once the task is back in `pr`).
 - **Probe**: `npm run pr-probe -- <PR url>` prints what the watcher would see (reads only).
 
 ## A lead per building (contract, 2026-10-03)
@@ -198,3 +198,59 @@ Foreman -> client:
 - Each podium shows the decisions of its building's lead (home podium: marlow's + unassigned).
 - Hub Buildings tab: each building shows its lead (portrait, name). The task wall title shows the lead.
 - PR triage turns go to the PR's repo's lead.
+
+### As implemented (Foreman + protocol, branch `foreman/leads`)
+- **Protocol**: as above. `lead.assign` acks `{leadId}`, or `{leadId: "marlow", overflow: true}` when no
+  lead is free. `lead.release` acks `{}` (also for an unknown building). `lead.sync` acks `{leads: {building:
+  leadId}}`; it releases the world's missing buildings first, then assigns, so a freed lead is reused at once,
+  and sends one `leads.update` for the whole sync. Building keys must look like `"<world>/<building>"` and the
+  world in `lead.sync` must not contain `/` (schema-checked). `LeadAssignment` lists marlow first with `repos: []`
+  (not "repos without a building"), then the assigned leads in `claude.leads` order. `Goal.leadId` is omitted for
+  marlow, so old goals keep their shape.
+- **Cast**: `foreman/src/cast.ts` has Ines, Bram and Cass (role lead) in its placeholder list, overridden by
+  `assets-src/cast.json` when it has them; a configured lead id with no entry anywhere gets its capitalised id as
+  its name and a generated colour. Unassigned building leads are kept in `state.json` but are hidden from
+  `snapshot.agents` and `agent.upsert`, and `@ines` does not resolve while Ines leads nothing. A released lead gets
+  one last `agent.upsert` (active false, lounge) before it is hidden.
+- **Config**: `claude.leads` (also `--leads`, `AGENTCRAFT_LEADS`) is normalized to start with marlow; `[]` or one
+  entry means marlow alone, so `["marlow"]` reproduces the single lead. `claude.maxConcurrentTurns` (also
+  `--max-concurrent-turns`) is new, optional and unset by default. Leads in the store that are no longer in
+  `claude.leads` are released when the Foreman starts, and their goals move to marlow.
+- **Sessions / migration**: a goal without `leadId` is marlow's, so the existing `marlow:<goalId>` keys are already
+  `<leadId>:<goalId>`. Nothing is rewritten, and old stores resume as before. At start, in-flight turns of leads
+  that are off duty (or whose goal moved) are dropped, and reconciliation re-plans the goals under marlow.
+- **Parallel leads, throttle**: one queue per lead id (as the backend already queued per agent), with per-lead
+  order kept. Workers are capped by `maxConcurrent` as before, and leads by nothing extra. While the plan reports a
+  usage warning, workers are capped by `throttleConcurrent` (as before) and leads take turns **one at a time**, so
+  one lead alone behaves exactly as before. `claude.maxConcurrentTurns`, if set, caps lead and worker turns
+  together. At the usage limit itself nobody starts a turn (unchanged).
+- **Routing**: plan, review, follow-up and triage jobs, merge decisions, and the backend's and the PR watcher's feed
+  lines all go to the goal's lead. A task without a goal goes to its repository's building's lead. **Deviation:**
+  PR triage goes to the *goal's* lead, because its `<lead>:<goal>` session has the plan, not to the lead of the
+  PR's repository. The two differ only for a cross-repository task whose repository is in another building. A
+  plain console message (`to: "all"` without `@`) goes to the lead of the newest goal (marlow if that lead is
+  released). A lead's follow-up resumes the session of its own newest goal (not the newest goal overall). A worker
+  with no task forwards to that same lead. A worker's `send_message` to `"lead"` reaches its task's lead.
+- **Release**: the lead's running turn is aborted with no after-turn step, and its queue, paused job and in-flight
+  record are dropped. Its open questions and permission prompts are withdrawn; its merge decisions stay open for
+  you. Its open (`planning` / `active`) goals lose `leadId` (`goal.upsert` plus a feed line). Then reconciliation
+  runs: planning goals are planned again by marlow, tasks in review without a decision get CI and review again
+  under marlow, and pending PR triage of the moved goals is offered to marlow at once. Marlow's first turn on each
+  moved goal starts with a **takeover note**: the previous lead's plan note (`planText`) and the goal's task
+  board. The backend tracks which lead last had a turn per goal, so this also works after a restart.
+- **Lead tools**: a lead may `update_task` only its own goals' tasks; another lead's task is refused with a
+  pointer to `send_message`. Reassigning a task that is `doing` goes through the proper hand-off
+  (`task.action reassign`) instead of just changing the assignee. **This changes single-lead behaviour too**: the worker's turn is aborted and the next worker continues its branch. Before, only the assignee changed. The feed line for it reads as a user reassign. `create_task` naming a worker busy on another
+  lead's task creates it (the scheduler waits for that worker, never preempts) and the result says so. Leads cannot
+  be assignees.
+- **Prompts**: a building lead's header is `# You are Ines, lead of building b3 on an AgentCraft team`. Every lead,
+  when others are on duty, gets a section naming its building and repositories, the other leads and their
+  buildings, and the shared worker pool. With marlow alone the prompt is byte-identical to before. The worker
+  prompt names its task's lead.
+- **Sim**: the scripted goal is run by its goal's lead. A goal for another building's lead (while the script runs,
+  or after it finished) runs as a 3-beat side flow on that building's repository: the lead plans one task, the
+  first free worker writes `docs/goals/<goal>.md` in a real worktree and runs the tests, then the lead reviews and
+  opens the merge decision. One side flow runs per lead at a time; a second goal for a busy lead is refused, as
+  before. A side flow can borrow a worker the script needs later, and the script's own animation then overrides it
+  (cosmetic). A released lead does not block the script: `gate()` lets off-duty leads pass.
+- **Not done here**: the cast.json entries, skins and portraits (art track), and everything under "Mod".

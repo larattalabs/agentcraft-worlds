@@ -4,12 +4,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { MessageBus } from './bus.js';
-import { loadCast, type CastMember } from './cast.js';
+import { LEAD_ID, loadCast, type CastMember } from './cast.js';
 import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, type Ctx, type Logger } from './context.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
+import { HOME_LEAD, LeadBook } from './leads.js';
 import { Memory, MemoryError } from './memory.js';
 import { Notifier } from './notifier.js';
 import type {
@@ -72,6 +73,13 @@ export interface Backend {
   onPrPush?(task: Task, outcome: 'opened' | 'landed' | 'empty' | 'rejected', sha?: string): void;
   /** pr.refresh: poll the PR of this task (or of every task in `pr`) now */
   onPrRefresh?(taskId?: string): void;
+  /** a building lead was assigned (it is on duty and visible now) */
+  onLeadAssigned?(leadId: string): void;
+  /**
+   * A building lead was released (lead.release / lead.sync, or dropped from claude.leads): its turns
+   * end, and `goals` (its open goals) are marlow's now.
+   */
+  onLeadReleased?(leadId: string, goals: Goal[]): void;
 }
 
 export type Reply = (msg: Outbound) => void;
@@ -97,6 +105,8 @@ export class Foreman {
   readonly decisions: DecisionQueue;
   readonly repos: RepoManager;
   readonly designs: DesignBook;
+  /** who leads which building (leads.ts) */
+  readonly leads: LeadBook;
   readonly notifier: Notifier;
   readonly log: Logger;
   readonly cast: CastMember[];
@@ -124,7 +134,8 @@ export class Foreman {
     this.notifier =
       opts.notifier ??
       new Notifier({ enabled: opts.config.notify, silent: opts.config.toastSilent, log: this.log, now });
-    const { cast, source } = loadCast(opts.config.projectRoot);
+    this.leads = new LeadBook(this.ctx, opts.config.claude.leads);
+    const { cast, source } = loadCast(opts.config.projectRoot, opts.config.claude.leads);
     this.cast = cast;
     this.log.debug(`cast from ${source}`);
     setUserName(opts.config.userName);
@@ -132,6 +143,8 @@ export class Foreman {
     if (opts.config.backend === 'sim') this.status.message = 'Simulated team (sim backend)';
     this.initRoster();
     this.decisions.onCreated((d) => this.onDecisionCreated(d));
+    // leads no longer in claude.leads: their buildings go back to marlow
+    for (const id of this.leads.stale()) this.releaseLead(id, 'no longer in claude.leads');
   }
 
   // ---- event plumbing ---------------------------------------------------------------------
@@ -143,6 +156,8 @@ export class Foreman {
 
   private emit(m: Outbound): void {
     if (m.type === 'task.upsert' && m.task.goalId) this.scheduleGoalUpdate(m.task.goalId);
+    // a building lead exists for the mod only while it is assigned
+    if (m.type === 'agent.upsert' && !this.visible(m.agent)) return;
     for (const l of this.listeners) {
       try {
         l(m);
@@ -167,10 +182,10 @@ export class Foreman {
           color: c.color,
           skin: c.id,
           state: 'idle',
-          activity: c.role === 'lead' ? 'ready for a goal' : 'off shift',
+          activity: c.id === LEAD_ID ? 'ready for a goal' : 'off shift',
           station: 'lounge',
           paused: false,
-          active: c.role === 'lead',
+          active: c.id === LEAD_ID || (c.role === 'lead' && this.leads.onDuty(c.id)),
         };
         if (c.accent) a.accent = c.accent;
         agents.push(a);
@@ -186,10 +201,16 @@ export class Foreman {
     this.store.markDirty();
   }
 
+  /** The roster as the mod sees it: building leads only while they are assigned. */
   agents(): Agent[] {
-    return this.store.data.agents;
+    return this.store.data.agents.filter((a) => this.visible(a));
   }
 
+  private visible(a: Agent): boolean {
+    return a.role !== 'lead' || this.leads.onDuty(a.id);
+  }
+
+  /** Any agent, including building leads that are off duty (not assigned). */
   agent(id: string): Agent | undefined {
     return this.store.data.agents.find((a) => a.id === id);
   }
@@ -302,6 +323,9 @@ export class Foreman {
     const now = this.ctx.now();
     const goal: Goal = { id: this.store.nextId('g'), text: text.trim(), progress: 0, status: 'planning', createdAt: now, updatedAt: now };
     if (repoId) goal.repoId = repoId;
+    // the lead of the building that has the repository (absent = marlow)
+    const lead = this.leads.leadForRepo(repoId);
+    if (lead !== HOME_LEAD) goal.leadId = lead;
     this.store.data.goals.push(goal);
     this.store.markDirty();
     this.emit({ type: 'goal.upsert', goal: { ...goal } });
@@ -331,6 +355,116 @@ export class Foreman {
       this.emit({ type: 'goal.upsert', goal: { ...g } });
     }
     return g;
+  }
+
+  // ---- leads ----------------------------------------------------------------------------------
+
+  /** The lead running a goal: Goal.leadId, absent = marlow. */
+  leadOf(goal: Goal | undefined): string {
+    return goal?.leadId ?? HOME_LEAD;
+  }
+
+  /** The lead responsible for a task: its goal's lead, else the lead of its repository's building. */
+  leadOfTask(task: Task | undefined): string {
+    const g = task?.goalId ? this.goal(task.goalId) : undefined;
+    return g ? this.leadOf(g) : this.leads.leadForRepo(task?.repoId);
+  }
+
+  /** A lead (role lead), on duty or not. */
+  isLead(id: string): boolean {
+    return id === HOME_LEAD || this.agent(id)?.role === 'lead';
+  }
+
+  /** The newest goal a lead runs (its "current" goal: follow-ups and answers resume its session). */
+  currentGoalOf(leadId: string): Goal | undefined {
+    const g = this.store.data.goals;
+    for (let i = g.length - 1; i >= 0; i--) if (this.leadOf(g[i]) === leadId) return g[i];
+    return undefined;
+  }
+
+  private emitLeads(): void {
+    this.emit({ type: 'leads.update', leads: this.leads.list() });
+  }
+
+  /** lead.assign: see LeadBook.assign. */
+  assignLead(building: string, repos: string[], opts: { quiet?: boolean } = {}): { leadId: string; overflow?: true } {
+    const r = this.leads.assign(building, repos);
+    const where = building.slice(building.indexOf('/') + 1);
+    if (r.overflow) {
+      this.bus.feed('system', `No free lead for building ${where}: ${this.nameOf(HOME_LEAD)} leads it`, { agentId: HOME_LEAD });
+      return { leadId: HOME_LEAD, overflow: true };
+    }
+    for (const m of r.moved) this.bus.feed('system', `${m.repo} moved from ${this.nameOf(m.from)}'s building to ${this.nameOf(r.leadId)}'s`, { agentId: r.leadId });
+    if (r.created) {
+      const a = this.agent(r.leadId);
+      if (a) {
+        a.active = true;
+        a.paused = false;
+        a.state = 'idle';
+        a.station = 'meeting';
+        a.activity = 'ready for a goal';
+        delete a.taskId;
+        delete a.worktree;
+        delete a.repoId;
+        this.store.markDirty();
+        this.emit({ type: 'agent.upsert', agent: { ...a } });
+      }
+      this.bus.feed('system', `${this.nameOf(r.leadId)} leads building ${where}${repos.length ? ` (${repos.join(', ')})` : ''}`, { agentId: r.leadId });
+      try {
+        this.backend?.onLeadAssigned?.(r.leadId);
+      } catch (e) {
+        this.log.error(`backend.onLeadAssigned: ${(e as Error).message}`);
+      }
+    }
+    if (r.changed && !opts.quiet) this.emitLeads();
+    return { leadId: r.leadId };
+  }
+
+  /** lead.release by building key (unknown building: nothing happens). */
+  releaseBuilding(building: string, opts: { quiet?: boolean } = {}): string | undefined {
+    const id = this.leads.leadOfBuilding(building);
+    if (id) this.releaseLead(id, 'its building was removed', opts);
+    return id;
+  }
+
+  /**
+   * Free a building lead: one last agent.upsert (off shift, lounge) so the mod walks it home, its
+   * open goals move to marlow (who gets the plan when it next works on them), the backend ends its
+   * turns.
+   */
+  releaseLead(leadId: string, why: string, opts: { quiet?: boolean } = {}): void {
+    const rec = this.leads.record(leadId);
+    if (!rec) return;
+    if (this.agent(leadId)) this.setAgent(leadId, { active: false, paused: false, state: 'idle', station: 'lounge', activity: 'off shift', taskId: null, worktree: null, repoId: null });
+    this.leads.remove(leadId);
+    const moved: Goal[] = [];
+    for (const g of this.store.data.goals) {
+      if (g.leadId !== leadId || (g.status !== 'planning' && g.status !== 'active')) continue;
+      delete g.leadId;
+      g.updatedAt = this.ctx.now();
+      this.store.markDirty();
+      this.emit({ type: 'goal.upsert', goal: { ...g } });
+      this.bus.feed('goal', `${this.nameOf(HOME_LEAD)} takes over ${g.id} "${truncate(g.text, 60)}" from ${this.nameOf(leadId)}`, { agentId: HOME_LEAD });
+      moved.push(g);
+    }
+    this.bus.feed('system', `${this.nameOf(leadId)} no longer leads building ${rec.building.slice(rec.building.indexOf('/') + 1)} (${why})`, { agentId: leadId });
+    try {
+      this.backend?.onLeadReleased?.(leadId, moved);
+    } catch (e) {
+      this.log.error(`backend.onLeadReleased: ${(e as Error).message}`);
+    }
+    if (!opts.quiet) this.emitLeads();
+  }
+
+  /** lead.sync: release the world's buildings that are gone, then assign every listed one. */
+  syncLeads(world: string, buildings: Array<{ building: string; repos: string[] }>): Record<string, string> {
+    const keep = new Set(buildings.map((b) => b.building));
+    const before = JSON.stringify(this.leads.list());
+    for (const b of this.leads.buildingsOf(world)) if (!keep.has(b.building)) this.releaseLead(b.leadId, 'its building is gone', { quiet: true });
+    const out: Record<string, string> = {};
+    for (const b of buildings) out[b.building] = this.assignLead(b.building, b.repos, { quiet: true }).leadId;
+    if (JSON.stringify(this.leads.list()) !== before) this.emitLeads();
+    return out;
   }
 
   private scheduleGoalUpdate(goalId: string): void {
@@ -559,6 +693,7 @@ export class Foreman {
       feed: this.store.data.feed.slice(-200),
       logs: this.agents().map((a) => ({ agentId: a.id, entries: this.store.logTail(a.id).slice(-60) })),
       designs: this.designs.recent(),
+      leads: this.leads.list(),
     };
   }
 
@@ -625,6 +760,13 @@ export class Foreman {
       case 'design.cancel':
         this.cancelDesign(msg.designId);
         return { designId: msg.designId };
+      case 'lead.assign':
+        return this.assignLead(msg.building, msg.repos);
+      case 'lead.release':
+        this.releaseBuilding(msg.building);
+        return {};
+      case 'lead.sync':
+        return { leads: this.syncLeads(msg.world, msg.buildings) };
       case 'pr.refresh': {
         if (!this.backend?.onPrRefresh || !this.backend.watchesPrs?.()) throw new ClientError('pull requests are not watched (claude backend with claude.prWatch "observe" or "on")');
         if (msg.taskId && this.tasks.get(msg.taskId)?.status !== 'pr') throw new ClientError(`task ${msg.taskId} has no open pull request`);

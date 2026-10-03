@@ -42,6 +42,14 @@ export interface ClaudeConfig {
   throttleConcurrent: number;
   /** worker ids in the team (subset of the cast) */
   workers: string[];
+  /**
+   * lead ids in use, always starting with "marlow" (home, repositories without a building, anything
+   * not tied to a repository); the others lead one building each, assigned in this order
+   * (lead.assign). Default ["marlow","ines","bram","cass"]; [] or one entry = marlow alone.
+   */
+  leads: string[];
+  /** cap on agent turns running at once, leads and workers together (unset: no cap besides maxConcurrent) */
+  maxConcurrentTurns?: number;
   /** test command for CI after a worker finishes (default: detect, e.g. `npm test`) */
   ciCommand?: string;
   /** per-turn budget cap passed to the SDK */
@@ -310,6 +318,21 @@ function subagentsConfig(v: unknown): SubagentsConfig {
   return { enabled: typeof o.enabled === 'boolean' ? o.enabled : DEFAULT_SUBAGENTS.enabled, agents: strings(o.agents) };
 }
 
+export const DEFAULT_LEADS = ['marlow', 'ines', 'bram', 'cass'];
+
+/**
+ * claude.leads / --leads / AGENTCRAFT_LEADS: an id list (array or comma list). Normalized to start
+ * with "marlow"; [] or a single entry means marlow alone (today's single lead).
+ */
+export function leadsList(v: unknown): string[] {
+  if (v === undefined) return [...DEFAULT_LEADS];
+  const raw = Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : [];
+  const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string').map((x) => x.trim().toLowerCase()).filter(Boolean))];
+  for (const id of ids) if (!/^[a-z0-9_-]+$/.test(id)) throw new Error(`bad lead id "${id}" (lowercase letters, digits, - and _)`);
+  if (ids.length <= 1) return ['marlow'];
+  return ['marlow', ...ids.filter((x) => x !== 'marlow')];
+}
+
 function mergeStyle(v: unknown): 'merge' | 'squash' {
   if (v === undefined || v === 'merge') return 'merge';
   if (v === 'squash') return 'squash';
@@ -336,7 +359,7 @@ export const KNOWN_FLAGS = new Set([
   'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges',
   'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
-  'ambient', 'pr-watch', 'pr-poll-seconds',
+  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns',
 ]);
 
 /**
@@ -463,6 +486,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       maxConcurrent: Math.max(1, num(flags['max-concurrent'] ?? fileClaude.maxConcurrent, 3)),
       throttleConcurrent: Math.max(1, num(flags['throttle-concurrent'] ?? fileClaude.throttleConcurrent, 1)),
       workers,
+      leads: leadsList(str(flags.leads) ?? str(env.AGENTCRAFT_LEADS) ?? fileClaude.leads),
+      ...((t) => (t > 0 ? { maxConcurrentTurns: Math.floor(t) } : {}))(num(flags['max-concurrent-turns'] ?? fileClaude.maxConcurrentTurns, 0)),
       ciCommand: str(flags.ci) ?? str(fileClaude.ciCommand),
       maxBudgetUsdPerTurn: flags['max-budget'] !== undefined ? num(flags['max-budget'], 0) || undefined : (fileClaude.maxBudgetUsdPerTurn as number | undefined),
       resumeOnStart: bool(flags.resume ?? fileClaude.resumeOnStart, true),
@@ -532,6 +557,10 @@ usage: npm run start -- [options]
   --max-turns <n>          turn cap per session run (default lead 40 / worker 80)
   --workers <n|ids>        team size or comma list (default juniper,kit,wren)
   --max-concurrent <n>     workers running at once (default 3)
+  --max-concurrent-turns <n>  agent turns at once, leads and workers together (default: no cap)
+  --leads <ids>            leads in use, in assignment order (default marlow,ines,bram,cass): marlow
+                           leads home and repos without a building, each other lead one building
+                           the mod assigns it; "marlow" alone = one lead for everything
   --throttle-concurrent <n>  workers at once while your plan reports a usage warning (default 1);
                            at the limit itself every agent waits until it resets, then resumes
   --max-budget <usd>       per-turn USD cap

@@ -5,8 +5,9 @@ import type { Decision, Design, Goal, Task } from '../../protocol.js';
 import { SimDesigner } from './designer.js';
 import { truncate } from '../../util/text.js';
 import { SimDirector, Stopped, type SimState } from './director.js';
-import { BEATS, DEFAULT_SIM_GOAL } from './scenario.js';
+import { BEATS, DEFAULT_SIM_GOAL, SIDE_BEATS } from './scenario.js';
 import { userName } from '../../user.js';
+import { HOME_LEAD } from '../../leads.js';
 
 const CANNED_REPLIES = [
   'Got it - noted.',
@@ -19,6 +20,8 @@ export class SimBackend implements Backend {
   readonly name = 'sim' as const;
   private director: SimDirector | undefined;
   private running: Promise<void> | undefined;
+  /** side flows: goals of other buildings' leads (SIDE_BEATS), by goal id */
+  private sides = new Map<string, { director: SimDirector; running: Promise<void> }>();
   private replyCount = 0;
   /** resolves when the scenario reaches the showcase checkpoint or ends (tests) */
   private settledWaiters: Array<() => void> = [];
@@ -62,6 +65,8 @@ export class SimBackend implements Backend {
       this.fm.bus.feed('system', `Foreman restarted - the team picks up where it left off (${BEATS[st.beat]?.name ?? 'end'}).`);
       this.launch();
     }
+    // side flows of other leads' goals that were running
+    for (const goalId of Object.keys(st.side ?? {})) if (!st.side![goalId]!.finished) this.launchSide(goalId);
   }
 
   /** Called by main when --autostart/--showcase and no scenario has run yet. */
@@ -72,6 +77,17 @@ export class SimBackend implements Backend {
 
   async submitGoal(goal: Goal): Promise<void> {
     const st = this.state;
+    // a goal for another building's lead while the script is busy (or done): that lead runs a side
+    // flow on its building's repository, borrowing free workers
+    const lead = this.fm.leadOf(goal);
+    const scriptLead = st.goalId ? this.fm.leadOf(this.fm.goal(st.goalId)) : undefined;
+    if (st.goalId && lead !== HOME_LEAD && (st.finished || lead !== scriptLead) && !this.sideBusy(lead)) {
+      st.side ??= {};
+      st.side[goal.id] = { goalId: goal.id, beat: 0, vars: {} };
+      this.fm.store.markDirty();
+      this.launchSide(goal.id);
+      return;
+    }
     if (st.goalId && !st.finished) {
       this.fm.setGoal(goal.id, { status: 'cancelled' });
       throw new ClientError('the sim team is already working on a goal (restart with --reset to replay)');
@@ -126,9 +142,39 @@ export class SimBackend implements Backend {
         this.fm.notify('warn', `Sim error: ${truncate((e as Error).message, 120)}`);
       } finally {
         this.running = undefined;
-        for (const w of this.settledWaiters.splice(0)) w();
+        if (!this.sides.size) for (const w of this.settledWaiters.splice(0)) w();
       }
     })();
+  }
+
+  /** A lead already runs a side flow (one goal at a time per lead in the sim). */
+  private sideBusy(lead: string): boolean {
+    return Object.values(this.state.side ?? {}).some((x) => !x.finished && x.goalId && this.fm.leadOf(this.fm.goal(x.goalId)) === lead);
+  }
+
+  private launchSide(goalId: string): void {
+    if (this.sides.has(goalId)) return;
+    const st = this.state.side![goalId]!;
+    const d = new SimDirector(this.fm, { ...this.cfg, showcase: false }, st, () => this.fm.store.markDirty());
+    const running = (async () => {
+      try {
+        while (st.beat < SIDE_BEATS.length) {
+          await SIDE_BEATS[st.beat]!.run(d);
+          st.beat++;
+          this.fm.store.markDirty();
+        }
+        st.finished = true;
+        this.store();
+      } catch (e) {
+        if (e instanceof Stopped) return;
+        this.fm.log.error(`sim side flow ${goalId} "${SIDE_BEATS[st.beat]?.name}" failed: ${(e as Error).stack ?? e}`);
+        this.fm.bus.feed('error', `Sim side flow for ${goalId} failed in "${SIDE_BEATS[st.beat]?.name}": ${(e as Error).message}`);
+      } finally {
+        this.sides.delete(goalId);
+        if (!this.running && !this.sides.size) for (const w of this.settledWaiters.splice(0)) w();
+      }
+    })();
+    this.sides.set(goalId, { director: d, running });
   }
 
   private store(): void {
@@ -138,14 +184,16 @@ export class SimBackend implements Backend {
 
   /** For tests/tools: resolves when the scenario finishes, errors, or holds at the showcase. */
   idle(): Promise<void> {
-    if (!this.running) return Promise.resolve();
+    if (!this.running && !this.sides.size) return Promise.resolve();
     return new Promise((r) => this.settledWaiters.push(r));
   }
 
   async stop(): Promise<void> {
     this.director?.stop();
+    for (const s of this.sides.values()) s.director.stop();
     await this.designer.stop();
     await this.running?.catch(() => undefined);
+    await Promise.allSettled([...this.sides.values()].map((s) => s.running));
   }
 
   onDesignRequest(d: Design): void {
@@ -157,7 +205,8 @@ export class SimBackend implements Backend {
   }
 
   onUserMessage(to: string, text: string): void {
-    const agents = to === 'all' ? ['marlow'] : [to];
+    const lead = this.fm.leadOf(this.fm.currentGoal());
+    const agents = to === 'all' ? [this.fm.leads.onDuty(lead) ? lead : HOME_LEAD] : [to];
     for (const id of agents) {
       const a = this.fm.agent(id);
       if (!a) continue;
@@ -172,7 +221,7 @@ export class SimBackend implements Backend {
   }
 
   onTaskAction(task: Task, action: string): void {
-    this.fm.agentLog('marlow', 'text', `${userName()}: ${action} ${task.id} (${task.title}). The sim script keeps its own course.`);
+    this.fm.agentLog(this.fm.leadOfTask(task), 'text', `${userName()}: ${action} ${task.id} (${task.title}). The sim script keeps its own course.`);
   }
 
   onAgentAction(agentId: string, action: string): void {

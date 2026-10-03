@@ -42,13 +42,43 @@ function sizeRule(fm: Foreman): string {
   return `\n- Set create_task size to pick the worker's model: ${what}. "small" for mechanical, well-specified changes; "large" for hard or architectural work; leave it out otherwise.`;
 }
 
-export function leadSystemPrompt(fm: Foreman, workers: string[], roles?: RoleLookup): string {
-  const team = `\n${workers.map((w) => teamLine(fm, w, roles)).join('\n')}`;
+/** "b3" from the building key "New World/b3". */
+function buildingName(key: string): string {
+  return key.slice(key.indexOf('/') + 1);
+}
+
+/**
+ * With building leads on duty: which building this lead runs, who the other leads are, and that the
+ * workers are one shared pool. Empty for marlow alone (today's single lead).
+ */
+export function leadsSection(fm: Foreman, leadId: string): string {
+  const others = fm.leads.onDutyIds().filter((id) => id !== leadId && fm.agent(id));
+  const mine = fm.leads.record(leadId);
+  if (!others.length && !mine) return '';
+  const describe = (id: string) => {
+    const r = fm.leads.record(id);
+    return r ? `${fm.nameOf(id)} (id "${id}") leads building ${buildingName(r.building)}${r.repos.length ? ` (${r.repos.join(', ')})` : ''}` : `${fm.nameOf(id)} (id "${id}") leads home: repositories without a building and everything not tied to a repository`;
+  };
+  const you = mine
+    ? `You lead building ${buildingName(mine.building)}${mine.repos.length ? ` with the repositories ${mine.repos.join(', ')}` : ''}: goals in those repositories are yours.`
+    : 'You lead home: repositories without a building of their own and everything not tied to a repository.';
   return `
-# You are Marlow, lead of an AgentCraft team
+# Your building and the other leads
+${you} Other leads, each running their own goals at the same time:
+${others.map((id) => `- ${describe(id)}`).join('\n')}
+The workers are ONE pool shared by every lead: a worker may be busy on another lead's task. Naming a busy worker as assignee is fine (your task waits until they are free); leave assignee out to get the first free worker. Never reassign, cancel or redirect another lead's tasks, and never pull a worker off another lead's task; coordinate with the other lead with send_message instead.`;
+}
+
+export function leadSystemPrompt(fm: Foreman, workers: string[], roles?: RoleLookup, leadId = 'marlow'): string {
+  const team = `\n${workers.map((w) => teamLine(fm, w, roles)).join('\n')}`;
+  const mine = fm.leads.record(leadId);
+  const header = mine ? `# You are ${fm.nameOf(leadId)}, lead of building ${buildingName(mine.building)} on an AgentCraft team` : `# You are ${fm.nameOf(leadId)}, lead of an AgentCraft team`;
+  const leads = leadsSection(fm, leadId);
+  return `
+${header}
 AgentCraft shows your team as characters in a Minecraft HQ. The user is ${userName()}. Your workers:${team}
 Your job: turn ${userName()}'s goal into a short plan and small tasks for the workers, review their finished work, and ask ${userName()} only when a decision is genuinely theirs.
-
+${leads ? `${leads.trim()}\n` : ''}
 Rules
 - You are READ-ONLY. Explore with Read/Grep/Glob. Never edit files: workers make every change in their own git worktree.
 - Write the plan to shared memory with write_memory (title starting "Plan:"): approach, task list, risks. Keep it under 40 lines.
@@ -61,13 +91,14 @@ Rules
 `.trim();
 }
 
-export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree, role?: RepoRole): string {
+export function workerSystemPrompt(fm: Foreman, agentId: string, wt: Worktree, role?: RepoRole, leadId = 'marlow'): string {
+  const lead = fm.nameOf(leadId);
   const s = specialty(fm, agentId);
   const focus = role
     ? `\n## Your role in this repository: ${role.name}\nThis is how the repository's own agent file describes your role. Follow it, within the AgentCraft rules below. AgentCraft already made your worktree and branch (${wt.branch}, from ${wt.base}): skip any steps in the role, or the docs it points to, about creating a worktree or branch, merging or pushing. Your hand-back is the update_task summary.\n\n${role.prompt}\n`
     : s.title || s.text ? `\nYour specialty${s.title ? `: ${s.title}` : ''}.${s.text ? ` ${s.text}` : ''} Bring that expertise to every task; other kinds of work are fine when you are assigned them.\n` : '';
   return `
-# You are ${fm.nameOf(agentId)}, a worker on an AgentCraft team led by Marlow${focus}
+# You are ${fm.nameOf(agentId)}, a worker on an AgentCraft team led by ${lead}${focus}
 The user is ${userName()}. You work ONLY inside your git worktree:
   ${wt.path}
 on branch ${wt.branch} (based on ${wt.base}). Edit files and run commands there; never touch anything outside it.
@@ -75,7 +106,7 @@ Your branch started from the current local ${wt.base}, which already includes ev
 
 How to work
 - Read the task and the relevant code, make the change, add or adjust tests, run the test suite.
-- Use report_status at milestones (one short line), send_message to coordinate with teammates or Marlow.
+- Use report_status at milestones (one short line), send_message to coordinate with teammates or ${lead}.
 - Keep private notes (write_memory, scope "private") about things that would help you on a later task in this codebase: where things live, conventions, traps. Short, and say which repository.
 - Decide technical details yourself. Call ask_user only for something genuinely ${userName()}'s (product choice, credentials, scope).
 - Never git push, never install global tools, never change files outside your worktree. Committing is optional (the Foreman commits your work when ${userName()} approves the merge).
