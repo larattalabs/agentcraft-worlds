@@ -12,18 +12,22 @@
 //   /wait decision|goal|merge|<seconds>   (scripts) wait for something
 //   /quit
 //
-// Flags: --port N  --transcript <file>  --script <file>  --commands <file> (tailed)
+// Flags: --port N  --home <dir> (finds the client token; default AGENTCRAFT_HOME or ~/.agentcraft)  --transcript <file>  --script <file>  --commands <file> (tailed)
 //        --auto-answer [merge,permission,question]  --auto-delay <s>  --exit-on-goal-done
 //        --quiet-logs  --no-color  --timeout <s>  --once (print snapshot and exit)
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import readline from 'node:readline';
 import WebSocket from 'ws';
 import type { Agent, Decision, DiffFile, FeedItem, Goal, MemoryEntry, Repo, ServerMessage, Task } from '../src/protocol.js';
 import { parseFlags } from '../src/config.js';
+import { readClientToken } from '../src/runfile.js';
 
 const { flags } = parseFlags(process.argv.slice(2));
 const port = Number(flags.port ?? process.env.AGENTCRAFT_PORT ?? 7878);
 const url = `ws://127.0.0.1:${port}`;
+const home = path.resolve(typeof flags.home === 'string' ? flags.home : process.env.AGENTCRAFT_HOME ?? path.join(os.homedir(), '.agentcraft'));
 const useColor = flags.color !== false && !process.env.NO_COLOR;
 const quietLogs = flags['quiet-logs'] === true;
 const autoKinds = flags['auto-answer'] === true ? ['merge', 'permission', 'question'] : typeof flags['auto-answer'] === 'string' ? String(flags['auto-answer']).split(',') : [];
@@ -144,7 +148,10 @@ function connect(): void {
   ws.on('open', () => {
     backoff = 500;
     out(paint('green', `connected to ${url}`));
-    ws!.send(JSON.stringify({ v: 1, type: 'hello', modVersion: 'fake-mod 0.1.0', protocol: 1, client: 'cli' }));
+    // the client token is re-read on every connect (a restarted Foreman has a new one)
+    const token = readClientToken(home, port);
+    if (!token) out(paint('yellow', `no client token found under ${home}: read-only connection`));
+    ws!.send(JSON.stringify({ v: 1, type: 'hello', modVersion: 'fake-mod 0.1.0', protocol: 1, client: 'cli', ...(token ? { token } : {}) }));
   });
   ws.on('message', (data) => {
     let m: ServerMessage;

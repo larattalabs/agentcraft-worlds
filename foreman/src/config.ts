@@ -178,6 +178,8 @@ export interface Config {
   projectRoot: string;
   /** reject WebSocket upgrades that carry a browser Origin (CSRF-style protection) */
   allowBrowserOrigins: boolean;
+  /** require the client token (clienttoken.ts) for anything but read-only use; --no-client-token (dev) turns it off */
+  clientToken: boolean;
   /** how often the main checkouts are polled for head/dirty changes (ms) */
   repoPollMs: number;
   /** approved merges: a merge commit (keeps the agents' commits) or one squashed commit */
@@ -359,7 +361,7 @@ export const KNOWN_FLAGS = new Set([
   'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges',
   'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
-  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns',
+  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns', 'client-token',
 ]);
 
 /**
@@ -471,6 +473,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
     quiet: bool(flags.quiet, false),
     projectRoot: PROJECT_ROOT,
     allowBrowserOrigins: bool(pick('allow-browser-origins'), false),
+    clientToken: bool(flags['client-token'], true),
     repoPollMs: Math.max(500, num(pick('repo-poll-ms'), 10_000)),
     mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE')),
     // the sim answers merges unattended (screenshot QA, --auto-answer): never sign there
@@ -536,6 +539,8 @@ usage: npm run start -- [options]
   --no-sign-merges         never sign approved merge commits (default: signed when your git
                            config has commit.gpgsign=true; claude backend only)
   --debug                  verbose logging
+  --no-client-token        (dev only) every local WebSocket client may change things, as before the
+                           client token; by default only clients that send <profile>/client.token do
 
  sim backend
   --speed <x>              speed multiplier (default 1)

@@ -272,7 +272,7 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
 };
 
 export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
-  hello: { v: 1, type: 'hello', modVersion: '0.1.0', protocol: 1, client: 'mod' },
+  hello: { v: 1, type: 'hello', modVersion: '0.1.0', protocol: 1, client: 'mod', token: 'EXAMPLE-not-a-real-token-0123456789abcdef' },
   'goal.submit': { v: 1, type: 'goal.submit', id: 'c12', text: 'Add a --version flag to the CLI', repoId: 'demo-app', repos: ['demo-app', 'notes-api'], branch: 'feature/version-flag', instructions: ['No new dependencies'] },
   'goal.message': { v: 1, type: 'goal.message', id: 'c25', goalId: 'g1', text: 'Is the tag parser case-insensitive?' },
   'goal.instructions': { v: 1, type: 'goal.instructions', id: 'c26', goalId: 'g1', instructions: ['No new dependencies', 'Keep the CLI output under 80 columns'] },

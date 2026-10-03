@@ -9,6 +9,7 @@ import { FOREMAN_VERSION, HELP, loadConfig, type Config } from './config.js';
 import { consoleLogger } from './context.js';
 import { Foreman } from './foreman.js';
 import { ForemanServer } from './server.js';
+import { createClientToken, removeClientToken } from './clienttoken.js';
 import { claimRunFiles, homeRunFile, liveOwner, profileRunFile, releaseRunFiles } from './runfile.js';
 import { isInsideOrEqual } from './util/fsx.js';
 
@@ -62,7 +63,10 @@ export async function main(argv: string[]): Promise<void> {
 
   const foreman = new Foreman({ config: cfg, logger: log });
   const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : new ClaudeBackend(foreman, cfg.claude);
-  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, log });
+  // a new client token every start (after --reset wiped the profile); never logged
+  const client = cfg.clientToken ? createClientToken(cfg.dataDir) : undefined;
+  if (!client) log.warn('--no-client-token: every local WebSocket client may drive the Foreman (dev only)');
+  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, ...(client ? { token: client.token } : {}), log });
 
   try {
     await server.start();
@@ -72,11 +76,13 @@ export async function main(argv: string[]): Promise<void> {
       log.error(`port ${cfg.port} is already in use - is another Foreman running? (see ${homeRunFile(cfg.home)} and <home>/<profile>/foreman.json) Use --port or AGENTCRAFT_PORT.`);
     } else log.error(`could not listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`);
     await foreman.close();
+    if (client) removeClientToken(client.file, client.token);
     process.exitCode = 1;
     return;
   }
+  foreman.endpoint = { port: server.port, ...(client ? { tokenFile: client.file } : {}) };
 
-  await claimRunFiles(cfg.home, cfg.dataDir, { pid: process.pid, port: server.port, host: cfg.host, backend: cfg.backend, profile: cfg.profile, version: FOREMAN_VERSION, startedAt: new Date().toISOString() });
+  await claimRunFiles(cfg.home, cfg.dataDir, { pid: process.pid, port: server.port, host: cfg.host, backend: cfg.backend, profile: cfg.profile, version: FOREMAN_VERSION, startedAt: new Date().toISOString(), ...(client ? { tokenFile: client.file } : {}) });
 
   log.info(`AgentCraft Foreman ${FOREMAN_VERSION} | backend ${cfg.backend} | ws://${cfg.host}:${server.port} | state ${cfg.dataDir}`);
 
@@ -90,6 +96,7 @@ export async function main(argv: string[]): Promise<void> {
     await server.stop();
     await foreman.close();
     await releaseRunFiles(cfg.home, cfg.dataDir).catch(() => undefined);
+    if (client) removeClientToken(client.file, client.token);
     clearTimeout(force);
     process.exit(0);
   };

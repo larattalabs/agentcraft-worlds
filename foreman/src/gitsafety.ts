@@ -85,5 +85,7 @@ export function gitSafetyEnv(base: NodeJS.ProcessEnv = process.env, opts: GitSaf
 export function withGitSafety(base: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}, opts: GitSafetyOptions = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
   for (const k of Object.keys(env)) if (GIT_REDIRECT_VARS.includes(k.toUpperCase())) delete env[k];
+  // the Foreman's client token (tools may take it from the environment) never reaches agents, CI or setup
+  delete env.AGENTCRAFT_CLIENT_TOKEN;
   return { ...env, ...gitSafetyEnv(base, opts), ...extra };
 }

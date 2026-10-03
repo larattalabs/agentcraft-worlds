@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
-import { ForemanClient } from '../lib/foremanclient.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { ForemanClient, readForemanToken } from '../lib/foremanclient.mjs';
 
 // A tiny stand-in for the Foreman's WS server (protocol v1 shapes from docs/protocol.md).
 function fakeForeman() {
@@ -63,4 +66,45 @@ test('hello -> snapshot, acks, rejected acks, diff, live state, no Origin header
 
 test('connect retries until the Foreman is up, then times out cleanly when it never is', async () => {
   await assert.rejects(ForemanClient.connect({ port: 1, timeoutMs: 600, retryMs: 100 }), /not reachable/);
+});
+
+function fakeHome(port, token) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ac-tools-home-'));
+  const dataDir = path.join(home, 'claude');
+  fs.mkdirSync(dataDir);
+  const tokenFile = path.join(dataDir, 'client.token');
+  fs.writeFileSync(tokenFile, `${token}\n`);
+  fs.writeFileSync(path.join(dataDir, 'foreman.json'), JSON.stringify({ pid: 1, port, host: '127.0.0.1', profile: 'claude', tokenFile }));
+  return home;
+}
+
+test('readForemanToken: the run file whose port matches, the env override, else null', () => {
+  const home = fakeHome(7878, 'tok-123');
+  try {
+    assert.equal(readForemanToken({ home, port: 7878, env: {} }), 'tok-123');
+    assert.equal(readForemanToken({ home, env: {} }), 'tok-123');
+    assert.equal(readForemanToken({ home, port: 9999, env: {} }), null);
+    assert.equal(readForemanToken({ home, port: 9999, env: { AGENTCRAFT_CLIENT_TOKEN: 'env-tok' } }), 'env-tok');
+    assert.equal(readForemanToken({ home: path.join(home, 'missing'), env: {} }), null);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('connect sends the client token in hello (and none when there is no token)', async () => {
+  const { wss, seen, port } = await fakeForeman();
+  const home = fakeHome(port, 'tok-456');
+  try {
+    const fm = await ForemanClient.connect({ port, home, timeoutMs: 5000 });
+    assert.equal(seen.messages[0].token, 'tok-456');
+    assert.equal(fm.readOnly, false);
+    fm.close();
+    const ro = await ForemanClient.connect({ port, home: path.join(home, 'missing'), timeoutMs: 5000 });
+    assert.equal(seen.messages.filter((m) => m.type === 'hello')[1].token, undefined);
+    assert.equal(ro.readOnly, true);
+    ro.close();
+  } finally {
+    wss.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

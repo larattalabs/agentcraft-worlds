@@ -217,7 +217,7 @@ async function launch(opt, summary) {
       summary.foreman.port = fmPort;
       console.log(`Reusing Foreman ${fm.pid} on :${fmPort}`);
       if (fm.backend !== opt.backend) console.warn(`Foreman is already using backend ${fm.backend}`);
-      for (const repo of opt.repo) console.log(runCli('foremancli.mjs', ['repo-add', repo, '--port', String(fmPort)]));
+      for (const repo of opt.repo) console.log(runCli('foremancli.mjs', ['repo-add', repo, '--port', String(fmPort), '--home', fm.home ?? opt.home]));
     } else {
       if (await portOpen(fmPort)) throw new Error(`port ${fmPort} is already in use`);
       installDeps(path.join(root, 'foreman'));

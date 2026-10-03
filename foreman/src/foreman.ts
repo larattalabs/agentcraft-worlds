@@ -145,6 +145,8 @@ export class Foreman {
   readonly cast: CastMember[];
   backend: Backend | undefined;
   status: ForemanStatus;
+  /** where clients reach this Foreman (set by main once the server listens): the agent policy keeps agents away from both */
+  endpoint: { port: number; tokenFile?: string } | undefined;
 
   private listeners = new Set<(m: Outbound) => void>();
   private logBuffers = new Map<string, LogEntry[]>();

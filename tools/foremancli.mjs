@@ -10,7 +10,9 @@
 //   node tools/foremancli.mjs send user.message to=kit "text=hello there"   (same, key=value form)
 //
 // Options: --port N (default AGENTCRAFT_PORT or 7878), --timeout SECONDS (connect, default 15),
-// --full (diff: print every file/hunk instead of a summary). Exit 0 when ok, 1 on error.
+// --home DIR (where the Foreman's run file names its client token; default AGENTCRAFT_HOME or
+// ~/.agentcraft; without the token the connection is read-only), --full (diff: print every
+// file/hunk instead of a summary). Exit 0 when ok, 1 on error.
 
 import { ForemanClient, DEFAULT_FOREMAN_PORT } from './lib/foremanclient.mjs';
 
@@ -21,13 +23,13 @@ for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a.startsWith('--')) {
     const key = a.slice(2);
-    if (['port', 'timeout', 'wait-showcase', 'decision'].includes(key)) flags[key] = argv[++i];
+    if (['port', 'timeout', 'wait-showcase', 'decision', 'home'].includes(key)) flags[key] = argv[++i];
     else flags[key] = true;
   } else pos.push(a);
 }
 const cmd = pos.shift();
 if (!cmd || flags.help) {
-  console.error('usage: node tools/foremancli.mjs status|wait|diff|send [args] [--port N] [--timeout S] [--wait-showcase S] [--json]');
+  console.error('usage: node tools/foremancli.mjs status|wait|diff|send [args] [--port N] [--home DIR] [--timeout S] [--wait-showcase S] [--json]');
   process.exit(cmd ? 0 : 2);
 }
 const port = flags.port ? Number(flags.port) : DEFAULT_FOREMAN_PORT;
@@ -38,6 +40,7 @@ let fm;
 try {
   fm = await ForemanClient.connect({
     port,
+    ...(flags.home ? { home: flags.home } : {}),
     timeoutMs: connectMs,
     client: 'cli',
     onWait: (ms) => process.stderr.write(`[foremancli] waiting for the Foreman on :${port} (${Math.round(ms / 1000)}s)...\n`),

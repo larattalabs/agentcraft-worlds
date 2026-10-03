@@ -1224,6 +1224,7 @@ First message after connecting. The Foreman replies with `snapshot`, then stream
 | `modVersion` | string | yes |  |
 | `protocol` | 1 | yes |  |
 | `client` | string | no | "mod" \| "cli" \| ... (informational) |
+| `token` | string | no | the client token: the contents of the file the run file names in `tokenFile` (`<dataDir>/client.token`, new on every Foreman start). Without a valid token the connection is read-only: snapshot and events, and only `hello`, `diff.request` and `goal.digest`; every other message is refused (`ack.ok` false, "read-only connection: no client token") |
 
 ```json
 {
@@ -1231,7 +1232,8 @@ First message after connecting. The Foreman replies with `snapshot`, then stream
   "type": "hello",
   "modVersion": "0.1.0",
   "protocol": 1,
-  "client": "mod"
+  "client": "mod",
+  "token": "EXAMPLE-not-a-real-token-0123456789abcdef"
 }
 ```
 

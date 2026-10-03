@@ -540,6 +540,7 @@ export const HelloMsg = z.object({
   modVersion: z.string(),
   protocol: z.literal(PROTOCOL_VERSION),
   client: z.string().optional().describe('"mod" | "cli" | ... (informational)'),
+  token: z.string().optional().describe('the client token: the contents of the file the run file names in `tokenFile` (`<dataDir>/client.token`, new on every Foreman start). Without a valid token the connection is read-only: snapshot and events, and only `hello`, `diff.request` and `goal.digest`; every other message is refused (`ack.ok` false, "read-only connection: no client token")'),
 });
 export const GoalSubmitMsg = z.object({
   ...envelope('goal.submit'),
