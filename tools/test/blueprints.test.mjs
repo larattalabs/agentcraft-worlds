@@ -451,6 +451,7 @@ test('beds: every bundled design has 2-4 beds per building / per campus wing, he
   for (const name of listDesigns()) {
     const mod = await import(`../blueprints/designs/${name}.mjs`);
     const bp = mod.default();
+    if (bp.kind === 'fixture') continue; // fixtures (the village board) have no beds
     const n = bedNames(bp.anchors).length;
     const want = bp.kind === 'group' ? [2 * bp.wings, 4 * bp.wings] : [2, 4];
     assert.ok(n >= want[0] && n <= want[1], `${name}: ${n} beds`);
