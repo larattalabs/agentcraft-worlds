@@ -236,6 +236,23 @@ test('C5 shell: a functional block in the outer wall without a vanilla block beh
   assert.equal(workshop().nameAt(27, 3, 16), B.walnutTrim);
 });
 
+test('C5 shell: a doorway without a door is an error; a lamp in a gable wall opening the attic too', () => {
+  const doorless = workshop();
+  doorless.air(13, 1, 20);
+  doorless.air(13, 2, 20);
+  assert.match(checkBlueprint(doorless).errors.join('\n'), /walk cell\(s\) reachable from outside through the walls.*14,1,21/);
+  const gable = workshop();
+  gable.statusLamp(0, 8, 3, 'ci:#1'); // west gable wall, attic behind it, open eave outside
+  const errs = checkBlueprint(gable).errors.join('\n');
+  assert.match(errs, /without the mod the agentcraft:status_lamp at 1,8,4 leaves a hole in the outer shell/);
+  // a courtyard (walk open to the sky only) stays a warning
+  const yard = workshop();
+  for (let y = 7; y <= 14; y++) for (const [x, z] of [[5, 16], [5, 17]]) if (yard.inBounds(x, y, z)) yard.air(x, y, z);
+  const r = checkBlueprint(yard);
+  assert.ok(!r.errors.some((e) => e.startsWith('shell')), r.errors.join('\n'));
+  assert.ok(r.warnings.some((w) => w.includes('open to the sky')), r.warnings.join('\n'));
+});
+
 test('C5 light: the studio corner (34,1,26) was dark; the corner lantern fixes it (regression)', async () => {
   const { default: studio } = await import('../blueprints/designs/studio.mjs');
   const bp = studio();
@@ -313,6 +330,9 @@ test('C5 doors: outside doors are iron, written closed, with stone buttons on bo
   const glassJamb = workshop();
   glassJamb.set(14, 2, 20, B.pane); // a button on glass powers nothing
   assert.match(checkBlueprint(glassJamb).errors.join('\n'), /iron door at 14,1,21: needs a stone button on both sides/);
+  const glow = workshop();
+  glow.set(14, 2, 20, 'minecraft:glowstone'); // full and opaque, but carries no redstone power
+  assert.match(checkBlueprint(glow).errors.join('\n'), /iron door at 14,1,21: needs a stone button on both sides/);
   const open = workshop();
   open.door(13, 1, 20, 'south', { open: true });
   assert.match(checkBlueprint(open).errors.join('\n'), /door at 14,1,21 is written open/);

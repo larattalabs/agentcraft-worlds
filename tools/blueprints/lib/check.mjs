@@ -38,13 +38,17 @@ const DIRS6 = [['east', 1, 0, 0], ['west', -1, 0, 0], ['up', 0, 1, 0], ['down', 
 const OPP = { east: 'west', west: 'east', up: 'down', down: 'up', south: 'north', north: 'south' };
 const H_VEC = { north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0] };
 const fmt = (x, y, z) => `${x},${y},${z}`;
+/** Full opaque cubes vanilla does not let carry redstone power (Blocks: isRedstoneConductor(never)), from the table. */
+const NON_CONDUCTORS = new Set(['minecraft:glowstone', 'minecraft:sea_lantern']);
 
 /**
  * Shell integrity (C5): flood-fills the outside of the building (the padded template box above ground; rows below
  * groundY are ground) through everything a mob could pass, once with AgentCraft blocks in place and once with
  * every agentcraft:* cell turned to air (a world opened without the mod). Walk cells reached only in the second pass
  * mean a functional block is part of the outer shell. Unwritten cells above ground count as open (placement
- * clears the box).
+ * clears the box). Errors: walk reachable through the walls (a flood capped at walk.maxY: a doorway without
+ * a closed door, a gap) and any cell that only becomes reachable without the mod (walk, attic or cavity).
+ * Warning: walk cells reached only from above (open to the sky: a courtyard).
  * @returns {{ errors: string[], warnings: string[], outside: Set<string> }} `outside` = cells reached with the mod
  */
 export function shellCheck(grid, size, walk, groundY) {
@@ -59,16 +63,18 @@ export function shellCheck(grid, size, walk, groundY) {
     const k = collisionOf(c);
     return k === 'none' || k === 'low' || k === 'partial';
   };
-  const flood = (acAir) => {
+  // capY: a flood that never rises above capY (seeded at the ground beside the box) can only get in through the
+  // walls; the uncapped one (seeded above the box) also comes down through open roofs and courtyards
+  const flood = (acAir, capY = sy) => {
     const parent = new Map();
-    const start = fmt(-1, sy, -1);
-    parent.set(start, null);
-    const q = [[-1, sy, -1]];
+    const sy0 = capY === sy ? sy : groundY;
+    parent.set(fmt(-1, sy0, -1), null);
+    const q = [[-1, sy0, -1]];
     for (let i = 0; i < q.length; i++) {
       const [x, y, z] = q[i];
       for (const [, dx, dy, dz] of DIRS6) {
         const nx = x + dx; const ny = y + dy; const nz = z + dz;
-        if (nx < -1 || nx > sx || nz < -1 || nz > sz || ny > sy || ny < Math.min(groundY, 0)) continue;
+        if (nx < -1 || nx > sx || nz < -1 || nz > sz || ny > capY || ny < Math.min(groundY, 0)) continue;
         const k = fmt(nx, ny, nz);
         if (parent.has(k) || !open(nx, ny, nz, acAir)) continue;
         parent.set(k, fmt(x, y, z));
@@ -79,17 +85,26 @@ export function shellCheck(grid, size, walk, groundY) {
   };
   const withMod = flood(false);
   const noMod = flood(true);
+  const walls = flood(false, walk.maxY);
   const reachedWalk = (m) => [...m.keys()].filter((k) => { const [x, y, z] = k.split(',').map(Number); return inWalk(x, y, z); });
-  const modWalk = reachedWalk(withMod);
-  if (modWalk.length) {
+  const entriesOf = (m, cells) => {
     const entries = new Set();
-    for (const k of modWalk) { const p = withMod.get(k); const [px, py, pz] = p.split(',').map(Number); if (!inWalk(px, py, pz)) entries.add(`${p} -> ${k}`); }
-    warnings.push(`shell: ${modWalk.length} walk cell(s) reachable from outside (open door, gap or courtyard), entries: ${[...entries].slice(0, 4).join('; ')}`);
+    for (const k of cells) { const p = m.get(k); const [px, py, pz] = p.split(',').map(Number); if (!inWalk(px, py, pz)) entries.add(`${p} -> ${k}`); }
+    return [...entries].slice(0, 4).join('; ');
+  };
+  const wallWalk = reachedWalk(walls);
+  if (wallWalk.length) {
+    errors.push(`shell: ${wallWalk.length} walk cell(s) reachable from outside through the walls (a doorway without a closed door, a gap), entries: ${entriesOf(walls, wallWalk)}`);
   }
-  const modSet = new Set(modWalk);
+  const wallSet = new Set(wallWalk);
+  const skyWalk = reachedWalk(withMod).filter((k) => !wallSet.has(k));
+  if (skyWalk.length) warnings.push(`shell: ${skyWalk.length} walk cell(s) open to the sky (a courtyard or an open roof), entries: ${entriesOf(withMod, skyWalk)}`);
+  // without the mod: every cell (walk, attic, cavity) that only becomes reachable when the AgentCraft blocks are gone
   const leaks = new Map();
-  for (const k of reachedWalk(noMod)) {
-    if (modSet.has(k)) continue;
+  for (const k of noMod.keys()) {
+    if (withMod.has(k)) continue;
+    const c0 = grid.get(k);
+    if (c0 && isAC(c0.name)) continue;
     let hole = null; // the AgentCraft cell on the path that is nearest the outside = the opening in the shell
     for (let p = noMod.get(k); p; p = noMod.get(p)) {
       const c = grid.get(p);
@@ -98,7 +113,7 @@ export function shellCheck(grid, size, walk, groundY) {
     if (hole) leaks.set(hole[0], hole[1]);
   }
   for (const [k, name] of [...leaks].slice(0, 8)) {
-    errors.push(`shell: without the mod the ${name} at ${k} leaves a hole into the building (put a solid vanilla block behind it on the outside, or move it off the shell)`);
+    errors.push(`shell: without the mod the ${name} at ${k} leaves a hole in the outer shell (put a solid vanilla block behind it on the outside, or move it off the shell)`);
   }
   if (leaks.size > 8) errors.push(`shell: ${leaks.size - 8} more AgentCraft block(s) in the outer shell`);
   return { errors, warnings, outside: new Set(withMod.keys()) };
@@ -178,7 +193,7 @@ export function doorCheck(grid, outside) {
     const f = c.props.face;
     const [ax, ay, az] = f === 'floor' ? [x, y - 1, z] : f === 'ceiling' ? [x, y + 1, z] : [x - H_VEC[c.props.facing][0], y, z - H_VEC[c.props.facing][1]];
     const a = grid.get(fmt(ax, ay, az));
-    const conductive = a && !isAC(a.name) && collisionOf(a) === 'full' && opticsOf(a) === 'opaque';
+    const conductive = a && !isAC(a.name) && collisionOf(a) === 'full' && opticsOf(a) === 'opaque' && !NON_CONDUCTORS.has(a.name);
     buttons.push({ x, y, z, ax, ay, az, conductive });
   }
   for (const [k, c] of grid) {
