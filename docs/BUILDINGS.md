@@ -179,7 +179,7 @@ wait for the writes. So the snapshot is kept, and the site recorded under `pendi
 - **released** (snapshot deleted): the site shows its snapshot again (at least 90 % of the cells where the
   snapshot and the building differ hold the snapshot's block; the building's own template when its pin
   matches, else its pinned block-entity positions), or a standing building covers the whole site (that
-  building's own snapshot holds the same terrain);
+  building's own snapshot holds the same terrain; the same building included, after Undo move or a move back);
 - **record back**: a removal that did not reach the disk (the building stands again) gets its record back; a
   move that did not reach the disk (the old site stands, the new one does not) gets the old record and its
   snapshot back (the unused one is kept as `<id>.unused-<ms>.nbt`);
@@ -223,7 +223,8 @@ current blueprint has fewer wings than the building has repos.
 wing n becomes `repos[n-1]`. Station bindings `repo:<old wing n repo>` / `ci:<old wing n repo>` and unfilled
 `repo:#n` / `ci:#n` are rebound to the new wing n repo, a wing that loses its repo goes back to `#n`
 (`BlueprintTransform.rebindBinding`); the per-wing anchors are derived again from the building's pin (the
-blueprint as it was at placement, "Blueprint versions"), so the blueprint need not be loaded. Refuses more
+blueprint as it was at placement, "Blueprint versions"), so the blueprint need not be loaded; the repo screen
+caps the pick at the same count. Refuses more
 repos than wings and a repo that has another building. The lead sync
 (`LeadsFeature`'s listener) then sends `lead.assign` with the new repos.
 

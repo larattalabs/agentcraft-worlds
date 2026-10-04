@@ -1,5 +1,7 @@
 package dev.agentcraft.building;
 
+import dev.agentcraft.layout.Anchors;
+import java.util.List;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -32,14 +34,50 @@ public final class Reconcile {
 		return total <= 0 ? null : match >= RESTORED * total;
 	}
 
-	/** What a pending site (removed / moved away) overlaps among the current records (other ids, same dimension). */
+	/** What a pending site (removed / moved away) overlaps among the current records (same dimension, its own id included). */
 	public enum Overlap {
 		/** Nothing. */
 		NONE,
-		/** A current record that stands covers the whole site: that record's own snapshot holds the same terrain. */
+		/**
+		 * A current record that stands covers the whole site: that record's own snapshot holds the same terrain. Its own
+		 * id included: a building moved away and back (Undo move) stands on its old site legitimately.
+		 */
 		COVERED,
 		/** Anything else that touches it. */
 		PARTIAL
+	}
+
+	/** A site for {@link #overlap}: a building's id, dimension, restore box and whether it stands (null: unknown). */
+	public record Site(String id, String dimension, Anchors.Bounds box, @Nullable Boolean stands) {
+	}
+
+	/** What {@link #overlap} found, and the record it is about (null for NONE). */
+	public record Found(Overlap overlap, @Nullable String by) {
+	}
+
+	/**
+	 * How a pending site relates to the current records: COVERED when one that stands contains it whole (its own id
+	 * included), else PARTIAL when any intersects it, else NONE. Pure.
+	 */
+	public static Found overlap(Site pending, List<Site> current) {
+		Found found = new Found(Overlap.NONE, null);
+		for (Site c : current) {
+			if (!c.dimension().equals(pending.dimension()) || !Building.intersects(c.box(), pending.box())) {
+				continue;
+			}
+			if (Boolean.TRUE.equals(c.stands()) && contains(c.box(), pending.box())) {
+				return new Found(Overlap.COVERED, c.id());
+			}
+			if (found.overlap() == Overlap.NONE) {
+				found = new Found(Overlap.PARTIAL, c.id());
+			}
+		}
+		return found;
+	}
+
+	static boolean contains(Anchors.Bounds outer, Anchors.Bounds inner) {
+		return outer.minX() <= inner.minX() && outer.minY() <= inner.minY() && outer.minZ() <= inner.minZ() && outer.maxX() >= inner.maxX()
+			&& outer.maxY() >= inner.maxY() && outer.maxZ() >= inner.maxZ();
 	}
 
 	/** What the world-start check does with a pending site. */

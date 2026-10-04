@@ -136,6 +136,29 @@ class PinAndReconcileTest {
 		assertEquals(Action.KEEP, Reconcile.decide(false, false, false, Overlap.PARTIAL, false, null));
 	}
 
+	@Test
+	void overlapCountsTheSameIdSoUndoMoveIsNotTwoCopies() {
+		String ow = "minecraft:overworld";
+		Anchors.Bounds a = new Anchors.Bounds(0, 58, 0, 20, 72, 16);
+		// move A -> B, undo: pending (b1 at A, moved) while b1 stands at A again: covered by itself, released
+		Reconcile.Found undo = Reconcile.overlap(new Reconcile.Site("b1", ow, a, null), List.of(new Reconcile.Site("b1", ow, a, true)));
+		assertEquals(Reconcile.Overlap.COVERED, undo.overlap());
+		assertEquals(Action.RELEASE, Reconcile.decide(true, true, false, undo.overlap(), true, true));
+		// another building that stands covers the whole site: covered
+		Anchors.Bounds big = new Anchors.Bounds(-2, 50, -2, 30, 80, 30);
+		assertEquals(new Reconcile.Found(Reconcile.Overlap.COVERED, "b2"),
+			Reconcile.overlap(new Reconcile.Site("b1", ow, a, null), List.of(new Reconcile.Site("b2", ow, big, true))));
+		// covering but not standing (or unknown), or only intersecting: partial
+		assertEquals(new Reconcile.Found(Reconcile.Overlap.PARTIAL, "b2"),
+			Reconcile.overlap(new Reconcile.Site("b1", ow, a, null), List.of(new Reconcile.Site("b2", ow, big, false))));
+		assertEquals(Reconcile.Overlap.PARTIAL, Reconcile.overlap(new Reconcile.Site("b1", ow, a, null),
+			List.of(new Reconcile.Site("b2", ow, new Anchors.Bounds(10, 60, 10, 40, 70, 40), true))).overlap());
+		// another dimension, or apart: none (a move to a separate site can still be undone by RECOVER)
+		assertEquals(Reconcile.Overlap.NONE, Reconcile.overlap(new Reconcile.Site("b1", ow, a, null),
+			List.of(new Reconcile.Site("b2", "minecraft:the_nether", a, true), new Reconcile.Site("b1", ow, new Anchors.Bounds(100, 60, 0, 120, 70, 16), false)))
+			.overlap());
+	}
+
 	// ------------------------------------------------------------------ occupancy (medium: tridents and pickable arrows)
 
 	@Test

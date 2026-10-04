@@ -1068,20 +1068,13 @@ public final class Buildings {
 				changed = true;
 				continue;
 			}
-			Reconcile.Overlap overlap = Reconcile.Overlap.NONE;
-			String over = null;
+			List<Reconcile.Site> sites = new ArrayList<>();
 			for (Building o : map.values()) {
-				if (o.id().equals(gone.id()) || !o.dimensionOrDefault().equals(gone.dimensionOrDefault())
-					|| !Building.intersects(o.restoreBox(), gone.restoreBox())) {
-					continue;
-				}
-				over = o.id();
-				if (Boolean.TRUE.equals(standsNow.get(o.id())) && contains(o.restoreBox(), gone.restoreBox())) {
-					overlap = Reconcile.Overlap.COVERED;
-					break;
-				}
-				overlap = Reconcile.Overlap.PARTIAL;
+				sites.add(new Reconcile.Site(o.id(), o.dimensionOrDefault(), o.restoreBox(), standsNow.get(o.id())));
 			}
+			Reconcile.Found found = Reconcile.overlap(new Reconcile.Site(gone.id(), gone.dimensionOrDefault(), gone.restoreBox(), null), sites);
+			Reconcile.Overlap overlap = found.overlap();
+			String over = found.by() == null || found.by().equals(gone.id()) ? null : found.by();
 			Building current = map.get(gone.id());
 			Boolean stands = stands(server, gone);
 			Boolean restored = restored(server, gone, snap);
@@ -1171,10 +1164,6 @@ public final class Buildings {
 		return b.withPin(pinFor(bp, grid, turns, b.box()));
 	}
 
-	private static boolean contains(Anchors.Bounds outer, Anchors.Bounds inner) {
-		return outer.minX() <= inner.minX() && outer.minY() <= inner.minY() && outer.minZ() <= inner.minZ() && outer.maxX() >= inner.maxX()
-			&& outer.maxY() >= inner.maxY() && outer.maxZ() >= inner.maxZ();
-	}
 
 	// ------------------------------------------------------------------ world work
 

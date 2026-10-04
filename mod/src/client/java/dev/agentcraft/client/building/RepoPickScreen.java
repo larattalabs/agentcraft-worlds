@@ -46,6 +46,8 @@ final class RepoPickScreen extends WizardScreen {
 	private @Nullable String error;
 	/** Edit mode (the hub's "Edit repos…"): the building whose repos are being changed, null = a new building. */
 	private @Nullable String editBuilding;
+	/** Edit mode: how many repos the building takes (its pin's wings, not the blueprint's current version). */
+	private int editMax;
 	/** Edit mode: what confirming does with the chosen repos, and where Esc goes. */
 	private java.util.function.@Nullable Consumer<List<String>> onEdit;
 	private net.minecraft.client.gui.screens.@Nullable Screen back;
@@ -84,6 +86,7 @@ final class RepoPickScreen extends WizardScreen {
 	static RepoPickScreen forEdit(Building b, java.util.function.Consumer<List<String>> onEdit, net.minecraft.client.gui.screens.@Nullable Screen back) {
 		RepoPickScreen s = new RepoPickScreen(b.repos(), b.blueprint(), null);
 		s.editBuilding = b.id();
+		s.editMax = editMax(b);
 		s.onEdit = onEdit;
 		s.back = back;
 		return s;
@@ -195,14 +198,18 @@ final class RepoPickScreen extends WizardScreen {
 			minecraft.gui.setScreen(new BlueprintPickScreen(c));
 			return;
 		}
+		if (editBuilding != null && onEdit != null) {
+			error = fitsEdit(c.size()); // the building's own wings: the blueprint may have changed or be gone
+			if (error != null) {
+				return;
+			}
+			onEdit.accept(c);
+			minecraft.gui.setScreen(back);
+			return;
+		}
 		Blueprint bp = Blueprints.get(fixedBlueprint);
 		error = bp == null ? "Blueprint " + fixedBlueprint + " is no longer loaded" : fits(bp, c.size());
 		if (error != null) {
-			return;
-		}
-		if (editBuilding != null && onEdit != null) {
-			onEdit.accept(c);
-			minecraft.gui.setScreen(back);
 			return;
 		}
 		try {
@@ -213,6 +220,20 @@ final class RepoPickScreen extends WizardScreen {
 		} catch (IllegalArgumentException e) {
 			error = e.getMessage();
 		}
+	}
+
+	/**
+	 * How many repos a placed building takes (docs/BUILDINGS.md "Blueprint versions"): its pin's wings (1 for a single
+	 * building), whatever its blueprint has become since; a record without a pin, its current count.
+	 */
+	static int editMax(Building b) {
+		Building.Pin pin = b.pin();
+		return pin == null ? b.repos().size() : pin.group() ? pin.wings() : 1;
+	}
+
+	/** Why building {@code id} cannot take {@code n} repos in edit mode (null = it can). */
+	private @Nullable String fitsEdit(int n) {
+		return n > editMax ? editBuilding + " takes at most " + editMax + " repo" + (editMax == 1 ? "" : "s") + " (the wings it was placed with)" : null;
 	}
 
 	/** Why {@code bp} cannot take {@code n} repos (null = it can): a single blueprint takes one, a group up to its wings. */
@@ -309,8 +330,8 @@ final class RepoPickScreen extends WizardScreen {
 		int fieldH = textMode ? typedView.height(font, typed, Math.min(MAX_W, width - 24) - 24, fieldStyle) : 0;
 		int bodyH = 22 + (textMode ? 14 + fieldH + 4 : visibleRows * ROW) + 14;
 		Blueprint fixed = fixedBlueprint == null ? null : Blueprints.get(fixedBlueprint);
-		int y = frame(g, editBuilding != null ? "Repos of " + editBuilding + (fixed != null ? " (" + fixed.name() + ", " + fixed.wings() + " wing"
-			+ (fixed.wings() == 1 ? "" : "s") + ")" : "") : fixed != null ? "Repos for " + fixed.name() + (lockAt != null ? " (on the plot)" : "")
+		int y = frame(g, editBuilding != null ? "Repos of " + editBuilding + " (" + (fixed != null ? fixed.name() + ", " : "") + editMax + " wing"
+			+ (editMax == 1 ? "" : "s") + ")" : fixed != null ? "Repos for " + fixed.name() + (lockAt != null ? " (on the plot)" : "")
 			: "1/2  Choose repos", bodyH);
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
@@ -358,7 +379,8 @@ final class RepoPickScreen extends WizardScreen {
 		if (fixed != null && !c.isEmpty()) {
 			summary = fixed.name() + " for " + String.join(", ", c);
 		}
-		String problem = error != null ? error : fixed != null && !c.isEmpty() ? fits(fixed, c.size()) : null;
+		String problem = error != null ? error : c.isEmpty() ? null : editBuilding != null ? fitsEdit(c.size())
+			: fixed != null ? fits(fixed, c.size()) : null;
 		g.text(font, TextUtil.ellipsize(font, problem != null ? problem : summary, cw), cx, y + 2,
 			problem != null ? UiBits.errorText() : c.isEmpty() ? muted : ink, false);
 		String[] hints = textMode ? new String[] {"Enter", "next", "Esc", "close"} : new String[] {"Space", "pick", "Tab", "type ids", "Enter", "next"};
