@@ -57,6 +57,8 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 	private @Nullable Screen parent;
 	/** Plain text waiting for its second Enter ("Create goal …? Enter again"), null = none. */
 	private @Nullable String armedGoal;
+	/** OS key repeats: a held Enter never turns an armed plain-text goal (or the repo chooser) into a goal. */
+	private final UiRules.KeyRepeat keyRepeat = new UiRules.KeyRepeat();
 	/** The building the console terminal stands in (its repos are where goals go), null = not opened at a terminal in one. */
 	private @Nullable String buildingId;
 	private List<String> buildingRepos = List.of();
@@ -201,6 +203,18 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 	protected void init() {
 		minecraft.onTextInputFocusChange(this, true);
 		input.touch();
+		keyRepeat.reset();
+		for (int k : new int[] {InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER}) {
+			if (InputConstants.isKeyDown(k)) {
+				keyRepeat.heldAtOpen(k);
+			}
+		}
+	}
+
+	@Override
+	public boolean keyReleased(KeyEvent e) {
+		keyRepeat.release(e.key());
+		return super.keyReleased(e);
 	}
 
 	@Override
@@ -436,6 +450,10 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 	public boolean keyPressed(KeyEvent e) {
 		refresh();
 		int k = e.key();
+		boolean repeat = keyRepeat.press(k, InputConstants.isKeyDown(k));
+		if (repeat && TextKeys.isEnter(e) && (armedGoal != null || pendingGoal != null)) {
+			return true; // the goal confirm (and the repo chooser) needs a second deliberate Enter, not a held one
+		}
 		if (e.isEscape()) {
 			if (pendingGoal != null) {
 				pendingGoal = null;
