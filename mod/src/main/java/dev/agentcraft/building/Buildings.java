@@ -458,6 +458,9 @@ public final class Buildings {
 			if (plan.fillCount() > 0) {
 				notes.add(plan.fillCount() + " foundation block" + (plan.fillCount() == 1 ? "" : "s"));
 			}
+			if (plan.clearCount() > 0) {
+				notes.add(plan.clearCount() + " terrain block" + (plan.clearCount() == 1 ? "" : "s") + " cleared");
+			}
 			String wet = Approach.waterWarning(approach);
 			if (wet != null) {
 				notes.add(wet);
