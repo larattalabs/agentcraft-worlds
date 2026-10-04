@@ -31,7 +31,7 @@ public final class AgentLife {
 
 	/** What the body is doing (picked every tick). */
 	public enum Posture {
-		WALK, IDLE, SIT_IDLE, SIT_TYPE, SIT_THINK, SIT_SCRATCH, READ, TYPE_STAND, LEAN_BENCH, REVIEW, WAIT, THINK, SCRATCH, RELAX, STRETCH, TALK
+		WALK, IDLE, SIT_IDLE, SIT_TYPE, SIT_THINK, SIT_SCRATCH, READ, TYPE_STAND, LEAN_BENCH, REVIEW, WAIT, THINK, SCRATCH, RELAX, STRETCH, TALK, LIE
 	}
 
 	/** Eye height of the agent model (player eye 1.62 x model scale 0.9375). */
@@ -62,6 +62,8 @@ public final class AgentLife {
 	private float exclaimPrev;
 	private Posture posture = Posture.IDLE;
 	private Seats.@Nullable Seat seat;
+	/** The bed the agent lies in (night routine, {@link Routines}), or null. A render pose only: the bed block is never touched. */
+	private Routines.@Nullable BedSpot lying;
 	/** Vertical model offset of the seat the agent sits on / last sat on (blocks). */
 	private double drop;
 	private float headYaw;
@@ -155,6 +157,24 @@ public final class AgentLife {
 
 	public boolean seated() {
 		return seat != null && sit > 0.5f;
+	}
+
+	/** The bed the agent lies in, or null. */
+	Routines.@Nullable BedSpot lyingIn() {
+		return lying;
+	}
+
+	/** Lying in a bed (night routine). */
+	public boolean lying() {
+		return lying != null;
+	}
+
+	/** Lie down in {@code bed} (the caller placed the agent at the bed's lie anchor), or get up (null). */
+	void lie(Routines.@Nullable BedSpot bed) {
+		lying = bed;
+		if (bed != null) {
+			seat = null;
+		}
 	}
 
 	/** Set by {@link AgentManager} with the seat at the agent's current target (null = stand there). */
@@ -303,8 +323,15 @@ public final class AgentLife {
 	}
 
 	private Posture choose(AgentView v, boolean walking, boolean seated) {
+		if (lying != null) {
+			return Posture.LIE;
+		}
 		if (walking) {
 			return Posture.WALK;
+		}
+		if (v.routine == dev.agentcraft.routine.RoutineRules.Kind.LIBRARY && !seated && !v.stale
+			&& v.station.equals(AnchorNames.LIBRARY) && atLibrary(v)) {
+			return Posture.READ; // a library visit: reading at the shelves (the book came in its hand)
 		}
 		if (v.stale) {
 			return seated ? Posture.SIT_IDLE : Posture.IDLE;
@@ -422,6 +449,7 @@ public final class AgentLife {
 			case RELAX -> arms(t, -3.7f, 0f, 0.62f, -3.7f, 0f, -0.62f);
 			case STRETCH -> arms(t, -3.05f, 0f, -0.22f, -3.05f, 0f, 0.22f);
 			case TALK -> arms(t, -0.7f, -0.22f, 0.08f, 0.02f, 0f, -0.05f);
+			case LIE -> arms(t, 0f, 0f, 0.08f, 0f, 0f, -0.08f); // arms at the sides, legs straight: the renderer lays the body down
 		}
 	}
 
@@ -462,6 +490,14 @@ public final class AgentLife {
 
 	private void look(Minecraft mc, AgentView v, boolean walking, boolean snap) {
 		float body = e.yBodyRot;
+		if (lying != null) {
+			// asleep: the head rests with the body (no glances, no tracking the player)
+			e.motion().faceTowards(null);
+			headYaw = body;
+			headPitch = 0f;
+			e.setHeadLook(headYaw, headPitch);
+			return;
+		}
 		Vec3 eye = new Vec3(e.getX(), e.getY() + EYE + sitOffset(), e.getZ());
 		float wantYaw = body;
 		float wantPitch = 0f;
@@ -556,6 +592,12 @@ public final class AgentLife {
 		float off = Mth.clamp(Mth.wrapDegrees(headYaw - body), -limit, limit);
 		headYaw = body + off;
 		e.setHeadLook(headYaw, headPitch);
+	}
+
+	/** At its library slot (the motion target, reached). */
+	private boolean atLibrary(AgentView v) {
+		Anchor t = e.motion().target();
+		return t != null && t.name().startsWith(AnchorNames.LIBRARY) && e.position().distanceToSqr(t.pos()) < 0.6 * 0.6;
 	}
 
 	/** Working, thinking or in trouble: the agent's attention is on its work. */

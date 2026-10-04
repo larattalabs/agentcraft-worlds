@@ -41,6 +41,8 @@ public final class AgentView {
 	/** The Foreman link is down: show the last known state, dimmed. */
 	public boolean stale;
 	public AgentPose pose = AgentPose.STAND;
+	/** The village routine it follows this tick (docs/VILLAGE.md V3; {@link Routines}): rest, stand-up, library, or none. */
+	public dev.agentcraft.routine.RoutineRules.Kind routine = dev.agentcraft.routine.RoutineRules.Kind.NONE;
 	public @Nullable String taskId;
 	/**
 	 * An open decision is waiting on the user for this agent's work (a merge of its task, a question it
@@ -110,6 +112,9 @@ public final class AgentView {
 		}
 		if (paused) {
 			return activity.isEmpty() ? "paused" : "paused · " + activity;
+		}
+		if (routine == dev.agentcraft.routine.RoutineRules.Kind.REST) {
+			return "resting"; // the night routine (an idle agent: nothing else to say)
 		}
 		return activity;
 	}

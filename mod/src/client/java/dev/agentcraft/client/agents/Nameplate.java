@@ -31,6 +31,8 @@ import net.minecraft.util.FormattedCharSequence;
 public final class Nameplate {
 	/** Bottom of the plate above the feet of a standing agent, in blocks (before any declutter lift; seated agents: {@link AgentRenderState#plateBase}). */
 	public static final double HEIGHT = 2.12;
+	/** Bottom of the plate above the position of an agent lying in a bed (the night routine; the body is flat). */
+	public static final double LYING_HEIGHT = 0.95;
 	public static final int MAX_ACTIVITY_PX = 116;
 	/** Plates keep their world size up to this distance, then grow with it (constant screen size) ... */
 	public static final double SCALE_FROM = 12;

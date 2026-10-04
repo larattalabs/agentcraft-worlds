@@ -56,7 +56,7 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.Vec3;
 
 /** Built-in DevBridge commands. See mod/DEV.md for the reference. */
-final class DevCommands {
+public final class DevCommands {
 	/** Radius meaning "the whole render distance" (clamped to renderDistance-1). */
 	static final int FULL_RADIUS = 64;
 	/** dev.camera: how close (blocks / degrees) the rendered camera must get to the request. */
@@ -846,7 +846,7 @@ final class DevCommands {
 
 	// ------------------------------------------------------------------ dev.command
 
-	static CompletableFuture<JsonObject> serverCommand(Minecraft mc, String cmd) {
+	public static CompletableFuture<JsonObject> serverCommand(Minecraft mc, String cmd) {
 		return DevBridge.onClient(mc, () -> new Object[] {needServer(mc), mc.player.getUUID()}).thenCompose(arr -> {
 			var server = (net.minecraft.client.server.IntegratedServer) arr[0];
 			UUID uuid = (UUID) arr[1];

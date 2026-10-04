@@ -15,6 +15,7 @@ import dev.agentcraft.client.foreman.Protocol.AgentState;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
+import dev.agentcraft.routine.RoutineRules;
 import dev.agentcraft.walk.WalkRules;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -206,6 +207,7 @@ public final class AgentManager {
 			regionsSignature = Long.MIN_VALUE;
 			trips.clear();
 			sendOverrides.clear();
+			guardRoutines("reset", () -> Routines.get().reset("level changed"));
 		}
 		OutdoorRoutes.get().tick(mc);
 		if (lvl == null) {
@@ -278,19 +280,39 @@ public final class AgentManager {
 		}
 		Map<String, Anchor> targets = new HashMap<>();
 		Map<String, GridPathfinder> pfs = new HashMap<>();
+		boolean stale = st.isStale();
+		updateAwaiting(st);
+		// village routines (docs/VILLAGE.md V3): night rest, stand-ups, library visits change the station an agent uses
+		Map<String, Anchors.Layout> routed = new HashMap<>();
+		for (var g : groups.entrySet()) {
+			for (Agent a : g.getValue()) {
+				routed.put(a.id(), layouts.get(g.getKey()));
+			}
+		}
+		Routines routines = Routines.get();
+		guardRoutines("begin", () -> routines.begin(mc, lvl, st, liveTicks, stale, routed));
 		for (var g : groups.entrySet()) {
 			Anchors.Layout l = layouts.get(g.getKey());
 			if (l.isEmpty()) {
 				targets.putAll(fallbackTargets(g.getValue(), lvl));
 			} else {
-				targets.putAll(assigners.computeIfAbsent(l.name(), k -> new StationAssigner()).assign(g.getValue(), l));
-				pfs.put(l.name(), new GridPathfinder(lvl, l.bounds()));
+				GridPathfinder lpf = new GridPathfinder(lvl, l.bounds());
+				pfs.put(l.name(), lpf);
+				java.util.function.Function<Agent, String> keyOf = StationAssigner::stationKey;
+				try {
+					Map<String, @Nullable String> repos = new HashMap<>();
+					for (Agent a : g.getValue()) {
+						repos.put(a.id(), repoOf(st, a));
+					}
+					keyOf = routines.plan(lvl, l, lpf, g.getValue(), a -> routineFacts(a, l.name()), stale, repos);
+				} catch (RuntimeException ex) {
+					routineFailed("plan", ex); // the routines never stop the agents: everyone works as usual
+				}
+				targets.putAll(assigners.computeIfAbsent(l.name(), k -> new StationAssigner()).assign(g.getValue(), l, keyOf));
 			}
 		}
 		assigners.keySet().retainAll(groups.keySet());
 		layoutRevisions.keySet().retainAll(groups.keySet());
-		boolean stale = st.isStale();
-		updateAwaiting(st);
 		// the player is in at most one building: its waiting agents come to you, the others use their user spot
 		Vec3 playerFeet = null;
 		String playerLayout = null;
@@ -322,6 +344,10 @@ public final class AgentManager {
 			boolean playerHere = layoutName.equals(playerLayout);
 			for (Agent a : g.getValue()) {
 				Anchor target = targets.get(a.id());
+				Routines.Plan plan = routines.planOf(a.id());
+				if (plan != null && plan.bed() != null && pf != null) {
+					target = plan.bed().approachAnchor(); // the night routine: to the bed (it lies down on arrival)
+				}
 				if (target == null) {
 					continue;
 				}
@@ -346,7 +372,7 @@ public final class AgentManager {
 				boolean moved = !spawned && before != null && !before.equals(layoutName);
 				AgentView v = e.view();
 				v.update(a, stale, awaiting.get(a.id()), awaitingCounts.getOrDefault(a.id(), 0));
-				v.station = StationAssigner.stationKey(a);
+				v.station = plan != null && plan.stationKey() != null ? plan.stationKey() : StationAssigner.stationKey(a);
 				v.anchor = target.name();
 				v.layout = layout;
 				v.repo = repoOf(st, a);
@@ -357,6 +383,9 @@ public final class AgentManager {
 					}
 				} else {
 					userSpots.remove(a.id());
+				}
+				if (keepLying(e, plan, moved, snap && !walkIn, stale)) {
+					continue; // asleep in its bed: nothing to walk to
 				}
 				Seats.Seat seat = pf == null ? null : seats.at(lvl, layout, target, ticks, pf);
 				Anchor effective = seat != null ? seat.target() : target;
@@ -390,6 +419,7 @@ public final class AgentManager {
 			}
 		}
 		tickTrips(mc, lvl);
+		guardRoutines("after", () -> routines.after(entities, stale));
 		for (var it = entities.entrySet().iterator(); it.hasNext();) {
 			var en = it.next();
 			String id = en.getKey();
@@ -398,6 +428,9 @@ public final class AgentManager {
 			}
 			trips.remove(id);
 			ClientAgentEntity e = en.getValue();
+			if (e.life().lyingIn() != null) {
+				guardRoutines("getUp", () -> Routines.get().getUp(e)); // out of bed before walking out (or vanishing)
+			}
 			Long deadline = departing.get(id);
 			if (deadline == null && !stale && leads.known() && leadIds.contains(id) && startDeparture(lvl, e, current)) {
 				departing.put(id, ticks + DEPART_TICKS);
@@ -417,6 +450,43 @@ public final class AgentManager {
 			it.remove();
 		}
 		populated = true;
+	}
+
+	/** The inputs of the routine rules for one agent routed to layout {@code layoutName} this tick. */
+	private RoutineRules.Facts routineFacts(Agent a, String layoutName) {
+		String fam = a.state().family();
+		String before = agentLayouts.get(a.id());
+		boolean changing = trips.containsKey(a.id()) || before != null && !before.equals(layoutName);
+		return new RoutineRules.Facts(followsPlayer(a) || awaiting.containsKey(a.id()), changing, a.taskId() != null,
+			fam.equals("working") || fam.equals("thinking") || fam.equals("error"), a.isActive());
+	}
+
+	/** A lying agent keeps lying (true) or gets up beside its bed; an error gets it up and lets it work. */
+	private boolean keepLying(ClientAgentEntity e, Routines.@Nullable Plan plan, boolean moved, boolean snap, boolean stale) {
+		try {
+			return Routines.get().keepLying(e, plan, moved, snap, stale);
+		} catch (RuntimeException ex) {
+			routineFailed("bed", ex);
+			e.life().lie(null);
+			return false;
+		}
+	}
+
+	private long lastRoutineWarn = Long.MIN_VALUE / 2;
+
+	private void routineFailed(String what, RuntimeException ex) {
+		if (ticks - lastRoutineWarn > 200) {
+			lastRoutineWarn = ticks;
+			AgentCraft.LOGGER.warn("Village routines ({}) failed; agents work as usual", what, ex);
+		}
+	}
+
+	private void guardRoutines(String what, Runnable r) {
+		try {
+			r.run();
+		} catch (RuntimeException ex) {
+			routineFailed(what, ex);
+		}
 	}
 
 	/** A lead that can lead a building (every lead but marlow). */
@@ -467,6 +537,23 @@ public final class AgentManager {
 		retarget(lvl, new GridPathfinder(lvl, home.bounds()), e, exit, null);
 		AgentCraft.LOGGER.info("Lead {} released: walking out of {} ({})", e.agentId(), home.name(), exit.name());
 		return true;
+	}
+
+	/** Agent id -> the layout it is routed to now (dev.routines.standup). Client thread. */
+	Map<String, Anchors.Layout> routedLayoutsNow() {
+		Map<String, Anchors.Layout> out = new HashMap<>();
+		ClientLevel lvl = level;
+		if (lvl == null) {
+			return out;
+		}
+		String dim = lvl.dimension().identifier().toString();
+		for (var e : agentLayouts.entrySet()) {
+			Anchors.Layout l = OutdoorRoutes.layoutByName(e.getValue(), dim);
+			if (l != null) {
+				out.put(e.getKey(), l);
+			}
+		}
+		return out;
 	}
 
 	/** Agent id -> the name of the layout it is routed to (spawned agents of the player's level). Client thread. */
@@ -971,6 +1058,7 @@ public final class AgentManager {
 		departing.clear();
 		trips.clear();
 		populated = false;
+		guardRoutines("reset", () -> Routines.get().reset("no Foreman data"));
 	}
 
 	private static void remove(ClientLevel lvl, ClientAgentEntity e) {

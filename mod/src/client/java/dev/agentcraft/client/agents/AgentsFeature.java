@@ -94,12 +94,19 @@ public final class AgentsFeature {
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agents.tick", () -> AgentManager.get().tick(mc)));
 		OutdoorRoutes.registerDev();
+		Routines.registerDev();
 		// nameplate declutter: every agent's render state is extracted, nothing is submitted yet
 		LevelExtractionEvents.END_EXTRACTION.register(ctx -> Guard.run("agents.plates", () -> PlateLayout.layout(ctx.levelState())));
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onSnapshot(ForemanState state) {
 				AgentManager.get().onSnapshot();
+				Guard.run("routines.snapshot", () -> Routines.get().onSnapshot(state));
+			}
+
+			@Override
+			public void onMemory(Protocol.@Nullable MemoryEntry previous, Protocol.MemoryEntry entry) {
+				Guard.run("routines.memory", () -> Routines.get().onMemory(previous, entry, Foreman.state()));
 			}
 
 			@Override
