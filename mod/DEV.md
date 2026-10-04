@@ -1019,8 +1019,9 @@ name on the screen).
 #### Layout checks at the user's setup (wave 2, stream layout)
 4K fullscreen with GUI scale auto (= 9) is **426x240 GUI px**. The dev client reproduces it exactly with `dev.window
 {width:1278, height:720}` + `dev.review.guiScale {scale:0}` (auto picks 3 there: 1278/3 x 720/3); scales 2/3/4 at the
-default 1920x1080 window give 960x540, 640x360 and 480x270. No layout code branches on the scale value itself (only
-TaskScreen's title size), so 3 at 1278x720 lays out like 9 at 3840x2160. Put the window back with `dev.window
+default 1920x1080 window give 960x540, 640x360 and 480x270. No panel layout depends on the scale value itself (it only snaps
+scrolling to physical pixels in Diff/Library, caps nameplate size, and sizes TaskScreen's title at (s+1)/s, which is
+smaller at 9 than at 3), so 3 at 1278x720 lays out like 9 at 3840x2160 (the shots are the worst case). Put the window back with `dev.window
 {width:1920, height:1080}` + `dev.review.guiScale {scale:3}`. Overflow reports: `dev.hub.state` (`tabs`, `statusTab`,
 `inboxTab.layout`, `reposTab/goalsTab/teamTab/settingsTab.layout`), `dev.hud.state alert.layout`, `dev.walk.state.ui`,
 `dev.agents.card layout`, `dev.onboarding welcomeLayout`, `dev.design.state form.layout` (`scrolls` = the left column
