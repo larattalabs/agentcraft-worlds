@@ -115,6 +115,7 @@ public final class HubScreen extends Screen {
 	final GoalsTab goals = new GoalsTab(this);
 	final TeamTab team = new TeamTab(this);
 	final SettingsTab settings = new SettingsTab(this);
+	final InboxTab inbox = new InboxTab(this);
 	private boolean opened;
 	private boolean textInput;
 
@@ -126,6 +127,7 @@ public final class HubScreen extends Screen {
 	/** The pane of a tab with its own state and input (Repos, Goals), or null. */
 	@Nullable HubPane pane(HubTab t) {
 		return switch (t) {
+			case INBOX -> inbox;
 			case REPOS -> repos;
 			case GOALS -> goals;
 			case TEAM -> team;
@@ -685,6 +687,7 @@ public final class HubScreen extends Screen {
 			case GOALS -> goals.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			case TEAM -> team.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			case SETTINGS -> settings.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
+			case INBOX -> inbox.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			default -> drawComingNext(g, cx, y, cw, footerY - 4 - y);
 		}
 		HubPane hp = pane();
@@ -700,7 +703,23 @@ public final class HubScreen extends Screen {
 		}
 	}
 
+	/** Width the tab strip needs (every tab's label + padding) and had last frame (DevBridge layout: 7 tabs at ~426 GUI px). */
+	int tabStripNeeded() {
+		int n = 0;
+		for (HubTab t : HubTab.values()) {
+			n += font.width(t.label) + 16 + 2;
+		}
+		return n - 2;
+	}
+
+	int tabStripAvailable() {
+		return tabStripW;
+	}
+
+	private int tabStripW;
+
 	private void drawTabs(GuiGraphicsExtractor g, int x0, int y, int w, int mx, int my) {
+		tabStripW = w;
 		int edge = UiStyle.color("palette.ui.panel_edge");
 		g.fill(x0, y + TAB_H - 1, x0 + w, y + TAB_H, edge);
 		int x = x0;

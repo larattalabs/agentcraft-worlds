@@ -123,7 +123,7 @@ final class HubDev {
 				// only the shown tab's chips (a hidden form keeps last frame's hit list)
 				boolean ok = s.press(id) || s.tab() == HubTab.GOALS && s.goals.pressChip(id) || s.tab() == HubTab.TEAM && s.team.form.press(id)
 					|| s.tab() == HubTab.SETTINGS && s.settings.form.press(id) || s.tab() == HubTab.REPOS && s.repos.editing() != null && s.repos.form
-						.press(id);
+						.press(id) || s.tab() == HubTab.INBOX && s.inbox.pressChip(id);
 				if (!ok) {
 					throw new DevBridge.DevException("button: no enabled button or chip '" + id + "' was drawn last frame (see dev.hub.state buttons"
 						+ ", goalsTab.chips and the forms' chips: teamTab/settingsTab/reposTab .form.chips)");
