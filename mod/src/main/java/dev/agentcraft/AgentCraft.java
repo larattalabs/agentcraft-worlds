@@ -4,6 +4,7 @@ import dev.agentcraft.block.ModBlocks;
 import dev.agentcraft.building.BuildingCommands;
 import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Trophies;
 import dev.agentcraft.block.ModItems;
 import dev.agentcraft.block.entity.ModBlockEntities;
 import dev.agentcraft.command.AgentCraftCommands;
@@ -37,6 +38,7 @@ public class AgentCraft implements ModInitializer {
 		// after Anchors: in a world with buildings the home building's layout replaces the (empty) one Anchors loaded
 		Blueprints.init();
 		Buildings.init();
+		Trophies.init();
 		AgentCraftCommands.init();
 		BuildingCommands.init();
 		HqFeature.init();

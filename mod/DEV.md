@@ -437,6 +437,15 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   chest is replaced without spilling, so restore doesn't duplicate items), reconnects panels,
   rewrites `<prefix>:#n` bindings to the n-th repo, clears drops. `remove` places the snapshot back
   at the same corner and deletes it; `remove <id> forget` only drops the record.
+- Trophies (`docs/BUILDINGS.md` "Trophies"): `Trophies` hangs a waxed `DARK_OAK_WALL_SIGN` at a slot from the
+  building's pin (`TrophySlots`), lines from `TrophyText`, flags `UPDATE_CLIENTS` only. Ledger
+  `<world>/agentcraft-trophies.json` (`TrophyLedger`, loaded on server start after `Buildings` so it can prune slots
+  of buildings that are gone, cleared on stop). Inspect it with `jq . "<save>/agentcraft-trophies.json"` (keys under
+  `awarded`, signs under `buildings.<id>.<slot>`), or in game with the DevBridge `dev.trophies.list`
+  (`Trophies.list`: every building's slots with cell, key, lines, `at`). To start over in a test world, delete the
+  file with the game closed (the signs stay; a slot only takes air or a sign the ledger knows, so break them by hand
+  or Remove and re-place the building). Pure tests: `TrophyTest` (text widths, slot order, ledger, removal exemption,
+  the bundled blueprints' 6 slots per wing at every rotation).
 - Placement math is `BlueprintTransform` (pure; unit tests in `src/test/java`, `gradlew test`, also
   run by `build`). Vanilla rotates about the template's origin cell (clockwise_90 puts the footprint
   at x-(sizeZ-1)..x), so `place` shifts the position by the rotated box's minimum: the `origin` is

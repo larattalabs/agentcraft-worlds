@@ -260,7 +260,7 @@ them). Forcing is a further explicit confirm: the hub's
 button turns into "Remove anyway", `/agentcraft remove <id> force`. Nothing is deleted silently. Drops are
 only cleared when the placement/removal itself made them: the items and XP around the box are recorded
 before, and only new ones are removed (right after and again three ticks later), never the player's own drops
-lying there.
+lying there. Trophy signs the mod hung at the building's own trophy slots never count (see "Trophies").
 
 ### Crash safety
 
@@ -332,7 +332,53 @@ one to `<id>.before.nbt`), then the old site restored from the renamed snapshot 
 as for a removal). A failure at any step undoes the steps before it (files renamed back, the new site restored
 from its snapshot) and records nothing, so the record never points at a site whose snapshot is another site's
 terrain (`dev.buildings.failNextRename` injects a rename failure). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
-old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step).
+old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step). The building's trophies are hung again
+at the new site (see "Trophies").
+
+### Trophies
+
+A repo's building gets a plaque when one of its PRs merges, a task merges locally, or one of its goals turns done
+(the client decides when; server side `dev.agentcraft.building.Trophies` hangs it):
+- **The plaque** is a vanilla **waxed dark-oak wall sign** (front text, black, not glowing; nobody can edit it, and
+  it stays a plain sign when the mod is removed). Lines (`TrophyText`, pure):
+
+  | kind | line 1 | lines 2-3 | line 4 |
+  |---|---|---|---|
+  | PR | `Merged PR #612` | title, word-wrapped | `2026-10-04` |
+  | merge (done without a PR) | `Merged t12` | title, word-wrapped | `2026-10-04` |
+  | goal | `Goal done` | the goal text's first line, word-wrapped; when it takes one line, line 3 is `3 tasks` | `2026-10-04` |
+
+  Every line fits the sign's 90 px by the vanilla default font's advances (6 px for most characters, 2-5 for the
+  thin ones, conservative widths for anything Unifont draws); a word longer than a line is broken; what does not fit
+  ends the last line with `…`. `§` codes and control characters are dropped, whitespace collapsed. The task count
+  never shares the date's line: `3 tasks · 2026-10-04` is 107 px.
+- **Where**: only at the building's trophy slots (see "Trophy slots"), read from its **pin** (raw `trophy*@<w>`,
+  world space: the template that stands there, not the blueprint's current version), the repo's wing only (a single
+  building: wing 1), never outside the building's box. A building placed before pins, or a blueprint without slots,
+  gets none; so does a repo without a building (the dev HQ studio has no slots).
+- **Which slot**: the lowest free slot in fill order, else the slot with the oldest trophy (replaced: its sign is
+  rewritten). A slot is only used when its cell is air (or holds our own sign, per the ledger) and the block behind
+  it has a sturdy face towards the sign; a blocked slot is skipped for the next one.
+- **How**: `setBlock` with `UPDATE_CLIENTS` only (no neighbour or shape updates, nothing pops), then the sign's
+  block entity text. No AgentCraft block, no items, works with cheats off.
+- **Ledger** `<world>/agentcraft-trophies.json` (`TrophyLedger`, written atomically): `awarded` keys and per building
+  per slot `{key, lines, at}`. Keys: `goal:<goalId>:<createdAt>`, `pr:<repo>:<prId>`, `merge:<taskId>:<createdAt>`
+  (`Trophy.goalKey/prKey/mergeKey`). A known key is never hung again (also after its sign was replaced or its building
+  removed). A key is only recorded when a sign was hung: a repo without a building, slots or room catches up later.
+  Malformed parts are skipped; a file that is not JSON at all is left alone and nothing is awarded that session.
+- **Remove / Move**: the slots are inside the box, so the snapshot (`before.nbt`) covers them and Remove puts back
+  exactly what was there (the restore flags suppress drops: no sign item comes out; the drop cleaner catches any).
+  The removal check ignores sign block entities at the building's pinned trophy cells (a chest put there still
+  counts), and the world-start check skips those cells. Move (and Undo move) hangs every ledger trophy again at the
+  same slot of the new site; a slot the new site lacks or blocks drops out of the ledger. `forget` drops the
+  building's slots from the ledger at once; a removed building's slots are dropped at the next world start (a
+  removal the disk never saw comes back with its record, and its signs must still read as ours). Keys stay awarded.
+- A player can still break a trophy sign (it drops one dark-oak sign, as any sign does); the slot then holds air
+  and is reused like any other.
+
+API (server thread): `Trophies.award(level | server, Trophy, key) -> Result{outcome PLACED | KNOWN | NO_BUILDING |
+NO_SLOTS | NO_ROOM | UNAVAILABLE, building, slot, replaced, message}`, `Trophies.known(key)`, `Trophies.slotsFor(repo)`,
+`Trophies.list(server)` (JSON for the DevBridge).
 
 ## Server API (mod, `dev.agentcraft.building`)
 
