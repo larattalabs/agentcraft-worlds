@@ -2,10 +2,11 @@ package dev.agentcraft.walk;
 
 import it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.PriorityQueue;
-import java.util.function.LongPredicate;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -77,8 +78,10 @@ public final class OutdoorPlanner {
 	}
 
 	/**
-	 * A step onto a laid road (docs/VILLAGE.md V1) costs this much of a step elsewhere, so routes prefer roads. With roads,
-	 * the heuristic is scaled by it too (it stays an estimate of the cheapest way, or the search would rush past them).
+	 * A step onto a laid road (docs/VILLAGE.md V1) costs this much of a step elsewhere, so routes prefer roads. When a
+	 * road cell lies inside the search box, the heuristic is scaled by it too (it stays an estimate of the cheapest way,
+	 * or the search would rush past the road); with no road in the box it is not, so a road elsewhere in the dimension
+	 * costs other searches nothing.
 	 */
 	public static final double ROAD_FACTOR = 0.6;
 
@@ -95,8 +98,9 @@ public final class OutdoorPlanner {
 	private final Terrain terrain;
 	private final Limits limits;
 	/** Feet cells ({@link WalkCell#pack}) on a laid road, or null. */
-	private final @Nullable LongPredicate roads;
-	private final double hWeight;
+	private final @Nullable LongSet roads;
+	/** The heuristic weight this round: {@link #H_WEIGHT}, times {@link #ROAD_FACTOR} when a road lies in the box. */
+	private double hWeight = H_WEIGHT;
 	private final Point from;
 	private final Point to;
 	private final Long2IntOpenHashMap codes = new Long2IntOpenHashMap();
@@ -147,13 +151,12 @@ public final class OutdoorPlanner {
 	}
 
 	/** With {@code roads} (feet cells on a laid road): steps onto them cost {@link #ROAD_FACTOR}. */
-	public OutdoorPlanner(Terrain terrain, Point from, Point to, Limits limits, @Nullable LongPredicate roads) {
+	public OutdoorPlanner(Terrain terrain, Point from, Point to, Limits limits, @Nullable LongSet roads) {
 		this.terrain = terrain;
 		this.from = from;
 		this.to = to;
 		this.limits = limits;
-		this.roads = roads;
-		this.hWeight = roads == null ? H_WEIGHT : H_WEIGHT * ROAD_FACTOR;
+		this.roads = roads == null || roads.isEmpty() ? null : roads;
 		this.pad = limits.pad();
 		floors.defaultReturnValue(UNKNOWN);
 		best.defaultReturnValue(Double.MAX_VALUE);
@@ -346,6 +349,7 @@ public final class OutdoorPlanner {
 		maxZ = Math.max(fz, tz) + pad;
 		minY = Math.min(fy, ty) - vpad;
 		maxY = Math.max(fy, ty) + vpad;
+		pickWeight();
 		int[] s = cellAt(fx, fy, fz);
 		int[] g = cellAt(tx, ty, tz);
 		if (s == null) {
@@ -403,6 +407,28 @@ public final class OutdoorPlanner {
 			floors.put(k, v);
 		}
 		return v;
+	}
+
+	/** Scales the heuristic only when some road cell lies inside the search box (see {@link #ROAD_FACTOR}). */
+	private void pickWeight() {
+		hWeight = H_WEIGHT;
+		if (roads == null) {
+			return;
+		}
+		for (LongIterator it = roads.iterator(); it.hasNext(); ) {
+			long c = it.nextLong();
+			int x = WalkCell.unpackX(c);
+			int z = WalkCell.unpackZ(c);
+			if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
+				hWeight = H_WEIGHT * ROAD_FACTOR;
+				return;
+			}
+		}
+	}
+
+	/** The heuristic weight in use (for tests). */
+	double heuristicWeight() {
+		return hWeight;
 	}
 
 	private double h(int x, int y, int z) {
@@ -480,7 +506,7 @@ public final class OutdoorPlanner {
 					break;
 				}
 				int feet = code(nx, ny, nz);
-				double step = (diagonal ? SQRT2 : 1.0) * (roads != null && roads.test(WalkCell.pack(nx, ny, nz)) ? ROAD_FACTOR : 1.0);
+				double step = (diagonal ? SQRT2 : 1.0) * (roads != null && roads.contains(WalkCell.pack(nx, ny, nz)) ? ROAD_FACTOR : 1.0);
 				double cost = step + (rise > 0.01 ? 0.5 * rise : 0) + (rise < -0.01 ? 0.25 * -rise : 0)
 					+ (feet == WalkCell.WATER ? 1.5 : 0) + (feet == WalkCell.DOOR || code(nx, ny + 1, nz) == WalkCell.DOOR ? 0.3 : 0)
 					+ (code(nx, ny + 1, nz) == WalkCell.LEAVES ? 0.6 : 0);
@@ -517,6 +543,7 @@ public final class OutdoorPlanner {
 		maxZ = Math.max(fz, tz) + pad;
 		minY = Math.min(sy, gy) - vpad;
 		maxY = Math.max(sy, gy) + vpad;
+		pickWeight();
 		best.put(WalkCell.pack(sx, sy, sz), 0.0);
 		open.add(new Node(sx, sy, sz, 0, h(sx, sy, sz), null));
 	}

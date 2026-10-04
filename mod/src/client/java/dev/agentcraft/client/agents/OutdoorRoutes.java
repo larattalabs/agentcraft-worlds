@@ -201,9 +201,9 @@ public final class OutdoorRoutes {
 	}
 
 	/** Feet cells on laid roads in the level's dimension (steps onto them are cheaper), or null when there are none. */
-	private static java.util.function.@Nullable LongPredicate roads(ClientLevel lvl) {
+	private static it.unimi.dsi.fastutil.longs.@Nullable LongSet roads(ClientLevel lvl) {
 		it.unimi.dsi.fastutil.longs.LongSet s = dev.agentcraft.building.Roads.feetCells(lvl.dimension().identifier().toString());
-		return s.isEmpty() ? null : s::contains;
+		return s.isEmpty() ? null : s;
 	}
 
 	private CompletableFuture<Outcome> request(ClientLevel lvl, String key, Point from, Point to, boolean fresh, OutdoorPlanner.Limits limits) {
