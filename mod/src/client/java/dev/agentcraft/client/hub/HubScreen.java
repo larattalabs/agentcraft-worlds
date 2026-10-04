@@ -823,15 +823,31 @@ public final class HubScreen extends Screen {
 		List<Building> bs = buildings();
 		List<Blueprint> bps = blueprints();
 		List<Design> ds = designs();
-		// sub switch (left) and Place new / Design new (right)
+		// sub switch (left) and Place new / Design new (right). Narrow (GUI scale 4, ~426 px): the counts go first (each
+		// list says them again), then the right button's label shortens, so the strip never overlaps
+		boolean running = ds.stream().anyMatch(d -> d.status().isRunning());
+		String rightFull = sub == Sub.DESIGNS ? "Design new…" : sub == Sub.ROADS ? null : "Place new…";
+		String rightShort = sub == Sub.DESIGNS ? "Design…" : "Place…";
+		int level = 0;
+		int needed = 0;
+		for (; level < 3; level++) {
+			needed = 0;
+			for (Sub s : Sub.values()) {
+				needed += bw(subLabel(s, level > 0, bs.size(), bps.size(), ds.size(), running)) + 4;
+			}
+			if (rightFull != null) {
+				needed += bw(level > 1 ? rightShort : rightFull);
+			} else {
+				needed -= 4;
+			}
+			if (needed <= w) {
+				break;
+			}
+		}
+		level = Math.min(level, 2);
 		int sx = x;
 		for (Sub s : Sub.values()) {
-			String label = switch (s) {
-				case BUILDINGS -> "Buildings " + bs.size();
-				case BLUEPRINTS -> "Blueprints " + bps.size();
-				case DESIGNS -> "Designs " + ds.size() + (ds.stream().anyMatch(d -> d.status().isRunning()) ? " ●" : "");
-				case ROADS -> "Roads " + dev.agentcraft.building.Roads.all().size();
-			};
+			String label = subLabel(s, level > 0, bs.size(), bps.size(), ds.size(), running);
 			int sw = bw(label);
 			button(g, "sub:" + s.name().toLowerCase(Locale.ROOT), label, sx, y, sw, false, false, false, mx, my, () -> setSub(s));
 			if (s == sub) {
@@ -839,14 +855,15 @@ public final class HubScreen extends Screen {
 			}
 			sx += sw + 4;
 		}
-		dev.agentcraft.client.road.RoadsFeature.reportStrip(sx - x + bw(sub == Sub.DESIGNS ? "Design new…" : "Place new…"), w);
-		if (sub == Sub.DESIGNS) {
-			String dn = "Design new…";
-			button(g, "design_new", dn, x + w - bw(dn), y, bw(dn), true, HubFeature.designNew == null, false, mx, my, this::designNew);
-		} else if (sub != Sub.ROADS) {
-			String place = "Place new…";
-			button(g, "place_new", place, x + w - bw(place), y, bw(place), true, minecraft.getSingleplayerServer() == null, false, mx, my,
-				this::placeNew);
+		dev.agentcraft.client.road.RoadsFeature.reportStrip(needed, w, level);
+		if (rightFull != null) {
+			String right = level > 1 ? rightShort : rightFull;
+			if (sub == Sub.DESIGNS) {
+				button(g, "design_new", right, x + w - bw(right), y, bw(right), true, HubFeature.designNew == null, false, mx, my, this::designNew);
+			} else {
+				button(g, "place_new", right, x + w - bw(right), y, bw(right), true, minecraft.getSingleplayerServer() == null, false, mx, my,
+					this::placeNew);
+			}
 		}
 		y += 26;
 		h -= 26;
@@ -856,6 +873,17 @@ public final class HubScreen extends Screen {
 			case DESIGNS -> drawDesigns(g, ds, x, y, w, h, mx, my);
 			case ROADS -> roadsView.draw(g, x, y, w, h, mx, my);
 		}
+	}
+
+	/** A Buildings sub-switch label, with its count unless {@code compact}. */
+	private static String subLabel(Sub s, boolean compact, int buildings, int blueprints, int designs, boolean running) {
+		String dot = running ? " ●" : "";
+		return switch (s) {
+			case BUILDINGS -> compact ? "Buildings" : "Buildings " + buildings;
+			case BLUEPRINTS -> compact ? "Blueprints" : "Blueprints " + blueprints;
+			case DESIGNS -> (compact ? "Designs" : "Designs " + designs) + dot;
+			case ROADS -> compact ? "Roads" : "Roads " + dev.agentcraft.building.Roads.all().size();
+		};
 	}
 
 	/**

@@ -289,6 +289,47 @@ class RoadPlanTest {
 		assertEquals(Block.PACKED_MUD, at(p, 3, 0).get(0).block());
 	}
 
+	/** RoadTerrain classes exposed ores as BUILT: never gravelled over (they would be lost if the gravel were mined). */
+	@Test
+	void exposedOresAreKept() {
+		Grid g = Grid.flat();
+		g.surface = RoadPlan.STONE;
+		g.set(4, 64, 0, RoadPlan.BUILT).set(6, 64, 1, RoadPlan.BUILT); // an ore under the centre, one under a side cell
+		Plan p = plan(alongX(0, 10, 65, 0), W2, g);
+		assertTrue(at(p, 4, 0).stream().noneMatch(o -> o.y() == 64), "the ore under the centre is kept");
+		assertTrue(columns(p).contains(RoadPlan.col(4, 0)), "the centre stays a road cell");
+		assertFalse(columns(p).contains(RoadPlan.col(6, 1)), "the side cell on an ore is left out");
+		assertTrue(at(p, 5, 0).stream().anyMatch(o -> o.y() == 64 && o.block() == Block.GRAVEL), "natural stone gets gravel");
+	}
+
+	@Test
+	void previewHashFollowsTheChanges() {
+		Grid g = Grid.flat();
+		Plan p = plan(alongX(0, 20, 65, 0), W2, g);
+		Plan same = plan(alongX(0, 20, 65, 0), W2, Grid.flat());
+		assertEquals(RoadPlan.hash(p.ops()), RoadPlan.hash(same.ops()));
+		Grid changed = Grid.flat();
+		changed.set(7, 64, 0, RoadPlan.SAND);
+		assertTrue(RoadPlan.hash(p.ops()) != RoadPlan.hash(plan(alongX(0, 20, 65, 0), W2, changed).ops()), "a changed block changes the hash");
+		Grid built = Grid.flat();
+		built.set(9, 64, 1, RoadPlan.BUILT);
+		assertTrue(RoadPlan.hash(p.ops()) != RoadPlan.hash(plan(alongX(0, 20, 65, 0), W2, built).ops()), "a dropped cell changes the hash");
+		List<Op> swapped = new ArrayList<>(p.ops());
+		java.util.Collections.swap(swapped, 0, 1);
+		assertTrue(RoadPlan.hash(p.ops()) != RoadPlan.hash(swapped));
+	}
+
+	@Test
+	void onlyNewOrTallerShapesCanTrap() {
+		assertTrue(RoadPlan.canTrap(true, 0, false, 0.5)); // air to a slab
+		assertTrue(RoadPlan.canTrap(true, 0, false, 1.5)); // air to a fence
+		assertFalse(RoadPlan.canTrap(false, 1, false, 0.9375)); // grass to a dirt path
+		assertFalse(RoadPlan.canTrap(false, 1, false, 1)); // stone to gravel
+		assertFalse(RoadPlan.canTrap(false, 1, true, 0)); // cleared
+		assertTrue(RoadPlan.canTrap(false, 0.5, false, 1)); // a slab back to grass
+		assertFalse(RoadPlan.canTrap(false, 0.9375, false, 1)); // a path back to grass (1/16)
+	}
+
 	@Test
 	void ownBlocksAreNeverChanged() {
 		Grid g = Grid.flat();

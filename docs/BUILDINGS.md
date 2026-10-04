@@ -413,9 +413,11 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   step; no step on the road is ever more than one block.
 - **Blocks** (`RoadPlan.surfaceFor`; decision): `minecraft:dirt_path` on grass, dirt, coarse/rooted dirt, podzol,
   mycelium and moss; `minecraft:gravel` on sand, red sand, gravel and natural stone (base stone, sandstone, terracotta,
-  clay, snow block, ores) where the block below holds it up, else `minecraft:packed_mud` (it never falls); `packed_mud`
+  clay, snow block) where the block below holds it up, else `minecraft:packed_mud` (it never falls); `packed_mud`
   on mud. Half steps: `mud_brick_slab` on dirt and mud roads, `cobblestone_slab` on gravel. Only those natural kinds are
   ever paved (`RoadTerrain`): a player's floor on the route is crossed as it is, a field (farmland) is the player's.
+  **Ores** count as built (never gravelled: if the player mined the gravel the ore would be gone for good): a centre
+  cell on an exposed ore keeps it, a side cell on one is left out (`RoadPlanTest.exposedOresAreKept`).
 - **Clearing**: plants, flowers, saplings, grass, snow layers, lily pads and leaves in the walkway's two cells of
   headroom (three over a half step). A tall plant (double plants, sugar cane, bamboo) goes with its whole stack, so
   nothing floats and pops. Never: block entities, logs, cacti, a player's blocks (anything not natural, torches and
@@ -430,14 +432,20 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   other side, then the next route cells (up to 3 further) are tried, else it is noted.
 - **Shared cells**: a cell another road already changed is left to that road (the column is skipped, noted "already
   part of another road"); removing the first road removes it.
-- **Laying** (`Roads.lay(level, a, b, route, options)`, server thread): the client sends only the route. The server
+- **Laying** (`Roads.lay(level, a, b, route, options, previewHash)`, server thread): the client sends the route and,
+  from a preview, the fingerprint of the ghost the player confirmed (`RoadPlan.hash`: each change's x, y, z and block,
+  in order). The server
   checks again: both buildings in the player's dimension, no road between them yet, the route a chain of neighbouring
   cells (each step at most one block up or down, at most 1024 cells), starting and ending within 4.5 blocks of the two
   entrances, every cell outside the buildings still standable on the server's level (`walk.LevelWalk`, the agents'
   rules), every chunk loaded (nothing is loaded or generated). Then it plans the road itself on its own level
-  (`RoadPlan.plan` with `RoadTerrain`), drops changes that change nothing, and refuses when a player (box grown by
-  0.3), a pet, a villager, an armor stand or a named mob is in a cell about to gain a collision shape ("Step off the road
-  first: you at 12, 65, -3"). Order: the snapshot (written atomically, read back), the record, then the blocks.
+  (`RoadPlan.plan` with `RoadTerrain`), refuses when its plan is not the confirmed ghost ("The ground changed since the
+  preview: preview the road again"; `dev.roads.lay` with `a`/`b` lays without a preview and skips this), drops changes
+  that change nothing, and refuses when a player (box grown by 0.3 sideways), a pet, a villager, an armor stand or a
+  named mob is in a cell that could trap them: one that gains a collision shape or whose top rises by more than 1/8
+  (`RoadPlan.canTrap`; a ground swap such as grass to a dirt path or stone to gravel never counts) ("Step off the road
+  first: you at 12, 65, -3"). Order: the snapshot (written atomically, read back), the record, then the blocks; when the
+  record cannot be written the snapshot is deleted and nothing is laid (no block stands without a record).
 - **Blocks are set** with `UPDATE_CLIENTS | UPDATE_SKIP_ALL_SIDEEFFECTS`: no neighbour or shape updates (nothing next
   to the road pops or reconnects), no drops, no `onPlace` (gravel never ticks), no block-entity side effects. New item
   and XP entities within a block of a changed cell are cleared anyway, right after and 3 ticks later (`Roads.CellDrops`;
@@ -449,11 +457,14 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   at all is left alone and nothing is laid that session.
 - **Snapshot**: `<world>/agentcraft-roads/<id>.before.nbt`, one entry per changed cell `{x, y, z, before, after}` (block
   states), never a box: a box restore would revert everything else in a long diagonal road's bounding box.
-- **Remove road** (`Roads.remove(level, id)`): every cell that **still holds what the road put there** gets its old block
-  back, ground first, then what stood on it; cells the player changed since and cells a building now covers are left as
+- **Remove road** (`Roads.remove(level, id)`): every cell that **still holds what the road put there** (the same state;
+  for fences and lanterns the same block, as a neighbour update reshapes a fence's connections or water fills it; for
+  slabs the same block and slab type, waterlogged or not) gets its old block back, ground first, then what stood on it; cells the player changed since and cells a building now covers are left as
   they are ("Removed road r2 (b1 to b3): 140 cells back as they were; 3 cells you changed since left alone"). Refuses while
   a player or a pet stands where an old block comes back (a bush at head height suffocates). Crash safety as for
-  buildings: the snapshot is renamed `<id>.removed-<ms>.nbt` and recorded under `pending`; the next world start settles
+  buildings: the removal is recorded under `pending` first (refused, nothing done, when the record cannot be written),
+  then the snapshot is renamed `<id>.removed-<ms>.nbt` (the record is put back when that fails), then the blocks
+  are restored; the next world start settles
   it on the cells (`Road.settle`): most telling cells hold the old blocks -> the snapshot goes; most hold the road (the
   removal never reached the disk) -> the record comes back; nothing readable -> kept. `forget` drops a record and leaves
   the blocks (for a road whose snapshot is gone).
@@ -462,10 +473,12 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   nowhere now. Remove it in the hub: Buildings > Roads") and lists those roads first in Roads with **Remove road…** and
   **Keep it**. Nothing is removed silently. The building's armed Remove note says its roads stay.
 - **Agents prefer roads**: the planner's steps onto a road's feet cells (`Roads.feetCells(dimension)`) cost
-  `OutdoorPlanner.ROAD_FACTOR` (0.6) of a step elsewhere, and with roads present its heuristic is scaled by the same
-  factor (otherwise the search would rush past them). Measured (`routesPreferLaidRoads`): a 100-block trip with a road 4
-  blocks off the straight line keeps to the road for 90+ cells (241 expansions); a road 40 blocks off is not worth the
-  detour; the mountain test route takes ~15 000 expansions with the scaled heuristic instead of ~3 400 (budget 120 000).
+  `OutdoorPlanner.ROAD_FACTOR` (0.6) of a step elsewhere, and when a road cell lies inside the search box its heuristic
+  is scaled by the same factor (otherwise the search would rush past it). A road elsewhere in the dimension leaves the
+  heuristic as it is, so it costs other searches nothing. Measured (`routesPreferLaidRoads`,
+  `unrelatedRoadsDoNotSlowTheCorridor`): a 100-block trip with a road 4 blocks off the straight line keeps to the road
+  for 90+ cells (241 expansions); a road 40 blocks off is not worth the detour; the 256-block corridor and the mountain
+  route take the same expansions with an unrelated road as without (21 919 and 3 390; budget 120 000).
   Route caches are dropped whenever a road is laid or removed (`Roads.signature`).
 - **Ghost** (`RoadGhost`, the placement ghost's colours): new surface, half steps and decks tan; cleared cells orange;
   road cells left out red at their feet (the whole route red when the plan is refused); fence posts and lanterns brass.

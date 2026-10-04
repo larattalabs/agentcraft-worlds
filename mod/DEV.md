@@ -640,16 +640,16 @@ settling), `building.RoadTerrain` (block -> road kind, client and server), `walk
 level: the server checks a route with it; `agents/LevelTerrain` delegates to it); client `road/RoadsFeature` (routes via
 `OutdoorRoutes.requestRoad`, preview, lay/remove through `ServerTasks.callAsPlayer`, offers, DevBridge), `road/RoadGhost`,
 `road/RoadHud`, hub `hub/RoadsView` (Buildings > Roads). The planner gained `Limits.maxDrop` (`Limits.ROAD` = 1) and a
-road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; `OutdoorPlannerTest.roadRoutesDropAtMostOneBlock`,
-`routesPreferLaidRoads`).
+road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled only when a road lies in the search box;
+`OutdoorPlannerTest.roadRoutesDropAtMostOneBlock`, `routesPreferLaidRoads`, `unrelatedRoadsDoNotSlowTheCorridor`).
 
 - `dev.roads.state` -> `{roads[{id, a, b, width, lanterns, bridge, length, cells, changes, lanternCount, lanternCells, notes,
   orphan}], pending[], pairs[{a, b, key, distance, road, route: not planned|planning|found|failed, length?, routeCells?, why?}],
   options{width, lanterns, bridge}, offers{roadId: why}, orphans[], preview{a, b, cells, ops, blocks{dirt_path, gravel, air,
   fence, lantern, ...}, lanterns, skipped{reason: n}, notes[], halfSteps, bridgeCells, keptCells, refusal, box, planMicros},
-  last{action, roadId, ok, message}, ghost{lastFrameQuads, lastFrameMicros, frames}, ui{drawn, needed, available, overflow, strip{needed, available, overflow},
+  last{action, roadId, ok, message}, ghost{lastFrameQuads, lastFrameMicros, frames}, ui{drawn, needed, available, overflow, strip{needed, available, overflow, compact},
   hudShown}}` (`ui.needed` counts the whole note, also when it is cut at the pane's bottom; `strip` = the Buildings tab's
-  list switch with Place new…/Design new…).
+  list switch with Place new…/Design new…; `compact` 0 = full labels, 1 = counts dropped, 2 = also "Place…"/"Design…").
 - `dev.roads.plan {a, b, fresh?}` -> the road route only `{status, length, cells, why?}`.
 - `dev.roads.preview {a, b, width?, lanterns?, bridge?}` plans the route and shows the ghost (closes screens; Enter lays,
   Esc cancels); `{cancel:true}` hides it. Replies with the client's plan (what the server will do unless the world changes).
@@ -664,7 +664,12 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; `OutdoorPlannerTest.road
   the next world start).
 - Gotchas: the client's preview can be stale (the server plans again; a route the ground has broken since refuses with
   "preview the road again"); a building placed later over a road keeps those cells on Remove road (they belong to the
-  building's snapshot now); a cell shared with an older road belongs to that road.
+  building's snapshot now); a cell shared with an older road belongs to that road; Enter lays only the confirmed ghost
+  (the server's plan must hash the same, else "The ground changed since the preview").
+- QA at small sizes: at GUI scale 2, 3 and 4 (and a ~426x240 GUI px window) open `dev.hub.open {tab:"buildings",
+  sub:"roads"}`, check `dev.roads.state ui.strip.overflow` and `ui.overflow` are false and screenshot the strip (at scale 4
+  `strip.compact` is 1 or 2: counts dropped, "Place…"); select a pair row and check the Width / Lanterns / Bridges row
+  wraps Bridges under the others rather than overlapping, and Lay road… / Plan again fit.
 
 ### A lead per building (`dev.agentcraft.client.leads`)
 The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUILDINGS.md "Client (routing)".

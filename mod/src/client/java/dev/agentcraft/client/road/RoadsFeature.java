@@ -334,7 +334,10 @@ public final class RoadsFeature {
 		preview = null;
 	}
 
-	/** Enter while previewing: lays the previewed road (the server checks and plans it again). */
+	/**
+	 * Enter while previewing: lays the previewed road. The server checks and plans it again, and lays it only when its plan
+	 * is the ghost the player confirmed ({@link RoadPlan#hash}); otherwise it asks for a new preview.
+	 */
 	public static CompletableFuture<Result> layPreview() {
 		Preview pv = preview;
 		if (pv == null) {
@@ -343,7 +346,7 @@ public final class RoadsFeature {
 		if (pv.plan().refusal() != null) {
 			return CompletableFuture.completedFuture(note(new Result("lay", null, false, "Cannot lay this road: " + pv.plan().refusal())));
 		}
-		return send(pv.a(), pv.b(), pv.route(), pv.options()).thenApply(r -> {
+		return send(pv.a(), pv.b(), pv.route(), pv.options(), RoadPlan.hash(pv.plan().ops())).thenApply(r -> {
 			if (r.ok()) {
 				preview = null;
 			}
@@ -357,15 +360,15 @@ public final class RoadsFeature {
 			if (!rs.found()) {
 				return CompletableFuture.completedFuture(note(new Result("lay", null, false, "No road route between " + a + " and " + b + ": " + rs.why)));
 			}
-			return send(rs.a, rs.b, java.util.Objects.requireNonNull(rs.cells), o);
+			return send(rs.a, rs.b, java.util.Objects.requireNonNull(rs.cells), o, null);
 		});
 	}
 
-	private static CompletableFuture<Result> send(String a, String b, long[] route, RoadPlan.Options o) {
+	private static CompletableFuture<Result> send(String a, String b, long[] route, RoadPlan.Options o, @Nullable Long previewHash) {
 		busy = true;
 		return run("lay", ServerTasks.callAsPlayer((level, player) -> {
 			try {
-				Roads.Laid l = Roads.lay(level, a, b, route, o);
+				Roads.Laid l = Roads.lay(level, a, b, route, o, previewHash);
 				String notes = l.plan().notes().isEmpty() ? "" : " (" + String.join("; ", l.plan().notes()) + ")";
 				return new Result("lay", l.road().id(), true, "Laid road " + l.road().id() + " from " + a + " to " + b + ": " + l.road().cellCount()
 					+ " cells, " + l.road().lanternCount() + " lantern" + (l.road().lanternCount() == 1 ? "" : "s") + notes + ". Remove it in the hub to undo");
@@ -529,13 +532,16 @@ public final class RoadsFeature {
 	}
 
 	/** The Buildings tab's list switch (Buildings / Blueprints / Designs / Roads + Place new…) reports its fit (dev.roads.state ui.strip). */
-	public static void reportStrip(int needed, int available) {
+	/** The Buildings sub-strip's width: {@code compact} 0 = full labels, 1 = no counts, 2 = no counts and a short right button. */
+	public static void reportStrip(int needed, int available, int compact) {
 		stripNeeded = needed;
 		stripAvailable = available;
+		stripCompact = compact;
 	}
 
 	private static int stripNeeded;
 	private static int stripAvailable;
+	private static int stripCompact;
 
 	/** The road HUD panel drawn last frame (x, y, w, h), or null: toasts keep clear of it. */
 	public static int @Nullable [] hudRect() {
@@ -663,6 +669,7 @@ public final class RoadsFeature {
 		strip.addProperty("needed", stripNeeded);
 		strip.addProperty("available", stripAvailable);
 		strip.addProperty("overflow", stripNeeded > stripAvailable);
+		strip.addProperty("compact", stripCompact);
 		ui.add("strip", strip);
 		int[] hr = RoadHud.lastRect;
 		ui.addProperty("hudShown", hr != null);
@@ -679,7 +686,7 @@ public final class RoadsFeature {
 		DevBridge.register("dev.roads.state", 10_000, "{} -> {roads[{id, a, b, width, lanterns, bridge, length, cells, changes, lanternCount, notes, orphan}], "
 			+ "pending[], pairs[{a, b, key, distance, road, route, length?, why?}], options{width, lanterns, bridge}, offers{roadId: why}, orphans[], "
 			+ "preview{a, b, cells, ops, blocks{}, lanterns, skipped{}, notes, halfSteps, bridgeCells, refusal}, last{action, roadId, ok, message}, "
-			+ "ghost{lastFrameQuads}, ui{needed, available, overflow}} - roads between buildings (docs/VILLAGE.md V1)",
+			+ "ghost{lastFrameQuads}, ui{needed, available, overflow, strip{needed, available, overflow, compact}}} - roads between buildings (docs/VILLAGE.md V1)",
 			(req, mc) -> DevBridge.onClient(mc, RoadsFeature::state));
 		DevBridge.register("dev.roads.preview", 60_000, "{a, b, width?: 1-3, lanterns?: bool, bridge?: bool, cancel?: false} - plan the road route "
 			+ "between two buildings (ids) and show its ghost (closes screens; Enter lays, Esc cancels) -> the preview's plan {cells, ops, blocks, lanterns, "

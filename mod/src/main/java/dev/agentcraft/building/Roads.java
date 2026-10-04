@@ -30,6 +30,7 @@ import java.util.function.Consumer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
@@ -45,9 +46,13 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.FenceBlock;
+import net.minecraft.world.level.block.LanternBlock;
+import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -221,6 +226,15 @@ public final class Roads {
 	 * stands where a block would go. Writes the snapshot, then the record, then the blocks. Server thread.
 	 */
 	public static Laid lay(ServerLevel level, String a, String b, long[] route, RoadPlan.Options o) throws RoadException {
+		return lay(level, a, b, route, o, null);
+	}
+
+	/**
+	 * As {@link #lay(ServerLevel, String, String, long[], RoadPlan.Options)}, but with {@code previewHash} (the
+	 * {@link RoadPlan#hash} of the ghost the player confirmed) it lays only that: when this level's plan differs, it
+	 * refuses and nothing is done.
+	 */
+	public static Laid lay(ServerLevel level, String a, String b, long[] route, RoadPlan.Options o, @Nullable Long previewHash) throws RoadException {
 		if (loadFailed) {
 			throw new RoadException(FILE + " could not be read (see the log): no roads are laid until it is fixed or moved away");
 		}
@@ -262,6 +276,9 @@ public final class Roads {
 		if (plan.refusal() != null) {
 			throw new RoadException("Cannot lay this road: " + plan.refusal());
 		}
+		if (previewHash != null && RoadPlan.hash(plan.ops()) != previewHash) {
+			throw new RoadException("The ground changed since the preview: preview the road again; nothing was done");
+		}
 		// the changes that change something (a dirt path stays a dirt path)
 		List<RoadPlan.Op> ops = new ArrayList<>();
 		List<BlockState> after = new ArrayList<>();
@@ -280,7 +297,7 @@ public final class Roads {
 		if (ops.isEmpty() && plan.cells().isEmpty()) {
 			throw new RoadException("Nothing to lay between " + a + " and " + b + (plan.notes().isEmpty() ? "" : ": " + String.join("; ", plan.notes())));
 		}
-		refuseOccupied(level, ops, after, "laying it");
+		refuseOccupied(level, ops, before, after, "laying it");
 		State s = state;
 		String id = "r" + s.next();
 		Path snap = snapshotFile(level.getServer(), id);
@@ -302,7 +319,16 @@ public final class Roads {
 			changes, plan.notes());
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
 		map.put(id, road);
-		commit(level.getServer(), new State(Collections.unmodifiableMap(map), s.next() + 1, s.pending()));
+		try {
+			commit(level.getServer(), s, new State(Collections.unmodifiableMap(map), s.next() + 1, s.pending()));
+		} catch (RoadException e) {
+			try {
+				Files.deleteIfExists(snap);
+			} catch (IOException ex) {
+				AgentCraft.LOGGER.warn("Could not delete {}", snap, ex);
+			}
+			throw new RoadException(e.getMessage() + "; nothing was laid");
+		}
 		// the blocks last: a crash before this leaves a record whose cells do not hold the road (Remove then leaves them)
 		CellDrops drops = CellDrops.before(level, ops);
 		for (int i = 0; i < ops.size(); i++) {
@@ -361,14 +387,17 @@ public final class Roads {
 	 * (a slab under their feet, a restored bush at head height: stuck or suffocating, which in Hardcore is the end). Hostile
 	 * mobs and dropped items are pushed out by the game.
 	 */
-	static void refuseOccupied(ServerLevel level, List<RoadPlan.Op> ops, List<BlockState> to, String verb) throws RoadException {
+	static void refuseOccupied(ServerLevel level, List<RoadPlan.Op> ops, List<BlockState> from, List<BlockState> to, String verb) throws RoadException {
 		LongOpenHashSet solid = new LongOpenHashSet();
 		int[] bb = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
 		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
 		for (int i = 0; i < ops.size(); i++) {
 			RoadPlan.Op op = ops.get(i);
-			if (to.get(i).getCollisionShape(level, m.set(op.x(), op.y(), op.z())).isEmpty()) {
-				continue;
+			m.set(op.x(), op.y(), op.z());
+			VoxelShape was = from.get(i).getCollisionShape(level, m);
+			VoxelShape is = to.get(i).getCollisionShape(level, m);
+			if (!RoadPlan.canTrap(was.isEmpty(), was.isEmpty() ? 0 : was.max(Direction.Axis.Y), is.isEmpty(), is.isEmpty() ? 0 : is.max(Direction.Axis.Y))) {
+				continue; // nothing new to stand in (a ground swap, a block cleared)
 			}
 			solid.add(WalkCell.pack(op.x(), op.y(), op.z()));
 			bb[0] = Math.min(bb[0], op.x());
@@ -395,7 +424,7 @@ public final class Roads {
 			}
 			AABB box = e.getBoundingBox();
 			if (e instanceof Player) {
-				box = box.inflate(0.3); // a step away from the edge of a new block
+				box = box.inflate(0.3, 0, 0.3); // a step away from the edge of a new block (sideways: not into the ground below)
 			}
 			BlockPos at = touches(box, solid);
 			if (at != null) {
@@ -406,6 +435,28 @@ public final class Roads {
 			throw new RoadException("Step off the road first: " + String.join(", ", who.subList(0, Math.min(4, who.size())))
 				+ (who.size() > 4 ? ", ..." : "") + " (" + verb + " puts blocks where they stand); nothing was done");
 		}
+	}
+
+	/**
+	 * Whether a cell still holds what the road put there. Fences and lanterns are compared by block (a neighbour update
+	 * reshapes a fence's connections, a lantern or fence may take water), slabs by block and slab type (waterlogged or
+	 * not); everything else by exact state.
+	 */
+	static boolean stillOurs(BlockState now, BlockState placed) {
+		if (now == placed) {
+			return true;
+		}
+		if (now.getBlock() != placed.getBlock()) {
+			return false;
+		}
+		Block b = now.getBlock();
+		if (b instanceof FenceBlock || b instanceof LanternBlock) {
+			return true;
+		}
+		if (b instanceof SlabBlock) {
+			return now.getValue(SlabBlock.TYPE) == placed.getValue(SlabBlock.TYPE);
+		}
+		return false;
 	}
 
 	private static @Nullable BlockPos touches(AABB box, LongSet cells) {
@@ -565,38 +616,47 @@ public final class Roads {
 				throw new RoadException("Chunks around " + e.x() + ", " + e.z() + " are not loaded: walk closer to the road and try again");
 			}
 			BlockState now = level.getBlockState(m.set(e.x(), e.y(), e.z()));
-			if (now != e.after() || now.hasBlockEntity()) {
+			if (!stillOurs(now, e.after()) || now.hasBlockEntity()) {
 				changed++;
 				continue;
 			}
-			restore.add(e);
+			restore.add(new Entry(e.x(), e.y(), e.z(), e.before(), now));
 		}
 		restore.sort(Comparator.comparingInt(Entry::y));
 		List<RoadPlan.Op> ops = new ArrayList<>();
+		List<BlockState> from = new ArrayList<>();
 		List<BlockState> to = new ArrayList<>();
 		for (Entry e : restore) {
 			ops.add(new RoadPlan.Op(e.x(), e.y(), e.z(), RoadPlan.Block.AIR, 0));
+			from.add(e.after());
 			to.add(e.before());
 		}
-		refuseOccupied(level, ops, to, "removing it");
-		CellDrops drops = CellDrops.before(level, ops);
-		for (Entry e : restore) {
-			level.setBlock(m.set(e.x(), e.y(), e.z()), e.before(), FLAGS);
-		}
-		drops.clearNew(level);
+		refuseOccupied(level, ops, from, to, "removing it");
+		// the record first (as a pending removal naming the snapshot's new name), then the snapshot, then the blocks: a
+		// crash in between leaves a pending removal that the next start settles on the cells
 		Path kept = snap.resolveSibling(id + ".removed-" + System.currentTimeMillis() + ".nbt");
-		try {
-			Files.move(snap, kept, StandardCopyOption.ATOMIC_MOVE);
-		} catch (IOException ex) {
-			kept = snap; // still there under its old name: the next start settles it all the same
-			AgentCraft.LOGGER.warn("Could not rename {}", snap, ex);
-		}
 		State s = state;
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
 		map.remove(id);
 		List<Road.Pending> pending = new ArrayList<>(s.pending());
 		pending.add(new Road.Pending(r, kept.getFileName().toString(), System.currentTimeMillis()));
-		commit(server, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
+		commit(server, s, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
+		try {
+			Files.move(snap, kept, StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException ex) {
+			AgentCraft.LOGGER.warn("Could not rename {}; the road stays", snap, ex);
+			try {
+				commit(server, state, s); // back as it was: the record names the snapshot's old name again
+			} catch (RoadException again) {
+				AgentCraft.LOGGER.warn("Could not put road {} back in {}", id, FILE, again);
+			}
+			throw new RoadException("Could not move the snapshot of " + id + " (" + ex.getMessage() + "); nothing was removed");
+		}
+		CellDrops drops = CellDrops.before(level, ops);
+		for (Entry e : restore) {
+			level.setBlock(m.set(e.x(), e.y(), e.z()), e.before(), FLAGS);
+		}
+		drops.clearNew(level);
 		Removed out = new Removed(r, restore.size(), changed, covered);
 		lastNote = changed + covered == 0 ? null : out.message();
 		AgentCraft.LOGGER.info("{}", out.message());
@@ -612,7 +672,7 @@ public final class Roads {
 		State s = state;
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
 		map.remove(id);
-		commit(server, new State(Collections.unmodifiableMap(map), s.next(), s.pending()));
+		commit(server, s, new State(Collections.unmodifiableMap(map), s.next(), s.pending()));
 		AgentCraft.LOGGER.info("Forgot road {} (its blocks stay)", id);
 		return r;
 	}
@@ -703,7 +763,7 @@ public final class Roads {
 				BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
 				for (Entry e : entries) {
 					BlockState now = level.getBlockState(m.set(e.x(), e.y(), e.z()));
-					if (now == e.after()) {
+					if (stillOurs(now, e.after())) {
 						atAfter++;
 					} else if (now == e.before()) {
 						atBefore++;
@@ -737,9 +797,16 @@ public final class Roads {
 
 	// ------------------------------------------------------------------ state, persistence
 
-	private static void commit(MinecraftServer server, State s) {
-		state = s;
-		save(server, s);
+	/**
+	 * Makes {@code next} the state and writes it; when the file cannot be written, {@code prev} stays the state and this
+	 * throws (so no block is touched for a change that would not survive a restart).
+	 */
+	private static void commit(MinecraftServer server, State prev, State next) throws RoadException {
+		if (!save(server, next)) {
+			state = prev;
+			throw new RoadException("Could not save " + FILE + " (see the log)");
+		}
+		state = next;
 		changed();
 	}
 
@@ -759,17 +826,20 @@ public final class Roads {
 		return server.getWorldPath(LevelResource.ROOT).resolve(FILE);
 	}
 
-	private static void save(MinecraftServer server, State s) {
+	/** Writes {@code s}; false when it could not (the file was unreadable at load, or the write failed). */
+	private static boolean save(MinecraftServer server, State s) {
 		if (loadFailed) {
-			return;
+			return false;
 		}
 		Path f = file(server);
 		try {
 			Path tmp = f.resolveSibling(FILE + ".tmp");
 			Files.writeString(tmp, GSON.toJson(new Road.FileData(List.copyOf(s.byId().values()), s.next(), s.pending()).toJson()), StandardCharsets.UTF_8);
 			Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			return true;
 		} catch (IOException e) {
 			AgentCraft.LOGGER.warn("Could not save {}", f, e);
+			return false;
 		}
 	}
 

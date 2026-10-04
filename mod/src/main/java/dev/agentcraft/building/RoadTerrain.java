@@ -85,6 +85,9 @@ public final class RoadTerrain implements RoadPlan.World {
 		if (b instanceof FarmlandBlock) {
 			return RoadPlan.BUILT; // a field: the player's
 		}
+		if (s.is(BlockTags.ORES)) {
+			return RoadPlan.BUILT; // never gravelled over: a centre cell keeps it, a side cell is left out (docs/VILLAGE.md V1)
+		}
 		if (s.is(BlockTags.MUD)) {
 			return RoadPlan.MUD;
 		}
@@ -94,7 +97,7 @@ public final class RoadTerrain implements RoadPlan.World {
 		if (s.is(BlockTags.SAND) || s.is(Blocks.GRAVEL)) {
 			return RoadPlan.SAND;
 		}
-		if (s.is(BlockTags.BASE_STONE_OVERWORLD) || s.is(BlockTags.BASE_STONE_NETHER) || s.is(BlockTags.ORES) || s.is(BlockTags.BADLANDS_TERRACOTTA)
+		if (s.is(BlockTags.BASE_STONE_OVERWORLD) || s.is(BlockTags.BASE_STONE_NETHER) || s.is(BlockTags.BADLANDS_TERRACOTTA)
 			|| s.is(Blocks.SANDSTONE) || s.is(Blocks.RED_SANDSTONE) || s.is(Blocks.CLAY) || s.is(Blocks.SNOW_BLOCK) || s.is(Blocks.TERRACOTTA)) {
 			return RoadPlan.STONE;
 		}

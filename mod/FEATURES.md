@@ -521,7 +521,8 @@ it all again. Width 1-3 (default 2), lanterns on fence posts every ~12 blocks (d
 (opt in). Only natural blocks are paved or cleared (dirt path, gravel, packed mud; plants, snow, leaves, whole tall-plant
 stacks); never block entities, logs, a player's blocks, fluids or buildings. **Remove road…** (twice) puts back every cell
 nobody changed since, from a per-cell snapshot. A building removed or moved offers its roads for removal (toast + list),
-never silently. Agents prefer laid roads (cheaper planner steps).
+never silently. Agents prefer laid roads (cheaper planner steps; the search's heuristic is scaled only when a road lies in
+its box, so roads elsewhere never slow it). Enter lays only the ghost the player confirmed (the server's plan must match it).
 
 ## Displays (`client.monitor`, `client.taskwall`)
 

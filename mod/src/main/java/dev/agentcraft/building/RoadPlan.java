@@ -297,6 +297,41 @@ public final class RoadPlan {
 		return false;
 	}
 
+	/**
+	 * A fingerprint of a plan's changes (each cell's x, y, z and block, in order): the ghost the player confirmed is sent
+	 * with it, and {@link Roads#lay} refuses when its own plan's differs (the ground, a road or a building changed since).
+	 */
+	public static long hash(List<Op> ops) {
+		long h = 0xcbf29ce484222325L;
+		for (Op o : ops) {
+			h = mix(h, o.x());
+			h = mix(h, o.y());
+			h = mix(h, o.z());
+			h = mix(h, o.block().ordinal());
+		}
+		return mix(h, ops.size());
+	}
+
+	private static long mix(long h, int v) {
+		for (int i = 0; i < 4; i++) {
+			h ^= (v >>> (8 * i)) & 0xff;
+			h *= 0x100000001b3L;
+		}
+		return h;
+	}
+
+	/**
+	 * Whether changing a cell from one collision shape to another can trap whoever stands in it: it had none and gets
+	 * one, or its top rises by more than {@code 1/8} (a slab back to a full block). A ground swap (grass to a dirt path,
+	 * stone to gravel) lowers or keeps the top, so it cannot. Tops are in blocks from the cell's floor.
+	 */
+	public static boolean canTrap(boolean wasEmpty, double wasTop, boolean isEmpty, double isTop) {
+		if (isEmpty) {
+			return false;
+		}
+		return wasEmpty || isTop > wasTop + 0.125;
+	}
+
 	/** The box covering every op, or null. */
 	public static Anchors.@Nullable Bounds box(List<Op> ops) {
 		if (ops.isEmpty()) {
