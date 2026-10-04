@@ -192,8 +192,23 @@ public final class BuildPlacement {
 		return active ? moving : null;
 	}
 
-	/** Locks the ghost at an explicit origin and base rotation (DevBridge, reproducible shots). */
+	/** Locks the ghost at an explicit origin and base rotation (plots, DevBridge). */
 	static void lockAt(int x, int y, int z, int turns) {
+		lockAt(x, y, z, turns, false);
+	}
+
+	/**
+	 * Locks the ghost at an explicit origin and base rotation (DevBridge, reproducible shots). {@code ground}: the y is
+	 * replaced by the footprint's median surface as the wizard puts it (the surface at the footprint's centre as the
+	 * reference), for QA on natural terrain.
+	 */
+	static void lockAt(int x, int y, int z, int turns, boolean ground) {
+		Minecraft mc = Minecraft.getInstance();
+		if (ground && mc.level != null && bp != null) {
+			GhostModel m = model(Math.floorMod(turns, 4));
+			int ref = mc.level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x + m.sizeX / 2, z + m.sizeZ / 2);
+			y = footprintSurface(mc.level, m, x, z, ref) - bp.groundY();
+		}
 		explicitOrigin = new int[] {x, y, z};
 		explicitTurns = Math.floorMod(turns, 4);
 		userTurns = 0;
