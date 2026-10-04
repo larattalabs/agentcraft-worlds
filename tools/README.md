@@ -44,8 +44,8 @@ runs for weeks can grow its log past 5 MB until the next start.
 Dev runs (`mac.mjs`) use the dev checkout, profile `claude`/`sim` and ports 7878/7879. The
 everyday game is different: a jar in a Prism instance, with a Foreman that starts with the game.
 That Foreman runs from a **stable checkout** (default: `agentcraft-stable` next to your clone,
-e.g. `~/code/agentcraft-stable` for `~/code/agentcraft`), not from your dev checkout. The dev checkout has many worktrees, the Foreman works on it as a
-repository, and agent merges land in its `main`. The stable Foreman uses its own profile and port
+e.g. `~/code/agentcraft-stable` for `~/code/agentcraft`), not from your dev checkout. The dev
+checkout has many worktrees, the Foreman works on it as a repository, and agent merges land in its `main`. The stable Foreman uses its own profile and port
 (`hardcore`, 7880), so it never collides with a dev run.
 
 **Setup (once, and again to update):** quit Prism and the game first, because setup rewrites
