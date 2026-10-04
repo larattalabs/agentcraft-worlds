@@ -50,3 +50,25 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
   steps; never interrupts a running task's position more than that).
 - Settings: per-world toggles in hub > Buildings: "Night routine", "Stand-ups", "Library visits" (default on).
 - DevBridge: `dev.routines.state`, `dev.routines.time {ticks}` (or reuse /time in dev worlds), `dev.routines.standup {goalId}`.
+
+## As implemented: routines (branch `village/routines`)
+- Pure scheduling in `mod/src/main/java/dev/agentcraft/routine` (`RoutineRules` priorities + night window, `BedPicker`,
+  `StandupTracker`, `LibraryVisits`, `RoutineSettings`; `RoutineLogicTest`); client `client/agents/Routines` hooked into
+  `AgentManager` (the station key per agent; beds; lying; bubbles; the book). Details: mod/DEV.md "Village routines".
+- Night: 13000 <= time of day < 23000 on the overworld clock. Idle = no task and not working/thinking/in an error, or off
+  shift; agents waiting on the player or walking between buildings never rest. Beds: plain `bed`, `bed_2`.. anchors (no
+  `@<n>`: the free bed nearest the agent's wing task wall / desk; a bed the player sleeps in is skipped); no free bed: the
+  lounge. Lying = vanilla's sleeping pose on the render state of the client-only agent (nothing in the world changes);
+  the nameplate says "resting". Morning: up beside the bed, back to the desk / lounge.
+- Blueprints: kit `bed()`, checker rule for `bed*` anchors (optional), workshop and studio three beds, each campus wing two
+  (docs/BUILDINGS.md "Beds"). The bundled fingerprints changed: existing buildings get "blueprint changed" notes until moved.
+- Stand-up: once per goal (`goalId:createdAt`), 3 s after the first assignment of an active goal, in the lead's building
+  (`meeting` slots, else `user`); only participants routed to that building gather; lead line = the plan note's first
+  line, else the goal text; workers say their first open task's title; 20-30 s. Skipped (recorded) when off, the player
+  is > 64 blocks from the building box, its chunks are not loaded, nobody is routed there, or it has no spot; goals
+  already under way at connect never get one.
+- Library: `memory.upsert` with `author` = an agent; between steps only; a book in the main hand while walking, READ pose
+  for 5 s at the `library` slot; cancelled by work or a stand-up; 30 s cap; notes wait at most 2 min; 1 min cooldown.
+- Toggles: hub > Buildings, a row under the trophies toggle (`Night`, `Stand-ups`, `Library`), `routines.json` per world,
+  default on. DevBridge: `dev.routines.state`, `dev.routines.toggle`, `dev.routines.time`, `dev.routines.standup`,
+  `dev.routines.library`.

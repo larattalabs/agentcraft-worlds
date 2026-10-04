@@ -79,6 +79,7 @@ Where they live:
   - `cam_overview` (+ any `cam_*` for QA shots)
   - optional: `trophy@<n>`, `trophy_2@<n>` .. `trophy_<k>@<n>` (see "Trophy slots"; a wing without any is a
     checker warning, so user and generated blueprints without a trophy wall stay valid)
+  - optional: `bed`, `bed_2` .. (see "Beds": the night routine; without beds agents rest in the lounge)
   Per-wing anchors use the suffix `@<n>`; placement rewrites them (see below).
 - Station blocks in the template carry their binding in block-entity NBT (`{"binding": "..."}`).
   Wing placeholders: `repo:#<n>` (a task wall showing wing n's repo) and `ci:#<n>` (a CI lamp)
@@ -130,6 +131,28 @@ backing behind each, a walnut frame, a `glowPanel` row above for light; order = 
 first, left to right). All bundled designs have 6 slots per wing: studio (meeting room, west wall), workshop (east wall,
 north end), campuses (per wing, on the wing's far wall: the outer wall beside the arch rows z13..15, or south of the
 arch gap z18..20 on a partition; both sides of a partition share the wall).
+
+### Beds
+
+The night routine (docs/VILLAGE.md V3) lets idle agents sleep in the building's **vanilla beds**. A blueprint offers
+them with plain anchors `bed`, `bed_2` .. (no `@<n>`: a campus names its beds across all wings, and agents take the free
+bed nearest their wing's task wall or their desk; `@<n>` anchors of a wing without a repo would be dropped):
+- the anchor is the **head half's cell** at the feet row (`x+.5, feetY, z+.5`), `yaw` = the bed's `facing` (from the
+  foot to the head, the pillow end; kit convention 0 south, 90 west, 180 north, -90 east);
+- the cell holds `minecraft:<colour>_bed` `part=head`, `occupied=false`; the foot half is the cell behind it (opposite
+  `facing`) with the same block and facing; a full floor under both; air above both; a free standable cell beside the
+  bed (where an agent steps in and gets up); one anchor per bed; inside `walk`;
+- the kit writes one with `bed(x, z, facing, { color })` (both halves + the next anchor); bundled: workshop three red
+  beds in the south-west corner, studio three light-grey beds between the meeting room and the runner, each campus
+  wing two beds in its colour with a barrel-and-lantern nightstand, all against the front wall;
+- beds are block entities: the template's own beds are in the building's pin (`blockEntities`), so Remove and Move
+  treat them as the building's (a bed the player adds is still "move this first"); the snapshot restores them like
+  any block (no drops: the restore flags suppress them, both halves are in the box);
+- agents never change the world: lying is a render pose of the client-only agent; a bed the player sleeps in
+  (`occupied=true`) is skipped. The player can sleep in them too (it is a normal bed: spawn point, night skip).
+- Regenerated bundled blueprints change the template fingerprint: buildings placed before have a pin from the old
+  version (the world-start check notes "the blueprint changed since it was placed" and does not check); Move
+  re-places them from the current blueprint (with beds).
 
 ## Buildings in a world
 
@@ -522,6 +545,9 @@ explicit interior air, bindings, and C5:
 - doors: written closed; a door next to an outside cell is iron; every iron door has a stone button
   on each side on a full, opaque, redstone-conductive block (not glowstone or a sea lantern) touching one of its
   halves;
+- beds (`bed`, `bed_2`.., see "Beds"): on a bed's head half, the matching foot half behind it, yaw = its facing, written
+  `occupied=false`, a solid floor and air above both halves, a free standable cell beside it, one anchor per bed,
+  inside `walk`; optional (no beds is fine);
 - trophy slots (`trophy*`, see "Trophy slots"): wing in range, yaw a multiple of 90, the cell inside `walk` and explicit
   air, a full opaque block behind it, one slot per cell, not an agent's feet/head cell; a wing without any slot is a
   warning. They are block anchors for `verify.mjs` (no floor/headroom check);

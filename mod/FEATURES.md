@@ -38,6 +38,7 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 | `client.permissions` | permissions specialist | permission decision UX |
 | `client.building` | buildings | placement wizard: repo/blueprint screens, ghost (terrain fit, entrance approach), placement keys (docs/BUILDINGS.md) |
 | `building`, `walk` (main) | buildings / walking | buildings in a world (place, move, remove, snapshots, terrain fit, approach); the pure outdoor planner |
+| `client.agents` `Routines` + `routine` (main) | routines | village routines (docs/VILLAGE.md V3): night rest in beds, stand-ups, library visits; pure `RoutineRules`, `BedPicker`, `StandupTracker`, `LibraryVisits`, `RoutineSettings` |
 | `client.trophy` + `trophy` (main) | buildings | trophies: `TrophyFeature` (Foreman updates -> `Trophies.award`, hub toggle, `dev.trophies.*`); pure `TrophyEvents`, `TrophySettings` |
 | `client.hq` + `hq` (main) | HQ specialist | the real HQ builder (main), world blocks driven by state (client), `StatusLampRenderer` |
 | `client.ui` | core (additive) | kit drawing, style tokens, text utils (screens + world) |
@@ -457,7 +458,8 @@ Repos failing CI, Team blocked agents; `H` reopens the world's last tab, or the 
 - **Buildings**: the world's buildings (blueprint, repos, lead, home), Place new / Place / Place on the plot,
   Make home, Teleport (gated: commands or creative), Edit repos…, Move… / Undo move, Remove (twice; "Remove
   anyway" after a "move these first" refusal); the blueprint browser with plan and rendered previews; Design
-  new and the Designs list (below); the "Agents walk between buildings" toggle.
+  new and the Designs list (below); the "Agents walk between buildings" toggle; the trophies toggle; the village routine
+  toggles (Night, Stand-ups, Library).
 - **Repos**: registered repos (branch, CI lamp, worktrees, building, lead, open PRs), Add / Remove, Edit
   settings, Refresh PRs, New goal, Place a building.
 - **Goals**: submit (repo, continue a branch, instructions); per goal the thread with its lead, the plan
@@ -509,6 +511,29 @@ toggle goes on. The integrated server hangs them (`Trophies.award` through `Serv
 singleplayer only. Per-world toggle in hub > Buildings, under the walking one: "Trophies for merges and finished goals: On/Off"
 (compact: "Trophies: Off" + a note), `<gameDir>/agentcraft/trophies.json`, default on. Off = nothing is hung, nothing queued
 (turning it on catches up). DevBridge: `dev.trophies.award` (QA trigger), `dev.trophies.list` (ledger), `dev.trophies.toggle`.
+
+## Village routines (`client.agents`: `Routines`; `routine` main: `RoutineRules`, `BedPicker`, `StandupTracker`, `LibraryVisits`, `RoutineSettings`)
+
+Contract: docs/VILLAGE.md V3 ("As implemented: routines"); notes in mod/DEV.md "Village routines". `AgentManager` asks
+`Routines` once per building and tick which station each agent uses (`StationAssigner.assign(agents, layout, keyOf)`):
+- **Night** (world time 13000-23000, the overworld clock): idle agents (no task and not mid-step, or off shift; never one
+  waiting on the player) walk to a free bed of their building (`bed`, `bed_2`.. anchors on a bed's head half; nearest
+  their wing's task wall / desk; sticky; a bed the player sleeps in is skipped) and lie in it: vanilla's sleeping pose,
+  set on the render state only (`AgentRenderer`: `Pose.SLEEPING` + `bedOrientation`), the bed block is never touched;
+  no free bed: the lounge. Nameplate "resting". Morning: they get up beside the bed and go back to work.
+- **Stand-ups**: once per goal (`goalId:createdAt`), 3 s after its first tasks are assigned while it is active, the lead
+  and those workers gather at the lead's building's `meeting` slots (else the podium's `user` spots), the lead says the
+  plan's first line (else the goal's text), each worker its task title (speech bubbles, 3 s apart), 20-30 s, then work.
+  Skipped (and recorded) when the player is more than 64 blocks from the building, it is not loaded, it has no spot or
+  the toggle is off. Goals already under way when the client connects never get one.
+- **Library visits**: a `memory.upsert` written by an agent (`author`) queues a visit; between steps (not working,
+  thinking or in an error) it walks to its building's `library` slot with a book in its hand, reads ~5 s (READ pose),
+  then returns; cancelled the moment work needs it; at most 30 s; a 2 min wait and a 1 min cooldown.
+- Priorities (pure, `RoutineRules.decide`): waiting on the player / walking between buildings > stand-up > library >
+  night rest > normal. Nothing starts or ends while the Foreman link is stale. Every hook is guarded: an error leaves
+  the agents working as usual (logged at most every 10 s).
+- Per-world toggles in hub > Buildings ("Night", "Stand-ups", "Library"), `routines.json`, default on. DevBridge:
+  `dev.routines.state`, `dev.routines.toggle`, `dev.routines.time`, `dev.routines.standup`, `dev.routines.library`.
 
 ## Displays (`client.monitor`, `client.taskwall`)
 
