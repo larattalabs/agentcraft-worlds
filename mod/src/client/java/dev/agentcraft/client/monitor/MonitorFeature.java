@@ -58,11 +58,18 @@ public final class MonitorFeature {
 	private MonitorFeature() {
 	}
 
+	/** A monitor right-click opens the Inbox only with an empty main hand or a non-block item (a block in hand builds the wall). */
+	static boolean opensInbox(net.minecraft.world.item.ItemStack mainHand) {
+		return mainHand.isEmpty() || !(mainHand.getItem() instanceof net.minecraft.world.item.BlockItem);
+	}
+
 	public static void init() {
 		BlockEntityRenderers.register(ModBlockEntities.MONITOR, ctx -> new MonitorRenderer());
 		// W4: a monitor's right-click opens its agent's view in the hub Inbox (card summary + full log); the feed
-		// monitor opens the Inbox itself
-		dev.agentcraft.client.world.StationInteractions.onUse(dev.agentcraft.block.ModBlocks.MONITOR, (player, pos, state, be) -> {
+		// monitor opens the Inbox itself. Only with an empty hand or a non-block item: monitors are multi-block panels, so a
+		// right-click with a block in hand still places the next block (no sneak needed)
+		dev.agentcraft.client.world.StationInteractions.onUse(dev.agentcraft.block.ModBlocks.MONITOR, (player, pos, state) -> opensInbox(
+			player.getMainHandItem()), (player, pos, state, be) -> {
 			String agent = agentAt(player.level(), pos);
 			if (agent == null || agent.equals("feed")) {
 				dev.agentcraft.client.hub.Inbox.open(null);

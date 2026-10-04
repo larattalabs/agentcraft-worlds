@@ -532,8 +532,9 @@ The first hub tab: everything that needs the player or happened for them, in one
   Foreman's stored log (`agent.logs.request`, 200 per page, both rotation files) joined with the live tail;
   scrolling up at the top loads the page before (the view keeps its place), "Load older" does the same; a message
   box (`user.message`) and Open card. An older Foreman shows the live tail with "older lines need a newer Foreman".
-- **Deep links** (W4): podium right-click -> Inbox on that podium's decisions; monitor right-click -> the Inbox
-  view of the agent that panel shows (the feed monitor: the Inbox); console `/inbox [@agent]`; `J` still opens
+- **Deep links** (W4): podium right-click -> Inbox on that podium's decisions; monitor right-click (empty hand or a
+  non-block item; with a block in hand the click places it, so monitor walls still build) -> the Inbox view of the
+  agent that panel shows (the feed monitor: the Inbox); console `/inbox [@agent]`; `J` still opens
   the decision screen (the fast path), which hosts the same AnswerPanel.
 - **Layout**: compact under 470 × 200 GUI px (GUI scale 4 at 1080p, 4K with auto scale ~426 × 240): the list or
   the detail with "‹ Inbox", shorter chip and button labels; `dev.inbox.state` `layout` = `{guiWidth, guiHeight,

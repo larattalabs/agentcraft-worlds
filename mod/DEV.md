@@ -933,7 +933,8 @@ agent log, `InboxDev` = DevBridge), `client.decisions.AnswerPanel` and the pure 
   keys and OS repeats stay the host's (DecisionScreen passes `repeat`); hosts own SDL text input (`Host.textFocus`).
 - Deep links: `DecisionsFeature.openPodium` (podium right-click) -> `Inbox.openPodium(building)`; the old scoped
   decision screen is `openPodiumScreen` (`dev.decision {podium, screen:true}`); `MonitorFeature.agentAt(level, pos)` +
-  a `StationInteractions` handler on the monitor (sneak keeps vanilla use) -> `Inbox.openAgent`; console `/inbox
+  a filtered `StationInteractions` handler on the monitor (`MonitorFeature.opensInbox`: empty main hand or a
+  non-block item; a block in hand and sneak keep vanilla use, so panels still place) -> `Inbox.openAgent`; console `/inbox
   [@agent]` (`ConsoleCommands.OpenInbox`), `/hub inbox`.
 - DevBridge:
   - `dev.hub.open {tab:"inbox", filter?: all|needs_you|building:<id>|agent:<id>|podium:<id|home>, item?: key | decision
