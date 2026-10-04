@@ -626,6 +626,10 @@ public final class BuildPlacement {
 		if (wet != null) {
 			notes.add(wet + " (blue)");
 		}
+		String shortOf = Approach.shortWarning(approach);
+		if (shortOf != null) {
+			notes.add(shortOf);
+		}
 		String front = BlueprintTransform.rotateDirection(b.front(), turns);
 		return new View(b, m, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, List.copyOf(refusals), inside, locked,
 			pending, forceArmed, shellOf(concat(plan.water(), approach.water())), plan.waterCount() + approach.waterCount(),
@@ -798,6 +802,8 @@ public final class BuildPlacement {
 			feet.add(f);
 		}
 		a.add("feet", feet);
+		a.addProperty("ground", ap.ground() == Integer.MIN_VALUE ? null : ap.ground());
+		a.addProperty("short", Approach.shortWarning(ap));
 		if (ap.end() != null) {
 			JsonArray e = new JsonArray();
 			for (double d : ap.end()) {

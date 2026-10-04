@@ -98,6 +98,8 @@ public final class OutdoorPlanner {
 	private int closeY;
 	private int closeZ;
 	private double closeDist = Double.MAX_VALUE;
+	/** The horizontal box of every expanded cell (min x, min z, max x, max z), for explaining a failure. */
+	private final int[] reached = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
 	/** Start / goal cells, once found. */
 	private int sx;
 	private int sy;
@@ -205,7 +207,7 @@ public final class OutdoorPlanner {
 				if (expanded < 64) {
 					yield "the start is walled in: only " + expanded + " cells reachable from " + cell(sx, sy, sz) + where;
 				}
-				yield "every reachable cell searched (" + expanded + ")" + where + (edgeHits > 0 ? "; the search box (pad " + pad
+				yield "every reachable cell searched (" + expanded + ", x " + reached[0] + ".." + reached[2] + " z " + reached[1] + ".." + reached[3] + ")" + where + (edgeHits > 0 ? "; the search box (pad " + pad
 					+ ") was the limit " + edgeHits + " times" : "; the goal's side is cut off (a cliff over 3 blocks, a step over 1, water deeper than 1)");
 			}
 		};
@@ -395,6 +397,10 @@ public final class OutdoorPlanner {
 			return;
 		}
 		expanded++;
+		reached[0] = Math.min(reached[0], n.x);
+		reached[1] = Math.min(reached[1], n.z);
+		reached[2] = Math.max(reached[2], n.x);
+		reached[3] = Math.max(reached[3], n.z);
 		double hd = Math.hypot(n.x - gx, n.z - gz);
 		if (hd < closeDist) {
 			closeDist = hd;

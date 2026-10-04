@@ -220,7 +220,7 @@ public final class BuildingCommands {
 				src.sendSuccess(() -> Component.literal("Forgot " + id + "; its blocks stay in the world"), true);
 			} else {
 				Building b = Buildings.remove(src.getLevel(), id, force);
-				src.sendSuccess(() -> Component.literal("Removed " + id + " (" + b.blueprint() + "); restored " + Buildings.str(b.box())), true);
+				src.sendSuccess(() -> Component.literal("Removed " + id + " (" + b.blueprint() + "); restored " + Buildings.str(b.restoreBox())), true);
 			}
 			return 1;
 		} catch (Buildings.BuildingException e) {

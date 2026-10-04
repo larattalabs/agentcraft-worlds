@@ -114,10 +114,13 @@ class ApproachTest {
 	void aLongDropExtendsTheApproachUntilItMeetsTheGround() {
 		Approach.Plan p = south(ground((x, z) -> z <= 9 ? 10 : 1)); // nine below
 		assertEquals(9, p.rows());
+		assertEquals(2, p.ground());
 		assertEquals(2, p.feet()[9]);
 		assertGentle(p);
+		assertNull(Approach.shortWarning(p));
 		Approach.Plan far = south(ground((x, z) -> z <= 9 ? 10 : -20)); // too deep: stops after length + EXTEND rows
 		assertEquals(Approach.DEFAULT_LENGTH + Approach.EXTEND, far.rows());
+		assertNotNull(Approach.shortWarning(far));
 		assertGentle(far);
 	}
 

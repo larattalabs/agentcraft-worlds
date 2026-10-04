@@ -35,7 +35,7 @@ public final class Approach {
 	/** Natural terrain above the path is cleared up to this many cells above the path surface. */
 	public static final int MAX_CUT = 8;
 	/** Rows added beyond {@link Spec#length} while the path has not reached the ground. */
-	public static final int EXTEND = 4;
+	public static final int EXTEND = 8;
 	/** How far above the previous row's feet a row's ground is looked for. */
 	static final int SCAN_UP = 12;
 	public static final int DEFAULT_LENGTH = 6;
@@ -115,9 +115,9 @@ public final class Approach {
 	 * @param end the walkable centre of the last row (feet position: x, y, z), or null when there is no approach
 	 */
 	public record Plan(int[] path, int[] slabs, int[] fill, int[] clear, int[] water, int waterCount, int[] lava, int lavaCount,
-		int[] blockEntities, int[] feet, Anchors.@Nullable Bounds bounds, double @Nullable [] end) {
+		int[] blockEntities, int[] feet, Anchors.@Nullable Bounds bounds, double @Nullable [] end, int ground) {
 		public static final Plan EMPTY = new Plan(new int[0], new int[0], new int[0], new int[0], new int[0], 0, new int[0], 0, new int[0],
-			new int[0], null, null);
+			new int[0], null, null, Integer.MIN_VALUE);
 
 		public int rows() {
 			return Math.max(0, feet.length - 1);
@@ -203,6 +203,7 @@ public final class Approach {
 		int[] feet = new int[maxRows + 1];
 		feet[0] = feetY;
 		int rows = 0;
+		int lastTarget = Integer.MIN_VALUE;
 		for (int i = 1; i <= maxRows; i++) {
 			int[] ground = new int[hi - lo + 1];
 			for (int c = lo; c <= hi; c++) {
@@ -212,6 +213,7 @@ public final class Approach {
 			// no ground within reach: a deep drop, keep going down (the fill holds the path up)
 			int target = TerrainFit.medianSurface(ground, feet[i - 1] - TerrainFit.MAX_FILL);
 			feet[i] = feet[i - 1] + Integer.signum(target - feet[i - 1]);
+			lastTarget = target;
 			rows = i;
 			if (i >= spec.length() && feet[i] == target) {
 				break; // met the ground
@@ -297,7 +299,7 @@ public final class Approach {
 		boolean lastSlab = rows > 0 && slab(feet, rows);
 		double[] end = {last[0] + 0.5, lf + (lastSlab ? 0.5 : 0), last[1] + 0.5};
 		Anchors.Bounds bounds = new Anchors.Bounds(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5]);
-		return new Plan(path.all(), slabs.all(), fill.all(), clear.all(), water.drawn(), water.n, lava.drawn(), lava.n, be.all(), feet, bounds, end);
+		return new Plan(path.all(), slabs.all(), fill.all(), clear.all(), water.drawn(), water.n, lava.drawn(), lava.n, be.all(), feet, bounds, end, lastTarget);
 	}
 
 	/**
@@ -361,6 +363,20 @@ public final class Approach {
 	/** The refusal for an approach's lava, or null. */
 	public static @Nullable String lavaRefusal(Plan p) {
 		return p.lavaCount() == 0 ? null : "lava on or beside the entrance approach (" + p.lavaCount() + " block" + (p.lavaCount() == 1 ? "" : "s") + ")";
+	}
+
+	/**
+	 * The warning for an approach that ran out of rows before meeting the ground (a slope steeper than one block per
+	 * block), or null: walkers may not get past its end.
+	 */
+	public static @Nullable String shortWarning(Plan p) {
+		int[] f = p.feet();
+		if (f.length < 2 || p.ground() == Integer.MIN_VALUE || p.ground() == f[f.length - 1]) {
+			return null;
+		}
+		int d = p.ground() - f[f.length - 1];
+		return "the entrance path ends " + Math.abs(d) + " block" + (Math.abs(d) == 1 ? "" : "s") + (d > 0 ? " below" : " above")
+			+ " the ground (too steep here: turn or move the building)";
 	}
 
 	/** The warning for an approach's water, or null. */

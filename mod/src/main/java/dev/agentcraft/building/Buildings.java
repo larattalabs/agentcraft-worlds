@@ -468,6 +468,10 @@ public final class Buildings {
 			if (approach.rows() > 0) {
 				notes.add("entrance approach " + approach.rows() + " rows (" + approach.changed() + " blocks)");
 			}
+			String shortOf = Approach.shortWarning(approach);
+			if (shortOf != null) {
+				notes.add(shortOf);
+			}
 			return new Built(turns, box, snapBox, BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
 				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), pinFor(bp, grid, turns, box),
 				notes.isEmpty() ? null : String.join("; ", notes));
