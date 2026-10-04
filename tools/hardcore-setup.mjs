@@ -12,7 +12,7 @@
 //      running from the stable checkout is stopped before its code or node_modules change.
 //   3. npm dependencies in <stable>/foreman and <stable>/tools
 //   4. build the mod jar in <stable>/mod
-//   5. backups: the world saves (backup-world.sh), and instance.cfg + mods/ into
+//   5. backups: the world saves (--backup-script, optional), and instance.cfg + mods/ into
 //      <backup-dir>/agentcraft-setup-<stamp>/
 //   6. mods/: older agentcraft*.jar out, the new jar in
 //   7. instance.cfg: PreLaunchCommand -> <stable>/tools/foreman-daemon.sh start ...;
@@ -33,25 +33,34 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const thisRoot = path.resolve(here, '..');
 const HOME = os.homedir();
 
+// Built-in defaults. Machine-specific values (the instance, a world backup script, ...) come from
+// flags or from the optional `hardcore` section of the Foreman config (<home>/config.json):
+//   "hardcore": { "instance": "~/Library/Application Support/PrismLauncher/instances/<name>",
+//                 "stable": "~/code/agentcraft-stable", "backupScript": "~/bin/backup-world.sh",
+//                 "backupDir": "~/MinecraftBackups/<name>", "profile": "hardcore", "port": 7880 }
+// Precedence: flags > config.json "hardcore" > these defaults.
 export const DEFAULTS = {
-  instance: path.join(HOME, 'Library', 'Application Support', 'PrismLauncher', 'instances', 'Hardcore-World'),
-  stable: path.join(HOME, 'Developer', 'agentcraft-stable'),
   ref: 'main',
   profile: 'hardcore',
   port: 7880,
   devPort: 7881,
   home: path.join(HOME, '.agentcraft'),
-  backupScript: path.join(HOME, 'bin', 'backup-world.sh'),
   java: '/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home',
 };
+/** keys of config.json "hardcore" and their flag spelling */
+export const CONFIG_KEYS = { instance: 'instance', stable: 'stable', backupScript: 'backup-script', backupDir: 'backup-dir', profile: 'profile', port: 'port' };
 const DEV_PORTS = new Set([7878, 7879]);
 
 function usage(code = 0) {
   console.log(`AgentCraft Hardcore setup (dry run unless --apply)
   node tools/hardcore-setup.mjs [--apply] [options]
 
-  --instance PATH       Prism instance dir (default ${DEFAULTS.instance})
-  --stable PATH         stable checkout (default ${DEFAULTS.stable})
+  Defaults for --instance, --stable, --backup-script, --backup-dir, --profile and --port can live
+  in the "hardcore" section of <home>/config.json (flags win). See tools/README.md.
+
+  --instance PATH       Prism instance dir (required: the flag or config.json hardcore.instance)
+  --stable PATH         stable checkout (default: agentcraft-stable next to this repository,
+                        ${defaultStable()})
   --source REPO         where the stable checkout clones/fetches from (default: the repository this
                         script runs from, ${defaultSource()}; run from the stable checkout itself:
                         its origin)
@@ -60,7 +69,8 @@ function usage(code = 0) {
   --port N              Foreman port (default ${DEFAULTS.port}; 7878/7879 belong to dev runs)
   --home PATH           Foreman home (default ~/.agentcraft)
   --backup-dir PATH     where backups go (default ~/MinecraftBackups/<instance dir name>)
-  --backup-script PATH  world backup script (default ${DEFAULTS.backupScript})
+  --backup-script PATH  world backup script, run as: SCRIPT <game dir> <backup dir> (optional;
+                        without one the world saves are not backed up)
   --stop-on-exit        stop the Foreman when the game exits (after the backup). Default: it keeps
                         running (PR polling continues); running again without it undoes it.
   --devbridge [--dev-port N]  enable the DevBridge in this instance on port N (default ${DEFAULTS.devPort})
@@ -105,6 +115,32 @@ export function resolveRemoteRef(lsRemote, ref) {
   return null;
 }
 
+/** <parent of this repository>/agentcraft-stable (the main checkout's parent, also from a worktree) */
+export function defaultStable() {
+  return path.join(path.dirname(defaultSource()), 'agentcraft-stable');
+}
+
+/** The "hardcore" section of <home>/config.json, or {} (no file / no section). */
+export function readHardcoreConfig(home) {
+  let file;
+  try { file = JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')); } catch (e) {
+    if (e.code === 'ENOENT') return {};
+    throw new Error(`cannot read ${path.join(home, 'config.json')}: ${e.message}`);
+  }
+  const h = file?.hardcore;
+  if (h === undefined || h === null) return {};
+  if (typeof h !== 'object' || Array.isArray(h)) throw new Error('config.json "hardcore" must be an object');
+  const out = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (!(k in CONFIG_KEYS)) throw new Error(`config.json hardcore.${k}: unknown key (known: ${Object.keys(CONFIG_KEYS).join(', ')})`);
+    if (k === 'port' ? !(typeof v === 'number' || (typeof v === 'string' && v.trim())) : !(typeof v === 'string' && v.trim())) {
+      throw new Error(`config.json hardcore.${k}: expected ${k === 'port' ? 'a number' : 'a non-empty string'}`);
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
 function defaultSource() {
   const r = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: thisRoot, encoding: 'utf8' });
   if (r.status !== 0) return thisRoot;
@@ -112,8 +148,9 @@ function defaultSource() {
   return path.basename(common) === '.git' ? path.dirname(common) : common;
 }
 
-export function parseArgs(argv) {
+export function parseArgs(argv, { config } = {}) {
   const out = { ...DEFAULTS, apply: false };
+  const given = new Set();
   const flags = new Set(['apply', 'stop-on-exit', 'devbridge', 'skip-checkout', 'skip-deps']);
   const values = new Set(['instance', 'stable', 'source', 'ref', 'profile', 'port', 'home', 'backup-dir', 'backup-script', 'dev-port', 'jar', 'prism-cfg']);
   for (let i = 0; i < argv.length; i++) {
@@ -125,8 +162,16 @@ export function parseArgs(argv) {
     else if (values.has(key)) {
       if (argv[i + 1] === undefined) throw new Error(`${a} needs a value`);
       out[camel(key)] = argv[++i];
+      given.add(camel(key));
     } else throw new Error(`unknown option: ${a}`);
   }
+  // config.json "hardcore" fills what the flags left out (it lives in the Foreman home)
+  const fromConfig = config ?? readHardcoreConfig(path.resolve(expandHome(out.home)));
+  for (const [k, v] of Object.entries(fromConfig)) if (!given.has(k)) out[k] = v;
+  if (!out.instance) {
+    throw new Error('no Prism instance: pass --instance PATH, or set "hardcore": { "instance": "..." } in ' + path.join(path.resolve(expandHome(out.home)), 'config.json'));
+  }
+  out.stable ??= defaultStable();
   for (const k of ['instance', 'stable', 'home', 'backupDir', 'backupScript', 'jar', 'prismCfg']) {
     if (out[k]) out[k] = path.resolve(expandHome(out[k]));
   }
@@ -431,7 +476,9 @@ export async function setup(opt, deps = realDeps) {
   // 5. backups
   const backup = path.join(opt.backupDir, `agentcraft-setup-${stampOf(deps.now())}`);
   say('\n5. backups');
-  if (fs.existsSync(opt.backupScript)) {
+  if (!opt.backupScript) {
+    say('  note: no world backup script configured (--backup-script or config.json hardcore.backupScript); world saves are not backed up');
+  } else if (fs.existsSync(opt.backupScript)) {
     plan(`back up the world saves: ${opt.backupScript} ${gameDir} ${opt.backupDir}`);
     if (apply) deps.exec('/bin/bash', [opt.backupScript, gameDir, opt.backupDir]);
   } else warn(`no world backup script at ${opt.backupScript}; saves are NOT backed up`);

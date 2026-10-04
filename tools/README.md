@@ -43,13 +43,34 @@ runs for weeks can grow its log past 5 MB until the next start.
 
 Dev runs (`mac.mjs`) use the dev checkout, profile `claude`/`sim` and ports 7878/7879. The
 everyday game is different: a jar in a Prism instance, with a Foreman that starts with the game.
-That Foreman runs from a **stable checkout** (`~/Developer/agentcraft-stable`), not from
-`~/Developer/agentcraft`. The dev checkout has many worktrees, the Foreman works on it as a
+That Foreman runs from a **stable checkout** (default: `agentcraft-stable` next to your clone,
+e.g. `~/code/agentcraft-stable` for `~/code/agentcraft`), not from your dev checkout. The dev checkout has many worktrees, the Foreman works on it as a
 repository, and agent merges land in its `main`. The stable Foreman uses its own profile and port
 (`hardcore`, 7880), so it never collides with a dev run.
 
 **Setup (once, and again to update):** quit Prism and the game first, because setup rewrites
 `instance.cfg` and swaps jars in `mods/`.
+
+Tell it which Prism instance to use, either with `--instance` on every run or once in the
+optional `hardcore` section of the Foreman config (`~/.agentcraft/config.json`, or `<--home>/config.json`).
+Flags win over the config; every key is optional except that an instance must come from one of
+the two:
+
+```json
+{
+  "hardcore": {
+    "instance": "~/Library/Application Support/PrismLauncher/instances/My Hardcore World",
+    "stable": "~/code/agentcraft-stable",
+    "backupScript": "~/bin/backup-world.sh",
+    "backupDir": "~/MinecraftBackups/My Hardcore World",
+    "profile": "hardcore",
+    "port": 7880
+  }
+}
+```
+
+`backupScript` is your own world backup script, called as `SCRIPT <game dir> <backup dir>`;
+without one, setup notes that the world saves are not backed up (instance.cfg and `mods/` still are).
 
 ```sh
 node tools/hardcore-setup.mjs                    # dry run: prints every change, changes nothing
@@ -61,11 +82,11 @@ What `--apply` changes (defaults; see `--help`):
 
 | what | change |
 | --- | --- |
-| `~/Developer/agentcraft-stable` | cloned from this repository (or fetched), `--ref` (default `main`) checked out detached; refuses local changes, and refuses a ref without `tools/foreman-daemon.sh`/`.mjs` (the PreLaunchCommand points there) |
+| `<stable>` (default `../agentcraft-stable`) | cloned from this repository (or fetched), `--ref` (default `main`) checked out detached; refuses local changes, and refuses a ref without `tools/foreman-daemon.sh`/`.mjs` (the PreLaunchCommand points there) |
 | the `hardcore` Foreman | stopped first when it runs from the stable checkout and the checkout or its `node_modules` are about to change; it starts again with the next game launch |
 | its `foreman/`, `tools/` | `npm ci` |
 | its `mod/` | `gradlew build`, giving `mod/build/libs/agentcraft-<version>.jar` |
-| `~/MinecraftBackups/<instance>/` | world saves via `~/bin/backup-world.sh`; `agentcraft-setup-<stamp>/` with `instance.cfg` and the whole `mods/` folder on every run; on the first run also `agentcraft-setup-original/`, the pre-AgentCraft state, which is never overwritten |
+| `~/MinecraftBackups/<instance>/` | world saves via the backup script, when one is set; `agentcraft-setup-<stamp>/` with `instance.cfg` and the whole `mods/` folder on every run; on the first run also `agentcraft-setup-original/`, the pre-AgentCraft state, which is never overwritten |
 | `<instance>/.minecraft/mods/` | older `agentcraft*.jar` removed (they are in the backup) and the new jar copied in |
 | `<instance>/instance.cfg` | `PreLaunchCommand="<stable>/tools/foreman-daemon.sh" start --profile hardcore --port 7880 --home "<home>"`; `JvmArgs` gains `-Dagentcraft.port=7880 -Dagentcraft.profile=hardcore` (other args kept); `OverrideCommands`/`OverrideJavaArgs=true`; `PostExitCommand` (the world backup) kept. When the instance used Prism's global commands or JVM args (override off), their `PostExitCommand`, `WrapperCommand` and `JvmArgs` are copied in from `prismlauncher.cfg` (`--prism-cfg` if it is elsewhere) |
 
@@ -81,7 +102,7 @@ Without the option the Foreman keeps running after you quit, so agents keep work
 continues; running setup again without the option removes it. `--devbridge [--dev-port 7881]`
 turns the DevBridge on in this instance, for scripted checks in a copy of the instance. In a
 Hardcore world the DevBridge answers only `dev.help`. `--instance`, `--stable`, `--profile`,
-`--port`, `--home` and `--backup-dir` change the defaults.
+`--port`, `--home`, `--backup-script` and `--backup-dir` override the defaults and the config.
 
 **How the Foreman starts:** Prism runs the PreLaunchCommand and waits for it, and a non-zero exit
 aborts the launch. Prism 11.0.3 does no shell parsing: it splits the command on double quotes
@@ -97,14 +118,14 @@ error goes to the log.
 **Day to day** (any terminal; the script finds its own checkout):
 
 ```sh
-~/Developer/agentcraft-stable/tools/foreman-daemon.sh status    # JSON: running, pid, port, commit, stale
-~/Developer/agentcraft-stable/tools/foreman-daemon.sh stop
-~/Developer/agentcraft-stable/tools/foreman-daemon.sh restart   # e.g. after `claude` /login
-~/Developer/agentcraft-stable/tools/foreman-daemon.sh start --wait   # start in the foreground, see errors
-node ~/Developer/agentcraft-stable/tools/mac.mjs stop --foreman --profile hardcore   # same as stop
+<stable>/tools/foreman-daemon.sh status    # JSON: running, pid, port, commit, stale
+<stable>/tools/foreman-daemon.sh stop
+<stable>/tools/foreman-daemon.sh restart   # e.g. after `claude` /login
+<stable>/tools/foreman-daemon.sh start --wait   # start in the foreground, see errors
+node <stable>/tools/mac.mjs stop --foreman --profile hardcore   # same as stop
 ```
 
-Logs: `~/Developer/agentcraft-stable/artifacts/logs/foreman-daemon-hardcore.log` holds the daemon
+Logs: `<stable>/artifacts/logs/foreman-daemon-hardcore.log` holds the daemon
 and the Foreman's output. It is checked at every game launch and rotated past 5 MB, with 3 kept. Prism's own console shows only that the
 PreLaunchCommand ran. In game, the top-right pill says "Foreman not running: it starts with the
 game; or run tools/foreman-daemon.sh" until the link is up. After a reboot, nothing starts the
@@ -125,7 +146,7 @@ next game launch, or right away with `foreman-daemon.sh start`. Merge the launch
 `~/MinecraftBackups/<instance>/agentcraft-setup-original/instance.cfg` over
 `<instance>/instance.cfg`. Then remove `mods/agentcraft*.jar` and run `foreman-daemon.sh stop`.
 The original has no AgentCraft jar, so there is nothing to copy back. Use an
-`agentcraft-setup-<stamp>/` folder instead to return to an earlier AgentCraft version. World saves are restored from the `backup-world.sh` archives
+`agentcraft-setup-<stamp>/` folder instead to return to an earlier AgentCraft version. World saves are restored from your backup script's archives
 as usual.
 
 ## Windows

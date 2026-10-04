@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process';
 const tmp = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `ac-${name}-`));
 
 // The way Prism (QSettings) writes these keys; JvmArgs with a comma is quoted as a whole.
-const BACKUP = '/Users/me/Developer/bin/backup-world.sh';
+const BACKUP = '/Users/me/bin/backup-world.sh';
 const CFG = [
   '[General]',
   'AutoCloseConsole=false',
@@ -301,6 +301,45 @@ test('setup --stop-on-exit wraps the backup command; running again without it un
   g = readGeneral(fs.readFileSync(path.join(w.instance, 'instance.cfg'), 'utf8'));
   assert.equal(g.PostExitCommand, readGeneral(CFG).PostExitCommand);
   assert.doesNotMatch(g.JvmArgs, /agentcraft\.dev/);
+});
+
+test('setup options come from config.json "hardcore" when no flag is given; flags win', () => {
+  const w = fakeWorld();
+  assert.throws(() => parseSetupArgs(['--home', w.home]), /no Prism instance: pass --instance PATH, or set "hardcore"/);
+  const cfg = JSON.parse(fs.readFileSync(path.join(w.home, 'config.json'), 'utf8'));
+  cfg.hardcore = { instance: w.instance, stable: w.stable, backupScript: w.backupScript, backupDir: w.backupDir, profile: 'hc2', port: 7990 };
+  fs.writeFileSync(path.join(w.home, 'config.json'), JSON.stringify(cfg));
+  const o = parseSetupArgs(['--home', w.home, '--skip-checkout']);
+  assert.equal(o.instance, w.instance);
+  assert.equal(o.stable, w.stable);
+  assert.equal(o.backupScript, w.backupScript);
+  assert.equal(o.backupDir, w.backupDir);
+  assert.equal(o.profile, 'hc2');
+  assert.equal(o.port, 7990);
+  const f = parseSetupArgs(['--home', w.home, '--skip-checkout', '--profile', 'hc3', '--port', '7991', '--instance', path.join(w.dir, 'other')]);
+  assert.equal(f.profile, 'hc3');
+  assert.equal(f.port, 7991);
+  assert.equal(f.instance, path.join(w.dir, 'other'));
+  // validated like the flags
+  assert.throws(() => parseSetupArgs(['--home', w.home], { config: { instance: w.instance, port: 7878 } }), /dev runs/);
+  assert.throws(() => parseSetupArgs(['--home', w.home], { config: { instance: w.instance, profile: 'bad name' } }), /profile/);
+  fs.writeFileSync(path.join(w.home, 'config.json'), JSON.stringify({ hardcore: { instance: w.instance, bogus: 1 } }));
+  assert.throws(() => parseSetupArgs(['--home', w.home]), /hardcore\.bogus: unknown key/);
+  fs.writeFileSync(path.join(w.home, 'config.json'), JSON.stringify({ hardcore: { instance: '' } }));
+  assert.throws(() => parseSetupArgs(['--home', w.home]), /hardcore\.instance: expected a non-empty string/);
+  // --help needs no instance
+  assert.deepEqual(parseSetupArgs(['--help']), { help: true });
+  // without --stable: agentcraft-stable next to the repository
+  assert.equal(path.basename(parseSetupArgs(['--home', w.home, '--instance', w.instance, '--skip-checkout'], { config: {} }).stable), 'agentcraft-stable');
+});
+
+test('setup without a backup script notes that saves are not backed up', async () => {
+  const w = fakeWorld();
+  const d = deps();
+  await setup(parseSetupArgs(['--instance', w.instance, '--stable', w.stable, '--home', w.home, '--jar', w.jar,
+    '--backup-dir', w.backupDir, '--skip-checkout', '--skip-deps']), d);
+  assert.ok(d.lines.some((l) => /no world backup script configured/.test(l)));
+  assert.ok(!d.lines.some((l) => /back up the world saves/.test(l)));
 });
 
 test('setup refuses: Prism running on --apply, a foreign PreLaunchCommand, dev ports, a stable dir inside a dev repo', async () => {
