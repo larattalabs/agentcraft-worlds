@@ -761,8 +761,8 @@ export class RepoManager {
       if (s.pr?.squash) {
         const tree = mt.stdout.trim().split('\n')[0]!.trim();
         const baseSha = await gitOut(r.path, ['rev-parse', baseRef]);
-        const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseRef}..${branchRef}`])).split('\n').filter(Boolean))];
-        const msg = `${(opts.title ?? opts.commitMessage ?? w.taskId ?? w.id).trim()}${opts.description ? `\n\n${opts.description.trim()}` : ''}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
+        // the user's own commit: no co-author trailers, no tool attribution (C8)
+        const msg = `${(opts.title ?? opts.commitMessage ?? w.taskId ?? w.id).trim()}${opts.description ? `\n\n${opts.description.trim()}` : ''}`;
         const { env } = await userIdentity(r.path);
         src = await gitOut(r.path, ['commit-tree', tree, '-p', baseSha, '-m', msg], { env });
       }
@@ -793,9 +793,7 @@ export class RepoManager {
         if (mt.code !== 0) throw new RepoError(`merge-tree failed: ${mt.stderr.trim()}`, 'failed');
         const tree = mt.stdout.trim().split('\n')[0]!.trim();
         if (tree === (await gitOut(r.path, ['rev-parse', `${pushed}^{tree}`]))) throw new RepoError(`${w.branch} has nothing new for the pull request`, 'empty');
-        const range = known ? `${prevTip}..${branchRef}` : `${onto}..${branchRef}`;
-        const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', range])).split('\n').filter(Boolean))];
-        const msg = `${(opts.commitMessage ?? 'Address review feedback').trim()}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
+        const msg = (opts.commitMessage ?? 'Address review feedback').trim();
         const { env } = await userIdentity(r.path);
         src = await gitOut(r.path, ['commit-tree', tree, '-p', pushed, '-m', msg], { env });
       }
@@ -870,13 +868,9 @@ export class RepoManager {
     const baseSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.base}`]);
     const branchSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.branch}`]);
     const tree = (await gitOut(r.path, ['merge-tree', '--write-tree', '--no-messages', w.base, w.branch])).split('\n')[0]!.trim();
-    const approved = `Approved in AgentCraft (decision ${decision.id}${w.taskId ? `, task ${w.taskId}` : ''}).`;
+    // the user's own commit (they approved it): no co-author trailers and no tool attribution (C8)
     const squash = (style ?? this.opts.mergeStyle) === 'squash';
-    let msg: string;
-    if (squash) {
-      const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseSha}..${branchSha}`])).split('\n').filter(Boolean))];
-      msg = `${(commitMessage ?? `agentcraft: ${w.taskId ?? w.id}`).trim()}\n\nSquashed from ${w.branch}. ${approved}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
-    } else msg = `Merge ${w.branch} into ${w.base}\n\n${approved}`;
+    const msg = squash ? (commitMessage ?? w.taskId ?? w.id).trim() : `Merge ${w.branch} into ${w.base}`;
     const sign = !!this.opts.signMerges && (await gitConfigGet(r.path, 'commit.gpgsign', 'bool')) === 'true';
     const { env } = await userIdentity(r.path);
     const parents = squash ? ['-p', baseSha] : ['-p', baseSha, '-p', branchSha];

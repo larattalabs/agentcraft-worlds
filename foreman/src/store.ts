@@ -52,7 +52,7 @@ export interface WorktreeMeta {
   prBranch?: string;
   prPushedSha?: string;
   prUrl?: string;
-  /** a PR fold-in by another worker: the earlier worktree's branch tip (for Co-authored-by) */
+  /** a PR fold-in by another worker: the earlier worktree's branch tip (the 3-way merge base of the added commit) */
   prevTip?: string;
 }
 

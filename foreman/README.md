@@ -157,8 +157,13 @@ the worktree is made). When you approve ("Merge" on the decision), the Foreman f
 for conflicts (a conflict goes back to the worker), pushes the branch (`branchPrefix` + the task slug)
 and opens the pull request with the remote's own CLI and your login: `az repos pr create` for Azure
 DevOps, `gh pr create` for GitHub (other remotes: pushed only). `squash` pushes one commit authored
-by you, with the agents as Co-authored-by. The push never overwrites a remote branch AgentCraft did
-not push itself. Agents still never push: only the Foreman does, and only after your approval.
+by you alone (no co-author trailers). The PR title is the task's title and its description the
+worker's summary: no AgentCraft or Claude attribution anywhere (no `Co-authored-by`, no footer; the
+agents run with Claude Code's `attribution` turned off, so their own commits carry none either).
+Without `squash` the agents' own commits are pushed as they are, authored `AgentCraft <Name>`: use
+`squash` for repositories where that should not show. The push never overwrites a remote branch
+AgentCraft did not push itself. Agents still never push: only the Foreman does, and only after your
+approval.
 
 #### Watching the pull requests (`claude.prWatch`, docs/PRWATCH.md)
 
@@ -584,7 +589,8 @@ spawns git with an empty environment); the policy refuses every command it can s
   turns signing off; the sim never signs. The agents' own commits on their branches (theirs
   and the Foreman's) use `AgentCraft <Name> <name@agentcraft.local>` and are never signed.
   With `--merge-style squash`, main gets one commit with the task's changes (your identity,
-  signed as above, `Co-authored-by` the agents) instead of a merge commit plus the agents'
+  signed as above, the task's title and summary as the message, no trailers) instead of a merge
+  commit (`Merge <branch> into <base>`, no tool attribution) plus the agents'
   commits - useful for repos that require signed commits or verified emails. Branches are kept.
 - `/repo add <path>` must name a repository root; a folder inside another repository is refused
   (instead of silently registering the enclosing repo as the merge target).

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { HookInput, Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ClaudeBackend } from '../src/agents/claude/index.js';
+import { ClaudeBackend, NO_ATTRIBUTION } from '../src/agents/claude/index.js';
 import { connectorAllowed, connectorHook, guardrail, guardrailHook, writeTargets } from '../src/agents/claude/permissions.js';
 import { loadSubagents } from '../src/agents/claude/subagents.js';
 import { loadConfig } from '../src/config.js';
@@ -166,7 +166,7 @@ describe('session options', () => {
       const w = options[1]!;
       expect(w.permissionMode).toBe('default');
       expect(w.hooks?.PreToolUse).toHaveLength(1); // only the Foreman guard (its own files, token and port)
-      expect(w.settings).toBeUndefined();
+      expect(w.settings).toEqual(NO_ATTRIBUTION); // C8: no Claude co-author trailer / PR footer
       expect(w.tools).toEqual(['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite']);
       expect(w.disallowedTools).toEqual(['Bash(git push:*)', 'Task', 'Agent', 'WebSearch', 'WebFetch']);
       expect(w.agents).toBeUndefined();
@@ -188,7 +188,7 @@ describe('session options', () => {
       for (const o of options) {
         expect(o.permissionMode).toBe('auto');
         expect(o.hooks?.PreToolUse).toHaveLength(2); // the Foreman guard, then the guardrail
-        expect(o.settings).toEqual({ permissions: { allow: ['Bash(codex exec:*)'], deny: [], ask: [] } });
+        expect(o.settings).toEqual({ permissions: { allow: ['Bash(codex exec:*)'], deny: [], ask: [] }, ...NO_ATTRIBUTION });
         expect(o.tools).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch', 'Agent', 'Task']));
         expect(o.disallowedTools).toEqual(['Bash(git push:*)']);
         expect(Object.keys(o.agents ?? {})).toEqual(['checker']);

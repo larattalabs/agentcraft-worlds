@@ -138,7 +138,7 @@ export interface PrSettings {
   branchPrefix?: string;
   /** open PRs as drafts */
   draft?: boolean;
-  /** push one commit authored by the user (agents' commits squashed, with Co-authored-by) instead of the agents' commits */
+  /** push one commit authored by the user (agents' commits squashed, no co-author trailers) instead of the agents' commits */
   squash?: boolean;
 }
 

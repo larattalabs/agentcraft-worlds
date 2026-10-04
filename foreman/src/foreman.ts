@@ -121,6 +121,16 @@ export function goalCopy(g: Goal): Goal {
   return { ...g, ...(g.repos ? { repos: [...g.repos] } : {}), ...(g.instructions ? { instructions: [...g.instructions] } : {}), ...(g.prs ? { prs: g.prs.map((p) => ({ ...p })) } : {}) };
 }
 
+/**
+ * A pull request's description from a task summary (C8): the summary as written, minus lines that
+ * advertise the tooling (AgentCraft / Claude attribution, co-author trailers, generated-with lines).
+ */
+export function prDescription(summary: string | undefined): string {
+  const lines = (summary ?? '').replace(/\r\n/g, '\n').split('\n');
+  const ad = /^\s*(co-authored-by:|generated with|🤖)|\b(agentcraft|claude code)\b/i;
+  return lines.filter((l) => !ad.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export type Reply = (msg: Outbound) => void;
 
 export class ClientError extends Error {}
@@ -786,7 +796,8 @@ export class Foreman {
             ? {
                 commitMessage: task.pr ? `${task.id}: address review feedback on PR #${task.pr.id}${task.summary ? `\n\n${task.summary}` : ''}` : `${task.id}: ${task.title}${task.summary ? `\n\n${task.summary}` : ''}`,
                 title: task.title,
-                description: [task.summary, d.context?.split('\n')[0], `Built and reviewed in AgentCraft (${task.id}), approved by ${userName()}.`].filter(Boolean).join('\n\n'),
+                // the worker's summary only: no tool attribution, no review transcript (C8)
+                description: prDescription(task.summary),
               }
             : {},
         );

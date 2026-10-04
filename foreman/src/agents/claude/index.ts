@@ -140,6 +140,9 @@ function alive(child: ChildProcess | undefined): child is ChildProcess {
   return !!child && child.exitCode === null && child.signalCode === null;
 }
 
+/** Claude Code settings that keep Claude's co-author trailer, PR footer and session link out (C8). */
+export const NO_ATTRIBUTION = { attribution: { commit: '', pr: '', sessionUrl: false }, includeCoAuthoredBy: false } as const;
+
 const TURN_TIMEOUT_MS = 45 * 60_000;
 /** wait after a usage limit that did not say when it resets (doubles per hit, up to LIMIT_BACKOFF_MAX_MS) */
 const LIMIT_BACKOFF_MS = 5 * 60_000;
@@ -1189,7 +1192,7 @@ export class ClaudeBackend implements Backend {
     if (sub) tools.push('Agent', 'Task');
     if (this.skillsPlugin) tools.push('Skill');
     const disallowed = ['Bash(git push:*)', ...(sub ? [] : ['Task', 'Agent']), ...(p.webTools ? [] : ['WebSearch', 'WebFetch'])];
-    const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : undefined;
+    const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : {};
     const connectors = this.cfg.context.connectors;
     // the Foreman's own files, token and port: denied before anything else, whatever the rules
     const hooks: HookCallbackMatcher[] = [
@@ -1217,7 +1220,9 @@ export class ClaudeBackend implements Backend {
       canUseTool: this.canUseTool(agentId, role, cwd, turn, repoId),
       tools,
       disallowedTools: disallowed,
-      ...(rules ? { settings: rules } : {}),
+      // no Claude attribution in anything an agent commits or writes for a PR (C8); the object form
+      // of `attribution` (older CLIs reject a boolean there), plus the deprecated switch
+      settings: { ...rules, ...NO_ATTRIBUTION },
       ...(sub && Object.keys(defs).length ? { agents: defs } : {}),
       // claude.ai connectors: none unless listed (strict), listed ones only (hook)
       strictMcpConfig: connectors.length === 0,

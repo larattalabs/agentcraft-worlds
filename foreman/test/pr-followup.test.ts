@@ -102,7 +102,7 @@ describe('review fixes on a squashed pull request', () => {
     expect(bareGit(ctx.bare, 'rev-parse', `${tip}^`)).toBe(squash); // added on top, not re-squashed
     expect(bareGit(ctx.bare, 'diff', '--name-only', squash, tip)).toBe('CHANGELOG.md'); // only the fix
     expect(bareGit(ctx.bare, 'log', '-1', '--format=%an|%s', tip)).toBe('Sam|t1: address review feedback on PR #5');
-    expect(bareGit(ctx.bare, 'log', '-1', '--format=%b', tip)).toContain('Co-authored-by: AgentCraft Kit');
+    expect(bareGit(ctx.bare, 'log', '-1', '--format=%B', tip)).not.toMatch(/co-authored-by|agentcraft|claude/i); // C8
     expect(bareGit(ctx.bare, 'ls-tree', '--name-only', tip).split('\n')).not.toContain('SERVER.md'); // the newer base stays out
     expect(meta.prPushedSha).toBe(tip);
 
@@ -116,8 +116,7 @@ describe('review fixes on a squashed pull request', () => {
     const tip2 = bareGit(ctx.bare, 'rev-parse', `refs/heads/${remoteBranch}`);
     expect(bareGit(ctx.bare, 'rev-parse', `${tip2}^`)).toBe(tip);
     expect(bareGit(ctx.bare, 'diff', '--name-only', tip, tip2)).toBe('docs.md');
-    expect(bareGit(ctx.bare, 'log', '-1', '--format=%b', tip2)).toContain('Co-authored-by: AgentCraft Wren');
-    expect(bareGit(ctx.bare, 'log', '-1', '--format=%b', tip2)).not.toContain('AgentCraft Kit');
+    expect(bareGit(ctx.bare, 'log', '-1', '--format=%an|%B', tip2)).not.toMatch(/co-authored-by|agentcraft|claude/i); // C8
     expect(fm.store.data.worktreeMeta[`demo-app/${wren.id}`]!.prUrl).toBe(meta.prUrl);
 
     // 3. kit again, continuing wren's branch: the PR state followed (lease, last landed tip)
