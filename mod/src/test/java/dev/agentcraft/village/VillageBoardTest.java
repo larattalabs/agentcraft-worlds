@@ -125,6 +125,10 @@ class VillageBoardTest {
 		VillageBoard.Layout held = VillageBoard.layout(5 * ppb, 3 * ppb, ppb, true);
 		assertTrue(held.perPage() <= l.perPage());
 		assertTrue(held.holdY() < held.footerY());
+		assertTrue(held.perPage() >= 2, "rows per page with the hold banner " + held.perPage());
+		// a card's third line (9 px with descenders) ends above the progress bar and the card's border
+		assertTrue(VillageBoard.CARD_LINE_Y + 3 * VillageBoard.CARD_LINE_STEP <= VillageBoard.ROW_H - VillageBoard.CARD_BAR_H,
+			"the goal line runs under the progress bar");
 		// a 2x1 board still lays out (one column, at least the header), never negative
 		VillageBoard.Layout tiny = VillageBoard.layout(2 * 64, 64, 64, true);
 		assertFalse(tiny.twoColumns());
@@ -141,6 +145,11 @@ class VillageBoardTest {
 		assertEquals("yesterday", VillageBoard.ago(NOW - DAY, NOW));
 		assertEquals("3 days ago", VillageBoard.ago(NOW - 3 * DAY, NOW));
 		assertEquals("just now", VillageBoard.ago(NOW + 10_000, NOW)); // clock skew: never negative
+		assertEquals("now", VillageBoard.agoShort(NOW - 5_000, NOW));
+		assertEquals("5m", VillageBoard.agoShort(NOW - 300_000, NOW));
+		assertEquals("13h", VillageBoard.agoShort(NOW - 13 * 3_600_000L, NOW));
+		assertEquals("3d", VillageBoard.agoShort(NOW - 3 * DAY, NOW));
+		assertEquals("now", VillageBoard.agoShort(NOW + 10_000, NOW));
 	}
 
 	@Test

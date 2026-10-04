@@ -150,27 +150,27 @@ final class BoardView {
 			String prs = prText(r);
 			int prw = prs.isEmpty() ? 0 : font.width(prs);
 			if (!prs.isEmpty()) {
-				cardTexts.add(new Text(prs, x1 - 4 - prw, y + 3, r.failing() ? error : muted));
+				cardTexts.add(new Text(prs, x1 - 4 - prw, y + VillageBoard.CARD_LINE_Y, r.failing() ? error : muted));
 			}
 			String name = r.name() + (r.home() ? " · home" : "");
-			cardTexts.add(new Text(TextUtil.ellipsize(font, name, (int) (tw - prw - (prw > 0 ? 6 : 0))), tx, y + 3, ink));
+			cardTexts.add(new Text(TextUtil.ellipsize(font, name, (int) (tw - prw - (prw > 0 ? 6 : 0))), tx, y + VillageBoard.CARD_LINE_Y, ink));
 			// line 2: lead portrait + name, then the repos
 			float lx = tx;
 			// Marlow leads a building without its own lead; offline nobody does ("no lead: Foreman offline"): no face then
 			Identifier face = offline ? null : r.leadId() == null ? portrait("marlow") : portrait(r.leadId());
 			if (face != null) {
-				pics.add(new Pic(face, lx, y + 11.5f, 8, false));
+				pics.add(new Pic(face, lx, y + VillageBoard.CARD_LINE_Y + VillageBoard.CARD_LINE_STEP - 0.5f, 8, false));
 				lx += 10;
 			}
-			cardTexts.add(new Text(TextUtil.ellipsize(font, r.lead() + " · " + r.repos(), (int) (x1 - 4 - lx)), lx, y + 12, muted));
+			cardTexts.add(new Text(TextUtil.ellipsize(font, r.lead() + " · " + r.repos(), (int) (x1 - 4 - lx)), lx, y + VillageBoard.CARD_LINE_Y + VillageBoard.CARD_LINE_STEP, muted));
 			// line 3: the active goal and its progress (a bar along the card's bottom edge)
 			String goal = r.goal() == null ? "No active goal" : r.goal();
 			String pct = r.progress() < 0 ? "" : Math.round(r.progress() * 100) + "%" + (r.moreGoals() > 0 ? " +" + r.moreGoals() : "");
 			int pw2 = pct.isEmpty() ? 0 : font.width(pct);
 			if (!pct.isEmpty()) {
-				cardTexts.add(new Text(pct, x1 - 4 - pw2, y + 21, muted));
+				cardTexts.add(new Text(pct, x1 - 4 - pw2, y + VillageBoard.CARD_LINE_Y + 2 * VillageBoard.CARD_LINE_STEP, muted));
 			}
-			cardTexts.add(new Text(TextUtil.ellipsize(font, goal, (int) (tw - pw2 - (pw2 > 0 ? 6 : 0))), tx, y + 21, r.goal() == null ? muted : ink));
+			cardTexts.add(new Text(TextUtil.ellipsize(font, goal, (int) (tw - pw2 - (pw2 > 0 ? 6 : 0))), tx, y + VillageBoard.CARD_LINE_Y + 2 * VillageBoard.CARD_LINE_STEP, r.goal() == null ? muted : ink));
 			if (r.progress() >= 0) {
 				float bw = (x1 - x0 - 4) * (float) r.progress();
 				overCards.add(x0 + 2, y + h - 3, x1 - 2, y + h - 2, 3.5f * Z, UiStyle.withAlpha(UiStyle.color("palette.ui.edge", 0xFFC9BBA3), 255), 0);
@@ -192,15 +192,19 @@ final class BoardView {
 			int n = Math.min(l.milestones(), c.milestones().size());
 			for (int i = 0; i < n; i++) {
 				VillageBoard.Milestone m = c.milestones().get(i);
-				String when = VillageBoard.ago(m.at(), now);
+				String when = VillageBoard.agoShort(m.at(), now);
 				int ww = font.width(when);
 				float lx = mx0;
 				if (m.trophy()) {
 					pics.add(new Pic(DisplayDraw.dot("done", false), lx, my + 1, 6, true));
 					lx += 8;
 				}
-				texts.add(new Text(when, mx1 - ww, my, mutedOnDark));
-				texts.add(new Text(TextUtil.ellipsize(font, m.label(), (int) (mx1 - ww - 4 - lx)), lx, my, cream));
+				// the label first: when it and the time do not both fit, the time goes (never a bare "…")
+				boolean withTime = font.width(m.label()) + 4 + ww <= mx1 - lx;
+				if (withTime) {
+					texts.add(new Text(when, mx1 - ww, my, mutedOnDark));
+				}
+				texts.add(new Text(TextUtil.ellipsize(font, m.label(), (int) (mx1 - (withTime ? ww + 4 : 0) - lx)), lx, my, cream));
 				String text = m.text().isBlank() ? m.where() : m.text() + " · " + m.where();
 				texts.add(new Text(TextUtil.ellipsize(font, text, mw), mx0, my + 9, mutedOnDark));
 				my += VillageBoard.MILESTONE_H + VillageBoard.MILESTONE_GAP;

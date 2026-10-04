@@ -305,7 +305,16 @@ public final class VillageBoard {
 	/** Header strip, building row and milestone heights (face pixels; the font is 8 px high). */
 	public static final int TRIM_TEXELS = 2;
 	public static final int HEADER_H = 14;
-	public static final int ROW_H = 30;
+	/**
+	 * A building card: three text lines from {@link #CARD_LINE_Y}, {@link #CARD_LINE_STEP} apart (the font draws 9 px with
+	 * descenders), then the 2 px progress bar along the bottom edge; ROW_H keeps the third line clear of the bar and the
+	 * card's border (it was 30: the goal line's bottom ran under the bar).
+	 */
+	public static final int ROW_H = 33;
+	public static final int CARD_LINE_Y = 3;
+	public static final int CARD_LINE_STEP = 9;
+	/** Face pixels at a card's bottom the progress bar and the card's border take. */
+	public static final int CARD_BAR_H = 3;
 	public static final int ROW_GAP = 3;
 	public static final int MILESTONE_H = 20;
 	public static final int MILESTONE_GAP = 3;
@@ -345,6 +354,24 @@ public final class VillageBoard {
 		int perPage = Math.max(0, (bodyH + ROW_GAP) / (ROW_H + ROW_GAP));
 		int ms = two ? Math.max(0, (bodyH - 11 + MILESTONE_GAP) / (MILESTONE_H + MILESTONE_GAP)) : 0;
 		return new Layout(pw, ph, trim, ix0, iy0, ix1, iy1, bodyY, bodyBottom, bx0, bx1, perPage, mx0, mx1, ms, holdY, footerY);
+	}
+
+	/**
+	 * The short form for a milestone's line on the board, where the column is ~90 px wide and the label comes first:
+	 * "now", "5m", "13h", "2d" (the long form left "Goal done" no room: it drew as "…").
+	 */
+	public static String agoShort(long at, long now) {
+		long s = Math.max(0, (now - at) / 1000);
+		if (s < 60) {
+			return "now";
+		}
+		if (s < 3600) {
+			return (s / 60) + "m";
+		}
+		if (s < 86_400) {
+			return (s / 3600) + "h";
+		}
+		return (s / 86_400) + "d";
 	}
 
 	/** "3 days ago", "5 min ago", "just now" for a milestone (coarse: the board is read from across a square). */
