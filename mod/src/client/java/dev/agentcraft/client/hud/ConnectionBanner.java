@@ -1,5 +1,6 @@
 package dev.agentcraft.client.hud;
 
+import dev.agentcraft.client.ClientEnv;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.LinkStatus;
@@ -11,6 +12,7 @@ import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.hub.ConnectionHints;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -26,7 +28,8 @@ import net.minecraft.util.Util;
  *       lower opacity after a few seconds;</li>
  *   <li>reconnecting (it was connected): clay pulsing dot, "Reconnecting to the Foreman", attempt
  *       count, and "showing last known state";</li>
- *   <li>never connected: grey dot, "Foreman not running" + how to start it;</li>
+ *   <li>never connected: grey dot, "Foreman not running" + how to start it for this kind of run
+ *       ({@link ConnectionHints});</li>
  *   <li>auth failed: paper banner with a red dot and the Foreman's message.</li>
  * </ul>
  */
@@ -82,7 +85,7 @@ public final class ConnectionBanner implements HudElement {
 		} else {
 			dot = "idle";
 			title = "Foreman not running";
-			detail = "start it: cd foreman; npm run start";
+			detail = ConnectionHints.notRunning(ClientEnv.DEV_RUN);
 		}
 		drawPill(g, font, dot, title, detail, alpha, pulse, now);
 
@@ -131,9 +134,14 @@ public final class ConnectionBanner implements HudElement {
 		}
 	}
 
+	/** The auth banner's text: the Foreman's own message, else how to recover in this kind of run. */
+	public static String authMessage(ForemanStatus fs) {
+		return fs.message() != null ? fs.message() : ConnectionHints.authFailed(ClientEnv.DEV_RUN);
+	}
+
 	private static void drawAuthBanner(GuiGraphicsExtractor g, Font font, ForemanStatus fs) {
 		String head = "Claude backend can't authenticate";
-		String msg = fs.message() != null ? fs.message() : "run `claude` and /login, then restart the Foreman";
+		String msg = authMessage(fs);
 		int maxW = Math.min(360, g.guiWidth() - 40);
 		var lines = TextUtil.wrap(font, msg, maxW - 34);
 		Kit.Padding p = Kit.padding("panel_paper");
