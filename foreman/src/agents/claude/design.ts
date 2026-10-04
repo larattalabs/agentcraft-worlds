@@ -78,15 +78,15 @@ interface DesignWork {
 
 const STYLE_GUIDE: Record<DesignRequest['style'], string> = {
   modern:
-    'Modern: crisp plaster walls (agentcraft:plaster_panel) framed with plaster_frame, large glass panes, a flat roof or a low hip roof (smooth_stone_slab, waxed_cut_copper / waxed_cut_copper_slab edges), glow strips and glow panels for light, oak parquet or terracotta tile floors. Clean lines, few ornaments.',
+    'Modern: crisp plaster walls (B.plaster = smooth_quartz) framed with B.plasterFrame (calcite), large glass panes, a flat roof or a low hip roof (smooth_stone_slab, waxed_cut_copper / waxed_cut_copper_slab edges), froglight panels (B.glowPanel) for light, oak plank or terracotta floors. Clean lines, few ornaments.',
   cabin:
     'Cabin: log walls (minecraft:stripped_dark_oak_log, posts at the corners), a stone-brick foundation and a stone-brick chimney, a steep gable roof of dark_oak_stairs with a slab ridge, small paned windows, lanterns and candles, walnut panels and bookshelves inside. Warm and cosy.',
   townhouse:
-    'Townhouse: a brick facade (minecraft:bricks, brick_stairs / brick_slab trim), a gable roof (dark_oak_stairs) with the ridge parallel to the front, tall paned windows in a regular rhythm with white_terracotta sills and lintels, a raised entrance with a step, plaster inside.',
+    'Townhouse: a brick facade (minecraft:bricks, brick_stairs / brick_slab trim), a gable roof (dark_oak_stairs) with the ridge parallel to the front, tall paned windows in a regular rhythm with white_terracotta sills and lintels, a raised entrance with a step, plaster (smooth_quartz) inside.',
   workshop:
-    "Workshop: the look of the bundled workshop (tools/blueprints/designs/workshop.mjs): plaster and walnut walls, oak parquet, a shallow dark-oak gable roof with an overhang and gable windows, a porch awning over the door, a stone-brick path.",
+    "Workshop: the look of the bundled workshop (tools/blueprints/designs/workshop.mjs): plaster and walnut walls (B.plaster / B.walnut: smooth quartz, stripped dark oak), oak plank floors, a shallow dark-oak gable roof with an overhang and gable windows, a porch awning over the door, a stone-brick path.",
   campus:
-    'Campus: a central hall (entrance, decision podium, goal atrium, meeting) with one wing per repo, each wing with its own task wall (task_wall@<n>) and desks. tools/blueprints/lib/campus.mjs and designs/campus2..4.mjs show how; you may call buildCampus or adapt it.',
+    'Campus: a central hall (entrance, decision podium, goal atrium, meeting) with one wing per repo, each wing with its own task wall (task_wall@<n>) and desks. tools/blueprints/lib/campus.mjs and designs/campus2..5.mjs show how; you may call buildCampus or adapt it.',
   custom: 'Custom: no preset; the notes describe the building.',
 };
 
@@ -116,9 +116,9 @@ export function designBrief(req: DesignRequest, bp: string, opts: { renderer: bo
     `- style: \`${req.style}\`. ${STYLE_GUIDE[req.style]}`,
     `- materials: \`${req.materials}\`. ${
       req.materials === 'agentcraft'
-        ? 'AgentCraft blocks first (plaster_panel, plaster_frame, walnut_panel, walnut_trim, terracotta_tile, oak_parquet, glow_panel, glow_strip); vanilla blocks where needed (glass, doors, stairs, slabs, lights).'
-        : 'Vanilla blocks may carry the whole look; the station blocks (monitor, task_board, decision_podium, merge_station, memory_archive / memory_catalog, console_terminal, status_lamp) stay AgentCraft blocks.'
-    } Set \`materials: '${req.materials}'\` on the Blueprint.`,
+        ? 'the AgentCraft look built from vanilla blocks: the kit palette `B` in lib/kit.mjs (plaster = smooth_quartz, plaster frame = calcite, walnut = stripped_dark_oak_log, walnut trim = dark_oak_planks, tile = terracotta, parquet = oak_planks, glow panel = ochre_froglight).'
+        : 'any vanilla look.'
+    } Either way structure, floors, roofs, trim and light are vanilla blocks; AgentCraft blocks only for the station blocks (monitor, task_board, decision_podium, merge_station, memory_archive / memory_catalog, console_terminal, status_lamp); the checker refuses the decorative ones (plaster_panel, walnut_panel, glow_panel, ...). Set \`materials: '${req.materials}'\` on the Blueprint.`,
     `- features: ${req.features.length ? req.features.map((f) => `${f} (${FEATURE_GUIDE[f]})`).join('; ') : 'none requested'}`,
     `- maximum size (the template, including roof overhangs, porch and garden): x <= ${m.x}, y <= ${m.y}, z <= ${m.z}. Use the space well, but never exceed it.`,
     req.name ? `- name: "${req.name}" (the sidecar's name)` : '- name: pick a short, fitting display name',
@@ -131,6 +131,8 @@ export function designBrief(req: DesignRequest, bp: string, opts: { renderer: bo
     '- `groundY` is the feet row; row groundY-1 is the floor; the whole `walk` region is written (interior air included).',
     '- Required anchors: `desk_<id>`, `seat_<id>` (if a chair) and `monitor_<id>` for juniper, kit, wren, rowan, tove; `meeting`, `lounge` (+ `lounge_2..`), `library`, `terminal`, `testbench`, `mergestation`, `user`; `task_wall@<n>` per wing, `decision_podium`, `goal_atrium`, `entrance`, `spawn`; `cam_overview`. Seats have a stair block under the feet, two free cells above and a free neighbour cell.',
     '- Station blocks carry their binding (`{"binding": "..."}`); multi-block monitors / task boards: same block, same facing, adjacent.',
+    '- Hardcore-safe (the checker enforces it): every outside door is an iron door with a stone button on both sides (the kit\'s `door()` writes that); no AgentCraft block in the outer shell without a solid vanilla block behind it on the outside (`wallLamp()` for lamps in walls); every walk cell lit (block light >= 1) by vanilla sources alone (froglights, sea lanterns, lanterns, lit candles; not monitors, not `minecraft:light`): mind corners and rooms under skylights.',
+    '- Set `foundationBlock` on the Blueprint (a vanilla block the mod fills below the floor down to the ground; default `minecraft:stone_bricks`), matching the style.',
     '- Only blocks listed in `tools/blueprints/lib/blocks.mjs` can be used (the checker refuses others, and the table cannot be extended here). When the style wants a block that is not there, use the closest one and say so in your summary.',
     '',
     '## How you work',

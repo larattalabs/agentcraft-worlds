@@ -325,7 +325,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `kind` | `single` \| `group` | yes | single: one repo (wings must be 1); group: N repos, one wing each (wings >= 2) |
 | `wings` | integer | yes |  |
 | `style` | [DesignStyle](#designstyle) | yes | style preset of a generated building (docs/HUB.md); `custom` = described only by the notes |
-| `materials` | `agentcraft` \| `vanilla` | yes | agentcraft: AgentCraft blocks first; vanilla: vanilla blocks allowed freely |
+| `materials` | `agentcraft` \| `vanilla` | yes | agentcraft: the AgentCraft look built from vanilla blocks; vanilla: any vanilla look (both: AgentCraft blocks only for the station blocks) |
 | `features` | [DesignFeature](#designfeature)[] | yes |  |
 | `maxSize` | { x: integer, y: integer, z: integer } | yes | the largest template allowed (x/z 9..128, y 6..48), e.g. from a marked plot |
 | `remix` | string (#RRGGBB) | no | start from this blueprint id (bundled or user) |

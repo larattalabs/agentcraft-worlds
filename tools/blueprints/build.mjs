@@ -49,7 +49,7 @@ async function main() {
       // previews live next to the sidecar so the mod's hub can show them (<id>.preview-{iso,cutaway,top,front}.png)
       const r = renderStructure(out.nbtPath, { out: JSON_DIR, sidecar: out.jsonPath });
       console.log(`  previews: ${Object.keys(r.files).join(', ')} (${r.ms.toFixed(0)} ms)`);
-      if (r.unknown.length) console.log(`  render: colour guessed from the name for ${r.unknown.join(', ')} (add them to lib/colors.mjs)`);
+      if (r.unknown?.length) console.log(`  render: colour guessed from the name for ${r.unknown.join(', ')} (add them to lib/colors.mjs)`);
     }
     else {
       failed = true;

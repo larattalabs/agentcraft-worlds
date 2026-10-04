@@ -646,7 +646,9 @@ A job (claude backend, `src/agents/claude/design.ts`), one at a time:
 1. `<profile>/designs/<id>/` mirrors the repo: a fresh copy of `tools/blueprints` (kit, block table,
    checker, example designs, the renderer if present), `docs/BUILDINGS.md`, and `BRIEF.md` written
    from the request (style guide per preset, materials, features, size limits, kind/wings, the
-   anchor contract summary, how to build/check/render). The blueprint id is `gen_<slug of the name,
+   anchor contract summary, the Hardcore rules the checker enforces (vanilla materials except the
+   station blocks, iron doors with buttons, a sealed shell without the mod, every walk cell lit by
+   vanilla sources, `foundationBlock`), how to build/check/render). The blueprint id is `gen_<slug of the name,
    else the style>`, free in `outDir` at that moment. A remix copies the source module (a bundled
    design, or the module an earlier job wrote).
 2. A design agent turn runs there: `claude_code` preset, `claude.designModel`, worker effort and
