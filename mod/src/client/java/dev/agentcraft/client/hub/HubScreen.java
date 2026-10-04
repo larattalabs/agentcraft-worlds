@@ -777,7 +777,7 @@ public final class HubScreen extends Screen {
 			g.text(font, TextUtil.ellipsize(font, UiBits.CROSS + " This tab failed to draw (see the game log)", cw), cx, by + 4, UiBits.errorText(), false);
 		}
 		HubPane hp = pane();
-		String[] hints = hp != null ? hp.hints() : tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "buildings/blueprints/designs", "↑↓", "select",
+		String[] hints = hp != null ? hp.hints() : tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "switch list", "↑↓", "select",
 			"Esc", "close"} : new String[] {"Tab", "next tab", "Esc", "close"};
 		ForemanState fst = Foreman.state();
 		if (fst != null && fst.readOnly()) {
