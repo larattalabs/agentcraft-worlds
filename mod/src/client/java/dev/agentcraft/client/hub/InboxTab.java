@@ -674,6 +674,14 @@ final class InboxTab implements HubPane {
 		y += TOP_H;
 		h -= TOP_H;
 		needed += TOP_H;
+		// the "since you were away" digest at the top (docs/WAVE2.md W6: H after the away toast opens the Inbox)
+		HubGoals.DigestState away = HubGoals.away();
+		if (showList && away != null && !away.dismissed && (away.loading() || away.digest != null && !away.digest.goals().isEmpty())) {
+			int ah = drawAway(g, away, x, y, w, mx, my);
+			y += ah;
+			h -= ah;
+			needed += ah;
+		}
 		if (rows.isEmpty()) {
 			list.hide();
 			panel.hide();
@@ -698,6 +706,29 @@ final class InboxTab implements HubPane {
 		}
 		// the list needs room for two rows; the detail added what it needs (header, body minimum, pinned area)
 		needed = Math.max(needed, TOP_H + ROW_H * 2 + 6);
+	}
+
+	/** One row: "Since you were away (14:02): 2 goals moved · 1 needs you", click = the Goals tab (its full digest), Dismiss. */
+	private int drawAway(GuiGraphicsExtractor g, HubGoals.DigestState st, int x, int y, int w, int mx, int my) {
+		String text;
+		if (st.loading()) {
+			text = "Since you were away: asking the Foreman…";
+		} else {
+			int n = st.digest.goals().size();
+			int needs = dev.agentcraft.client.hud.Alerts.line().needsYou();
+			text = (compact ? "Away (" : "Since you were away (") + UiBits.clock(st.since) + "): " + UiBits.plural(n, "goal", "goals") + " moved"
+				+ (needs > 0 ? " · " + needs + " need" + (needs == 1 ? "s" : "") + " you" : "");
+		}
+		String goals = compact ? "Goals ›" : "See Goals ›";
+		String dis = compact ? "×" : "Dismiss";
+		int dw = hub.bw(dis);
+		int gw = font().width(goals) + 12;
+		Panels.inset(g, x, y, w, 16);
+		hub.button(g, "inbox_away_dismiss", dis, x + w - dw - 1, y + 1, dw, false, false, false, mx, my, HubGoals::dismissAway);
+		int gx = x + w - dw - 4 - gw;
+		chip(g, "away:goals", goals, gx, y + 1, false, mx, my, () -> hub.setTab(HubTab.GOALS));
+		g.text(font(), TextUtil.ellipsize(font(), text, gx - x - 10), x + 6, y + 4, UiStyle.CLAY_DARK, false);
+		return 20;
 	}
 
 	private void drawFilters(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
