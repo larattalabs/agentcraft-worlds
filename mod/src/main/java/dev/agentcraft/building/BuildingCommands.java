@@ -26,7 +26,8 @@ import org.jspecify.annotations.Nullable;
  * buildings                        list buildings in this world
  * place &lt;blueprint&gt; &lt;repo&gt;[,&lt;repo&gt;...] [rotation] [force]
  *                                  place in front of the player (ground row at the feet, entrance
- *                                  facing the player; rotation overrides the automatic one)
+ *                                  facing the player, its approach ending 2 blocks ahead; rotation
+ *                                  overrides the automatic one)
  * remove &lt;id&gt; [forget|force]       restore the area (forget: only drop the record; force: although the
  *                                  player's things are inside, which are lost)
  * repos &lt;id&gt; &lt;repo&gt;[,&lt;repo&gt;...]    give a building other repos (wing n = the n-th)
@@ -175,7 +176,10 @@ public final class BuildingCommands {
 		int rsx = BlueprintTransform.rotatedSizeX(bp.sizeX(), bp.sizeZ(), turns);
 		int rsz = BlueprintTransform.rotatedSizeZ(bp.sizeX(), bp.sizeZ(), turns);
 		BlockPos feet = BlockPos.containing(pos);
-		int[] o = BlueprintTransform.originInFront(feet.getX(), feet.getY(), feet.getZ(), facing.getName(), rsx, rsz, bp.groundY(), GAP);
+		// the entrance approach lies between the player and a building whose entrance faces them: keep them out of it
+		boolean facesPlayer = BlueprintTransform.rotateDirection(bp.front(), turns).equals(facing.getOpposite().getName());
+		int gap = GAP + (facesPlayer ? bp.approach().length() : 0);
+		int[] o = BlueprintTransform.originInFront(feet.getX(), feet.getY(), feet.getZ(), facing.getName(), rsx, rsz, bp.groundY(), gap);
 		ServerLevel level = src.getLevel();
 		try {
 			Building b = Buildings.place(level, bp, new BlockPos(o[0], o[1], o[2]), Rotation.values()[turns], repos, force);

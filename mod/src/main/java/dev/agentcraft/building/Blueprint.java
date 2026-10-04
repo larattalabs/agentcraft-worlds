@@ -25,9 +25,12 @@ import org.jspecify.annotations.Nullable;
  * @param walk the walkable region (template-local block coordinates, inclusive); null when missing
  * @param foundationBlock the vanilla block id the placement fills below the floor with (docs/BUILDINGS.md "Terrain fit",
  *                        contract C4); {@link #DEFAULT_FOUNDATION} when the sidecar names none
+ * @param approach the entrance approach placement builds in front of the door (docs/BUILDINGS.md "Entrance approach");
+ *                 {@link Approach.Spec#DEFAULT} when the sidecar names none
  */
 public record Blueprint(String id, String name, String description, String kind, int wings, int sizeX, int sizeY, int sizeZ,
-	int groundY, String front, String materials, Anchors.@Nullable Bounds walk, Map<String, Anchor> anchors, String foundationBlock) {
+	int groundY, String front, String materials, Anchors.@Nullable Bounds walk, Map<String, Anchor> anchors, String foundationBlock,
+	Approach.Spec approach) {
 
 	public static final Pattern ID = Pattern.compile("[a-z0-9_]+");
 	public static final String SINGLE = "single";
@@ -95,7 +98,8 @@ public record Blueprint(String id, String name, String description, String kind,
 			foundation = "minecraft:" + foundation;
 		}
 		return new Blueprint(id, str(o, "name", id), str(o, "description", ""), kind, wings, sx, sy, sz, groundY, front,
-			str(o, "materials", ""), walk, Collections.unmodifiableMap(anchors), foundation.isEmpty() ? DEFAULT_FOUNDATION : foundation);
+			str(o, "materials", ""), walk, Collections.unmodifiableMap(anchors), foundation.isEmpty() ? DEFAULT_FOUNDATION : foundation,
+			Approach.Spec.fromJson(o.get("approach")));
 	}
 
 	public JsonObject toJson() {
@@ -119,6 +123,7 @@ public record Blueprint(String id, String name, String description, String kind,
 			o.add("walk", Building.boundsJson(walk));
 		}
 		o.addProperty("foundationBlock", foundationBlock);
+		o.add("approach", approach.toJson());
 		JsonObject a = new JsonObject();
 		anchors.forEach((n, v) -> a.add(n, Anchors.anchorJson(v)));
 		o.add("anchors", a);
@@ -164,6 +169,9 @@ public record Blueprint(String id, String name, String description, String kind,
 		}
 		if (walk == null) {
 			w.add("no walk box (the whole template is used)");
+		}
+		if (approach.enabled() && (!isBlockId(approach.block()) || !isBlockId(approach.slab()))) {
+			w.add("approach block/slab is not a block id (" + Approach.DEFAULT_BLOCK + " / " + Approach.DEFAULT_SLAB + " are used)");
 		}
 		if (!isBlockId(foundationBlock)) {
 			w.add("foundationBlock '" + foundationBlock + "' is not a block id (" + DEFAULT_FOUNDATION + " is used)");

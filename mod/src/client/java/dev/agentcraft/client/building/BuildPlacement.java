@@ -12,6 +12,7 @@ import dev.agentcraft.building.BuildingCommands;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.building.GhostModel;
 import dev.agentcraft.building.Occupancy;
+import dev.agentcraft.building.Approach;
 import dev.agentcraft.building.TerrainFit;
 import dev.agentcraft.client.agents.ClientAgentEntity;
 import dev.agentcraft.client.foreman.Protocol.Notify;
@@ -44,10 +45,10 @@ import org.jspecify.annotations.Nullable;
  * the ghost is (origin = the rotated box's minimum corner, as {@link Buildings#place} takes it), its
  * rotation, the conflicts under it and what {@link Buildings#place} would refuse.
  *
- * <p>Position: the ghost's entrance faces the player and its near edge sits on the block the player
- * looks at (ray up to {@value #REACH} blocks), its ground row on that spot's surface; looking at
- * nothing puts it where {@code /agentcraft place} would (ground row at the feet, near edge
- * {@link BuildingCommands#GAP} blocks ahead). Rotate adds quarter turns to the automatic rotation;
+ * <p>Position: the ghost's entrance faces the player and its entrance approach ({@code Approach}) ends on the
+ * block the player looks at (ray up to {@value #REACH} blocks), the building beyond it, its ground row on the
+ * footprint's median surface; looking at nothing puts it where {@code /agentcraft place} would (ground row at
+ * the feet, approach end {@link BuildingCommands#GAP} blocks ahead). Turned away (R), the near edge is there. Rotate adds quarter turns to the automatic rotation;
  * nudges are world offsets on top. Lock freezes the spot (and the automatic rotation) so the player
  * can walk around the ghost; a DevBridge start with an explicit origin is locked there.
  */
@@ -80,18 +81,21 @@ public final class BuildPlacement {
 	 *             terrain it will clear above the ground row
 	 * @param notes what placing does beside the building (hostile mobs removed, water in the footprint)
 	 * @param snapMinY the bottom of the box the placement touches (foundation included)
+	 * @param approach the entrance approach ({@link Approach}; its fill and clear cells are drawn with {@code fill} /
+	 *                 {@code clear}, its counts are its own), {@code path} its path and slab cells as quadruples
+	 * @param snapBox the whole box place() snapshots and checks (foundation and approach included)
 	 */
 	record View(Blueprint bp, GhostModel model, int ox, int oy, int oz, int turns, String front, int[] obstructed, int obstructedCount,
 		int[] blocked, int blockedCount, List<String> refusals, boolean playerInside, boolean locked, boolean pending, boolean forceArmed,
 		int[] water, int waterCount, int[] lava, int lavaCount, int[] fill, int fillCount, int[] clear, int clearCount, List<String> notes,
-		int snapMinY) {
+		int snapMinY, Approach.Plan approach, int[] path, Anchors.Bounds snapBox) {
 		Anchors.Bounds box() {
 			return new Anchors.Bounds(ox, oy, oz, ox + model.sizeX - 1, oy + model.sizeY - 1, oz + model.sizeZ - 1);
 		}
 
 		View with(boolean locked, boolean pending, boolean forceArmed) {
 			return new View(bp, model, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, refusals, playerInside, locked,
-				pending, forceArmed, water, waterCount, lava, lavaCount, fill, fillCount, clear, clearCount, notes, snapMinY);
+				pending, forceArmed, water, waterCount, lava, lavaCount, fill, fillCount, clear, clearCount, notes, snapMinY, approach, path, snapBox);
 		}
 	}
 
@@ -458,7 +462,9 @@ public final class BuildPlacement {
 			turns = Math.floorMod(auto + userTurns, 4);
 			int rsx = BlueprintTransform.rotatedSizeX(bp.sizeX(), bp.sizeZ(), turns);
 			int rsz = BlueprintTransform.rotatedSizeZ(bp.sizeX(), bp.sizeZ(), turns);
-			int[] o = BlueprintTransform.originInFront(s[0], s[1], s[2], facing, rsx, rsz, bp.groundY(), s[3]);
+			// entrance towards the player: the entrance approach ends on the looked-at block, the building stands beyond it
+			int gap = s[3] + (Math.floorMod(userTurns, 4) == 0 ? bp.approach().length() : 0);
+			int[] o = BlueprintTransform.originInFront(s[0], s[1], s[2], facing, rsx, rsz, bp.groundY(), gap);
 			ox = o[0];
 			oz = o[2];
 			// the ground row on the footprint's median surface (C4), not just on the looked-at spot's
@@ -514,38 +520,52 @@ public final class BuildPlacement {
 		int sx = m.sizeX;
 		int sy = m.sizeY;
 		int sz = m.sizeZ;
-		TerrainFit.Plan plan = TerrainFit.plan(m, ox, oy, oz, (x, y, z) -> TerrainFit.flags(lv, p.set(x, y, z)));
-		int below = oy - plan.minY(); // foundation rows under the box
-		int sh = sy + below;
-		// box-local flags (foundation rows included, y 0 = plan.minY): 1 = obstructed, 2 = foreign block entity
-		byte[] flags = new byte[sx * sh * sz];
+		TerrainFit.World world = (x, y, z) -> TerrainFit.flags(lv, p.set(x, y, z));
+		TerrainFit.Plan plan = TerrainFit.plan(m, ox, oy, oz, world);
+		Anchors.Bounds box = new Anchors.Bounds(ox, oy, oz, ox + sx - 1, oy + sy - 1, oz + sz - 1);
+		Approach.Plan approach = Approach.forBlueprint(b, turns, box, world);
+		// the box place() snapshots and checks: the template's, the foundation below it, the entrance approach
+		Anchors.Bounds snapBox = Buildings.snapshotBox(box, plan, approach);
+		int qx = snapBox.maxX() - snapBox.minX() + 1;
+		int qy = snapBox.maxY() - snapBox.minY() + 1;
+		int qz = snapBox.maxZ() - snapBox.minZ() + 1;
+		// snapshot-box-local flags: 1 = obstructed, 2 = foreign block entity
+		byte[] flags = new byte[qx * qy * qz];
 		int obstructedCount = 0;
 		for (int i = 0; i < m.count(); i++) {
 			p.set(ox + m.x(i), oy + m.y(i), oz + m.z(i));
 			BlockState s = lv.getBlockState(p);
 			if (GhostModel.classify(m.y(i), m.groundY, s.isAir(), s.canBeReplaced(), false) == GhostModel.Conflict.OBSTRUCTED) {
 				obstructedCount++;
-				flags[((m.y(i) + below) * sz + m.z(i)) * sx + m.x(i)] |= 1;
+				flags[((oy + m.y(i) - snapBox.minY()) * qz + oz + m.z(i) - snapBox.minZ()) * qx + ox + m.x(i) - snapBox.minX()] |= 1;
 			}
 		}
-		// block entities anywhere in the box (foundation included) block placement (place() checks all of it)
+		// what the approach clears that is more than terrain or plants (a log, a player's blocks) is drawn as obstructed too
+		for (int i = 0; i < approach.clear().length; i += 3) {
+			int x = approach.clear()[i];
+			int y = approach.clear()[i + 1];
+			int z = approach.clear()[i + 2];
+			if ((world.flags(x, y, z) & TerrainFit.NATURAL) == 0) {
+				obstructedCount++;
+				flags[((y - snapBox.minY()) * qz + z - snapBox.minZ()) * qx + x - snapBox.minX()] |= 1;
+			}
+		}
+		// block entities anywhere in the snapshot box block placement (place() checks all of it)
 		int blockedCount = 0;
-		for (int y = 0; y < sh; y++) {
-			for (int z = 0; z < sz; z++) {
-				for (int x = 0; x < sx; x++) {
-					p.set(ox + x, plan.minY() + y, oz + z);
+		for (int y = 0; y < qy; y++) {
+			for (int z = 0; z < qz; z++) {
+				for (int x = 0; x < qx; x++) {
+					p.set(snapBox.minX() + x, snapBox.minY() + y, snapBox.minZ() + z);
 					BlockState s = lv.getBlockState(p);
 					if (s.hasBlockEntity() && isForeign(lv, p, s)) {
 						blockedCount++;
-						flags[(y * sz + z) * sx + x] |= 2;
+						flags[(y * qz + z) * qx + x] |= 2;
 					}
 				}
 			}
 		}
-		int[] obstructed = shell(flags, 1, sx, sh, sz, ox, plan.minY(), oz);
-		int[] blocked = shell(flags, 2, sx, sh, sz, ox, plan.minY(), oz);
-		Anchors.Bounds box = new Anchors.Bounds(ox, oy, oz, ox + sx - 1, oy + sy - 1, oz + sz - 1);
-		Anchors.Bounds snapBox = new Anchors.Bounds(ox, plan.minY(), oz, box.maxX(), box.maxY(), box.maxZ());
+		int[] obstructed = shell(flags, 1, qx, qy, qz, snapBox.minX(), snapBox.minY(), snapBox.minZ());
+		int[] blocked = shell(flags, 2, qx, qy, qz, snapBox.minX(), snapBox.minY(), snapBox.minZ());
 		String moveId = moving;
 		List<String> withBuilding = new ArrayList<>();
 		for (String r : repos) {
@@ -564,6 +584,9 @@ public final class BuildPlacement {
 		List<String> refusals = new ArrayList<>(GhostModel.refusals(repos, b.wings(), withBuilding, snapBox.minY(), box.maxY(), lv.getMinY(),
 			lv.getMaxY(), overlaps, blockedCount, false));
 		String lava = TerrainFit.lavaRefusal(plan);
+		if (lava == null) {
+			lava = Approach.lavaRefusal(approach);
+		}
 		if (lava != null) {
 			refusals.add(lava);
 		}
@@ -584,10 +607,25 @@ public final class BuildPlacement {
 		if (water != null) {
 			notes.add(water + " (blue)");
 		}
+		String wet = Approach.waterWarning(approach);
+		if (wet != null) {
+			notes.add(wet + " (blue)");
+		}
 		String front = BlueprintTransform.rotateDirection(b.front(), turns);
 		return new View(b, m, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, List.copyOf(refusals), inside, locked,
-			pending, forceArmed, shellOf(plan.water()), plan.waterCount(), shellOf(plan.lava()), plan.lavaCount(), shellOf(plan.fill()),
-			plan.fillCount(), shellOf(plan.clear()), plan.clearCount(), List.copyOf(notes), plan.minY());
+			pending, forceArmed, shellOf(concat(plan.water(), approach.water())), plan.waterCount() + approach.waterCount(),
+			shellOf(concat(plan.lava(), approach.lava())), plan.lavaCount() + approach.lavaCount(), shellOf(concat(plan.fill(), approach.fill())),
+			plan.fillCount(), shellOf(concat(plan.clear(), approach.clear())), plan.clearCount(), List.copyOf(notes), snapBox.minY(), approach,
+			shellOf(approach.path()), snapBox);
+	}
+
+	private static int[] concat(int[] a, int[] b) {
+		if (b.length == 0) {
+			return a;
+		}
+		int[] out = java.util.Arrays.copyOf(a, a.length + b.length);
+		System.arraycopy(b, 0, out, a.length, b.length);
+		return out;
 	}
 
 	/** World cell triples as (x, y, z, exposed-face mask) quadruples: faces towards another listed cell are hidden. */
@@ -728,6 +766,31 @@ public final class BuildPlacement {
 		c.addProperty("foundation", v.fillCount());
 		c.addProperty("cleared", v.clearCount());
 		c.addProperty("snapshotMinY", v.snapMinY());
+		Anchors.Bounds sb = v.snapBox();
+		c.addProperty("snapshotBox", sb.minX() + "," + sb.minY() + "," + sb.minZ() + " .. " + sb.maxX() + "," + sb.maxY() + "," + sb.maxZ());
+		Approach.Plan ap = v.approach();
+		JsonObject a = new JsonObject();
+		a.addProperty("rows", ap.rows());
+		a.addProperty("path", ap.pathCount());
+		a.addProperty("slabs", ap.slabs().length / 3);
+		a.addProperty("fill", ap.fillCount());
+		a.addProperty("cleared", ap.clearCount());
+		a.addProperty("water", ap.waterCount());
+		a.addProperty("lava", ap.lavaCount());
+		a.addProperty("blockEntities", ap.blockEntityCount());
+		JsonArray feet = new JsonArray();
+		for (int f : ap.feet()) {
+			feet.add(f);
+		}
+		a.add("feet", feet);
+		if (ap.end() != null) {
+			JsonArray e = new JsonArray();
+			for (double d : ap.end()) {
+				e.add(d);
+			}
+			a.add("end", e);
+		}
+		c.add("approach", a);
 		JsonArray notes = new JsonArray();
 		v.notes().forEach(notes::add);
 		c.add("notes", notes);

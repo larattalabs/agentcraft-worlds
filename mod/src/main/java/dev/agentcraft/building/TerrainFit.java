@@ -39,6 +39,8 @@ public final class TerrainFit {
 	public static final int NATURAL = 8;
 	/** A block entity: never filled over or cleared. */
 	public static final int BLOCK_ENTITY = 16;
+	/** A log or leaves: solid, but not the ground ({@link Approach} looks through trees for the terrain). */
+	public static final int TREE = 32;
 
 	/** The world under a placement: {@link #flags} bits of a world cell. */
 	@FunctionalInterface
@@ -201,6 +203,8 @@ public final class TerrainFit {
 		}
 		if (natural(s)) {
 			f |= NATURAL;
+		} else if (s.is(BlockTags.LOGS) || s.is(BlockTags.LEAVES)) {
+			f |= TREE;
 		}
 		return f;
 	}

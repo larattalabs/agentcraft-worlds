@@ -37,6 +37,7 @@ export default function build() {
     origin: [OX, 0, OZ],
     groundY: 1,
     front: 'south',
+    approach: { length: 6, width: 3, block: 'minecraft:stone_bricks', slab: 'minecraft:stone_brick_slab' }, // continues the porch path down/up to the terrain
     walk: [1, 1, 1, W - 2, 6, D - 2],
     foundationBlock: 'minecraft:cobblestone', // a rustic footing under the workshop on uneven ground
   });

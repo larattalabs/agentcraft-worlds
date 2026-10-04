@@ -20,6 +20,8 @@ import net.minecraft.world.phys.Vec3;
  * <li>terrain fit ({@code TerrainFit}): the foundation the server adds below the floor in stone grey, natural
  * terrain it clears above the ground row as a pale wash; fluids in and next to the footprint: water blue, lava
  * bright amber (lava refuses);</li>
+ * <li>the entrance approach ({@code Approach}): its path and half-step slabs in tan, its fill and cut with the
+ * foundation and cleared terrain;</li>
  * <li>the outline of the ghost's footprint ({@link GhostModel#outline}) as thin bars: sage when placement
  * would go ahead, red when it would be refused (plus the whole reserved box, faintly, when the refusal is
  * an overlap or the player standing in it), and a brass bar along the front-most entrance face at ground
@@ -36,6 +38,7 @@ final class GhostRenderer {
 	static final int CLEARED = 0x30F4EBD8;
 	static final int WATER = 0x803C78E6;
 	static final int LAVA = 0xC8FFB000;
+	static final int PATH = 0x90C8A060;
 	static final float INFLATE = 0.005f;
 	static final float EDGE = 0.045f;
 
@@ -157,6 +160,7 @@ final class GhostRenderer {
 		}
 		quads += cells(pose, vc, v.fill(), FOUNDATION, 0.008f, cx, cy, cz);
 		quads += cells(pose, vc, v.clear(), CLEARED, 0.006f, cx, cy, cz);
+		quads += cells(pose, vc, v.path(), PATH, 0.009f, cx, cy, cz);
 		quads += cells(pose, vc, v.water(), WATER, 0.01f, cx, cy, cz);
 		quads += cells(pose, vc, v.lava(), LAVA, 0.02f, cx, cy, cz);
 		quads += cells(pose, vc, v.obstructed(), OBSTRUCTED, 0.012f, cx, cy, cz);
@@ -176,16 +180,21 @@ final class GhostRenderer {
 		if (refused && (v.blockedCount() > 0 || v.playerInside() || v.refusals().stream().anyMatch(r -> r.startsWith("overlaps") || r.startsWith("pets")
 			|| r.startsWith("in the box") || r.startsWith("dropped items")))) {
 			int faint = UiStyle.withAlpha(0xFFD0402A, 0x60);
-			float w = m.sizeX;
-			float h = m.sizeY;
-			float d = m.sizeZ;
+			// the snapshot box: the template's box with the foundation below and the entrance approach in front
+			dev.agentcraft.layout.Anchors.Bounds sb = v.snapBox();
+			float w = sb.maxX() - sb.minX() + 1;
+			float h = sb.maxY() - sb.minY() + 1;
+			float d = sb.maxZ() - sb.minZ() + 1;
+			float qx = (float) (sb.minX() - cx);
+			float qy = (float) (sb.minY() - cy);
+			float qz = (float) (sb.minZ() - cz);
 			float ft = t * 0.5f;
 			for (int a = 0; a <= 1; a++) {
 				for (int b = 0; b <= 1; b++) {
-					float ya = by + a * h;
-					quads += cube(pose, vc, bx - ft, ya - ft, bz + b * d - ft, bx + w + ft, ya + ft, bz + b * d + ft, faint, 0x3F, false);
-					quads += cube(pose, vc, bx + b * w - ft, ya - ft, bz - ft, bx + b * w + ft, ya + ft, bz + d + ft, faint, 0x3F, false);
-					quads += cube(pose, vc, bx + a * w - ft, by - ft, bz + b * d - ft, bx + a * w + ft, by + h + ft, bz + b * d + ft, faint, 0x3F, false);
+					float ya = qy + a * h;
+					quads += cube(pose, vc, qx - ft, ya - ft, qz + b * d - ft, qx + w + ft, ya + ft, qz + b * d + ft, faint, 0x3F, false);
+					quads += cube(pose, vc, qx + b * w - ft, ya - ft, qz - ft, qx + b * w + ft, ya + ft, qz + d + ft, faint, 0x3F, false);
+					quads += cube(pose, vc, qx + a * w - ft, qy - ft, qz + b * d - ft, qx + a * w + ft, qy + h + ft, qz + b * d + ft, faint, 0x3F, false);
 				}
 			}
 		}
