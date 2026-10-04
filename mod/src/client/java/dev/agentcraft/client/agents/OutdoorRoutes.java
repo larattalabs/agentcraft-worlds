@@ -54,7 +54,7 @@ public final class OutdoorRoutes {
 
 	/** A finished request: the route (FOUND) or why there is none. */
 	public record Outcome(String key, OutdoorPlanner.Status status, RouteCache.@Nullable Route route, boolean cached, int nodes, long micros,
-		int ticks) {
+		int ticks, @Nullable String why) {
 	}
 
 	private static final class Job {
@@ -83,6 +83,8 @@ public final class OutdoorRoutes {
 	private @Nullable JsonObject lastPlan;
 	private final Map<Reason, Integer> reasons = new EnumMap<>(Reason.class);
 	private final ArrayDeque<JsonObject> recent = new ArrayDeque<>();
+	/** The last plans that found nothing, with the planner's explanation (dev.walk.state "failures"). */
+	private final ArrayDeque<JsonObject> failures = new ArrayDeque<>();
 	// dev preview (dev.walk.plan show)
 	private List<Point> preview = List.of();
 	private int previewTicks;
@@ -191,7 +193,7 @@ public final class OutdoorRoutes {
 			RouteCache.Route r = cache.get(key);
 			if (r != null) {
 				if (OutdoorPlanner.stillWalkable(new LevelTerrain(lvl), r.cells())) {
-					return CompletableFuture.completedFuture(new Outcome(key, OutdoorPlanner.Status.FOUND, r, true, r.nodes(), r.micros(), 0));
+					return CompletableFuture.completedFuture(new Outcome(key, OutdoorPlanner.Status.FOUND, r, true, r.nodes(), r.micros(), 0, null));
 				}
 				cache.remove(key); // the terrain changed in a way no block update told us (e.g. a chunk reloaded)
 			}
@@ -225,7 +227,8 @@ public final class OutdoorRoutes {
 	private void failAll() {
 		for (Job j : jobs.values()) {
 			for (CompletableFuture<Outcome> f : j.waiters) {
-				f.complete(new Outcome(j.key, OutdoorPlanner.Status.NO_PATH, null, false, j.planner.expanded(), j.planner.micros(), j.planner.steps()));
+				f.complete(new Outcome(j.key, OutdoorPlanner.Status.NO_PATH, null, false, j.planner.expanded(), j.planner.micros(), j.planner.steps(),
+					"the level changed while planning"));
 			}
 		}
 		jobs.clear();
@@ -288,10 +291,30 @@ public final class OutdoorRoutes {
 		o.addProperty("length", round(p.length()));
 		o.addProperty("points", p.path() == null ? 0 : p.path().size());
 		o.addProperty("unloadedHits", p.unloadedHits());
+		o.addProperty("pad", p.pad());
+		o.addProperty("widenings", p.widenings());
+		o.addProperty("worstStepUs", p.worstStepMicros());
+		String why = p.explain();
+		if (why != null) {
+			o.addProperty("why", why);
+			int[] c = p.closestCell();
+			if (c != null) {
+				JsonArray cj = new JsonArray();
+				cj.add(c[0]);
+				cj.add(c[1]);
+				cj.add(c[2]);
+				o.add("closestCell", cj);
+				o.addProperty("closest", round(p.closest()));
+			}
+			failures.addFirst(o);
+			while (failures.size() > RECENT) {
+				failures.removeLast();
+			}
+		}
 		lastPlan = o;
-		AgentCraft.LOGGER.info("Outdoor route {}: {} ({} nodes, {} us over {} ticks, {} blocks)", j.key, p.status().wire(), p.expanded(), p.micros(),
-			p.steps(), Math.round(p.length()));
-		Outcome out = new Outcome(j.key, p.status(), route, false, p.expanded(), p.micros(), p.steps());
+		AgentCraft.LOGGER.info("Outdoor route {}: {} ({} nodes, {} us over {} ticks, worst step {} us, {} blocks){}", j.key, p.status().wire(),
+			p.expanded(), p.micros(), p.steps(), p.worstStepMicros(), Math.round(p.length()), why == null ? "" : ": " + why);
+		Outcome out = new Outcome(j.key, p.status(), route, false, p.expanded(), p.micros(), p.steps(), why);
 		for (CompletableFuture<Outcome> f : j.waiters) {
 			f.complete(out);
 		}
@@ -314,6 +337,11 @@ public final class OutdoorRoutes {
 
 	/** An agent changing building teleported ({@code r} != WALK) or started walking. */
 	void note(String agentId, String from, String to, Reason r, double length) {
+		note(agentId, from, to, r, length, null);
+	}
+
+	/** As {@link #note(String, String, String, Reason, double)}, with the planner's explanation of a failed route. */
+	void note(String agentId, String from, String to, Reason r, double length, @Nullable String detail) {
 		reasons.merge(r, 1, Integer::sum);
 		JsonObject o = new JsonObject();
 		o.addProperty("agent", agentId);
@@ -322,6 +350,9 @@ public final class OutdoorRoutes {
 		o.addProperty("outcome", r == Reason.WALK ? "walk" : "teleport");
 		o.addProperty("reason", r.wire());
 		o.addProperty("why", r.text);
+		if (detail != null) {
+			o.addProperty("detail", detail);
+		}
 		if (length > 0) {
 			o.addProperty("length", round(length));
 		}
@@ -331,7 +362,7 @@ public final class OutdoorRoutes {
 			recent.removeLast();
 		}
 		if (r != Reason.WALK) {
-			AgentCraft.LOGGER.info("Agent {} teleports {} -> {}: {}", agentId, from, to, r.text);
+			AgentCraft.LOGGER.info("Agent {} teleports {} -> {}: {}{}", agentId, from, to, r.text, detail == null ? "" : " (" + detail + ")");
 		}
 	}
 
@@ -373,6 +404,9 @@ public final class OutdoorRoutes {
 		p.addProperty("lastTickUs", lastTickMicros);
 		p.addProperty("maxTickUs", maxTickMicros);
 		p.add("last", lastPlan);
+		JsonArray fails = new JsonArray();
+		failures.forEach(fails::add);
+		p.add("failures", fails);
 		o.add("planner", p);
 		JsonObject rc = new JsonObject();
 		reasons.forEach((k, v) -> rc.addProperty(k.wire(), v));
@@ -428,11 +462,20 @@ public final class OutdoorRoutes {
 
 	static void registerDev() {
 		DevBridge.addStateContributor((mc, o) -> o.add("walk", get().state(AgentManager.get())));
-		DevBridge.register("dev.walk.state", 10_000, "{} -> {enabled, world, walking, planning, trips[{agent, from, to, phase, length, ticks}], jobs, "
+		DevBridge.register("dev.walk.state", 10_000, "{reset?: false} -> {enabled, world, walking, planning, trips[{agent, from, to, phase, length, ticks}], jobs, "
 			+ "cache{size, hits, misses, invalidations, blockChanges, routes[]}, planner{plans, found, lastTickUs, maxTickUs, last{key, status, nodes, "
-			+ "micros, ticks, length}}, reasons{reason: count}, recent[{agent, from, to, outcome, reason, why}], ui{needed, available, overflow, "
-			+ "compact}} - agents walking between buildings (docs/WAVE2.md W8)",
-			(req, mc) -> DevBridge.onClient(mc, () -> get().state(AgentManager.get())));
+			+ "micros, ticks, length, pad, widenings, worstStepUs, why?}, failures[{key, status, why, closest, closestCell}]}, reasons{reason: count}, recent[{agent, from, to, outcome, reason, why}], ui{needed, available, overflow, "
+			+ "compact}} - agents walking between buildings (docs/WAVE2.md W8); reset:true zeroes maxTickUs after this read",
+			(req, mc) -> {
+				boolean reset = Fields.of(req).optBool("reset", false);
+				return DevBridge.onClient(mc, () -> {
+					JsonObject o = get().state(AgentManager.get());
+					if (reset) {
+						get().maxTickMicros = 0; // after reporting: the next read covers only what ran since
+					}
+					return o;
+				});
+			});
 		DevBridge.register("dev.walk.toggle", 10_000, "{on?: bool} - set (or flip) \"Agents walk between buildings\" for this world -> {enabled, world}",
 			(req, mc) -> {
 				Boolean on = Fields.of(req).optBool("on");
@@ -540,6 +583,9 @@ public final class OutdoorRoutes {
 						}
 					} else {
 						o.addProperty("reason", Reason.of(out.status()).text);
+						if (out.why() != null) {
+							o.addProperty("why", out.why());
+						}
 					}
 					return o;
 				});

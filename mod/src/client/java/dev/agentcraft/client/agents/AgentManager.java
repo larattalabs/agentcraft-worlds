@@ -776,7 +776,8 @@ public final class AgentManager {
 			}
 			it.remove();
 			if (end != WalkRules.Reason.WALK) {
-				OutdoorRoutes.get().note(t.agentId, t.from, t.toLayout.name(), end, t.length);
+				OutdoorRoutes.Outcome o = t.route.isDone() ? t.route.getNow(null) : null;
+				OutdoorRoutes.get().note(t.agentId, t.from, t.toLayout.name(), end, t.length, o == null || t.walking ? null : o.why());
 				teleport(lvl, e, t.target, t.seat);
 			}
 		}
