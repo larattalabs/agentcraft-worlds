@@ -111,7 +111,8 @@ describe('landing as a pull request', () => {
     const tip = execFileSync('git', ['--git-dir', bare, 'rev-parse', `refs/heads/${remoteBranch}`], { encoding: 'utf8' }).trim();
     const log = execFileSync('git', ['--git-dir', bare, 'log', '--format=%an|%s|%b', `dev..${tip}`], { encoding: 'utf8' }).trim();
     expect(log.split('\n')[0]).toMatch(/^Sam\|Add a changelog\|/); // one squashed commit, authored by the user
-    expect(log).toContain('Co-authored-by: AgentCraft Kit');
+    expect(log).not.toMatch(/co-authored-by|agentcraft|claude/i); // C8: the user's commit, no attribution
+    expect(log).toContain('Adds a changelog.');
     expect(execFileSync('git', ['--git-dir', bare, 'rev-parse', `${tip}^`], { encoding: 'utf8' }).trim()).toBe(execFileSync('git', ['--git-dir', bare, 'rev-parse', 'dev'], { encoding: 'utf8' }).trim());
     expect(execFileSync('git', ['--git-dir', bare, 'show', `${tip}:CHANGELOG.md`], { encoding: 'utf8' })).toBe('# Changes\n\n- more\n');
     expect(fm.tasks.get(t.id)!.status).toBe('done');
@@ -209,7 +210,7 @@ describe('a goal across repositories', () => {
 });
 
 describe("the lead's view of the base", () => {
-  it('follows the base branch, not the checkout, and refreshes on every call', async () => {
+  it('follows the base branch, not the checkout, and refreshes once its cache is stale', async () => {
     const home = tempDir();
     const repo = await demoRepo();
     try {
@@ -232,6 +233,11 @@ describe("the lead's view of the base", () => {
       write(path.join(repo, 'LANDED.md'), 'merged\n');
       g(repo, 'add', '.');
       g(repo, 'commit', '-qm', 'landed');
+      // within the cache window the view is reused as it is (no fetch / checkout per lead turn)
+      expect(await h.fm.repos.leadView('demo-app')).toBe(view);
+      expect(fs.existsSync(path.join(view, 'LANDED.md'))).toBe(false);
+      // stale: the next call shows the moved base
+      h.fm.repos.leadViewTtlMs = 0;
       expect(await h.fm.repos.leadView('demo-app')).toBe(view);
       expect(fs.existsSync(path.join(view, 'LANDED.md'))).toBe(true);
       expect(h.fm.repos.viewPath('demo-app')).toBe(view);

@@ -10,6 +10,21 @@ import type { EffortLevel, McpServerConfig } from '@anthropic-ai/claude-agent-sd
 import { DEFAULT_CONTEXT, type AgentContextConfig } from './agents/claude/context.js';
 import { DEFAULT_PERMISSIONS, type PermissionsConfig } from './agents/claude/permissions.js';
 import { DEFAULT_SUBAGENTS, type SubagentsConfig } from './agents/claude/subagents.js';
+import { DEFAULT_DISCORD, type DiscordNotifyConfig } from './notifier.js';
+
+/**
+ * config.json `notify`: a boolean (desktop notifications), or an object
+ * `{ "desktop": true, "discord": { "script": "...", "ping": [...], "silent": [...] } }`
+ * (`discord: true` = the defaults). Discord is off unless configured.
+ */
+function discordConfig(file: unknown): DiscordNotifyConfig | undefined {
+  const d = file && typeof file === 'object' && !Array.isArray(file) ? (file as Record<string, unknown>).discord : undefined;
+  if (d === true) return { ...DEFAULT_DISCORD, ping: [...DEFAULT_DISCORD.ping], silent: [...DEFAULT_DISCORD.silent] };
+  if (!d || typeof d !== 'object' || (d as Record<string, unknown>).enabled === false) return undefined;
+  const o = d as Record<string, unknown>;
+  const list = (v: unknown, def: string[]) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [...def]);
+  return { script: str(o.script) ?? DEFAULT_DISCORD.script, ping: list(o.ping, DEFAULT_DISCORD.ping), silent: list(o.silent, DEFAULT_DISCORD.silent) };
+}
 
 export const FOREMAN_VERSION = '0.1.0';
 
@@ -81,6 +96,35 @@ export interface ClaudeConfig {
   prWatch: 'off' | 'observe' | 'on';
   /** how often watched PRs are polled (seconds, default 180) */
   prPollSeconds: number;
+  /**
+   * claude.ai login: keep part of the plan for the user's own Claude use. No new agent turn starts
+   * while a usage window is at or above its percentage (0 = no reserve for that window), until the
+   * window resets. Default 85 (5-hour) / 80 (7-day).
+   */
+  usageReserve: UsageReserve;
+  /**
+   * A lead's session for a goal is replaced by a fresh one (seeded with the plan note, the task
+   * board and the goal thread's last messages) once it is older than maxDays or has run maxTurns
+   * turns. 0 = no limit. Default 7 days / 40 turns.
+   */
+  leadSession: { maxDays: number; maxTurns: number };
+  /** building leads of a world that has not synced (lead.sync / assign / release) for this many days are released (0 = never; default 14) */
+  leadWorldTtlDays: number;
+}
+
+export const DEFAULT_LEAD_SESSION = { maxDays: 7, maxTurns: 40 };
+
+export interface UsageReserve {
+  fiveHourPct: number;
+  sevenDayPct: number;
+}
+
+export const DEFAULT_USAGE_RESERVE: UsageReserve = { fiveHourPct: 85, sevenDayPct: 80 };
+
+function usageReserve(v: unknown): UsageReserve {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const pct = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(0, Math.min(100, x)) : d);
+  return { fiveHourPct: pct(o.fiveHourPct, DEFAULT_USAGE_RESERVE.fiveHourPct), sevenDayPct: pct(o.sevenDayPct, DEFAULT_USAGE_RESERVE.sevenDayPct) };
 }
 
 /**
@@ -100,6 +144,8 @@ export interface RepoSettings {
   copy?: string[];
   /** setup timeout in ms (default 10 minutes) */
   setupTimeoutMs?: number;
+  /** test (CI) timeout in ms (default 5 minutes); the process tree is killed when it runs out */
+  ciTimeoutMs?: number;
   /**
    * agent id -> one of the repository's agent files (a name under .claude/agents, or a path): the
    * agent's role, prompt and model whenever it works in this repository
@@ -138,7 +184,7 @@ export interface PrSettings {
   branchPrefix?: string;
   /** open PRs as drafts */
   draft?: boolean;
-  /** push one commit authored by the user (agents' commits squashed, with Co-authored-by) instead of the agents' commits */
+  /** push one commit authored by the user (agents' commits squashed, no co-author trailers) instead of the agents' commits */
   squash?: boolean;
 }
 
@@ -179,10 +225,17 @@ export interface Config {
   autostart: boolean;
   reset: boolean;
   notify: boolean;
+  /** notify.discord (C10): the user's notification script, by kind; absent = off */
+  notifyDiscord?: DiscordNotifyConfig;
   toastSilent: boolean;
   debug: boolean;
   quiet: boolean;
   projectRoot: string;
+  /**
+   * daily housekeeping: worktrees and local agentcraft/* branches of tasks done or cancelled more than
+   * this many days ago are removed (0 = never; default 14). The first sweep only logs what it would do.
+   */
+  cleanupAfterDays: number;
   /** reject WebSocket upgrades that carry a browser Origin (CSRF-style protection) */
   allowBrowserOrigins: boolean;
   /** require the client token (clienttoken.ts) for anything but read-only use; --no-client-token (dev) turns it off */
@@ -458,6 +511,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       if (str(o.setup)) s.setup = o.setup as string;
       if (Array.isArray(o.copy)) s.copy = o.copy.filter((x): x is string => typeof x === 'string' && x.length > 0);
       if (typeof o.setupTimeoutMs === 'number' && o.setupTimeoutMs > 0) s.setupTimeoutMs = o.setupTimeoutMs;
+      if (typeof o.ciTimeoutMs === 'number' && o.ciTimeoutMs > 0) s.ciTimeoutMs = o.ciTimeoutMs;
       if (o.roles && typeof o.roles === 'object') {
         const roles: Record<string, string> = {};
         for (const [id, spec] of Object.entries(o.roles as Record<string, unknown>)) if (isAgentId(id.toLowerCase()) && str(spec)) roles[id.toLowerCase()] = spec as string;
@@ -510,12 +564,14 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
     goal: str(flags.goal),
     autostart: bool(flags.autostart, false) || !!str(flags.goal),
     reset: bool(flags.reset, false),
-    notify: bool(pick('notify', 'AGENTCRAFT_NOTIFY'), backend === 'claude'),
+    notify: bool(flags.notify ?? env.AGENTCRAFT_NOTIFY ?? (file.notify && typeof file.notify === 'object' ? (file.notify as Record<string, unknown>).desktop : file.notify), backend === 'claude'),
+    ...((d) => (d ? { notifyDiscord: d } : {}))(discordConfig(file.notify)),
     toastSilent: bool(pick('toast-silent', 'AGENTCRAFT_TOAST_SILENT', 'toastSilent'), false),
     debug: bool(pick('debug', 'AGENTCRAFT_DEBUG'), false),
     quiet: bool(flags.quiet, false),
     projectRoot: PROJECT_ROOT,
     allowBrowserOrigins: bool(pick('allow-browser-origins'), false),
+    cleanupAfterDays: Math.max(0, num(file.cleanupAfterDays, 14)),
     clientToken: bool(flags['client-token'], true),
     repoPollMs: Math.max(500, num(pick('repo-poll-ms'), 10_000)),
     mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE', 'mergeStyle')),
@@ -546,6 +602,13 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       subagents: subagentsConfig(fileClaude.subagents),
       prWatch: prWatchMode(flags['pr-watch'] ?? env.AGENTCRAFT_PR_WATCH ?? fileClaude.prWatch),
       prPollSeconds: Math.max(15, num(flags['pr-poll-seconds'] ?? fileClaude.prPollSeconds, 180)),
+      usageReserve: usageReserve(fileClaude.usageReserve),
+      leadSession: ((v: unknown) => {
+        const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+        const n = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : d);
+        return { maxDays: n(o.maxDays, DEFAULT_LEAD_SESSION.maxDays), maxTurns: Math.floor(n(o.maxTurns, DEFAULT_LEAD_SESSION.maxTurns)) };
+      })(fileClaude.leadSession),
+      leadWorldTtlDays: Math.max(0, num(fileClaude.leadWorldTtlDays, 14)),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),

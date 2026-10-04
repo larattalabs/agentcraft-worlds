@@ -33,8 +33,17 @@ export interface SessionRecord {
   sessionId?: string;
   model?: string;
   turns: number;
+  /** spend of every session this key had (earlier sessions + the current one) */
   costUsd: number;
   updatedAt: number;
+  /** when the current session id started (absent on records from before rotation: clock starts at next use) */
+  startedAt?: number;
+  /** agent turns (jobs) run in the current session */
+  sessionTurns?: number;
+  /** cumulative cost the current session reported (its total_cost_usd) */
+  sessionCostUsd?: number;
+  /** spend of the earlier sessions of this key (lead session rotation) */
+  baseCostUsd?: number;
   /** why the last turn ended (for resume decisions) */
   lastResult?: string;
 }
@@ -52,7 +61,7 @@ export interface WorktreeMeta {
   prBranch?: string;
   prPushedSha?: string;
   prUrl?: string;
-  /** a PR fold-in by another worker: the earlier worktree's branch tip (for Co-authored-by) */
+  /** a PR fold-in by another worker: the earlier worktree's branch tip (the 3-way merge base of the added commit) */
   prevTip?: string;
 }
 
@@ -82,6 +91,12 @@ export interface StateData {
   permissionRules: Record<string, string[]>; // agentId -> rule keys always allowed
   /** lead id -> its building (every lead but marlow that leads one); see leads.ts */
   leads: Record<string, LeadRecord>;
+  /** world id -> when it last talked to the Foreman about leads (lead.sync / assign / release) */
+  leadWorlds?: Record<string, number>;
+  /** when the first (dry-run) cleanup sweep ran: later sweeps remove things (Foreman.cleanup) */
+  cleanupArmedAt?: number;
+  /** the Foreman's own "drop the protected edits?" decisions (never an agent's question): decision id -> target */
+  protectedDrops?: Record<string, { repoId: string; worktree: string; mergeDecisionId: string; taskId?: string }>;
   /** opaque backend-owned state (e.g. sim progress) */
   backend: Record<string, unknown>;
 }

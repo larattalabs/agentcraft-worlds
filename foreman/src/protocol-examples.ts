@@ -263,8 +263,8 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
     type: 'leads.update',
     leads: [
       { leadId: 'marlow', repos: [] },
-      { leadId: 'ines', building: 'New World/b3', repos: ['demo-app'] },
-      { leadId: 'bram', building: 'New World/b7', repos: ['api', 'web'] },
+      { leadId: 'ines', building: 'New World/b3', repos: ['demo-app'], world: 'New World', lastSync: ts + 60_000 },
+      { leadId: 'bram', building: 'Dev HQ/b7', repos: ['api', 'web'], world: 'Dev HQ', lastSync: ts - 5 * 86_400_000 },
     ],
   },
   'config.changed': { v: 1, type: 'config.changed', keys: ['claude.workerModel', 'claude.leads'], restartRequired: ['claude.leads'] },
@@ -305,6 +305,7 @@ export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
   'pr.refresh': { v: 1, type: 'pr.refresh', id: 'c21', taskId: 't4' },
   'lead.assign': { v: 1, type: 'lead.assign', id: 'c22', building: 'New World/b7', repos: ['api', 'web'] },
   'lead.release': { v: 1, type: 'lead.release', id: 'c23', building: 'New World/b7' },
+  'lead.releaseWorld': { v: 1, type: 'lead.releaseWorld', id: 'c35', world: 'Dev HQ' },
   'lead.sync': {
     v: 1,
     type: 'lead.sync',

@@ -123,6 +123,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `worktree` | string | no | merge decisions: worktree to request the diff for |
 | `tool` | string | no | permission decisions: tool name, e.g. "Bash" |
 | `goalId` | string | no | the goal this decision is about (its task's goal, or the goal of the lead turn that asked); absent on older decisions and ones not tied to a goal |
+| `textAllowed` | boolean | no | false: only the options make sense (e.g. PR "Post"/"Skip", "Fold in"/"Leave it"): hide or disable free text; a `decision.answer` without a valid option is refused. Absent = true |
 | `createdAt` | integer | yes | epoch milliseconds |
 
 ### <a id="decisionanswer"></a>DecisionAnswer
@@ -183,7 +184,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `progress` | number | yes |  |
 | `status` | `planning` \| `active` \| `done` \| `failed` \| `cancelled` | yes | planning (lead is planning) -> active -> done (every non-cancelled task merged/done); cancelled: every task was cancelled or rejected (back to active if the lead adds a task); failed: planning failed |
 | `repoId` | string | no |  |
-| `leadId` | string | no | the lead running this goal (set at submit from the goal's repository: the lead of the building that has it). Absent = "marlow". Fixed for the goal's life, except when its lead is released (lead.release / lead.sync): then marlow takes the goal over |
+| `leadId` | string | no | the lead running this goal (set at submit from the goal's repository: the lead of the building that has it). Absent = "marlow". Changes only while the goal is open: when its lead is released (lead.release / lead.sync / lead.releaseWorld) marlow takes it over; when a building is assigned its repository (lead.assign / lead.sync) that building's lead adopts it |
 | `repos` | string[] | no | every repository the goal touches: repoId first, then each task's repository in order of first appearance (kept up to date) |
 | `instructions` | string[] | no | standing instructions (goal.instructions): in the lead's prompts, appended to new task descriptions, and a section of every worker prompt for its tasks |
 | `planId` | string | no | memory entry id of the goal's plan note, once it exists |
@@ -251,6 +252,8 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `leadId` | string | yes | a lead agent id, e.g. "ines" |
 | `building` | string (#RRGGBB) | no | the building this lead leads; absent for "marlow" (home, repositories without a building, everything not tied to a repository) |
 | `repos` | string[] | yes | repository ids of the building (a repository is in at most one building); empty for marlow |
+| `world` | string | no | the world (save folder name) the building is in; absent for marlow |
+| `lastSync` | integer | no | when that world last talked to the Foreman (lead.sync / lead.assign / lead.release). Assignments of worlds not seen for `claude.leadWorldTtlDays` (default 14) are dropped |
 
 ### <a id="feeditem"></a>FeedItem
 
@@ -278,6 +281,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `userName` | string | no | the person the team works for, as the agents address them (UI: "<name> answered") |
 | `usage` | { windows: { id: string, label: string, pct: number, resetsAt?: integer }[], updatedAt: integer } | no | claude.ai login: how much of the plan's usage windows is used (from the agents' sessions) |
 | `restartRequired` | string[] | no | config keys changed (config.set) that take effect only after a restart (`foreman.restart`); omitted when none |
+| `hold` | { reason: `usage` \| `auth` \| `offline`, until?: integer, message: string } | no | claude: the backend is holding new agent turns (usage limit or reserve, auth failure, offline); absent when nothing holds them. Running turns finish; queued work starts when the hold ends |
 
 ### <a id="agentlogs"></a>AgentLogs
 
@@ -1177,15 +1181,19 @@ Lead assignments changed (lead.assign / lead.release / lead.sync, or the Foreman
       "building": "New World/b3",
       "repos": [
         "demo-app"
-      ]
+      ],
+      "world": "New World",
+      "lastSync": 1790850060000
     },
     {
       "leadId": "bram",
-      "building": "New World/b7",
+      "building": "Dev HQ/b7",
       "repos": [
         "api",
         "web"
-      ]
+      ],
+      "world": "Dev HQ",
+      "lastSync": 1790418000000
     }
   ]
 }
@@ -1630,7 +1638,7 @@ Poll the pull request(s) of tasks in status `pr` now instead of at the next inte
 
 ### `lead.assign`
 
-A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it. New goals in these repositories go to that lead; goals already running keep theirs.
+A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it; a building left with no repository (here with `repos: []`, or because its last one moved) frees its lead. Open goals (planning / active) whose repository (`repoId`, else `repos[0]`) is in the building move to its lead (feed line per goal); new goals in these repositories go to that lead too.
 
 | field | type | required | notes |
 | --- | --- | --- | --- |
@@ -1757,7 +1765,7 @@ The repository's Claude Code agent files (`.claude/agents/*.md` in its checkout)
 
 ### `lead.sync`
 
-Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id).
+Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id). Also records the world's `lastSync`.
 
 | field | type | required | notes |
 | --- | --- | --- | --- |
@@ -1786,6 +1794,24 @@ Sent by the mod on connect for its world: every `"<world>/..."` building not in 
       ]
     }
   ]
+}
+```
+
+### `lead.releaseWorld`
+
+Release every lead held by buildings of another world (hub Team tab "Release" next to a world in `leads.update` that is not the current one). Acked with `{released: [leadId]}`; their open goals move to marlow as with `lead.release`. Worlds that have not synced for `claude.leadWorldTtlDays` (default 14; 0 = never) are released automatically at start and daily.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `world` | string (#RRGGBB) | yes | the world id (save folder name) whose leads to release |
+
+```json
+{
+  "v": 1,
+  "type": "lead.releaseWorld",
+  "id": "c35",
+  "world": "Dev HQ"
 }
 ```
 

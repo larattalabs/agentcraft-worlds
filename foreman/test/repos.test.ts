@@ -330,7 +330,7 @@ describe('approved merges are made as the user', () => {
     expect(head).toBe(headBefore);
   });
 
-  it('--no-sign-merges never signs; --merge-style squash makes one commit with co-authors', async () => {
+  it('--no-sign-merges never signs; --merge-style squash makes one commit authored by the user alone', async () => {
     const dir = tempDir('ac-gpg-');
     dirs.push(dir);
     const { repo, d } = await mergeOnce(['--no-sign-merges', '--merge-style', 'squash'], signing(fakeSigner(dir, false)));
@@ -339,7 +339,7 @@ describe('approved merges are made as the user', () => {
     expect(raw.includes('gpgsig')).toBe(false);
     expect((await gitOut(repo, ['rev-list', '--parents', '-n', '1', 'HEAD'])).split(' ')).toHaveLength(2); // one parent
     expect(await gitOut(repo, ['log', '-1', '--format=%an'])).toBe('Demo Author');
-    expect(raw).toMatch(/Co-authored-by: AgentCraft Kit <kit@agentcraft\.local>/);
+    expect(raw).not.toMatch(/co-authored-by|agentcraft|claude|squashed from/i); // C8: no trailers, no tool attribution
     expect(fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n')).toBe('# 0.2.0\n');
   });
 });

@@ -63,7 +63,7 @@ async function boot(workers: string, calls: Call[], worker: Record<string, Worke
   const repo = await demoRepo();
   cleanup.push(home, path.dirname(repo));
   const h = makeForeman(home, ['--backend', 'claude', '--workers', workers, '--repo', repo]);
-  const b = new ClaudeBackend(h.fm, h.cfg.claude, { queryFn: fake(calls, worker) as never, skipAuthCheck: true });
+  const b = new ClaudeBackend(h.fm, h.cfg.claude, { queryFn: fake(calls, worker) as never, skipAuthCheck: true, transientRetryMs: 50 });
   await h.fm.start(b);
   return { h, repo };
 }

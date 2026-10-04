@@ -3,6 +3,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Foreman } from '../../foreman.js';
 import { firstLine, headLines, tailLines, truncate } from '../../util/text.js';
 import { relPath, toolActivity } from '../activity.js';
+import { AUTH_ERRORS, isAuthText, isNetworkText } from './failures.js';
 
 export interface TurnStats {
   sessionId?: string;
@@ -59,7 +60,6 @@ interface Block {
   is_error?: boolean;
 }
 
-const AUTH_RE = /(authentication|not logged in|log ?in|\/login|invalid api key|oauth|401|credential)/i;
 
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -163,7 +163,7 @@ export class StreamMapper {
         if (msg.error) {
           const err = String(msg.error);
           this.stats.errors.push(err);
-          if (err === 'authentication_failed' || err === 'oauth_org_not_allowed') this.stats.authFailed = err;
+          if (AUTH_ERRORS.has(err)) this.stats.authFailed = err;
           if (err === 'rate_limit') this.stats.limited = true;
           fm.agentLog(id, 'error', `API error: ${err}`);
         }
@@ -219,11 +219,11 @@ export class StreamMapper {
         this.stats.sessionId ??= msg.session_id;
         if (msg.subtype === 'success') {
           this.stats.resultText = msg.result;
-          if (msg.is_error && AUTH_RE.test(msg.result)) this.stats.authFailed = firstLine(msg.result, 200);
+          if (msg.is_error && isAuthText(msg.result)) this.stats.authFailed = firstLine(msg.result, 200);
         } else {
           this.stats.errors.push(...(msg.errors ?? []));
           const joined = (msg.errors ?? []).join(' ');
-          if (AUTH_RE.test(joined)) this.stats.authFailed = firstLine(joined, 200);
+          if (isAuthText(joined)) this.stats.authFailed = firstLine(joined, 200);
         }
         if (this.stats.isError) {
           const l = limitFromText([this.stats.resultText ?? (msg.subtype === 'success' ? msg.result : ''), ...this.stats.errors].join(' '));
@@ -259,7 +259,8 @@ export class StreamMapper {
         }
         if (t === 'auth_status') {
           const m = msg as { error?: string };
-          if (m.error) this.stats.authFailed = m.error;
+          // (a token refresh that failed on the network is not a bad login)
+          if (m.error && (isAuthText(m.error) || !isNetworkText(m.error))) this.stats.authFailed = m.error;
         }
       }
     }

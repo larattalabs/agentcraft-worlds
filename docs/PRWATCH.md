@@ -167,9 +167,10 @@ and anything not tied to a repo. Workers stay one shared pool that every lead as
   Marlow that leads a building. `building` is the mod's key `"<worldId>/<buildingId>"` (worldId = the save
   folder name, so two worlds on one Foreman don't collide).
 - `leadForRepo(repoId)`: the lead whose building has that repo, else `marlow`.
-- `Goal.leadId` (protocol, optional; absent = marlow): set at submit from the goal's repo; fixed for
-  the goal's life except when its lead is released (then `marlow` takes the goal over, with a feed line
-  and the plan memory note carried in the takeover prompt).
+- `Goal.leadId` (protocol, optional; absent = marlow): set at submit from the goal's repo. It changes
+  when its lead is released (then `marlow` takes the goal over) or, while the goal is open, when a
+  building is assigned its repository (C3: that building's lead adopts it); each with a feed line and
+  the plan memory note carried in the new lead's takeover prompt.
 - Lead sessions are keyed `<leadId>:<goalId>` (was `marlow:<goalId>`; existing keys migrate on load).
 - Every lead has its own job queue (plan / review / followup / triage); leads run in parallel. The usage
   throttle and `claude.maxConcurrentTurns` (if set) count lead turns too.
@@ -185,9 +186,12 @@ Client -> Foreman:
 - `lead.release { building }` -> ack `{}`: frees that lead; its open goals move to marlow.
 - `lead.sync { world, buildings: [{ building, repos }] }`: sent by the mod on connect for its world;
   assigns missing ones and releases any `"<world>/..."` building not in the list.
+- `lead.releaseWorld { world }` -> ack `{ released: [leadId] }`: frees every lead held by that world
+  (fix wave C2; worlds not synced for `claude.leadWorldTtlDays`, default 14, expire by themselves).
 Foreman -> client:
 - `leads.update { leads: LeadAssignment[] }` (full list; also `snapshot.leads`), `LeadAssignment =
-  { leadId, building?, repos: string[] }` (marlow listed with no building).
+  { leadId, building?, repos: string[], world?, lastSync? }` (marlow listed with no building).
+- Goal adoption (C3): a lead assigned a building takes the open goals of its repositories.
 - Agents with role `lead` appear in `snapshot.agents` only while assigned (marlow always).
 
 ### Mod

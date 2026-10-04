@@ -5,7 +5,8 @@
 //  - rate-limited and coalesced: at most one toast per `minIntervalMs`; decisions that arrive
 //    inside the window are summarised in the next toast
 //  - disabled with config.notify=false / AGENTCRAFT_NOTIFY=0; tests inject a fake `spawnToast`
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import os from 'node:os';
 import { scrubEnv } from './util/env.js';
 import type { Logger } from './context.js';
 import { truncate } from './util/text.js';
@@ -89,6 +90,118 @@ export function showDesktopNotification(title: string, body: string, silent: boo
   if (process.platform === 'win32') return showWindowsToast(title, body, silent);
   if (process.platform === 'darwin') return showMacNotification(title, body, silent);
   return Promise.resolve(false);
+}
+
+// ---- Discord (C10, config.json notify.discord) -----------------------------------------------------
+//
+// Runs the user's own notification script (default ~/.agentcraft/discord-notify.sh, interface
+// `script <message>` = silent, `script --critical <message>` = a ping; the script dedups identical
+// messages itself). Off unless notify.discord is configured. Never blocks the Foreman: the script is
+// spawned without a shell, stdio ignored, killed after 30 s; a missing script is a warning.
+
+export type ExternalKind = 'need_user' | 'blocked' | 'usage' | 'goal_done' | 'auth';
+
+export interface DiscordNotifyConfig {
+  /** the script to run (~ expanded) */
+  script: string;
+  /** kinds sent with --critical (a ping) */
+  ping: string[];
+  /** kinds sent without (visible in the channel, no ping) */
+  silent: string[];
+}
+
+export const DEFAULT_DISCORD_SCRIPT = '~/.agentcraft/discord-notify.sh';
+export const DEFAULT_DISCORD: DiscordNotifyConfig = { script: DEFAULT_DISCORD_SCRIPT, ping: ['need_user', 'auth'], silent: ['blocked', 'usage', 'goal_done'] };
+
+/** A leading status emoji the script turns into the embed colour. */
+const MARK: Record<string, string> = { need_user: '🔴', auth: '🔴', blocked: '🟠', usage: '🟡', goal_done: '🟢' };
+
+/** The script's arguments for one notification, or undefined when this kind is not sent. */
+export function discordArgs(kind: string, text: string, cfg: DiscordNotifyConfig): string[] | undefined {
+  const msg = `${MARK[kind] ? `${MARK[kind]} ` : ''}AgentCraft: ${truncate(text.replace(/\s+/g, ' ').trim(), 600)}`;
+  if (cfg.ping.includes(kind)) return ['--critical', msg];
+  if (cfg.silent.includes(kind)) return [msg];
+  return undefined;
+}
+
+type SpawnFn = (cmd: string, args: string[], opts: { stdio: 'ignore'; env: NodeJS.ProcessEnv; windowsHide: boolean }) => ChildProcess;
+
+export class DiscordNotifier {
+  private pending: string[] = [];
+  private timer: NodeJS.Timeout | undefined;
+  private lastPing = 0;
+  private warned = false;
+  readonly sent: string[][] = [];
+
+  constructor(
+    /** read at every send (config.set changes it live) */
+    private config: () => DiscordNotifyConfig | undefined,
+    private opts: { log?: Logger; spawnFn?: SpawnFn; now?: () => number; coalesceMs?: number; timeoutMs?: number } = {},
+  ) {}
+
+  /** Queue one notification; need_user pings within coalesceMs of the last one are combined. */
+  send(kind: ExternalKind, text: string): void {
+    const cfg = this.config();
+    if (!cfg) return;
+    const args = discordArgs(kind, text, cfg);
+    if (!args) return;
+    if (kind !== 'need_user') {
+      this.run(cfg.script, args);
+      return;
+    }
+    const now = (this.opts.now ?? Date.now)();
+    const window = this.opts.coalesceMs ?? 60_000;
+    if (!this.timer && now - this.lastPing >= window) {
+      this.lastPing = now;
+      this.run(cfg.script, args);
+      return;
+    }
+    this.pending.push(text);
+    if (this.timer) return;
+    this.timer = setTimeout(() => this.flush(), Math.max(0, this.lastPing + window - now));
+    this.timer.unref?.();
+  }
+
+  /** Send the combined need_user pings now. */
+  flush(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    const items = this.pending.splice(0);
+    const cfg = this.config();
+    if (!items.length || !cfg) return;
+    this.lastPing = (this.opts.now ?? Date.now)();
+    const text = items.length === 1 ? items[0]! : `${items.length} things wait for you: ${items.slice(-3).join(' | ')}`;
+    const args = discordArgs('need_user', text, cfg);
+    if (args) this.run(cfg.script, args);
+  }
+
+  private run(script: string, args: string[]): void {
+    const cmd = script.replace(/^~(?=$|[\\/])/, os.homedir());
+    this.sent.push([cmd, ...args]);
+    try {
+      const child = (this.opts.spawnFn ?? (spawn as unknown as SpawnFn))(cmd, args, { stdio: 'ignore', env: scrubEnv(process.env), windowsHide: true });
+      const timer = setTimeout(() => child.kill(), this.opts.timeoutMs ?? 30_000);
+      timer.unref?.();
+      child.on('error', (e) => {
+        clearTimeout(timer);
+        if (!this.warned) this.opts.log?.warn(`notify.discord: could not run ${cmd}: ${e.message}`);
+        this.warned = true;
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        if (code) this.opts.log?.debug(`notify.discord: ${cmd} exited ${code}`);
+      });
+      child.unref?.();
+    } catch (e) {
+      if (!this.warned) this.opts.log?.warn(`notify.discord: could not run ${cmd}: ${(e as Error).message}`);
+      this.warned = true;
+    }
+  }
+
+  dispose(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
 }
 
 export class Notifier {

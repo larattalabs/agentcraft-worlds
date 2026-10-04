@@ -15,6 +15,11 @@ import type { LeadRecord } from './store.js';
 
 export const HOME_LEAD = LEAD_ID;
 
+/** The world part of a building key "<world>/<building>". */
+export function worldOf(building: string): string {
+  return building.slice(0, building.indexOf('/'));
+}
+
 export interface AssignResult {
   leadId: string;
   /** no lead was free: marlow leads the building, nothing was stored */
@@ -74,10 +79,45 @@ export class LeadBook {
 
   /** What `leads.update` / `snapshot.leads` carry: marlow (no building) first. */
   list(): LeadAssignment[] {
+    const worlds = this.ctx.store.data.leadWorlds ?? {};
     return this.onDutyIds().map((id) => {
       const r = this.data[id];
-      return r ? { leadId: id, building: r.building, repos: [...r.repos] } : { leadId: id, repos: [] };
+      if (!r) return { leadId: id, repos: [] };
+      const world = worldOf(r.building);
+      const last = worlds[world];
+      return { leadId: id, building: r.building, repos: [...r.repos], world, ...(last !== undefined ? { lastSync: last } : {}) };
     });
+  }
+
+  /** Every world holding a building lead. */
+  worlds(): string[] {
+    return [...new Set(Object.values(this.data).map((r) => worldOf(r.building)))];
+  }
+
+  /** A world talked to the Foreman about its leads (lead.sync / assign / release). */
+  touchWorld(world: string): void {
+    const w = (this.ctx.store.data.leadWorlds ??= {});
+    w[world] = this.ctx.now();
+    this.ctx.store.markDirty();
+  }
+
+  /**
+   * Worlds whose leads expire: not synced for `ttlMs`. A world with leads but no record yet (state
+   * from before lastSync existed) starts its clock now instead: the Foreman starts before the mod
+   * connects, so expiring by assignedAt would release the leads of the world being played.
+   */
+  expiredWorlds(ttlMs: number): string[] {
+    if (ttlMs <= 0) return [];
+    const now = this.ctx.now();
+    const seen = (this.ctx.store.data.leadWorlds ??= {});
+    const out: string[] = [];
+    for (const w of this.worlds()) {
+      if (seen[w] === undefined) {
+        seen[w] = now;
+        this.ctx.store.markDirty();
+      } else if (now - seen[w]! > ttlMs) out.push(w);
+    }
+    return out;
   }
 
   /**

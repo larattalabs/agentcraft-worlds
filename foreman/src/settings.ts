@@ -60,6 +60,8 @@ interface Spec {
   envs?: string[];
   /** other spellings of the key in config.json (read; written to when present) */
   alt?: string[];
+  /** when the file holds an object at this key, the value goes to <key>.<objectKey> (notify -> notify.desktop) */
+  objectKey?: string;
   def: unknown | ((x: SpecCtx) => unknown);
   /** the configured value (global: from the parsed config; repository: from its parsed settings) */
   get: (cfg: Config, rs: RepoSettings, raw: unknown) => unknown;
@@ -145,6 +147,7 @@ function globalSpecs(x: SpecCtx): Spec[] {
       get: g('claude.leads'),
       normalize: (v) => ({ value: leadsList(v) }),
     },
+    { key: 'claude.leadWorldTtlDays', group: 'team', type: 'int', min: 0, max: 365, label: 'Release leads of unused worlds after (days)', help: 'Building leads held by a world that has not been opened for this many days go back (checked at start and daily). 0: never. A world can also be released by hand from the Team tab.', live: true, def: 14, get: g('claude.leadWorldTtlDays') },
     { key: 'claude.leadReview', group: 'team', type: 'bool', label: 'Lead reviews finished work', help: 'The lead reviews each finished task (diff and tests) before the merge decision reaches you. Off: the decision comes straight after the tests.', live: true, flags: ['lead-review'], def: true, get: g('claude.leadReview') },
     // models
     { key: 'claude.leadModel', group: 'models', type: 'model', label: 'Lead model', help: 'The model the leads plan and review with (unless a lead has its own). From the next turn.', options: models, live: true, flags: ['lead-model', 'model'], envs: ['AGENTCRAFT_LEAD_MODEL'], def: 'opus', get: g('claude.leadModel') },
@@ -160,7 +163,8 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'claude.maxConcurrentTurns', group: 'models', type: 'int', min: 0, max: 20, label: 'Agent turns at once', help: 'A cap on turns running at once, leads and workers together. 0: no cap besides "Workers at once".', live: true, flags: ['max-concurrent-turns'], def: 0, get: (cfg) => cfg.claude.maxConcurrentTurns ?? 0, normalize: (v) => ({ value: v === 0 ? undefined : v }) },
     // general
     { key: 'userName', group: 'general', type: 'string', label: 'Your name', help: 'How the agents address you, in prompts, the feed and the hub. Empty: your OS user name.', live: true, flags: ['user-name'], envs: ['AGENTCRAFT_USER_NAME'], alt: ['user-name'], def: defaultUserName(), get: (cfg) => cfg.userName, normalize: (v) => (typeof v === 'string' && v.trim().length > 40 ? { error: 'must be at most 40 characters' } : { value: typeof v === 'string' && v.trim() ? v.trim() : undefined }) },
-    { key: 'notify', group: 'general', type: 'bool', label: 'Desktop notifications', help: 'A desktop notification when a decision waits for you.', live: true, flags: ['notify'], envs: ['AGENTCRAFT_NOTIFY'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.notify },
+    { key: 'cleanupAfterDays', group: 'general', type: 'int', min: 0, max: 3650, label: 'Clean up finished work after (days)', help: 'Once a day, worktrees and local agentcraft/* branches of tasks done or cancelled longer ago than this are removed (a cancelled task\'s unmerged branch is kept). The first run only lists what it would remove. 0: never.', live: true, def: 14, get: (cfg) => cfg.cleanupAfterDays },
+    { key: 'notify', group: 'general', type: 'bool', objectKey: 'desktop', label: 'Desktop notifications', help: 'A desktop notification when a decision waits for you.', live: true, flags: ['notify'], envs: ['AGENTCRAFT_NOTIFY'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.notify },
     { key: 'toastSilent', group: 'general', type: 'bool', label: 'Silent notifications', help: 'Desktop notifications without sound.', live: true, flags: ['toast-silent'], envs: ['AGENTCRAFT_TOAST_SILENT'], alt: ['toast-silent'], def: false, get: (cfg) => cfg.toastSilent },
     { key: 'mergeStyle', group: 'general', type: 'enum', options: ['merge', 'squash'], label: 'Merge style', help: 'merge: a merge commit that keeps the agents\' commits; squash: one commit with the task\'s changes, authored by you.', live: true, flags: ['merge-style'], envs: ['AGENTCRAFT_MERGE_STYLE'], alt: ['merge-style'], def: 'merge', get: (cfg) => cfg.mergeStyle },
     { key: 'signMerges', group: 'general', type: 'bool', label: 'Sign approved merges', help: 'Sign your approved merge commits when your git config signs commits (commit.gpgsign). Agents never sign.', live: true, flags: ['sign-merges'], envs: ['AGENTCRAFT_SIGN_MERGES'], alt: ['sign-merges'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.signMerges },
@@ -210,6 +214,10 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'claude.prPollSeconds', group: 'prs', type: 'int', min: 15, max: 3600, label: 'Poll pull requests every (seconds)', help: 'How often watched pull requests are checked.', live: true, flags: ['pr-poll-seconds'], def: 180, get: g('claude.prPollSeconds') },
     // usage
     { key: 'claude.maxBudgetUsdPerTurn', group: 'usage', type: 'int', min: 0, max: 1000, label: 'Budget per turn (USD)', help: 'Stop an agent turn that costs more than this many dollars. 0: no cap. From the next turn.', live: true, flags: ['max-budget'], def: 0, get: (cfg) => cfg.claude.maxBudgetUsdPerTurn ?? 0, normalize: (v) => ({ value: v === 0 ? undefined : v }) },
+    { key: 'claude.usageReserve.fiveHourPct', group: 'usage', type: 'int', min: 0, max: 100, label: 'Reserve: 5-hour window (%)', help: 'With your claude.ai login: no new agent turn starts while the 5-hour usage window is at or above this, until it resets, so some is left for you. 0: no reserve.', live: true, def: 85, get: g('claude.usageReserve.fiveHourPct') },
+    { key: 'claude.usageReserve.sevenDayPct', group: 'usage', type: 'int', min: 0, max: 100, label: 'Reserve: 7-day window (%)', help: 'Same for the 7-day window. 0: no reserve.', live: true, def: 80, get: g('claude.usageReserve.sevenDayPct') },
+    { key: 'claude.leadSession.maxDays', group: 'usage', type: 'int', min: 0, max: 365, label: 'Fresh lead session after (days)', help: 'A lead\'s session for a goal starts over (seeded with the plan, the task board and the last thread messages) once it is this old. 0: never.', live: true, def: 7, get: g('claude.leadSession.maxDays') },
+    { key: 'claude.leadSession.maxTurns', group: 'usage', type: 'int', min: 0, max: 1000, label: 'Fresh lead session after (turns)', help: 'Same, after this many lead turns in one session. 0: never.', live: true, def: 40, get: g('claude.leadSession.maxTurns') },
     { key: 'claude.useClaudeLogin', group: 'usage', type: 'bool', label: 'Use your claude.ai login', help: 'Run the agents on your local claude CLI login (your plan) instead of an API key. Personal use only. After a restart.', live: false, flags: ['use-claude-login'], envs: ['AGENTCRAFT_USE_CLAUDE_LOGIN'], def: false, get: g('claude.useClaudeLogin') },
   ];
   // per agent: role title, specialty prompt, model, effort
@@ -235,10 +243,11 @@ function repoSpecs(x: SpecCtx): Spec[] {
     { key: 'pr.remote', group: 'landing', type: 'string', label: 'Pull requests: remote', help: 'The remote to push to and open pull requests on. Empty: origin.', live: true, def: 'origin', get: (_c, rs) => rs.pr?.remote ?? '', normalize: pattern(/^[\w.-]+$/, 'a remote name') },
     { key: 'pr.branchPrefix', group: 'landing', type: 'string', label: 'Pull requests: branch prefix', help: 'Remote branch name prefix, e.g. feat/. Empty: the agent\'s branch name.', live: true, def: '', get: (_c, rs) => rs.pr?.branchPrefix ?? '', normalize: pattern(/^[\w./-]+$/, 'a branch name prefix') },
     { key: 'pr.draft', group: 'landing', type: 'bool', label: 'Pull requests: drafts', help: 'Open pull requests as drafts.', live: true, def: false, get: (_c, rs) => rs.pr?.draft ?? false },
-    { key: 'pr.squash', group: 'landing', type: 'bool', label: 'Pull requests: one commit', help: 'Push one commit authored by you (the agents\' commits squashed, with Co-authored-by) instead of the agents\' commits.', live: true, def: false, get: (_c, rs) => rs.pr?.squash ?? false },
+    { key: 'pr.squash', group: 'landing', type: 'bool', label: 'Pull requests: one commit', help: 'Push one commit authored by you (the agents\' commits squashed, no co-author trailers) instead of the agents\' commits.', live: true, def: false, get: (_c, rs) => rs.pr?.squash ?? false },
     { key: 'ci', group: 'worktrees', type: 'string', label: 'Test command', help: 'Run after each task. Empty: --ci, else detected (e.g. npm test).', live: true, def: '', get: (_c, rs) => rs.ci ?? '' },
     { key: 'setup', group: 'worktrees', type: 'string', label: 'Worktree setup command', help: 'Run once in each new worker worktree before the worker starts, e.g. npm ci.', live: true, def: '', get: (_c, rs) => rs.setup ?? '' },
     { key: 'copy', group: 'worktrees', type: 'stringList', label: 'Copy into new worktrees', help: 'Untracked files or folders copied from your checkout into each new worktree, e.g. .env.', live: true, def: [], get: (_c, rs) => rs.copy ?? [] },
+    { key: 'ciTimeoutMs', group: 'worktrees', type: 'int', min: 10_000, max: 7_200_000, label: 'Test timeout (ms)', help: 'How long the test command may run after each task before it is stopped (and counts as failed).', live: true, def: 300_000, get: (_c, rs) => rs.ciTimeoutMs ?? 300_000 },
     { key: 'setupTimeoutMs', group: 'worktrees', type: 'int', min: 1000, max: 3_600_000, label: 'Setup timeout (ms)', help: 'How long the setup command may run.', live: true, def: 600_000, get: (_c, rs) => rs.setupTimeoutMs ?? 600_000 },
     {
       key: 'protect',
@@ -553,7 +562,10 @@ export function configSet(t: ConfigTarget, changes: Array<{ key: string; value: 
       continue;
     }
     // write to the spelling the file already uses
-    const at = fileKeys(s).find((k) => hasPath(section, k)) ?? s.key.split('.');
+    let at = fileKeys(s).find((k) => hasPath(section, k)) ?? s.key.split('.');
+    // never replace an object with a scalar (e.g. notify: { desktop, discord })
+    const there = getPath(section, at);
+    if (s.objectKey && there && typeof there === 'object' && !Array.isArray(there)) at = [...at, s.objectKey];
     writes.push({ spec: s, keys: [...sectionPath, ...at], value: checked.value });
   }
   if (errors.length) throw new ConfigError(errors.join('; '));
@@ -607,6 +619,9 @@ function replaceInPlace<T extends object>(target: T, source: T): void {
 export function applyLive(running: Config, next: Config): void {
   running.userName = next.userName;
   running.notify = next.notify;
+  running.cleanupAfterDays = next.cleanupAfterDays;
+  if (next.notifyDiscord) running.notifyDiscord = next.notifyDiscord;
+  else delete running.notifyDiscord;
   running.toastSilent = next.toastSilent;
   running.mergeStyle = next.mergeStyle;
   running.signMerges = next.signMerges;
@@ -622,6 +637,9 @@ export function applyLive(running: Config, next: Config): void {
   c.leadReview = n.leadReview;
   c.prWatch = n.prWatch;
   c.prPollSeconds = n.prPollSeconds;
+  Object.assign(c.usageReserve, n.usageReserve);
+  Object.assign(c.leadSession, n.leadSession);
+  c.leadWorldTtlDays = n.leadWorldTtlDays;
   if (n.maxConcurrentTurns) c.maxConcurrentTurns = n.maxConcurrentTurns;
   else delete c.maxConcurrentTurns;
   if (n.maxBudgetUsdPerTurn) c.maxBudgetUsdPerTurn = n.maxBudgetUsdPerTurn;

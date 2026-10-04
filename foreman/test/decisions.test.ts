@@ -37,6 +37,22 @@ describe('DecisionQueue', () => {
     expect(done.answer!.option).toBe('Yes (recommended)');
   });
 
+  it('a closed decision (textAllowed false) refuses free text without a valid option (C1)', async () => {
+    const { fm } = setup();
+    const d = fm.createDecision({ agentId: 'marlow', kind: 'question', question: 'Post 2 replies on PR #7?', options: ['Post', 'Skip'], textAllowed: false });
+    expect(d.textAllowed).toBe(false);
+    await expect(fm.answerDecision(d.id, undefined, 'please post only the first one')).rejects.toThrow(/takes one of: Post \| Skip \(free text alone/);
+    expect(fm.decisions.get(d.id)!.status).toBe('open');
+    await expect(fm.answerDecision(d.id, 'Maybe')).rejects.toThrow(/not one of/);
+    const done = await fm.answerDecision(d.id, 'post', 'and thanks');
+    expect(done.answer).toMatchObject({ option: 'Post', text: 'and thanks' });
+    // an open question keeps accepting free text; textAllowed is only on the wire when false
+    const q = fm.createDecision({ agentId: 'marlow', kind: 'question', question: 'Which name?', options: ['a', 'b'] });
+    expect('textAllowed' in q).toBe(false);
+    expect((await fm.answerDecision(q.id, undefined, 'c please')).answer?.text).toBe('c please');
+    expect(() => fm.createDecision({ agentId: 'marlow', kind: 'question', question: 'x?', options: [], textAllowed: false })).toThrow(/needs options/);
+  });
+
   it('accepts option index, free text for questions, and rejects bad answers', async () => {
     const { fm } = setup();
     const q = fm.createDecision({ agentId: 'kit', kind: 'question', question: 'Name?', options: [] });

@@ -505,7 +505,7 @@ export class PrWatcher {
       this.observeNote(t, ref, `${question}\n(${why}; observe mode: nothing asked, nothing started)\n\n${notes}`);
       return;
     }
-    const d = this.fm.createDecision({ agentId: this.leadOf(t), kind: 'question', question, options: ['Fold in', 'Leave it'], context: `Automated review ${parsed.verdict ?? ''} (thread ${thread.id}); ${why}.\n${truncate(notes, 1500)}`, taskId: t.id });
+    const d = this.fm.createDecision({ agentId: this.leadOf(t), kind: 'question', question, options: ['Fold in', 'Leave it'], textAllowed: false, context: `Automated review ${parsed.verdict ?? ''} (thread ${thread.id}); ${why}.\n${truncate(notes, 1500)}`, taskId: t.id });
     this.data.decisions[d.id] = { taskId: t.id, kind: 'guard', notes: `The automated review (round ${s.reviewRounds + 1}) found:\n${notes}`, review: true };
     this.fm.store.markDirty();
   }
@@ -630,6 +630,7 @@ export class PrWatcher {
         kind: 'question',
         question: this.postQuestion(ref, now, after),
         options: ['Post', 'Skip'],
+        textAllowed: false,
         context: truncate([...now, ...after].map((o) => `- ${o.label}`).join('\n'), 3500),
         taskId: t.id,
       });
@@ -637,7 +638,7 @@ export class PrWatcher {
       did.push(`decision ${d.id} for ${userName()} (replies/resolutions)`);
     }
     for (const a of asks) {
-      const d = this.fm.createDecision({ agentId: this.leadOf(t), kind: 'question', question: `PR #${ref.id} (${t.id}): ${truncate(a.note || a.item.text, 200)}`, options: ['Fold in', 'Leave it'], context: `${a.item.author ?? ''}${where(a.item) ? ` on ${where(a.item)}` : ''}: ${truncate(a.item.text, 1200)}`, taskId: t.id });
+      const d = this.fm.createDecision({ agentId: this.leadOf(t), kind: 'question', question: `PR #${ref.id} (${t.id}): ${truncate(a.note || a.item.text, 200)}`, options: ['Fold in', 'Leave it'], textAllowed: false, context: `${a.item.author ?? ''}${where(a.item) ? ` on ${where(a.item)}` : ''}: ${truncate(a.item.text, 1200)}`, taskId: t.id });
       this.data.decisions[d.id] = { taskId: t.id, kind: 'ask', notes: `- [${a.item.author ?? 'comment'}] ${where(a.item) ? `${where(a.item)}: ` : ''}${a.item.text}${a.note ? `\n  ${this.fm.nameOf(this.leadOf(t))}: ${a.note}` : ''}`, review: a.item.kind === 'finding' };
       did.push(`question ${d.id}`);
     }

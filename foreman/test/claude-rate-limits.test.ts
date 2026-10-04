@@ -1,5 +1,6 @@
 // Usage limits (claude.ai login): a turn refused by the limit is held and resumed after the reset
 // instead of blocking its task, nobody starts a turn meanwhile, and a usage warning throttles workers.
+import fs from 'node:fs';
 import path from 'node:path';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -33,9 +34,10 @@ let h: Harness | undefined;
 let home: string;
 let repoPath: string;
 
-async function start(turn: Turn, args: string[]): Promise<Harness> {
+async function start(turn: Turn, args: string[], config?: object): Promise<Harness> {
   home = tempDir();
   repoPath = await demoRepo();
+  if (config) fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(config));
   h = makeForeman(home, ['--backend', 'claude', '--repo', repoPath, '--no-lead-review', ...args]);
   await h.fm.start(new ClaudeBackend(h.fm, h.cfg.claude, { queryFn: fakeQuery(turn) as never, skipAuthCheck: true }));
   return h;
@@ -123,7 +125,8 @@ describe('usage limits in the claude backend', () => {
         if (task) await callTool(opts, 'update_task', { task_id: task, status: 'review', summary: 'ok' });
         worked++;
         yield ok(s);
-      }, ['--workers', 'kit,juniper', '--max-concurrent', '2'])
+        // (no usage reserve here: 92% of the 7-day window would hold every turn, see claude-holds)
+      }, ['--workers', 'kit,juniper', '--max-concurrent', '2'], { claude: { usageReserve: { fiveHourPct: 0, sevenDayPct: 0 } } })
     ).fm;
 
     await fm.submitGoal('two things');

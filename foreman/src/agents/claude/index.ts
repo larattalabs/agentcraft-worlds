@@ -47,7 +47,10 @@ import { type RepoRole, boardSummary, foldInPrompt, leadRepoContext, leadSystemP
 import { DEFAULT_AUTO_SEVERITIES, DEFAULT_MAX_ROUNDS, PrWatcher, type TriageItem } from '../../prwatch.js';
 import type { RunFn } from '../../prs.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
-import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
+import { pruneUsage, readPlanUsage, reserveHold, usageLine, withWindow } from './usage.js';
+import { classifyFailure, isAuthText, probeFailure } from './failures.js';
+import type { ForemanHold } from '../../protocol.js';
+import type { SessionRecord } from '../../store.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
@@ -140,6 +143,9 @@ function alive(child: ChildProcess | undefined): child is ChildProcess {
   return !!child && child.exitCode === null && child.signalCode === null;
 }
 
+/** Claude Code settings that keep Claude's co-author trailer, PR footer and session link out (C8). */
+export const NO_ATTRIBUTION = { attribution: { commit: '', pr: '', sessionUrl: false }, includeCoAuthoredBy: false } as const;
+
 const TURN_TIMEOUT_MS = 45 * 60_000;
 /** wait after a usage limit that did not say when it resets (doubles per hit, up to LIMIT_BACKOFF_MAX_MS) */
 const LIMIT_BACKOFF_MS = 5 * 60_000;
@@ -148,6 +154,11 @@ const LIMIT_BACKOFF_MAX_MS = 60 * 60_000;
 const THROTTLE_DEFAULT_MS = 30 * 60_000;
 /** how often the plan's usage windows are re-read from a live session */
 const USAGE_REFRESH_MS = 5 * 60_000;
+/** first retry of the startup auth probe after a network-type failure (doubles, up to the max) */
+const AUTH_RETRY_MS = 30_000;
+const AUTH_RETRY_MAX_MS = 10 * 60_000;
+/** wall-clock check of usage windows and holds (timers drift or stall while the machine sleeps) */
+const WAKE_INTERVAL_MS = 60_000;
 
 /**
  * Environment for an agent's CLI process (and every command it runs): git refuses all
@@ -168,6 +179,19 @@ export function agentEnv(base: NodeJS.ProcessEnv = process.env, who: { agentId?:
   );
 }
 
+/**
+ * Lead session rotation (claude.leadSession): why the stored session should be replaced by a fresh
+ * one, or undefined. A record from before rotation existed (no startedAt) is not rotated: its clock
+ * starts at its next use.
+ */
+export function rotationDue(rec: SessionRecord | undefined, limits: { maxDays: number; maxTurns: number }, now = Date.now()): string | undefined {
+  if (!rec?.sessionId || rec.startedAt === undefined) return undefined;
+  const days = (now - rec.startedAt) / 86_400_000;
+  if (limits.maxDays > 0 && days >= limits.maxDays) return `${Math.floor(days)} days old`;
+  if (limits.maxTurns > 0 && (rec.sessionTurns ?? 0) >= limits.maxTurns) return `${rec.sessionTurns} turns`;
+  return undefined;
+}
+
 export interface ClaudeBackendOptions {
   /** injectable for tests */
   queryFn?: typeof query;
@@ -175,6 +199,12 @@ export interface ClaudeBackendOptions {
   skipAuthCheck?: boolean;
   /** runs `az` / `gh` for pull requests (opening and watching them); tests inject a fake */
   prRunFn?: RunFn;
+  /** first auth-probe retry delay after a network failure (tests) */
+  authRetryMs?: number;
+  /** the wall-clock hold/usage check interval (tests) */
+  wakeIntervalMs?: number;
+  /** delay before the automatic retry of a turn that failed for a passing reason (default 2-5 min) */
+  transientRetryMs?: number;
 }
 
 export class ClaudeBackend implements Backend {
@@ -183,7 +213,19 @@ export class ClaudeBackend implements Backend {
   private running = new Map<string, Running>();
   private pausedJobs = new Map<string, Job>();
   private tickTimer: NodeJS.Timeout | undefined;
+  /** sticky: the login / key is not valid (until a restart) */
   private authFailed = false;
+  private authMessage = '';
+  /** the startup auth probe could not reach Claude: retried with backoff, work waits meanwhile */
+  private offline: { delayMs: number; retryAt: number; message: string } | undefined;
+  private authRetryTimer: NodeJS.Timeout | undefined;
+  private wakeTimer: NodeJS.Timeout | undefined;
+  /** the usage reserve is holding new turns (announced once per episode) */
+  private reserveActive = false;
+  /** agent id -> a failed turn's job waiting for its one automatic retry (see autoRetry) */
+  private delayed = new Map<string, { job: Job; timer: NodeJS.Timeout; at: number }>();
+  /** automatic retries used, per (worker task | lead plan | lead review); cleared when one succeeds */
+  private retried = new Map<string, number>();
   private stopping = false;
   private waitingUser = new Set<string>();
   private readonly queryFn: typeof query;
@@ -224,7 +266,7 @@ export class ClaudeBackend implements Backend {
     this.designs = new DesignJobs({
       fm: this.fm,
       cfg: this.cfg,
-      canStart: () => !this.authFailed && !this.stopping && !this.limited(),
+      canStart: () => !this.stopping && !this.held(),
       holdForLimit: (stats) => {
         if (!this.limited()) this.setLimit(stats.rateLimit?.resetsAt, stats.rateLimit?.type);
         return this.st.limit?.until;
@@ -373,6 +415,13 @@ export class ClaudeBackend implements Backend {
       this.recover();
     }
     this.armLimitTimer();
+    // limits and reserve windows end on the wall clock: a timer alone can fire late after a sleep
+    this.wakeTimer = setInterval(() => {
+      this.liftExpired();
+      this.refreshHold();
+    }, this.opts.wakeIntervalMs ?? WAKE_INTERVAL_MS);
+    this.wakeTimer.unref?.();
+    this.refreshHold();
     this.prs.start();
     if (this.prs.active) this.fm.log.info(`PR watching: ${this.prs.mode} (every ${this.cfg.prPollSeconds}s)`);
     // plans recorded before goals carried their plan id
@@ -491,12 +540,23 @@ export class ClaudeBackend implements Backend {
       this.authFailed = false;
       this.fm.setStatus({ auth: 'ok', account, message: `Claude (lead ${this.cfg.leadModel}, workers ${this.cfg.workerModel})` });
       this.fm.log.info(`claude auth ok (${account})`);
+      if (this.offline) {
+        this.offline = undefined;
+        this.fm.bus.feed('system', 'Claude is reachable again: the team picks up where it stopped');
+      }
+      this.refreshHold();
       return true;
     } catch (e) {
+      const why = (e as Error).message ?? String(e);
+      if (probeFailure(why) === 'retry') {
+        // the network, a sleeping machine, an API outage: not a bad login. Retry with backoff.
+        this.goOffline(why);
+        return false;
+      }
       this.markAuthFailed(
         this.cfg.useClaudeLogin
-          ? `Claude login check failed: ${(e as Error).message}. Run \`claude\` and /login, then restart the Foreman. The sim backend still works.`
-          : `Claude API check failed: ${(e as Error).message}. Check ANTHROPIC_API_KEY (or your cloud provider settings), then restart the Foreman. The sim backend still works.`,
+          ? `Claude login check failed: ${why}. Run \`claude\` and /login, then restart the Foreman. The sim backend still works.`
+          : `Claude API check failed: ${why}. Check ANTHROPIC_API_KEY (or your cloud provider settings), then restart the Foreman. The sim backend still works.`,
       );
       return false;
     } finally {
@@ -510,23 +570,96 @@ export class ClaudeBackend implements Backend {
 
   private markAuthFailed(message: string): void {
     this.authFailed = true;
+    this.authMessage = message;
+    this.offline = undefined;
+    if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
+    this.authRetryTimer = undefined;
     this.fm.setStatus({ auth: 'failed', message });
     this.fm.log.error(message);
     this.fm.bus.feed('error', message);
     this.fm.notify('warn', message);
+    this.fm.notifyExternal('auth', message);
     if (process.stdout.isTTY) process.stdout.write('\x07');
+    this.refreshHold();
+  }
+
+  /** The auth probe could not reach Claude: hold new turns and probe again later (backoff). */
+  private goOffline(why: string): void {
+    const delayMs = this.offline ? Math.min(AUTH_RETRY_MAX_MS, this.offline.delayMs * 2) : (this.opts.authRetryMs ?? AUTH_RETRY_MS);
+    const first = !this.offline;
+    const retryAt = Date.now() + delayMs;
+    this.offline = { delayMs, retryAt, message: `Claude could not be reached (${truncate(why, 120)}); trying again at ${clock(retryAt)}. Work waits meanwhile.` };
+    this.fm.setStatus({ auth: 'checking', message: this.offline.message });
+    if (first) {
+      this.fm.log.warn(this.offline.message);
+      this.fm.bus.feed('error', this.offline.message);
+    } else this.fm.log.info(`claude still unreachable (${truncate(why, 120)}); next try ${clock(retryAt)}`);
+    this.refreshHold();
+    if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
+    this.authRetryTimer = setTimeout(() => {
+      this.authRetryTimer = undefined;
+      if (this.stopping) return;
+      void this.checkAuth().then((ok) => {
+        if (ok) this.tick();
+      });
+    }, delayMs);
+    this.authRetryTimer.unref?.();
+  }
+
+  /** New agent turns wait: auth failed, offline, a usage limit, or usage above the reserve. */
+  private held(now = Date.now()): boolean {
+    return this.authFailed || !!this.offline || this.limited(now) || !!this.reserved(now);
+  }
+
+  /** claude.usageReserve: the window above its reserve, while it lasts. */
+  private reserved(now = Date.now()): ReturnType<typeof reserveHold> {
+    return reserveHold(this.fm.status.usage, this.cfg.usageReserve, now);
+  }
+
+  /** What holds new turns right now (C9 foreman.status.hold), most important first. */
+  private currentHold(now = Date.now()): ForemanHold | undefined {
+    if (this.authFailed) return { reason: 'auth', message: this.authMessage || 'Claude authentication failed' };
+    if (this.offline) return { reason: 'offline', until: this.offline.retryAt, message: this.offline.message };
+    const l = this.st.limit;
+    if (l && now < l.until) return { reason: 'usage', until: l.until, message: `Usage limit reached${l.type ? ` (${l.type.replace(/_/g, ' ')})` : ''}: agents wait until ${clock(l.until)}, then resume` };
+    const r = this.reserved(now);
+    if (r) return { reason: 'usage', until: r.until, message: `Usage ${r.window.label} at ${r.window.pct}% (reserve ${r.limit}%): no new agent turns until ${clock(r.until)}, so some is left for you` };
+    return undefined;
+  }
+
+  /**
+   * Publish the hold (foreman.status.hold) and react to it changing: the reserve is announced once
+   * when it starts holding; when nothing holds any more, queued work starts.
+   */
+  private refreshHold(now = Date.now()): void {
+    const hold = this.currentHold(now);
+    const before = this.fm.status.hold;
+    const reserve = !!this.reserved(now) && !this.limited(now) && !this.authFailed && !this.offline;
+    if (reserve && !this.reserveActive && hold) {
+      this.fm.bus.feed('system', `${hold.message}.`);
+      this.fm.notify('warn', hold.message);
+      this.fm.notifyExternal('usage', hold.message);
+    }
+    this.reserveActive = reserve;
+    if (JSON.stringify(hold) === JSON.stringify(before)) return;
+    this.fm.setStatus({ hold });
+    if (before && !hold && !this.stopping) {
+      for (const id of this.queues.keys()) this.pump(id);
+      this.tick();
+    }
   }
 
   /** An agent's own open question (the PR watcher's decisions to the user are not the agent's). */
   private openQuestion(agentId: string): Decision | undefined {
-    return this.fm.decisions.open().find((d) => d.kind === 'question' && d.agentId === agentId && !this.prs.owns(d.id));
+    return this.fm.decisions.open().find((d) => d.kind === 'question' && d.agentId === agentId && !this.prs.owns(d.id) && !this.fm.ownsDecision(d.id));
   }
 
   /** A job matching `pred` is queued, running or paused (waiting for /resume) for this agent. */
   private hasQueued(agentId: string, pred: (j: Job) => boolean): boolean {
     const running = this.running.get(agentId);
     const paused = this.pausedJobs.get(agentId);
-    return (this.queues.get(agentId) ?? []).some(pred) || (running ? pred(running.job) : false) || (paused ? pred(paused) : false);
+    const later = this.delayed.get(agentId)?.job;
+    return (this.queues.get(agentId) ?? []).some(pred) || (running ? pred(running.job) : false) || (paused ? pred(paused) : false) || (later ? pred(later) : false);
   }
 
   /**
@@ -570,7 +703,10 @@ export class ClaudeBackend implements Backend {
     // goals still planning with nobody planning them
     for (const g of this.fm.goals().filter((x) => x.status === 'planning')) {
       const lead = this.fm.leadOf(g);
-      const leadOnIt = st.inflight[lead]?.goalId === g.id || this.hasQueued(lead, (j) => j.goalId === g.id) || this.openQuestion(lead) !== undefined;
+      // (another lead's plan for it still running or waiting, e.g. the goal moved to a new building's
+      // lead mid-plan: that plan settles the goal, no second one)
+      const otherPlanning = this.leadsOnDuty().some((l) => l !== lead && ((st.inflight[l]?.goalId === g.id && st.inflight[l]?.kind === 'plan') || this.hasQueued(l, (j) => j.goalId === g.id && j.kind === 'plan')));
+      const leadOnIt = otherPlanning || st.inflight[lead]?.goalId === g.id || this.hasQueued(lead, (j) => j.goalId === g.id) || this.openQuestion(lead) !== undefined;
       if (leadOnIt || this.isStopped(lead)) continue;
       if (this.fm.tasks.forGoal(g.id).length) this.promoteGoal(g, 'recovered');
       else {
@@ -611,6 +747,10 @@ export class ClaudeBackend implements Backend {
     if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.limitTimer) clearTimeout(this.limitTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
+    if (this.wakeTimer) clearInterval(this.wakeTimer);
+    for (const d of this.delayed.values()) clearTimeout(d.timer);
+    this.delayed.clear();
     const turns = [...this.running.values()];
     for (const r of turns) this.abortTurn(r, 'shutdown');
     const designs = this.designs.stop();
@@ -739,6 +879,7 @@ export class ClaudeBackend implements Backend {
     this.fm.setStatus({ usage: u });
     const now = usageLine(u);
     if (now !== before) this.fm.log.info(`plan usage: ${now}`);
+    this.refreshHold();
   }
 
   /** At most every few minutes, while some agent has a live session: the CLI's /usage windows. */
@@ -762,8 +903,10 @@ export class ClaudeBackend implements Backend {
     if (!prev || Date.now() >= prev.until) {
       this.fm.bus.feed('error', `${what}. Nobody starts a new turn until ${clock(until)}; interrupted work resumes then.`);
       this.fm.notify('warn', `${what}: AgentCraft resumes at ${clock(until)}`);
+      this.fm.notifyExternal('usage', `${what}: agents resume at ${clock(until)}`);
     }
     this.armLimitTimer();
+    this.refreshHold();
   }
 
   /** Wake up when the earliest limit/throttle window ends. */
@@ -804,6 +947,7 @@ export class ClaudeBackend implements Backend {
       this.fm.store.markDirty();
       this.tick();
     }
+    this.refreshHold(now);
   }
 
   /**
@@ -909,12 +1053,12 @@ export class ClaudeBackend implements Backend {
   private isFree(w: string): boolean {
     const a = this.fm.agent(w);
     if (!a || !a.active || a.paused || this.isStopped(w) || !this.team.includes(w)) return false;
-    if (this.running.has(w) || (this.queues.get(w)?.length ?? 0) > 0) return false;
+    if (this.running.has(w) || this.delayed.has(w) || (this.queues.get(w)?.length ?? 0) > 0) return false;
     return !this.fm.tasks.list().some((t) => t.assignee === w && t.status === 'doing');
   }
 
   private async schedule(): Promise<void> {
-    if (this.authFailed || this.stopping || this.limited()) return;
+    if (this.stopping || this.held()) return;
     // the design queue first: the goal loop below returns early when the workers are at the cap
     this.designs.kick();
     for (const goal of this.fm.goals().filter((g) => g.status === 'active')) {
@@ -990,7 +1134,7 @@ export class ClaudeBackend implements Backend {
   }
 
   private pump(agentId: string): void {
-    if (this.stopping || this.authFailed || this.limited()) return;
+    if (this.stopping || this.held()) return;
     if (this.running.has(agentId)) return;
     const a = this.fm.agent(agentId);
     if (!a || a.paused || !a.active || this.isStopped(agentId)) return;
@@ -1177,7 +1321,7 @@ export class ClaudeBackend implements Backend {
    * Permission mode, tools, guardrail hook and the user's rules for one turn (claude.permissions,
    * claude.subagents). Policy mode keeps upstream's behaviour: every call through canUseTool.
    */
-  private permissionOptions(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle, repoId?: string): Partial<Options> {
+  private permissionOptions(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle, repoId?: string, mcpServers?: string[]): Partial<Options> {
     const p = this.cfg.permissions;
     const sub = this.subagentsOn(repoId);
     const settings = repoId ? this.fm.repos.settingsFor(repoId) : {};
@@ -1189,7 +1333,7 @@ export class ClaudeBackend implements Backend {
     if (sub) tools.push('Agent', 'Task');
     if (this.skillsPlugin) tools.push('Skill');
     const disallowed = ['Bash(git push:*)', ...(sub ? [] : ['Task', 'Agent']), ...(p.webTools ? [] : ['WebSearch', 'WebFetch'])];
-    const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : undefined;
+    const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : {};
     const connectors = this.cfg.context.connectors;
     // the Foreman's own files, token and port: denied before anything else, whatever the rules
     const hooks: HookCallbackMatcher[] = [
@@ -1202,7 +1346,15 @@ export class ClaudeBackend implements Backend {
         ],
       },
     ];
-    if (connectors.length) hooks.push({ hooks: [connectorHook(connectors, (tool, server) => this.fm.agentLog(agentId, 'error', `blocked ${tool}: connector "${server}" is not enabled`))] });
+    // MCP tools: only the Foreman's own servers and the connectors listed, fail-closed (every turn)
+    hooks.push({
+      hooks: [
+        connectorHook(
+          () => ({ connectors: mcpServers ? [] : this.cfg.context.connectors, servers: mcpServers ?? [MCP_SERVER, ...Object.keys(this.cfg.context.mcpServers)] }),
+          (tool, server) => this.fm.agentLog(agentId, 'error', `blocked ${tool}: MCP server "${server}" is not enabled for agents`),
+        ),
+      ],
+    });
     if (p.mode === 'auto') {
       const guard = guardrailHook(
         (tool, input) => classifyToolUse(tool, input, this.policyContext(agentId, role, cwd, repoId)),
@@ -1217,7 +1369,9 @@ export class ClaudeBackend implements Backend {
       canUseTool: this.canUseTool(agentId, role, cwd, turn, repoId),
       tools,
       disallowedTools: disallowed,
-      ...(rules ? { settings: rules } : {}),
+      // no Claude attribution in anything an agent commits or writes for a PR (C8); the object form
+      // of `attribution` (older CLIs reject a boolean there), plus the deprecated switch
+      settings: { ...rules, ...NO_ATTRIBUTION },
       ...(sub && Object.keys(defs).length ? { agents: defs } : {}),
       // claude.ai connectors: none unless listed (strict), listed ones only (hook)
       strictMcpConfig: connectors.length === 0,
@@ -1246,7 +1400,21 @@ export class ClaudeBackend implements Backend {
       const roleDir = cwd;
       const roleOf = (id: string) => this.repoRole(id, repoId, roleDir);
       const session = this.fm.store.data.sessions[job.sessionKey];
-      const resume = !job.fresh && session?.sessionId ? session.sessionId : undefined;
+      let resume = !job.fresh && session?.sessionId ? session.sessionId : undefined;
+      // a lead's long-lived session for a goal: start over once it is old or long (seeded below).
+      // Never for a job that continues the session's own work (restart, usage limit, pause, retry,
+      // an answer after a restart): its prompt only means something inside that session.
+      let rotated = '';
+      if (resume && role === 'lead' && session && !job.resumed) {
+        session.startedAt ??= Date.now();
+        const why = rotationDue(session, this.cfg.leadSession);
+        if (why) {
+          resume = undefined;
+          rotated = this.rotationSeed(job, why);
+          this.fm.log.info(`${agentId}: fresh session for ${job.sessionKey} (the last one is ${why})`);
+          this.fm.agentLog(agentId, 'text', `Starting a fresh session for ${job.goalId ?? 'this work'} (the last one is ${why}); seeded with the plan, the board and the latest messages`);
+        }
+      }
       this.st.inflight[agentId] = { kind: job.kind, sessionKey: job.sessionKey, startedAt: Date.now(), ...(job.taskId ? { taskId: job.taskId } : {}), ...(job.goalId ? { goalId: job.goalId } : {}) };
       this.fm.store.markDirty();
 
@@ -1294,7 +1462,7 @@ export class ClaudeBackend implements Backend {
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
         abortController: abort,
         // the repository's env (e.g. a PATH for its Node version) on top; GIT_* never comes from it
-        env: scrubEnv({ ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) }),
+        env: scrubEnv(withAuthMode({ ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) }, this.cfg.useClaudeLogin)),
         // we spawn the CLI ourselves (same as the SDK's local spawn) so its pid is known: a stopped
         // turn's whole process tree can then be ended before its worktree is handed on
         spawnClaudeCodeProcess: this.spawner(entry, agentId),
@@ -1312,7 +1480,7 @@ export class ClaudeBackend implements Backend {
       const unread = this.fm.bus.inbox(agentId, { markRead: true });
       // a goal another lead worked on before: what this lead takes over
       const takeover = role === 'lead' ? this.takeoverNote(agentId, job.goalId) : '';
-      const withSetup = [setupNote, takeover, job.prompt].filter(Boolean).join('\n\n');
+      const withSetup = [setupNote, takeover, rotated, job.prompt].filter(Boolean).join('\n\n');
       const prompt = unread.length ? `${withSetup}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : withSetup;
       try {
         const q = this.queryFn({ prompt, options });
@@ -1348,7 +1516,7 @@ export class ClaudeBackend implements Backend {
         const msg = (e as Error).message ?? String(e);
         this.fm.log.error(`${agentId} ${job.kind} failed: ${msg}`);
         this.fm.agentLog(agentId, 'error', `session error: ${truncate(msg, 400)}`);
-        if (/auth|login|credential|401/i.test(msg)) this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
+        if (isAuthText(msg)) this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
         stats = { isError: true, errors: [msg] };
         const l = limitFromText(msg);
         if (l.limited) {
@@ -1404,7 +1572,8 @@ export class ClaudeBackend implements Backend {
    * agentcraft tool call, or while it was off shift): start a follow-up turn for them.
    */
   private deliverPending(agentId: string): void {
-    if (this.stopping || this.isStopped(agentId) || this.running.has(agentId) || this.pausedJobs.has(agentId) || (this.queues.get(agentId)?.length ?? 0) > 0) return;
+    // (a retry waiting for its time takes the unread messages along with its prompt)
+    if (this.stopping || this.isStopped(agentId) || this.running.has(agentId) || this.pausedJobs.has(agentId) || this.delayed.has(agentId) || (this.queues.get(agentId)?.length ?? 0) > 0) return;
     const a = this.fm.agent(agentId);
     if (!a?.active || a.paused) return;
     const fromUser = this.fm.bus.inbox(agentId).filter((m) => m.from === 'user' && m.to === agentId);
@@ -1415,22 +1584,53 @@ export class ClaudeBackend implements Backend {
 
   private recordSession(key: string, sessionId: string, model: string, stats?: TurnStats): void {
     const s = (this.fm.store.data.sessions[key] ??= { turns: 0, costUsd: 0, updatedAt: Date.now() });
-    s.sessionId = sessionId;
+    if (s.sessionId !== sessionId) {
+      // a new session under this key (fresh plan, rotation): the earlier sessions' spend is kept
+      if (s.sessionId) s.baseCostUsd = s.costUsd;
+      s.sessionId = sessionId;
+      s.startedAt = Date.now();
+      s.sessionTurns = 0;
+      s.sessionCostUsd = 0;
+    }
     s.model = model;
     s.updatedAt = Date.now();
     if (stats) {
       s.turns += stats.numTurns ?? 0;
+      s.sessionTurns = (s.sessionTurns ?? 0) + 1;
       if (typeof stats.costUsd === 'number') {
-        // total_cost_usd is cumulative per session (resumes continue from the saved total)
-        const prev = this.lastCost.get(sessionId) ?? s.costUsd;
+        // total_cost_usd is cumulative per session (resumes continue from the saved total); records
+        // from before rotation have no sessionCostUsd: their costUsd is that session's total
+        const sessionSoFar = s.sessionCostUsd ?? s.costUsd - (s.baseCostUsd ?? 0);
+        const prev = this.lastCost.get(sessionId) ?? sessionSoFar;
         const delta = Math.max(0, stats.costUsd - prev);
         this.lastCost.set(sessionId, stats.costUsd);
-        s.costUsd = Math.max(s.costUsd, stats.costUsd);
+        s.sessionCostUsd = Math.max(sessionSoFar, stats.costUsd);
+        s.costUsd = (s.baseCostUsd ?? 0) + s.sessionCostUsd;
         this.fm.setStatus({ costUsd: Math.round(((this.fm.status.costUsd ?? 0) + delta) * 1000) / 1000 });
       }
       s.lastResult = stats.subtype;
     }
     this.fm.store.markDirty();
+  }
+
+  /**
+   * What a lead's fresh session (rotation) starts from: the goal's plan note, its task board and the
+   * last messages of its thread. The earlier session is not available to it any more.
+   */
+  private rotationSeed(job: Job, why: string): string {
+    const goal = job.goalId ? this.fm.goal(job.goalId) : undefined;
+    const thread = this.fm.store.data.messages
+      .filter((m) => (goal ? m.goalId === goal.id : true) && (m.from === job.agentId || m.to === job.agentId))
+      .slice(-6)
+      .map((m) => `- ${m.from === 'user' ? userName() : this.fm.nameOf(m.from)} -> ${m.to === 'user' ? userName() : this.fm.nameOf(m.to)}: ${truncate(m.text.replace(/\s+/g, ' '), 400)}`);
+    return [
+      `(This is a fresh session${goal ? ` for goal ${goal.id} "${truncate(goal.text.replace(/\s+/g, ' '), 160)}"` : ''}: the previous one was ${why}, so it was retired. Below is what carries over; read anything else from the task board, shared memory and the repositories.)`,
+      goal ? `# The plan (shared memory)\n${planText(this.fm, goal, this.planIdOf(goal.id))}` : '',
+      `# Task board${goal ? ' for the goal' : ''}\n${boardSummary(this.fm, goal?.id)}`,
+      thread.length ? `# Latest messages\n${thread.join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   /** The CLI is spawned by us (same as the SDK's local spawn) so its pid is known: an aborted turn's whole process tree can be ended. */
@@ -1484,7 +1684,7 @@ export class ClaudeBackend implements Backend {
   private async doAuxTurn(spec: AuxTurnSpec, entry: Running): Promise<{ stats: TurnStats; reason?: AbortReason }> {
     const { logId, cwd } = spec;
     const turn: TurnHandle = { signal: entry.abort.signal, reason: () => entry.reason };
-    const { agents: _subagents, ...perm } = this.permissionOptions(logId, 'worker', cwd, turn);
+    const { agents: _subagents, ...perm } = this.permissionOptions(logId, 'worker', cwd, turn, undefined, Object.keys(spec.mcpServers));
     const off = new Set(['Agent', 'Task', 'WebFetch', 'WebSearch', 'Skill']);
     const options: Options = {
       cwd,
@@ -1545,7 +1745,7 @@ export class ClaudeBackend implements Backend {
         const msg = (e as Error).message ?? String(e);
         this.fm.log.error(`${logId} ${spec.sessionKey} failed: ${msg}`);
         this.fm.agentLog(logId, 'error', `session error: ${truncate(msg, 400)}`);
-        if (/auth|login|credential|401/i.test(msg)) {
+        if (isAuthText(msg)) {
           stats.authFailed = truncate(msg, 160);
           this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
         }
@@ -1584,10 +1784,98 @@ export class ClaudeBackend implements Backend {
     return truncate(stats?.subtype && stats.subtype !== 'success' ? stats.subtype.replace(/^error_/, '').replace(/_/g, ' ') : (stats?.errors[0] ?? 'error'), 36);
   }
 
+  /** Which automatic-retry budget a job uses (one retry per worker task, lead plan, lead review). */
+  private retryKey(job: Job): string {
+    if (job.kind === 'plan') return `plan:${job.goalId}`;
+    if (job.kind === 'review') return `review:${job.taskId}`;
+    if (!this.fm.isLead(job.agentId) && job.taskId) return `work:${job.taskId}`;
+    return `${job.kind}:${job.agentId}:${job.taskId ?? job.goalId ?? ''}`;
+  }
+
+  /**
+   * A turn failed for a passing reason (network, sleep, an overloaded API, its step or time limit,
+   * a too-long prompt), or a lead's plan / review failed at all: run the same job once more, after
+   * a pause (2-5 min), resuming its session (a too-long prompt: a fresh session with the original
+   * prompt). Never for auth, usage limits, the per-turn budget or billing. Returns false when no
+   * retry is due (the caller blocks / fails as before). The task or goal stays where it is meanwhile,
+   * so a restart picks it up the normal way.
+   */
+  private autoRetry(job: Job, stats: TurnStats | undefined, what: string): boolean {
+    if (this.stopping) return false;
+    const kind = classifyFailure(stats, { timedOut: stats?.subtype === 'timeout' });
+    const lead = this.fm.isLead(job.agentId);
+    const retryable = kind === 'transient' || kind === 'context' || (kind === 'fatal' && lead && (job.kind === 'plan' || job.kind === 'review'));
+    if (!retryable) return false;
+    const key = this.retryKey(job);
+    const used = this.retried.get(key) ?? 0;
+    if (used >= 1) return false;
+    this.retried.set(key, used + 1);
+    const why = this.failure(stats);
+    const hasSession = !!this.fm.store.data.sessions[job.sessionKey]?.sessionId;
+    const fresh = kind === 'context' || !hasSession;
+    const next: Job = fresh
+      ? { ...job, fresh: true, resumed: true, prompt: `${kind === 'context' ? 'Your previous session for this job ran out of room (the prompt grew too long), so this is a fresh one. Re-check where things stand (the task board; workers: git status and git log in your worktree) before you continue.\n\n' : ''}${job.prompt}` }
+      : { ...job, fresh: false, resumed: true, prompt: `Your last turn ended early (${why}). Re-check where you were (${lead ? 'the task board' : 'your worktree and the task board'}) and continue your current job.` };
+    const delay = this.opts.transientRetryMs ?? 2 * 60_000 + Math.floor(Math.random() * 3 * 60_000);
+    const at = Date.now() + delay;
+    const name = this.fm.nameOf(job.agentId);
+    this.fm.setAgent(job.agentId, { state: 'blocked', activity: `${what}: ${why} - retrying ${clock(at)}` });
+    this.fm.agentLog(job.agentId, 'error', `${what} ended early (${why}); one automatic retry at ${clock(at)}`);
+    this.fm.bus.feed('system', `${name}'s ${what} ended early (${why}); trying again at ${clock(at)}`, { agentId: job.agentId, ...(job.taskId ? { taskId: job.taskId } : {}), ...(job.goalId ? { goalId: job.goalId } : {}) });
+    const prev = this.delayed.get(job.agentId);
+    if (prev) clearTimeout(prev.timer);
+    const timer = setTimeout(() => {
+      this.delayed.delete(job.agentId);
+      if (this.stopping || !this.stillDue(next)) {
+        this.fm.log.info(`automatic retry of ${job.agentId}'s ${job.kind} dropped (no longer due)`);
+        return;
+      }
+      if (this.fm.agent(job.agentId)?.paused) {
+        this.pausedJobs.set(job.agentId, next);
+        return;
+      }
+      this.enqueue(next);
+    }, delay);
+    timer.unref?.();
+    this.delayed.set(job.agentId, { job: next, timer, at });
+    return true;
+  }
+
+  /** A delayed retry still makes sense: same agent on the same task / goal, in the same state. */
+  private stillDue(job: Job): boolean {
+    if (this.isStopped(job.agentId) || !this.fm.agent(job.agentId)) return false;
+    if (job.kind === 'plan') {
+      const g = job.goalId ? this.fm.goal(job.goalId) : undefined;
+      return !!g && g.status === 'planning' && this.fm.leadOf(g) === job.agentId && !this.fm.tasks.forGoal(g.id).length;
+    }
+    if (job.kind === 'review') {
+      const t = job.taskId ? this.fm.tasks.get(job.taskId) : undefined;
+      return !!t && t.status === 'review' && this.fm.leadOfTask(t) === job.agentId && !this.fm.decisions.open().some((d) => d.kind === 'merge' && d.taskId === t.id);
+    }
+    if (job.taskId && !this.fm.isLead(job.agentId)) {
+      const t = this.fm.tasks.get(job.taskId);
+      return !!t && t.status === 'doing' && t.assignee === job.agentId;
+    }
+    return true;
+  }
+
+  /** Drop delayed retries matching `pred` (cancel, stop, reassign, goal.cancel). */
+  private dropDelayed(pred: (agentId: string, job: Job) => boolean): void {
+    for (const [id, d] of [...this.delayed]) {
+      if (!pred(id, d.job)) continue;
+      clearTimeout(d.timer);
+      this.delayed.delete(id);
+    }
+  }
+
   private async afterTurn(job: Job, stats: TurnStats | undefined): Promise<void> {
     const failed = !stats || stats.isError;
+    if (!failed) this.retried.delete(this.retryKey(job));
     if (this.fm.isLead(job.agentId)) {
       const lead = job.agentId;
+      // a lead's follow-up (a goal message, an answer, a user message) that failed for a passing
+      // reason: one automatic resume, like a worker's turn (plans and reviews: below)
+      if (failed && job.kind === 'followup' && this.autoRetry(job, stats, 'turn')) return;
       this.fm.setAgent(lead, failed ? { state: 'error', station: 'meeting', activity: `turn failed: ${this.failure(stats)}` } : { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
       if (job.goalReply && job.goalId && !failed) this.replyToGoal(lead, job, stats);
       // any lead turn for a goal that is still planning (plan, or a plan resumed after a
@@ -1596,7 +1884,9 @@ export class ClaudeBackend implements Backend {
       if (goal && goal.status === 'planning') {
         const n = this.fm.tasks.forGoal(goal.id).length;
         if (n > 0) this.promoteGoal(goal, 'planned');
-        else if (failed) {
+        else if (failed && job.kind === 'plan' && this.autoRetry(job, stats, 'planning turn')) {
+          // tried once more after a pause; the goal stays planning meanwhile
+        } else if (failed) {
           this.fm.setGoal(goal.id, { status: 'failed' });
           this.fm.bus.feed('error', `${this.fm.nameOf(lead)}'s planning turn ended without tasks${stats?.errors.length ? `: ${stats.errors.join('; ')}` : ''}`, { agentId: lead, goalId: goal.id });
         } else if (job.kind === 'plan') {
@@ -1611,6 +1901,8 @@ export class ClaudeBackend implements Backend {
         const t = this.fm.tasks.get(job.taskId);
         const hasDecision = this.fm.decisions.open().some((d) => d.kind === 'merge' && d.taskId === job.taskId);
         if (t && t.status === 'review' && !hasDecision) {
+          // a failed review is tried once more before the merge goes to the user without a verdict
+          if (failed && this.autoRetry(job, stats, `review of ${t.id}`)) return;
           // lead gave no verdict: still surface the merge to the user (never auto-merge)
           this.openMergeDecision(t, `${this.fm.nameOf(lead)}'s review: ${truncate(stats?.resultText ?? '(no verdict)', 300)}`);
         }
@@ -1628,6 +1920,8 @@ export class ClaudeBackend implements Backend {
       return;
     }
     if (t.status === 'doing') {
+      // a passing failure (network, sleep, overload, step / time limit): one automatic resume first
+      if (failed && this.autoRetry(job, stats, `turn on ${t.id}`)) return;
       const nudges = job.nudges ?? 0;
       if (!failed && nudges < 1) {
         this.enqueue({ ...job, kind: 'followup', fresh: false, nudges: nudges + 1, prompt: `You ended your turn but ${t.id} is still "doing". If the work is complete, call update_task("${t.id}", status "review", summary). If you are stuck, call update_task with status "blocked" and blocked_reason. Otherwise continue.` });
@@ -1643,7 +1937,7 @@ export class ClaudeBackend implements Backend {
         // a failed turn is an error (red); a worker that gave up is blocked
         this.fm.setAgent(job.agentId, failed ? { state: 'error', station: 'desk', activity: `${t.id}: ${this.failure(stats)}` } : { state: 'blocked', station: 'desk', activity: `${t.id} blocked` });
         this.fm.bus.send(job.agentId, this.fm.leadOfTask(t), `${t.id} is blocked: ${this.fm.tasks.get(t.id)?.blockedReason}`, { taskId: t.id });
-        this.fm.notify('warn', `${this.fm.nameOf(job.agentId)}: ${t.id} ${failed ? 'failed' : 'is blocked'} (${this.fm.tasks.get(t.id)?.blockedReason ?? ''}) - /task ${t.id} retry when ready`);
+        this.fm.notify('warn', `${this.fm.nameOf(job.agentId)}: ${t.id} ${failed ? 'failed' : 'is blocked'} (${this.fm.tasks.get(t.id)?.blockedReason ?? ''}) - when ready: Retry on the task's card (task wall, or hub Goals > Tasks), or /task ${t.id} retry`);
       }
       return;
     }
@@ -1832,12 +2126,12 @@ export class ClaudeBackend implements Backend {
     if (!a) return;
     if (this.isStopped(id)) {
       // stays unread; delivered when the user resumes the agent (deliverPending)
-      this.fm.bus.send(id, 'user', `(${this.fm.nameOf(id)} is off shift - /resume @${id} to bring them back; your message is queued.)`);
+      this.fm.bus.send(id, 'user', `(${this.fm.nameOf(id)} is off shift - bring them back with Spawn on their agent card (hub Team tab), or /resume @${id}; your message is queued.)`);
       return;
     }
     // in a turn: delivered with its next agentcraft tool result, or right after the turn ends
     // (deliverPending). Paused mid-turn: delivered with the resumed job's prompt.
-    if (this.running.has(id) || this.pausedJobs.has(id)) return;
+    if (this.running.has(id) || this.pausedJobs.has(id) || this.delayed.has(id)) return;
     // every unread message from the user to this agent goes into one follow-up
     const mine = this.fm.bus.inbox(id).filter((m) => m.from === 'user' && (m.to === id || (to === 'all' && m.to === 'all')));
     const body = mine.length ? mine.map((m) => m.text).join('\n\n') : text;
@@ -1878,7 +2172,7 @@ export class ClaudeBackend implements Backend {
   onGoalMessage(goal: Goal, leadId: string): void {
     if (this.isStopped(leadId)) {
       // stays unread: queued again when the lead is resumed
-      this.fm.bus.send(leadId, 'user', `(${this.fm.nameOf(leadId)} is off shift - /resume @${leadId} to bring them back; your message about ${goal.id} is queued.)`, { goalId: goal.id });
+      this.fm.bus.send(leadId, 'user', `(${this.fm.nameOf(leadId)} is off shift - bring them back with Spawn on their agent card (hub Team tab), or /resume @${leadId}; your message about ${goal.id} is queued.)`, { goalId: goal.id });
       return;
     }
     this.enqueueGoalMessage(leadId, goal.id);
@@ -1931,6 +2225,7 @@ export class ClaudeBackend implements Backend {
     for (const [id, r] of this.running) if (this.fm.isLead(id) && mine(r.job)) this.abortTurn(r, 'cancel');
     for (const [id, q] of this.queues) if (this.fm.isLead(id)) this.queues.set(id, q.filter((j) => !mine(j)));
     for (const [id, j] of this.pausedJobs) if (mine(j)) this.pausedJobs.delete(id);
+    this.dropDelayed((id, j) => this.fm.isLead(id) && mine(j));
     for (const [id, inf] of Object.entries(this.st.inflight)) if (inf.goalId === goal.id && (inf.kind === 'plan' || inf.kind === 'review' || inf.kind === 'triage') && !this.running.has(id)) delete this.st.inflight[id];
     this.fm.store.markDirty();
     this.tick();
@@ -2009,6 +2304,7 @@ export class ClaudeBackend implements Backend {
         if (r.job.taskId === task.id && !this.fm.isLead(id) && (action === 'cancel' || task.assignee !== id)) this.abortTurn(r, 'cancel');
       }
       for (const [id, q] of this.queues) this.queues.set(id, q.filter((j) => j.taskId !== task.id || (action === 'reassign' && task.assignee === id)));
+      this.dropDelayed((id, j) => j.taskId === task.id && (action === 'cancel' || task.assignee !== id || this.fm.isLead(id)));
       // reassigned: the new worker continues from the old worker's branch once that turn is over
       if (action === 'reassign' && task.repoId && task.worktree) {
         const wt = this.fm.repos.findWorktree(task.repoId, task.worktree);
@@ -2020,7 +2316,7 @@ export class ClaudeBackend implements Backend {
 
   /** Withdraw an agent's open questions and permission prompts (not merge decisions: those are the user's). */
   private withdrawDecisions(agentId: string, why: string): void {
-    for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge' && !this.prs.owns(x.id))) this.fm.decisions.cancel(d.id, why);
+    for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge' && !this.prs.owns(x.id) && !this.fm.ownsDecision(x.id))) this.fm.decisions.cancel(d.id, why);
   }
 
   /**
@@ -2040,6 +2336,12 @@ export class ClaudeBackend implements Backend {
     const name = this.fm.nameOf(agentId);
     if (action === 'pause') {
       if (r) this.abortTurn(r, 'pause');
+      // a retry waiting for its time: held until the resume
+      const later = this.delayed.get(agentId);
+      if (later) {
+        this.dropDelayed((id) => id === agentId);
+        this.pausedJobs.set(agentId, later.job);
+      }
       this.fm.setAgent(agentId, { state: 'idle', activity: 'paused' });
     } else if (action === 'resume' || action === 'spawn') {
       const wasStopped = this.isStopped(agentId);
@@ -2062,6 +2364,7 @@ export class ClaudeBackend implements Backend {
       if (r) this.abortTurn(r, 'stop');
       this.queues.delete(agentId);
       this.pausedJobs.delete(agentId);
+      this.dropDelayed((id) => id === agentId);
       delete this.st.inflight[agentId];
       this.withdrawDecisions(agentId, `${name} was stopped`);
       if (!this.fm.isLead(agentId)) {
@@ -2090,6 +2393,33 @@ export class ClaudeBackend implements Backend {
   }
 
   /**
+   * Open goals moved to `leadId` (its building has their repository, C3). Work the previous lead had
+   * QUEUED for them (reviews, triage) is dropped and picked up again for the new lead (sweepReviews,
+   * PR triage); a turn already running finishes (its plan still settles the goal). The new lead's
+   * first turn on each gets the takeover note.
+   */
+  onGoalsAdopted(leadId: string, goals: Goal[], from: Record<string, string>): void {
+    const ids = new Set(goals.map((g) => g.id));
+    const mine = (j: Job) => !!j.goalId && ids.has(j.goalId) && (j.kind === 'review' || j.kind === 'triage');
+    for (const prev of new Set(Object.values(from))) {
+      if (prev === leadId) continue;
+      const q = this.queues.get(prev);
+      if (q) this.queues.set(prev, q.filter((j) => !mine(j)));
+      const p = this.pausedJobs.get(prev);
+      if (p && mine(p)) this.pausedJobs.delete(prev);
+      this.dropDelayed((id, j) => id === prev && mine(j));
+    }
+    if (this.stopping || this.authFailed) return;
+    this.reconcile();
+    for (const t of this.prs.watched()) {
+      if (!t.goalId || !ids.has(t.goalId)) continue;
+      const items = this.prs.pendingItems(t.id);
+      if (items.length && !this.triaging(t.id)) void this.enqueueTriage(t.id, items);
+    }
+    this.tick();
+  }
+
+  /**
    * A building lead was released: its turn ends and nothing more of it runs. Its goals are marlow's
    * now (the Foreman moved them): planning goals are planned again, finished tasks reviewed and
    * pending PR triage offered to marlow; marlow's first turn on each gets the takeover note.
@@ -2099,6 +2429,7 @@ export class ClaudeBackend implements Backend {
     if (r) this.abortTurn(r, 'stop');
     this.queues.delete(leadId);
     this.pausedJobs.delete(leadId);
+    this.dropDelayed((id) => id === leadId);
     this.waitingUser.delete(leadId);
     delete this.st.inflight[leadId];
     this.fm.store.markDirty();

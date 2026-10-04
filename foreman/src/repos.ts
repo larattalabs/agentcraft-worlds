@@ -28,6 +28,9 @@ import { openPullRequest, parseRemote, type PrHost } from './prs.js';
 import { run, runShell } from './util/proc.js';
 import { slugify, tailLines } from './util/text.js';
 
+/** How long a test (CI) run may take unless repoSettings.ciTimeoutMs says otherwise. */
+export const DEFAULT_CI_TIMEOUT_MS = 300_000;
+
 export class RepoError extends Error {
   constructor(
     message: string,
@@ -761,8 +764,8 @@ export class RepoManager {
       if (s.pr?.squash) {
         const tree = mt.stdout.trim().split('\n')[0]!.trim();
         const baseSha = await gitOut(r.path, ['rev-parse', baseRef]);
-        const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseRef}..${branchRef}`])).split('\n').filter(Boolean))];
-        const msg = `${(opts.title ?? opts.commitMessage ?? w.taskId ?? w.id).trim()}${opts.description ? `\n\n${opts.description.trim()}` : ''}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
+        // the user's own commit: no co-author trailers, no tool attribution (C8)
+        const msg = `${(opts.title ?? opts.commitMessage ?? w.taskId ?? w.id).trim()}${opts.description ? `\n\n${opts.description.trim()}` : ''}`;
         const { env } = await userIdentity(r.path);
         src = await gitOut(r.path, ['commit-tree', tree, '-p', baseSha, '-m', msg], { env });
       }
@@ -793,9 +796,7 @@ export class RepoManager {
         if (mt.code !== 0) throw new RepoError(`merge-tree failed: ${mt.stderr.trim()}`, 'failed');
         const tree = mt.stdout.trim().split('\n')[0]!.trim();
         if (tree === (await gitOut(r.path, ['rev-parse', `${pushed}^{tree}`]))) throw new RepoError(`${w.branch} has nothing new for the pull request`, 'empty');
-        const range = known ? `${prevTip}..${branchRef}` : `${onto}..${branchRef}`;
-        const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', range])).split('\n').filter(Boolean))];
-        const msg = `${(opts.commitMessage ?? 'Address review feedback').trim()}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
+        const msg = (opts.commitMessage ?? 'Address review feedback').trim();
         const { env } = await userIdentity(r.path);
         src = await gitOut(r.path, ['commit-tree', tree, '-p', pushed, '-m', msg], { env });
       }
@@ -809,6 +810,9 @@ export class RepoManager {
     if (push.code !== 0) throw new RepoError(`push to ${remote}/${remoteBranch} failed: ${(push.stderr || push.stdout).trim().split('\n').slice(-2).join(' ')}`, 'refused');
     meta.prBranch = remoteBranch;
     meta.prPushedSha = await gitOut(r.path, ['rev-parse', src]);
+    // persisted now: a crash before the bookkeeping below must not forget what is on the remote
+    // (the next push's lease and the PR watcher's "is it still ours" check rely on it)
+    this.ctx.store.markDirty();
 
     // 4. the pull request (once; later approvals update the same branch)
     const updated = !!meta.prUrl;
@@ -832,6 +836,7 @@ export class RepoManager {
     }
     w.status = 'merged';
     this.ctx.store.markDirty();
+    this.viewFresh.delete(r.id);
     await this.removeWorktreeDir(r, w);
     await this.refresh(r.id);
     return { ...(meta.prUrl ? { url: meta.prUrl } : {}), remoteBranch, base: target, branch: w.branch, updated, sha: meta.prPushedSha };
@@ -866,13 +871,9 @@ export class RepoManager {
     const baseSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.base}`]);
     const branchSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.branch}`]);
     const tree = (await gitOut(r.path, ['merge-tree', '--write-tree', '--no-messages', w.base, w.branch])).split('\n')[0]!.trim();
-    const approved = `Approved in AgentCraft (decision ${decision.id}${w.taskId ? `, task ${w.taskId}` : ''}).`;
+    // the user's own commit (they approved it): no co-author trailers and no tool attribution (C8)
     const squash = (style ?? this.opts.mergeStyle) === 'squash';
-    let msg: string;
-    if (squash) {
-      const authors = [...new Set((await gitOut(r.path, ['log', '--format=%an <%ae>', `${baseSha}..${branchSha}`])).split('\n').filter(Boolean))];
-      msg = `${(commitMessage ?? `agentcraft: ${w.taskId ?? w.id}`).trim()}\n\nSquashed from ${w.branch}. ${approved}${authors.length ? `\n\n${authors.map((a) => `Co-authored-by: ${a}`).join('\n')}` : ''}`;
-    } else msg = `Merge ${w.branch} into ${w.base}\n\n${approved}`;
+    const msg = squash ? (commitMessage ?? w.taskId ?? w.id).trim() : `Merge ${w.branch} into ${w.base}`;
     const sign = !!this.opts.signMerges && (await gitConfigGet(r.path, 'commit.gpgsign', 'bool')) === 'true';
     const { env } = await userIdentity(r.path);
     const parents = squash ? ['-p', baseSha] : ['-p', baseSha, '-p', branchSha];
@@ -904,6 +905,7 @@ export class RepoManager {
       mergedSha: mergeSha,
     };
     w.status = 'merged';
+    this.viewFresh.delete(r.id);
     await this.removeWorktreeDir(r, w);
     await this.refresh(r.id);
     return { sha: mergeSha.slice(0, 7), base: w.base, branch: w.branch, files };
@@ -976,6 +978,72 @@ export class RepoManager {
     return false;
   }
 
+  /**
+   * Housekeeping (cleanup.afterDays): worktrees of tasks that are done or cancelled for longer than
+   * `olderThanMs`, and their local agentcraft/* branches. Returns what it removes (or, `dryRun`,
+   * would remove). Rules: only worktrees under the worktree root and only refs/heads/agentcraft/*;
+   * nothing an open decision, a running turn (`busy`) or a still-kept worktree uses; a cancelled
+   * task's branch with commits its base does not have is kept (logged), its work is not thrown away.
+   * An active worktree is wound down the normal way first (its uncommitted work committed).
+   */
+  async sweepFinished(opts: {
+    olderThanMs: number;
+    dryRun: boolean;
+    task: (id: string) => { status: string; updatedAt: number } | undefined;
+    busy: (repoId: string, worktreeId: string) => boolean;
+  }): Promise<{ worktrees: string[]; branches: string[]; kept: string[] }> {
+    const out = { worktrees: [] as string[], branches: [] as string[], kept: [] as string[] };
+    const now = this.ctx.now();
+    for (const r of this.repos) {
+      if (!fs.existsSync(r.path)) continue;
+      const due = r.worktrees.filter((w) => {
+        const t = w.taskId ? opts.task(w.taskId) : undefined;
+        return !!t && (t.status === 'done' || t.status === 'cancelled') && now - t.updatedAt > opts.olderThanMs && !opts.busy(r.id, w.id) && isInsideOrEqual(w.path, this.worktreeRoot) && path.resolve(w.path) !== path.resolve(this.worktreeRoot);
+      });
+      if (!due.length) continue;
+      const leaving = new Set(due.map((w) => w.id));
+      // a branch still used by a worktree that stays (handed-over tasks share one) is not deleted
+      const keepBranches = new Set(r.worktrees.filter((w) => !leaving.has(w.id)).map((w) => w.branch));
+      const branches = new Map<string, { cancelled: boolean; base: string }>();
+      for (const w of due) {
+        out.worktrees.push(`${r.id}/${w.id}`);
+        const t = opts.task(w.taskId!)!;
+        if (!w.branch.startsWith(BRANCH_PREFIX) || keepBranches.has(w.branch)) continue;
+        const prev = branches.get(w.branch);
+        branches.set(w.branch, { cancelled: (prev?.cancelled ?? false) || t.status === 'cancelled', base: w.base });
+      }
+      for (const [b, info] of branches) {
+        const exists = (await git(r.path, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true })).code === 0;
+        if (!exists) continue;
+        if (info.cancelled && (await this.commitsAhead(r.id, b, info.base)) > 0) {
+          out.kept.push(`${r.id}:${b} (a cancelled task's unmerged work)`);
+          continue;
+        }
+        out.branches.push(`${r.id}:${b}`);
+      }
+      if (opts.dryRun) continue;
+      await this.serial(r.id, async () => {
+        for (const w of due) {
+          if (w.status === 'active') await this.doAbandon(r.id, w.id, `agentcraft: ${w.taskId ?? w.id} (cleanup)`).catch((e: Error) => this.ctx.log.warn(`cleanup ${w.id}: ${e.message}`));
+          if (fs.existsSync(w.path) && !(await this.removeWorktreeDir(r, w, 2))) continue;
+          r.worktrees = r.worktrees.filter((x) => x.id !== w.id);
+          delete this.ctx.store.data.worktreeMeta[`${r.id}/${w.id}`];
+        }
+        // (after the directories are gone: a branch still checked out anywhere is left alone)
+        const checkedOut = new Set((await listWorktrees(r.path)).map((e) => e.branch).filter((b): b is string => !!b));
+        for (const id of out.branches.filter((x) => x.startsWith(`${r.id}:`))) {
+          const b = id.slice(r.id.length + 1);
+          if (!b.startsWith(BRANCH_PREFIX) || checkedOut.has(b)) continue;
+          await git(r.path, ['branch', '-D', '-q', b], { allowFail: true });
+        }
+        this.ctx.store.markDirty();
+      });
+      await this.refresh(r.id).catch(() => undefined);
+      this.announce(r.id);
+    }
+    return out;
+  }
+
   /** Retry removing directories of finished worktrees that were busy before (poll timer / start). */
   async sweepPendingRemovals(): Promise<number> {
     let n = 0;
@@ -1036,16 +1104,26 @@ export class RepoManager {
 
   /** repo id -> the lead's read-only view of the base (see leadView) */
   private views = new Map<string, string>();
+  /** repo id -> what the view was last refreshed to, and when (leadView's cache) */
+  private viewFresh = new Map<string, { key: string; at: number }>();
+  /** how long a lead view counts as fresh (no fetch / checkout); merges and landings invalidate it */
+  leadViewTtlMs = 3 * 60_000;
 
   /**
    * A read-only view of the repository's base for the lead: a detached worktree at the base
    * (PR repos: the freshly fetched origin/<base>) under <worktrees>/<repo>/_lead, refreshed on every
    * call. The lead plans and reviews against what workers start from, not against the user's
    * checkout, which may be on another branch with work in progress. Nothing is ever written there.
+   * A view refreshed to the same branch within leadViewTtlMs is reused as it is (every lead turn
+   * asks for every repository's view: no fetch per turn); a merge or landing invalidates it.
    */
   leadView(repoId: string, branch?: string): Promise<string> {
     return this.serial(repoId, async () => {
       const r = this.require(repoId);
+      const fresh = this.viewFresh.get(r.id);
+      const cached = this.views.get(r.id);
+      const key = `${branch ?? ''}|${r.branch}`;
+      if (fresh && cached && fresh.key === key && this.ctx.now() - fresh.at < this.leadViewTtlMs && fs.existsSync(cached)) return cached;
       const pr = this.landsAsPr(r.id) && !branch;
       if (pr) await this.fetchBase(r);
       const sha = await gitOut(r.path, ['rev-parse', '--verify', branch ? `refs/heads/${branch}` : pr ? `refs/remotes/${this.remoteOf(r.id)}/${r.branch}` : `refs/heads/${r.branch}`]);
@@ -1061,6 +1139,7 @@ export class RepoManager {
         await git(r.path, [...lf, 'worktree', 'add', '-q', '--detach', dir, sha]);
       }
       this.views.set(r.id, dir);
+      this.viewFresh.set(r.id, { key, at: this.ctx.now() });
       return dir;
     });
   }
@@ -1111,8 +1190,8 @@ export class RepoManager {
   }
 
   /**
-   * Protected files the branch has COMMITTED changes to since its base. Uncommitted edits are fine:
-   * AgentCraft's own commits leave protected paths out (commitAll).
+   * Protected files the branch has COMMITTED changes to since its base. Uncommitted edits are left
+   * out of AgentCraft's own commits (commitAll), but they refuse landing (protectedUncommitted).
    */
   async protectedChanges(repoId: string, worktreeId: string): Promise<string[]> {
     if (!this.protectedPaths(repoId).length) return [];
@@ -1122,6 +1201,88 @@ export class RepoManager {
     if (mb.code !== 0) return [];
     const names = await gitOut(r.path, ['diff', '--name-only', '--no-renames', mb.stdout.trim(), `refs/heads/${w.branch}`]);
     return names.split('\n').filter(Boolean).filter((f) => this.isProtected(repoId, f));
+  }
+
+  /**
+   * Protected files (repoSettings.protect) with UNCOMMITTED changes in a worktree: they never land
+   * (commitAll leaves them out), although the tests ran with them. Landing is refused while there
+   * are any (Foreman.applyMergeAnswer); `dropProtectedEdits` saves and removes them.
+   */
+  async protectedUncommitted(repoId: string, worktreeId: string): Promise<string[]> {
+    if (!this.protectedPaths(repoId).length) return [];
+    const r = this.require(repoId);
+    const w = this.findWorktree(repoId, worktreeId);
+    if (!w || w.status !== 'active' || !fs.existsSync(w.path)) return [];
+    // never run git through a worktree whose .git link was changed (commitAll refuses those anyway)
+    if (!(await this.verifyWorktreeGit(r, w)).ok) return [];
+    return (await this.statusEntries(w.path)).filter((e) => this.isProtected(repoId, e.path)).map((e) => e.path);
+  }
+
+  /** `git status` entries of a worktree (renames: the new path), untracked files included. */
+  private async statusEntries(dir: string): Promise<Array<{ code: string; path: string }>> {
+    const out = (await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { allowFail: true })).stdout;
+    const parts = out.split('\0');
+    const entries: Array<{ code: string; path: string }> = [];
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]!;
+      if (p.length < 4) continue;
+      const code = p.slice(0, 2);
+      entries.push({ code, path: p.slice(3) });
+      if (code[0] === 'R' || code[0] === 'C') i++; // the source path follows
+    }
+    return entries;
+  }
+
+  /** Where dropped protected edits are saved (next to the worktrees). */
+  get protectedEditsDir(): string {
+    return path.join(path.dirname(this.worktreeRoot), 'protected-edits');
+  }
+
+  /**
+   * Remove the uncommitted edits to protected files from a worktree, after saving them under
+   * protectedEditsDir/<label>-<time>/ (changes.patch for tracked files, files/ for new ones) so they
+   * can be applied by hand. Only paths inside the worktree are touched.
+   */
+  dropProtectedEdits(repoId: string, worktreeId: string, label: string): Promise<{ dropped: string[]; saved?: string }> {
+    return this.serial(repoId, async () => {
+      const r = this.require(repoId);
+      const w = this.requireWorktree(repoId, worktreeId);
+      if (w.status !== 'active') return { dropped: [] };
+      const v = await this.verifyWorktreeGit(r, w);
+      if (!v.ok) throw new RepoError(`${TAMPERED} ${w.id}: ${v.reason}`, 'refused');
+      const entries = (await this.statusEntries(w.path)).filter((e) => this.isProtected(repoId, e.path));
+      if (!entries.length) return { dropped: [] };
+      const dir = ensureDir(path.join(this.protectedEditsDir, `${slugify(label)}-${new Date(this.ctx.now()).toISOString().replace(/[:.]/g, '-')}`));
+      const tracked = entries.filter((e) => e.code !== '??');
+      const untracked = entries.filter((e) => e.code === '??');
+      if (tracked.length) {
+        const patch = await git(w.path, ['diff', '--binary', 'HEAD', '--', ...tracked.map((e) => e.path)], { allowFail: true });
+        fs.writeFileSync(path.join(dir, 'changes.patch'), patch.stdout);
+      }
+      for (const e of untracked) {
+        const from = path.resolve(w.path, e.path);
+        if (!isInsideOrEqual(from, w.path) || !fs.existsSync(from)) continue;
+        const to = path.join(dir, 'files', e.path);
+        ensureDir(path.dirname(to));
+        fs.cpSync(from, to, { recursive: true });
+      }
+      fs.writeFileSync(path.join(dir, 'README.txt'), `Uncommitted edits to protected files of ${r.name} (repoSettings.protect), taken out of worktree ${w.id} (${w.branch}) before landing.\nchanges.patch: git apply it in your checkout; files/: new files, copy them by hand.\n${entries.map((e) => `${e.code} ${e.path}`).join('\n')}\n`);
+      for (const e of tracked) {
+        const inHead = (await git(w.path, ['cat-file', '-e', `HEAD:${e.path}`], { allowFail: true })).code === 0;
+        if (inHead) await git(w.path, ['checkout', '-q', 'HEAD', '--', e.path], { allowFail: true });
+        else {
+          await git(w.path, ['rm', '-q', '--cached', '-f', '--', e.path], { allowFail: true });
+          const abs = path.resolve(w.path, e.path);
+          if (isInsideOrEqual(abs, w.path) && abs !== path.resolve(w.path)) fs.rmSync(abs, { force: true, recursive: true });
+        }
+      }
+      for (const e of untracked) {
+        const abs = path.resolve(w.path, e.path);
+        if (isInsideOrEqual(abs, w.path) && abs !== path.resolve(w.path)) fs.rmSync(abs, { force: true, recursive: true });
+      }
+      await this.refresh(r.id).catch(() => undefined);
+      return { dropped: entries.map((e) => e.path), saved: dir };
+    });
   }
 
   /** repoSettings.env expanded against `base` (~, $VAR, ${VAR}). */
@@ -1193,9 +1354,10 @@ export class RepoManager {
     return out;
   }
 
-  /** Run the repo's test command in a worktree (or the main checkout). */
-  async runTests(repoId: string, worktreeId?: string, command?: string, timeoutMs = 300_000): Promise<TestResult> {
+  /** Run the repo's test command in a worktree (or the main checkout); timeout: repoSettings.ciTimeoutMs, else 5 min. */
+  async runTests(repoId: string, worktreeId?: string, command?: string, timeout?: number): Promise<TestResult> {
     const r = this.require(repoId);
+    const timeoutMs = timeout ?? this.settingsFor(repoId).ciTimeoutMs ?? DEFAULT_CI_TIMEOUT_MS;
     const cwd = worktreeId ? this.requireWorktree(repoId, worktreeId).path : r.path;
     const cmd = command ?? this.testCommand(repoId, cwd);
     if (!cmd) return { pass: true, code: 0, command: '(none)', output: 'no test command found', durationMs: 0, failures: [] };

@@ -10,9 +10,9 @@ import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, type Ctx, type Logger } from './context.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
-import { HOME_LEAD, LeadBook } from './leads.js';
+import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
 import { Memory, MemoryError } from './memory.js';
-import { Notifier } from './notifier.js';
+import { DiscordNotifier, Notifier, type ExternalKind } from './notifier.js';
 import type {
   Agent,
   AgentState,
@@ -86,6 +86,11 @@ export interface Backend {
    */
   onLeadReleased?(leadId: string, goals: Goal[]): void;
   /**
+   * A lead was assigned a building (or its repositories changed) and open goals in those
+   * repositories moved to it from other leads (C3): `from` maps goal id -> the previous lead.
+   */
+  onGoalsAdopted?(leadId: string, goals: Goal[], from: Record<string, string>): void;
+  /**
    * goal.message: the user's message (unread in bus.goalInbox(leadId, goal.id)) to `leadId` about
    * `goal`: answer it in a turn of the lead's session for the goal, replies tagged with the goal.
    */
@@ -121,6 +126,19 @@ export function goalCopy(g: Goal): Goal {
   return { ...g, ...(g.repos ? { repos: [...g.repos] } : {}), ...(g.instructions ? { instructions: [...g.instructions] } : {}), ...(g.prs ? { prs: g.prs.map((p) => ({ ...p })) } : {}) };
 }
 
+/**
+ * A pull request's description from a task summary (C8): the summary as written, minus lines that
+ * advertise the tooling (AgentCraft / Claude attribution, co-author trailers, generated-with lines).
+ */
+export function prDescription(summary: string | undefined): string {
+  const lines = (summary ?? '').replace(/\r\n/g, '\n').split('\n');
+  const ad = /^\s*(co-authored-by:|generated with|🤖)|\b(agentcraft|claude code)\b/i;
+  return lines.filter((l) => !ad.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** What an outside notification is about (notify.discord ping / silent lists). */
+export type ExternalNotifyKind = ExternalKind;
+
 export type Reply = (msg: Outbound) => void;
 
 export class ClientError extends Error {}
@@ -129,6 +147,8 @@ export interface ForemanOptions {
   config: Config;
   logger?: Logger;
   notifier?: Notifier;
+  /** notify.discord sender (tests inject one with a fake spawn) */
+  discord?: DiscordNotifier;
   now?: () => number;
 }
 
@@ -163,6 +183,11 @@ export class Foreman {
   private logTimer: NodeJS.Timeout | undefined;
   private goalTimers = new Set<string>();
   private closed = false;
+  private dailyTimer: NodeJS.Timeout | undefined;
+  /** notify.discord (C10); read live from the config */
+  readonly discord: DiscordNotifier;
+  /** task id -> last status seen (a task newly blocked is announced once) */
+  private taskStatusSeen = new Map<string, string>();
 
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
@@ -180,6 +205,8 @@ export class Foreman {
       opts.notifier ??
       new Notifier({ enabled: opts.config.notify, silent: opts.config.toastSilent, log: this.log, now });
     this.leads = new LeadBook(this.ctx, opts.config.claude.leads);
+    // (config.json is shared by every profile: a sim / dev run never pings the phone)
+    this.discord = opts.discord ?? new DiscordNotifier(() => (this.config.backend === 'claude' ? this.config.notifyDiscord : undefined), { log: this.log });
     const { cast, source } = loadCast(opts.config.projectRoot, opts.config.claude.leads);
     this.cast = cast;
     this.log.debug(`cast from ${source}`);
@@ -202,6 +229,11 @@ export class Foreman {
 
   private emit(m: Outbound): void {
     if (m.type === 'task.upsert' && m.task.goalId) this.scheduleGoalUpdate(m.task.goalId);
+    if (m.type === 'task.upsert') {
+      const before = this.taskStatusSeen.get(m.task.id);
+      this.taskStatusSeen.set(m.task.id, m.task.status);
+      if (m.task.status === 'blocked' && before !== undefined && before !== 'blocked') this.notifyExternal('blocked', `${m.task.id} "${truncate(m.task.title, 80)}" is blocked${m.task.blockedReason ? `: ${truncate(m.task.blockedReason, 200)}` : ''}`);
+    }
     // a building lead exists for the mod only while it is assigned
     if (m.type === 'agent.upsert' && !this.visible(m.agent)) return;
     for (const l of this.listeners) {
@@ -582,13 +614,21 @@ export class Foreman {
 
   /** lead.assign: see LeadBook.assign. */
   assignLead(building: string, repos: string[], opts: { quiet?: boolean } = {}): { leadId: string; overflow?: true } {
-    const r = this.leads.assign(building, repos);
+    this.leads.touchWorld(worldOf(building));
     const where = building.slice(building.indexOf('/') + 1);
+    if (!new Set(repos).size) {
+      // a building with no repository needs no lead: free its slot if it had one
+      const held = this.leads.leadOfBuilding(building);
+      if (held) this.releaseLead(held, 'its building has no repositories any more', opts);
+      return { leadId: HOME_LEAD };
+    }
+    const r = this.leads.assign(building, repos);
     if (r.overflow) {
       this.bus.feed('system', `No free lead for building ${where}: ${this.nameOf(HOME_LEAD)} leads it`, { agentId: HOME_LEAD });
       return { leadId: HOME_LEAD, overflow: true };
     }
     for (const m of r.moved) this.bus.feed('system', `${m.repo} moved from ${this.nameOf(m.from)}'s building to ${this.nameOf(r.leadId)}'s`, { agentId: r.leadId });
+
     if (r.created) {
       const a = this.agent(r.leadId);
       if (a) {
@@ -610,12 +650,89 @@ export class Foreman {
         this.log.error(`backend.onLeadAssigned: ${(e as Error).message}`);
       }
     }
-    if (r.changed && !opts.quiet) this.emitLeads();
+    // C3: open goals in these repositories are this lead's (idempotent: nothing moves twice)
+    this.adoptGoals(r.leadId, this.leads.record(r.leadId)?.repos ?? []);
+    // a building whose last repository moved here has nothing left to lead: free that lead
+    for (const from of new Set(r.moved.map((m) => m.from))) {
+      if (from !== r.leadId && this.leads.record(from) && !this.leads.record(from)!.repos.length) this.releaseLead(from, 'its building has no repositories left', { quiet: true });
+    }
+    if ((r.changed || r.moved.length) && !opts.quiet) this.emitLeads();
     return { leadId: r.leadId };
+  }
+
+  /**
+   * C3: open goals (planning / active) whose repository (repoId, else repos[0]) is in `repos` move to
+   * `leadId` (a feed line each), with their unread goal messages; the backend hands the work over.
+   */
+  private adoptGoals(leadId: string, repos: string[]): Goal[] {
+    if (!repos.length) return [];
+    const moved: Goal[] = [];
+    const from: Record<string, string> = {};
+    for (const g of this.store.data.goals) {
+      if (g.status !== 'planning' && g.status !== 'active') continue;
+      const primary = g.repoId ?? g.repos?.[0];
+      if (!primary || !repos.includes(primary)) continue;
+      const before = this.leadOf(g);
+      if (before === leadId) continue;
+      if (leadId === HOME_LEAD) delete g.leadId;
+      else g.leadId = leadId;
+      g.updatedAt = this.ctx.now();
+      this.store.markDirty();
+      this.emit({ type: 'goal.upsert', goal: goalCopy(g) });
+      this.bus.feed('goal', `${this.nameOf(leadId)} takes over ${g.id} "${truncate(g.text, 60)}" from ${this.nameOf(before)} (its repository is in ${this.nameOf(leadId)}'s building)`, { agentId: leadId, goalId: g.id });
+      from[g.id] = before;
+      moved.push(g);
+      // goal messages the previous lead had not read yet go to the new one
+      const unread = this.bus.goalInbox(before, g.id);
+      for (const m of unread) m.to = leadId;
+    }
+    if (!moved.length) return moved;
+    try {
+      this.backend?.onGoalsAdopted?.(leadId, moved, from);
+    } catch (e) {
+      this.log.error(`backend.onGoalsAdopted: ${(e as Error).message}`);
+    }
+    for (const g of moved) {
+      if (!this.bus.goalInbox(leadId, g.id).length) continue;
+      try {
+        this.backend?.onGoalMessage?.(g, this.goalLead(g));
+      } catch (e) {
+        this.log.error(`backend.onGoalMessage: ${(e as Error).message}`);
+      }
+    }
+    return moved;
+  }
+
+  /** lead.releaseWorld (C2): free every lead held by that world's buildings. */
+  releaseWorld(world: string, why = 'released from the Team tab'): string[] {
+    const released: string[] = [];
+    for (const b of this.leads.buildingsOf(world)) {
+      this.releaseLead(b.leadId, why, { quiet: true });
+      released.push(b.leadId);
+    }
+    const w = this.store.data.leadWorlds;
+    if (w && world in w) {
+      delete w[world];
+      this.store.markDirty();
+    }
+    if (released.length) this.emitLeads();
+    return released;
+  }
+
+  /** C2: release the leads of worlds that have not synced for claude.leadWorldTtlDays (start, daily). */
+  expireLeadWorlds(): string[] {
+    const days = this.config.claude.leadWorldTtlDays;
+    const out: string[] = [];
+    for (const w of this.leads.expiredWorlds(days * 86_400_000)) {
+      this.log.info(`releasing the leads of world "${w}" (not opened for ${days}+ days)`);
+      out.push(...this.releaseWorld(w, `world "${w}" not opened for ${days}+ days`));
+    }
+    return out;
   }
 
   /** lead.release by building key (unknown building: nothing happens). */
   releaseBuilding(building: string, opts: { quiet?: boolean } = {}): string | undefined {
+    if (building.includes('/')) this.leads.touchWorld(worldOf(building));
     const id = this.leads.leadOfBuilding(building);
     if (id) this.releaseLead(id, 'its building was removed', opts);
     return id;
@@ -668,6 +785,7 @@ export class Foreman {
 
   /** lead.sync: release the world's buildings that are gone, then assign every listed one. */
   syncLeads(world: string, buildings: Array<{ building: string; repos: string[] }>): Record<string, string> {
+    this.leads.touchWorld(world);
     const keep = new Set(buildings.map((b) => b.building));
     const before = JSON.stringify(this.leads.list());
     for (const b of this.leads.buildingsOf(world)) if (!keep.has(b.building)) this.releaseLead(b.leadId, 'its building is gone', { quiet: true });
@@ -723,6 +841,7 @@ export class Foreman {
       if (complete && !wasDone) {
         this.bus.feed('goal', `Goal complete: ${g.text}`, { goalId });
         this.notify('info', `Goal complete: ${truncate(g.text, 80)}`);
+        this.notifyExternal('goal_done', `Goal complete: ${truncate(g.text, 200)}`);
       }
     });
   }
@@ -733,12 +852,106 @@ export class Foreman {
     return this.decisions.create(input);
   }
 
+  /** The note a merge decision carries while its worktree has uncommitted protected edits. */
+  private static readonly PROTECTED_NOTE = /\n*Uncommitted edits to protected files[^\n]*(\n[^\n]*)?$/;
+
+  /** A merge decision whose worktree has uncommitted edits to protected files says so (B8). */
+  private async noteProtectedEdits(d: Decision): Promise<string[]> {
+    if (d.kind !== 'merge' || !d.repoId || !d.worktree || !this.repos.get(d.repoId)) return [];
+    const files = await this.repos.protectedUncommitted(d.repoId, d.worktree).catch(() => [] as string[]);
+    const cur = this.decisions.get(d.id);
+    if (!cur || cur.status !== 'open') return files;
+    const base = (cur.context ?? '').replace(Foreman.PROTECTED_NOTE, '');
+    const note = files.length ? `Uncommitted edits to protected files: ${files.join(', ')}.\nThe tests ran with them, but they never land: landing is refused until they are dropped (a copy is kept for you).` : '';
+    this.decisions.setContext(d.id, `${base}${note ? `${base ? '\n\n' : ''}${note}` : ''}`);
+    return files;
+  }
+
+  /** Ask (once per merge) whether to drop the protected edits; the Foreman owns the answer. */
+  private askDropProtected(d: Decision, files: string[]): void {
+    const drops = (this.store.data.protectedDrops ??= {});
+    const open = Object.entries(drops).find(([id, x]) => x.mergeDecisionId === d.id && this.decisions.get(id)?.status === 'open');
+    if (open) return;
+    const q = this.decisions.create({
+      agentId: d.agentId,
+      kind: 'question',
+      question: `${d.taskId ?? d.worktree}: drop the uncommitted edits to ${files.join(', ')}? They are protected files (never committed), so they cannot land.`,
+      options: ['Drop them', 'Leave them'],
+      textAllowed: false,
+      context: `"Drop them" saves the edits under ${this.repos.protectedEditsDir} (a patch to apply by hand in your checkout), removes them from the worktree and runs the tests again; then approve the merge again. "Leave them" keeps them; the merge stays refused while they are there.`,
+      ...(d.taskId ? { taskId: d.taskId } : {}),
+      ...(d.goalId ? { goalId: d.goalId } : {}),
+    });
+    drops[q.id] = { repoId: d.repoId!, worktree: d.worktree!, mergeDecisionId: d.id, ...(d.taskId ? { taskId: d.taskId } : {}) };
+    this.store.markDirty();
+  }
+
+  /** A decision the Foreman itself asked (not an agent's question; backends leave it alone). */
+  ownsDecision(id: string): boolean {
+    return !!this.store.data.protectedDrops?.[id];
+  }
+
+  /** The user answered a protected-edits question (Foreman-owned, not an agent's). */
+  private async applyProtectedDrop(d: Decision): Promise<void> {
+    const drops = this.store.data.protectedDrops ?? {};
+    const target = drops[d.id];
+    delete drops[d.id];
+    this.store.markDirty();
+    if (!target || d.status !== 'answered') return;
+    const merge = this.decisions.get(target.mergeDecisionId);
+    if (d.answer?.option !== 'Drop them') {
+      this.bus.feed('merge', `Kept the protected edits in ${target.worktree}; landing stays refused while they are there`, { agentId: 'user', goalId: d.goalId });
+      return;
+    }
+    const res = await this.repos.dropProtectedEdits(target.repoId, target.worktree, target.taskId ?? target.worktree);
+    if (!res.dropped.length) {
+      this.bus.feed('merge', `No protected edits left in ${target.worktree}`, { agentId: 'user', goalId: d.goalId });
+    } else {
+      this.bus.feed('merge', `Dropped the edits to ${res.dropped.join(', ')} from ${target.worktree}; saved for you at ${res.saved}`, { agentId: 'user', goalId: d.goalId });
+      this.notify('info', `Protected edits saved to ${res.saved}`);
+    }
+    // the tests ran with those edits: run them again without
+    const task = target.taskId ? this.tasks.get(target.taskId) : undefined;
+    const wt = this.repos.findWorktree(target.repoId, target.worktree);
+    let tests = '';
+    if (wt && wt.status === 'active') {
+      try {
+        if (task) this.tasks.update(task.id, { ci: 'running' });
+        const ci = await this.repos.runTests(target.repoId, wt.id, this.repos.testCommand(target.repoId, wt.path, this.config.claude.ciCommand));
+        if (task) this.tasks.update(task.id, { ci: ci.pass ? 'pass' : 'fail' });
+        this.repos.setCi(target.repoId, ci.pass ? 'pass' : 'fail');
+        tests = `tests without them: ${ci.pass ? 'pass' : 'FAIL'} (${ci.command})`;
+        this.bus.feed('ci', `${task?.id ?? wt.id}: ${tests}`, { ...(task?.assignee ? { agentId: task.assignee } : {}), ...(task ? { taskId: task.id } : {}) });
+      } catch (e) {
+        this.log.warn(`tests after dropping protected edits: ${(e as Error).message}`);
+      }
+    }
+    if (merge && merge.status === 'open') {
+      const base = (merge.context ?? '').replace(/\n*Merge refused: [\s\S]*$/, '').replace(Foreman.PROTECTED_NOTE, '');
+      this.decisions.setContext(merge.id, `${base}\n\nProtected edits dropped (saved at ${res.saved ?? 'n/a'})${tests ? `; ${tests}` : ''}. Approve again to land.`);
+    }
+  }
+
   private onDecisionCreated(d: Decision): void {
+    if (d.kind === 'merge') void this.noteProtectedEdits(d).catch((e) => this.log.warn(`protected edits for ${d.id}: ${(e as Error).message}`));
     const who = this.nameOf(d.agentId);
     const label = d.kind === 'merge' ? 'merge review' : d.kind === 'permission' ? 'permission' : 'question';
     this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user', goalId: d.goalId });
     this.notify('need_user', `${who}: ${truncate(d.question, 120)}`, d.id);
+    this.notifyExternal('need_user', `${who}: ${truncate(d.question, 200)}`);
     this.notifier.needUser(`${who}: ${d.question}`);
+  }
+
+  /**
+   * Outside-the-game notifications (C10, notify.discord): `kind` picks the channel level. Never
+   * blocks and never throws; off unless configured.
+   */
+  notifyExternal(kind: ExternalNotifyKind, text: string): void {
+    try {
+      this.discord.send(kind, text);
+    } catch (e) {
+      this.log.warn(`notify.discord: ${(e as Error).message}`);
+    }
   }
 
   notify(level: 'info' | 'warn' | 'need_user', text: string, decisionId?: string): void {
@@ -763,6 +976,15 @@ export class Foreman {
     }
     const answerText = [d.answer?.option, d.answer?.text].filter(Boolean).join(' — ');
     this.bus.feed('decision', `${userName()} answered ${this.nameOf(d.agentId)}: ${answerText}`, { agentId: 'user', to: d.agentId, goalId: d.goalId });
+    if (this.store.data.protectedDrops?.[d.id]) {
+      // the Foreman's own question: never handed to the backend (it is no agent's ask_user)
+      try {
+        await this.applyProtectedDrop(d);
+      } finally {
+        this.decisions.settle(d.id);
+      }
+      return d;
+    }
     if (d.kind === 'merge') await this.applyMergeAnswer(d);
     if (d.status === 'answered' || d.status === 'cancelled') {
       this.decisions.settle(d.id);
@@ -780,13 +1002,20 @@ export class Foreman {
     const option = d.answer?.option;
     if (option === 'Merge') {
       try {
+        // B8: uncommitted edits to protected files ran in CI but would not land: refuse until resolved
+        const pending = d.repoId && d.worktree ? await this.repos.protectedUncommitted(d.repoId, d.worktree) : [];
+        if (pending.length) {
+          this.askDropProtected(d, pending);
+          throw new RepoError(`uncommitted edits to protected files (${pending.join(', ')}) are in the worktree: the tests ran with them, but they would not land. Drop them (the question next to this one; a copy is kept) or take them out yourself, then approve again.`, 'refused');
+        }
         const res = await this.repos.land(
           d,
           task
             ? {
                 commitMessage: task.pr ? `${task.id}: address review feedback on PR #${task.pr.id}${task.summary ? `\n\n${task.summary}` : ''}` : `${task.id}: ${task.title}${task.summary ? `\n\n${task.summary}` : ''}`,
                 title: task.title,
-                description: [task.summary, d.context?.split('\n')[0], `Built and reviewed in AgentCraft (${task.id}), approved by ${userName()}.`].filter(Boolean).join('\n\n'),
+                // the worker's summary only: no tool attribution, no review transcript (C8)
+                description: prDescription(task.summary),
               }
             : {},
         );
@@ -1012,6 +1241,8 @@ export class Foreman {
         return {};
       case 'lead.sync':
         return { leads: this.syncLeads(msg.world, msg.buildings) };
+      case 'lead.releaseWorld':
+        return { released: this.releaseWorld(msg.world) };
       case 'config.get':
         return configGet({ cfg: this.config, cast: this.cast, ...(msg.repoId ? { repo: this.repoTarget(msg.repoId) } : {}) }) as unknown as Record<string, unknown>;
       case 'config.set':
@@ -1243,6 +1474,11 @@ export class Foreman {
     }
     this.repos.startPolling(this.config.repoPollMs);
     await backend.start();
+    // leads held by worlds nobody opened for a long time (a dev world, a test or dead save), and
+    // worktrees / branches of tasks finished long ago
+    this.daily();
+    this.dailyTimer = setInterval(() => this.daily(), 86_400_000);
+    this.dailyTimer.unref?.();
     // designs that were queued or running when the Foreman stopped
     for (const d of this.designs.active()) {
       if (!backend.onDesignRequest) {
@@ -1254,9 +1490,50 @@ export class Foreman {
     }
   }
 
+  /** Once a day (and at start): housekeeping. */
+  private daily(): void {
+    try {
+      this.expireLeadWorlds();
+    } catch (e) {
+      this.log.error(`daily: ${(e as Error).message}`);
+    }
+    void this.cleanup().catch((e) => this.log.warn(`cleanup: ${(e as Error).message}`));
+  }
+
+  /**
+   * cleanupAfterDays: remove the worktrees and local agentcraft/* branches of tasks finished long
+   * ago (RepoManager.sweepFinished). The very first sweep is a dry run: it logs and announces what it
+   * would remove; sweeps from 12 h later on act.
+   */
+  async cleanup(now = this.ctx.now()): Promise<{ dryRun: boolean; worktrees: string[]; branches: string[]; kept: string[] } | undefined> {
+    const days = this.config.cleanupAfterDays;
+    if (!days || this.closed) return undefined;
+    const armed = this.store.data.cleanupArmedAt;
+    const dryRun = armed === undefined || now - armed < 12 * 3_600_000;
+    const res = await this.repos.sweepFinished({
+      olderThanMs: days * 86_400_000,
+      dryRun,
+      task: (id) => this.tasks.get(id),
+      busy: (repoId, wt) => this.decisions.open().some((d) => d.repoId === repoId && d.worktree === wt) || this.agents().some((a) => a.worktree === wt && a.repoId === repoId),
+    });
+    if (armed === undefined) {
+      this.store.data.cleanupArmedAt = now;
+      this.store.markDirty();
+    }
+    const what = `${res.worktrees.length} worktree${res.worktrees.length === 1 ? '' : 's'} and ${res.branches.length} branch${res.branches.length === 1 ? '' : 'es'} of tasks finished more than ${days} days ago`;
+    if (res.worktrees.length || res.branches.length) {
+      for (const x of res.worktrees) this.log.info(`cleanup${dryRun ? ' (dry run)' : ''}: worktree ${x}`);
+      for (const x of res.branches) this.log.info(`cleanup${dryRun ? ' (dry run)' : ''}: branch ${x}`);
+      this.bus.feed('system', dryRun ? `Cleanup (first run, nothing removed): would remove ${what}; from tomorrow this runs daily (cleanupAfterDays, 0 = off)` : `Cleanup: removed ${what}`);
+    }
+    for (const x of res.kept) this.log.info(`cleanup: kept ${x}`);
+    return { dryRun, ...res };
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.dailyTimer) clearInterval(this.dailyTimer);
     this.repos.stopPolling();
     try {
       await this.backend?.stop();
@@ -1265,6 +1542,7 @@ export class Foreman {
     }
     this.flushLogs();
     this.notifier.dispose();
+    this.discord.dispose();
     this.store.close();
   }
 }

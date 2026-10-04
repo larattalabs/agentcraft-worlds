@@ -102,6 +102,49 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 
 `<home>/config.json` can hold the same settings (`{"backend":"claude","claude":{"workers":["kit","wren"]}}`).
 
+### Unattended running: holds, retries, usage reserve, notifications
+
+- **Holds** (`foreman.status.hold {reason, until?, message}`): while the claude backend holds new
+  turns the status says why: `usage` (a usage limit until it resets, or the usage reserve below),
+  `auth` (the login / key failed: until a restart) or `offline` (the start-up check could not reach
+  Claude: retried after 30 s, doubling up to 10 min; goals still queue). Running turns finish;
+  queued work starts when the hold ends. Limits and reserve windows are re-checked on the wall clock
+  every 60 s, so a sleep cannot delay the wake-up. Only an exact auth failure (`authentication_failed`,
+  a 401, "Invalid API key", "not logged in") counts as one.
+- **Usage reserve** (`claude.usageReserve {fiveHourPct, sevenDayPct}`, default 85 / 80, 0 = off;
+  hub Settings): with your claude.ai login no new agent turn starts while the 5-hour or 7-day
+  window is at or above that share, until it resets, so some of your plan is left for you.
+- **Automatic retry**: a worker turn that fails for a passing reason (network, the Mac sleeping, an
+  overloaded API (529) or a server error, the turn's step limit or time limit) resumes its session
+  once after 2-5 minutes (the agent shows "retrying hh:mm"), then the task blocks as before (Retry
+  on the task's card). A too-long prompt retries once in a fresh session. A failed plan is tried once
+  more before the goal fails, a failed lead review once more before the merge reaches you without a
+  verdict. Never retried: auth, usage limits, the per-turn budget, billing.
+- **Lead sessions** (`claude.leadSession {maxDays, maxTurns}`, default 7 / 40, 0 = no limit): a lead's
+  session for a goal starts over once it is that old or long, seeded with the goal's plan note, its
+  task board and the thread's last messages.
+- **Cleanup** (`cleanupAfterDays`, default 14, 0 = off; hub Settings): once a day (and at start) the
+  worktrees and local `agentcraft/*` branches of tasks done or cancelled longer ago than that are
+  removed. The first run only lists what it would remove (log + a feed line); runs from 12 hours
+  later act. Never touched: anything an open decision or an agent still uses, a branch another kept
+  worktree shares, a branch checked out anywhere, and a cancelled task's branch with commits its base
+  does not have (logged as kept).
+- **Discord** (`notify.discord`, off by default): runs your notification script for things that need
+  you, never blocking the Foreman:
+
+  ```json
+  { "notify": { "desktop": true,
+      "discord": { "script": "~/.agentcraft/discord-notify.sh",
+                   "ping": ["need_user", "auth"], "silent": ["blocked", "usage", "goal_done"] } } }
+  ```
+
+  `ping` kinds run `script --critical <message>`, `silent` ones `script <message>` (the script's own
+  interface; it dedups identical messages). `"discord": true` uses these defaults. Decisions arriving
+  within a minute of a ping are combined into the next one. Kinds: `need_user` (a decision waits),
+  `auth` (auth failed), `blocked` (a task blocked), `usage` (a usage limit or the reserve holds
+  turns), `goal_done`. `notify` can stay a plain boolean (desktop notifications) when Discord is off.
+
+
 Per-repo settings go under `repoSettings`, keyed by the repository path. They live in your config, not
 in the repo, so an agent cannot change what the Foreman runs by editing its worktree:
 
@@ -110,8 +153,12 @@ in the repo, so an agent cannot change what the Foreman runs by editing its work
     "ci": "pnpm -r test",
     "setup": "pnpm install --frozen-lockfile",
     "copy": [".env", ".env.local"],
-    "setupTimeoutMs": 600000 } } }
+    "setupTimeoutMs": 600000,
+    "ciTimeoutMs": 300000 } } }
 ```
+
+`ciTimeoutMs` bounds the test run after each task (default 5 minutes; the process tree is killed and
+the run counts as failed); raise it for slow suites.
 
 A repository's own Claude Code agent files (`.claude/agents/*.md`) can be used two ways:
 
@@ -139,7 +186,12 @@ For a workspace of several repos with local-only setup, three more per-repo sett
 `baseBranch` is what agents start from and land into, whatever your checkout has checked out (the
 local branch is created from `origin/<base>` if needed). `protect` paths are never committed:
 AgentCraft's commits leave them out, editing them asks first, and a branch that commits one goes
-back to the worker before review. `env` applies to the agents' shells, setup and CI (`GIT_*` is
+back to the worker before review. An approved edit that stays uncommitted in the worktree ran with
+the tests but can never land: the merge decision lists such files and landing is refused while they
+are there. Approving shows a question next to it: "Drop them" saves them under
+`<profile>/protected-edits/<task>-<time>/` (`changes.patch` to `git apply` in your checkout, `files/`
+for new files), removes them from the worktree and runs the tests again; then approve again.
+`env` applies to the agents' shells, setup and CI (`GIT_*` is
 ignored). `CLAUDE.md` / `AGENTS.md` in the folders above a repository (a workspace holding several
 repos, up to your home folder) are read too, and that folder is readable for agents
 (`claude.context.workspaceInstructions`, default on).
@@ -157,8 +209,13 @@ the worktree is made). When you approve ("Merge" on the decision), the Foreman f
 for conflicts (a conflict goes back to the worker), pushes the branch (`branchPrefix` + the task slug)
 and opens the pull request with the remote's own CLI and your login: `az repos pr create` for Azure
 DevOps, `gh pr create` for GitHub (other remotes: pushed only). `squash` pushes one commit authored
-by you, with the agents as Co-authored-by. The push never overwrites a remote branch AgentCraft did
-not push itself. Agents still never push: only the Foreman does, and only after your approval.
+by you alone (no co-author trailers). The PR title is the task's title and its description the
+worker's summary: no AgentCraft or Claude attribution anywhere (no `Co-authored-by`, no footer; the
+agents run with Claude Code's `attribution` turned off, so their own commits carry none either).
+Without `squash` the agents' own commits are pushed as they are, authored `AgentCraft <Name>`: use
+`squash` for repositories where that should not show. The push never overwrites a remote branch
+AgentCraft did not push itself. Agents still never push: only the Foreman does, and only after your
+approval.
 
 #### Watching the pull requests (`claude.prWatch`, docs/PRWATCH.md)
 
@@ -243,7 +300,10 @@ repo hooks would run ahead of, or outside, the permission policy. What they do g
   loaded with the Skill tool. Everything a skill then does goes through the normal permission checks.
 - **claude.ai connectors** (`connectors`, e.g. `["monday.com"]`): with a claude.ai login the CLI
   would also load the account's connectors (mail, calendars, accounting...). By default agents get
-  none (`strictMcpConfig`); listed ones load, and tools of any other connector are refused.
+  none (`strictMcpConfig`); listed ones load. On every turn a fail-closed gate refuses any `mcp__*`
+  tool that is not from the team tools server, one of `mcpServers`, or a listed connector with
+  matching claude.ai provenance (a tool whose provenance is missing is refused unless its name is
+  one of the configured servers).
 - **Earlier sessions** (`sessionHistory: true`, or `{ "enabled": true, "days": 60 }`): agents can
   search and read your earlier Claude Code / Claude Desktop sessions (`find_sessions`, `read_session`)
   from `~/.claude/projects`, only those whose folder is a registered repo, its workspace folder, or a
@@ -363,10 +423,20 @@ pool every lead assigns from.
   free lead in `claude.leads` order (default Ines, Bram, Cass); with none free Marlow leads it (the
   ack says `overflow`, nothing is stored). The same building again only updates its repositories; a
   repository listed by another building moves there. Assignments live in `state.json` `leads`.
-- A goal belongs to the lead of its repository's building when it is submitted (`Goal.leadId`;
-  absent = Marlow) and keeps that lead, even if repositories move later. Only releasing the lead
-  moves its open goals to Marlow, whose first turn on each gets the plan and the board (a takeover
-  note). Leads not in `claude.leads` any more are released at start.
+- A goal belongs to the lead of its repository's building (`Goal.leadId`; absent = Marlow). When a
+  building is placed or its repositories change, open goals (planning / active) whose repository
+  (`repoId`, else `repos[0]`) is in it move to its lead, with their unread goal messages (a feed line
+  each; a plan already running finishes, no second plan). Releasing a lead moves its open goals to
+  Marlow. The new lead's first turn on each gets the plan and the board (a takeover note). Leads
+  not in `claude.leads` any more are released at start.
+- A building left without repositories (its last one moved to another building, or `lead.assign`
+  with `repos: []`) frees its lead.
+- Lead worlds: every `lead.sync` / `lead.assign` / `lead.release` records the world's `lastSync`
+  (`LeadAssignment.world` / `lastSync` in `leads.update`). At start and daily the leads of worlds not
+  seen for `claude.leadWorldTtlDays` (default 14; 0 = never) are released, so a dev world, a test
+  save or a deleted world cannot hold the leads forever. `lead.releaseWorld {world}` (hub Team tab
+  "Release") frees a world's leads at once; acked with `{released: [leadId]}`. Worlds from before
+  `lastSync` existed start their clock at the first start.
 - Every lead has its own job queue (plan, review, follow-up, PR triage) and session per goal
   (`<lead>:<goal>`), and leads run in parallel. Merge decisions, questions, feed lines and PR triage
   carry the goal's lead (the mod shows them at that building's podium). A plain console message goes
@@ -447,7 +517,7 @@ for the roles picker.
 
 | applies | settings |
 | --- | --- |
-| live (from the next turn, tick or poll) | `claude.leadModel`, `leadEffort`, `workerModel`, `effort`, `designModel`, `taskModels.*`, `agents.<id>.{title,prompt,model,effort}` (a title change updates the nameplate at once), `maxConcurrent`, `throttleConcurrent`, `maxConcurrentTurns`, `leadReview`, `maxBudgetUsdPerTurn`, `prWatch` / `prPollSeconds` (the watcher switches over at once), `permissions.{mode,allow,deny,webTools,protectCheckouts}`, `context.{userInstructions,maxChars,mcpAllow,connectors}`; `userName`, `notify`, `toastSilent`, `mergeStyle`, `signMerges`; every repository setting (`baseBranch` at the repository's next refresh) |
+| live (from the next turn, tick or poll) | `claude.leadModel`, `leadEffort`, `workerModel`, `effort`, `designModel`, `taskModels.*`, `agents.<id>.{title,prompt,model,effort}` (a title change updates the nameplate at once), `maxConcurrent`, `throttleConcurrent`, `maxConcurrentTurns`, `leadReview`, `maxBudgetUsdPerTurn`, `usageReserve.{fiveHourPct,sevenDayPct}`, `leadSession.{maxDays,maxTurns}`, `leadWorldTtlDays`, `prWatch` / `prPollSeconds` (the watcher switches over at once), `permissions.{mode,allow,deny,webTools,protectCheckouts}`, `context.{userInstructions,maxChars,mcpAllow,connectors}`; `userName`, `notify` (written to `notify.desktop` when `notify` is an object; `notify.discord` is read live, edited in config.json), `toastSilent`, `mergeStyle`, `signMerges`, `cleanupAfterDays`; every repository setting (`baseBranch` at the repository's next refresh) |
 | after a restart | `claude.workers`, `claude.leads`, `claude.context.skills`, `claude.context.sessionHistory.{enabled,days}`, `claude.subagents.{enabled,agents}`, `claude.useClaudeLogin` |
 | read-only | `claude.context.mcpServers`, a repository's `env` |
 
@@ -584,7 +654,8 @@ spawns git with an empty environment); the policy refuses every command it can s
   turns signing off; the sim never signs. The agents' own commits on their branches (theirs
   and the Foreman's) use `AgentCraft <Name> <name@agentcraft.local>` and are never signed.
   With `--merge-style squash`, main gets one commit with the task's changes (your identity,
-  signed as above, `Co-authored-by` the agents) instead of a merge commit plus the agents'
+  signed as above, the task's title and summary as the message, no trailers) instead of a merge
+  commit (`Merge <branch> into <base>`, no tool attribution) plus the agents'
   commits - useful for repos that require signed commits or verified emails. Branches are kept.
 - `/repo add <path>` must name a repository root; a folder inside another repository is refused
   (instead of silently registering the enclosing repo as the merge target).

@@ -320,4 +320,30 @@ describe('claude backend with a lead per building', () => {
     expect(e.start).toBeGreaterThanOrEqual(z.end!);
     delete st.throttle;
   });
+
+  it('a goal marlow is planning moves to the lead of a building placed for its repository, without a second plan (C3)', async () => {
+    const fm = h.fm;
+    for (const l of fm.leads.list()) if (l.building) fm.releaseLead(l.leadId, 'test reset');
+    const repoD = await demoRepo();
+    extra.push(path.dirname(repoD));
+    const r = await fm.repos.add(repoD);
+    let release!: () => void;
+    holds.set('kappa', new Promise<void>((res) => (release = res)));
+    const g = await fm.submitGoal('kappa', r.id);
+    expect(fm.leadOf(g)).toBe('marlow');
+    await until(() => turns.some((t) => t.who === 'marlow' && t.prompt.includes('"kappa"')));
+    const lead = fm.assignLead('w/b9', [r.id]).leadId;
+    expect(lead).not.toBe('marlow');
+    expect(fm.goal(g.id)!.leadId).toBe(lead);
+    expect(fm.store.data.feed.some((f) => f.goalId === g.id && /takes over .* from Marlow \(its repository is in/.test(f.text))).toBe(true);
+    release();
+    await until(() => fm.goal(g.id)!.status === 'active'); // marlow's running plan settles it
+    await new Promise((res) => setTimeout(res, 150));
+    expect(turns.filter((t) => t.prompt.includes('"kappa"')).map((t) => t.who)).toEqual(['marlow']);
+  });
+});
+
+const extra: string[] = [];
+afterAll(() => {
+  for (const d of extra) rmrf(d);
 });

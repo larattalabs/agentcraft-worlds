@@ -350,9 +350,12 @@ decisions, and with config.set loosen its own permissions). From now on:
   (`claude.permissions.mode`, `allow`, `deny`, `webTools`, `protectCheckouts`); context
   (`claude.context.userInstructions`, `skills`, `sessionHistory.enabled/days`, `maxChars`, `mcpAllow`,
   `connectors`; MCP servers read-only); `claude.subagents` (list); PRs (`claude.prWatch`,
-  `claude.prPollSeconds`); usage (`claude.maxBudgetUsdPerTurn`, `claude.useClaudeLogin` - restart).
+  `claude.prPollSeconds`); usage (`claude.maxBudgetUsdPerTurn`, `claude.usageReserve.fiveHourPct` /
+  `sevenDayPct`, `claude.leadSession.maxDays` / `maxTurns`, `claude.useClaudeLogin` - restart); team
+  (`claude.leadWorldTtlDays`); general (`cleanupAfterDays`; `notify` writes `notify.desktop` when
+  config.json holds `notify: {desktop, discord}`, which stays file-only).
 - Repo settings (Repos tab "Edit settings", now enabled): `land`, `baseBranch`, `ci`, `setup`, `copy`,
-  `setupTimeoutMs`, `protect`, `roles.<agent>` (picker from `repo.agents`), `subagents`, `pr.*`,
+  `setupTimeoutMs`, `ciTimeoutMs`, `protect`, `roles.<agent>` (picker from `repo.agents`), `subagents`, `pr.*`,
   `prReview.*`; `env` stays read-only (keys only).
 - Not editable in the hub: `repos` (Repos tab add/remove), host/port/home/profile, sim settings.
 
@@ -380,7 +383,7 @@ decisions, and with config.set loosen its own permissions). From now on:
   Global groups: `team` (workers, leads, leadReview, `claude.agents.<id>.*` for every cast member,
   leads included), `models` (lead/worker/design models and effort, task-size models, concurrency),
   `general`, `permissions`, `context`, `subagents`, `prs`, `usage`. Repository groups: `landing`
-  (`land`, `baseBranch`, `pr.*`), `worktrees` (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`,
+  (`land`, `baseBranch`, `pr.*`), `worktrees` (`ci`, `setup`, `copy`, `setupTimeoutMs`, `ciTimeoutMs`, `protect`,
   `env`), `agents` (`roles.<id>` for every cast member, `subagents` as enum `off`/`repo`), `review`
   (`prReview.*`). `claude.subagents` is two keys: `claude.subagents.enabled`, `claude.subagents.agents`.
   `claude.permissions.ask` is not exposed. `claude.maxBudgetUsdPerTurn` is an `int` (whole dollars,
