@@ -45,6 +45,7 @@ import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -660,14 +661,18 @@ public final class Buildings {
 	/**
 	 * What a removal would destroy that the building did not bring: block entities at positions where the template
 	 * has none (a chest, furnace, bed or barrel the player placed), template containers / lecterns the player filled,
-	 * dropped items, item frames, paintings, armor stands and other non-living entities in the box. Server thread.
+	 * dropped items (not the trophy signs the mod hung at the building's trophy slots, {@link Trophies}), item frames, paintings, armor stands and other non-living entities in the box. Server thread.
 	 */
 	public static List<String> removalBlockers(ServerLevel level, Building b) {
 		List<String> out = new ArrayList<>();
 		java.util.Set<BlockPos> own = ownBlockEntities(b);
+		java.util.Set<Long> trophies = Trophies.cells(b);
 		Anchors.Bounds box = b.restoreBox();
 		forEachBlockEntity(level, box, be -> {
 			BlockPos p = be.getBlockPos();
+			if (TrophySlots.exempt(trophies, p.getX(), p.getY(), p.getZ(), be instanceof SignBlockEntity)) {
+				return; // a trophy the mod hung on the building's own trophy wall: the snapshot puts the cell back
+			}
 			String what = be.getBlockState().getBlock().getName().getString().toLowerCase(java.util.Locale.ROOT) + " at " + p.toShortString();
 			if (be instanceof StationBlockEntity) {
 				return; // AgentCraft stations: the building's own
@@ -748,6 +753,7 @@ public final class Buildings {
 		}
 		reports.remove(id);
 		commit(server, new State(Collections.unmodifiableMap(map), s.next(), s.pending()));
+		Trophies.forgetBuilding(id);
 	}
 
 	/** After {@code gone} left {@code map}: when it was home, the first remaining building becomes home. */
@@ -886,6 +892,7 @@ public final class Buildings {
 		pending.add(new Building.Pending(b, movedName, now, "moved"));
 		reports.remove(id);
 		commit(server, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
+		Trophies.rehang(server, nb);
 		lastNote = built.note();
 		AgentCraft.LOGGER.info("Moved building {} from {} ({}) to {} ({}){}", id, str(b.box()), b.dimensionOrDefault(), str(nb.box()),
 			nb.dimensionOrDefault(), built.note() == null ? "" : "; " + built.note());
@@ -984,7 +991,7 @@ public final class Buildings {
 
 	/**
 	 * How much of a building's template stands in the world, by {@code grid} (the building's own, {@link #ownGrid}):
-	 * {matching non-air blocks, non-air template blocks}; {0, 0} when it cannot be checked.
+	 * {matching non-air blocks, non-air template blocks}, trophy slot cells left out; {0, 0} when it cannot be checked.
 	 */
 	static int[] standing(MinecraftServer server, Building b, @Nullable TemplateGrid grid) {
 		ServerLevel level = levelOf(server, b);
@@ -993,13 +1000,14 @@ public final class Buildings {
 		}
 		int turns = Math.max(0, BlueprintTransform.ROTATIONS.indexOf(b.rotation()));
 		GhostModel m = grid.ghost(turns);
+		java.util.Set<Long> trophies = Trophies.cells(b);
 		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
 		int total = 0;
 		int match = 0;
 		for (int i = 0; i < m.count(); i++) {
 			BlockState want = grid.states()[i];
-			if (want.isAir()) {
-				continue;
+			if (want.isAir() || trophies.contains(TrophySlots.cell(b.box().minX() + m.x(i), b.box().minY() + m.y(i), b.box().minZ() + m.z(i)))) {
+				continue; // trophy cells hold the mod's signs, not the template's air
 			}
 			total++;
 			// by block, not state: the driver flips lamps, podiums, monitors and bulbs, players open doors
