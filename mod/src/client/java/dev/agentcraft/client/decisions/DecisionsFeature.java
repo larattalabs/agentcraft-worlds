@@ -222,6 +222,7 @@ public final class DecisionsFeature {
 			d.options().forEach(opts::add);
 			e.add("options", opts);
 			e.addProperty("answering", isAnswering(d.id()));
+			e.addProperty("freeText", d.freeText());
 			q.add(e);
 		}
 		o.add("queue", q);
@@ -240,6 +241,7 @@ public final class DecisionsFeature {
 			sc.addProperty("lastAnswer", ds.lastAnswer());
 			sc.addProperty("armed", ds.armed());
 			sc.addProperty("preview", ds.isPreview());
+			sc.addProperty("parent", ds.parent() == null ? null : ds.parent().getClass().getSimpleName());
 			o.add("screen", sc);
 		} else {
 			o.add("screen", null);

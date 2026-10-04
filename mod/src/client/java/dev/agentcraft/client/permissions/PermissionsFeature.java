@@ -42,6 +42,6 @@ public final class PermissionsFeature {
 			+ "registry.npmjs.org";
 		return new Decision("preview-permission", "wren", DecisionKind.PERMISSION, "Wren wants to run Bash: npm install chalk@5", List.of(
 			Protocol.ALLOW_ONCE, Protocol.ALWAYS_ALLOW, Protocol.DENY), ctx, DecisionStatus.OPEN, null, "t4", null, null, "Bash", System
-				.currentTimeMillis() - 40_000, null);
+				.currentTimeMillis() - 40_000, null, null);
 	}
 }

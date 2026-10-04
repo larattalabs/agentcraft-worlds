@@ -202,9 +202,13 @@ public final class Protocol {
 	public record DecisionAnswer(@Nullable String option, @Nullable String text, long ts) {
 	}
 
+	/**
+	 * {@code textAllowed} (contract C1, docs/FIXWAVE.md): false when only the options make sense (PR "Post replies"/"Skip",
+	 * "Fold in"/"Leave it", other closed choices); the Foreman refuses free text for those. Absent = true (older Foreman).
+	 */
 	public record Decision(String id, String agentId, DecisionKind kind, String question, List<String> options, @Nullable String context,
 		DecisionStatus status, @Nullable DecisionAnswer answer, @Nullable String taskId, @Nullable String repoId, @Nullable String worktree,
-		@Nullable String tool, long createdAt, @Nullable String goalId) {
+		@Nullable String tool, long createdAt, @Nullable String goalId, @Nullable Boolean textAllowed) {
 		public Decision {
 			kind = kind == null ? DecisionKind.UNKNOWN : kind;
 			question = question == null ? "" : question;
@@ -214,6 +218,11 @@ public final class Protocol {
 
 		public boolean isOpen() {
 			return status == DecisionStatus.OPEN;
+		}
+
+		/** Whether a free-text answer is accepted (C1): unless the Foreman said no; always when there are no options to pick. */
+		public boolean freeText() {
+			return textAllowed == null || textAllowed || options.isEmpty();
 		}
 	}
 

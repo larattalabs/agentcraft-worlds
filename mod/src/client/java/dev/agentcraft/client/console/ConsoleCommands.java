@@ -434,12 +434,15 @@ public final class ConsoleCommands {
 			if (option.equals(Protocol.REQUEST_CHANGES) && text.isEmpty()) {
 				return new Invalid("say what should change: /answer " + d.id() + " " + (d.options().indexOf(option) + 1) + " <feedback>");
 			}
+			if (!text.isEmpty() && !d.freeText() && !option.equals(Protocol.REQUEST_CHANGES)) {
+				return new Invalid(d.id() + " takes an option only, no text (it would be dropped). " + optionsHint(d));
+			}
 			return new Answer(d, option, text.isEmpty() ? null : text);
 		}
 		if (tok.matches("\\d+")) {
 			return new Invalid("option " + tok + " does not exist. " + optionsHint(d));
 		}
-		if (d.kind() == DecisionKind.QUESTION) {
+		if (d.kind() == DecisionKind.QUESTION && d.freeText()) {
 			// free-text answer
 			return new Answer(d, null, r);
 		}

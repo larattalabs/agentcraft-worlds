@@ -373,8 +373,9 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		switchTo(q.get(next).id(), false);
 	}
 
+	/** Free text: questions that accept it (C1 {@code textAllowed}), a merge's change request. */
 	private boolean allowsText(Decision d) {
-		return d.kind() == DecisionKind.QUESTION || d.kind() == DecisionKind.MERGE && requestChanges;
+		return d.kind() == DecisionKind.QUESTION && d.freeText() || d.kind() == DecisionKind.MERGE && requestChanges;
 	}
 
 	@Override
@@ -452,7 +453,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			return;
 		}
 		String text = answer.value().isBlank() ? null : answer.value().strip();
-		if (d.kind() == DecisionKind.MERGE && !option.equals(Protocol.REQUEST_CHANGES)) {
+		if (d.kind() == DecisionKind.MERGE && !option.equals(Protocol.REQUEST_CHANGES) || !d.freeText()) {
 			text = null;
 		}
 		send(d, option, text);
@@ -579,7 +580,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			return true;
 		}
 		if (k == InputConstants.KEY_TAB) {
-			if (textFocused && !requestChanges && d.kind() != DecisionKind.QUESTION) {
+			if (textFocused && !requestChanges && !allowsText(d)) {
 				focusText(false);
 			}
 			step(e.hasShiftDown() ? -1 : 1);
@@ -839,7 +840,8 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		if (qLines.size() > 5) {
 			qLines = qLines.subList(0, 5);
 		}
-		boolean fieldVisible = d.kind() == DecisionKind.QUESTION && !readOnly || requestChanges;
+		// closed choices (C1 textAllowed false) show no text box: only the options answer them
+		boolean fieldVisible = d.kind() == DecisionKind.QUESTION && d.freeText() && !readOnly || requestChanges;
 		int fieldHeight = fieldVisible ? answerView.height(font, answer, cw, fieldStyle(d)) : 0;
 		List<Btn> rowButtons = layoutButtons(d, cw);
 		int buttonRows = 1;

@@ -509,6 +509,9 @@ final class GoalsTab implements HubPane {
 			return done(d.id() + " just came up: press again to answer it", false);
 		}
 		String text = null;
+		if (option == null && !d.freeText()) {
+			return done(d.id() + " takes one of its options only (no free text)", true);
+		}
 		if (option == null) {
 			text = message.value().strip();
 			if (text.isEmpty()) {
@@ -527,7 +530,7 @@ final class GoalsTab implements HubPane {
 				confirmRejectUntil = Util.getMillis() + 3000;
 				return done("Reject abandons the branch: press Reject again", true);
 			}
-		} else if (d.kind() == DecisionKind.QUESTION && !message.value().isBlank()) {
+		} else if (d.kind() == DecisionKind.QUESTION && d.freeText() && !message.value().isBlank()) {
 			text = message.value().strip(); // an option with a note, like the decision screen's text box
 		}
 		confirmReject = null;
@@ -1117,7 +1120,7 @@ final class GoalsTab implements HubPane {
 						}
 						buttons.add(new String[] {o, label});
 					}
-					if (d.kind() == DecisionKind.QUESTION) {
+					if (d.kind() == DecisionKind.QUESTION && d.freeText()) {
 						buttons.add(new String[] {"\u0000text", "Answer with text"});
 					}
 					buttons.add(new String[] {"\u0000open", "Open…"});
