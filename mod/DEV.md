@@ -881,9 +881,10 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
 ### HUD check-in (wave 2)
 The contract is docs/WAVE2.md W5-W7 ("As implemented: hud" there). Code in `client.hud` and `client.hub`; pure rules
 in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTest`, `HudRulesTest`).
-- **Alert line** (`GoalBar.drawAlerts`, counts from `Alerts.line()` over an `AlertCounts` source, today
-  `ForemanAlertCounts`; `Alerts.setSource` swaps in the Inbox model): under the decisions badge, full / short / dots
-  width by what fits, hub keycap at the end. The whole goal bar is skipped while the HUD is hidden (F1, `dev.hud
+- **Alert line** (`GoalBar.drawAlerts`, counts from `Alerts.line()` over an `AlertCounts` source: the Inbox's
+  (`HubFeature.init`: `Alerts.setSource("inbox", …, Inbox::revision)`; `ForemanAlertCounts` before it is set):
+  decisions, blocked, replies, PRs, hold; under the decisions badge, full / short / dots width by what fits, hub keycap
+  at the end. `needsYou` = the Inbox's Needs you (the hold counts one), the inbox tab badge and the away toast. The whole goal bar is skipped while the HUD is hidden (F1, `dev.hud
   {hidden}`).
 - **Goal bar with several open goals**: urgent pinned, else 8 s turns, "+N more" (`HudRules.pickGoal`).
 - **`HudWatch`** (client tick, guarded as `hud.watch`): hub on screen (also under screens opened from it) ->
@@ -892,7 +893,7 @@ in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTe
 - **Files**: `<gameDir>/agentcraft/hub-hud.json` (per world: `lastTab`, `hubSeenAt`, `lastAwayToastAt`, `repliesSeen`,
   `welcomeDismissed`), next to `hub-seen.json` (same world key: save folder name, "multiplayer" otherwise).
 - **DevBridge**:
-  - `dev.hud.state` gains `hudHidden`, `hubKey`, `alert{source, visible, decisions, blocked, replies, needsYou, hold,
+  - `dev.hud.state` gains `hudHidden`, `hubKey`, `alert{source, visible, decisions, blocked, replies, prs, needsYou, hold,
     holdUntil, holdMessage, text, parts[{kind, family, full, short, dots}], drawn, level: full|short|dots|null,
     layout{needed, available, overflow, x, y, w, h, guiWidth, guiHeight, guiScale}}`, `goalBar{goalId, index, open,
     more, pinned}`, `away{world, hubSeenAt, lastAwayToastAt, awaySince, awayForMs, joinPending, lastCheckAt, checking,

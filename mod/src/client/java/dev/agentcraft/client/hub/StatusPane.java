@@ -93,11 +93,27 @@ final class StatusPane implements HubPane {
 		}
 		int top = y + 18;
 		if (view == View.OVERVIEW) {
-			// no scrolling here (the layout pass decides); the numbers say whether it fits
-			int bottom = hub.drawStatus(g, x, top, w, h - 18);
-			needed = bottom - y;
+			// scrolls when it does not fit: at 426x240 (4K, auto GUI scale) the claude backend's usage windows, account and
+			// note ran over the footer
+			int viewH = h - 18;
+			scroll = Math.max(0, Math.min(scroll, maxScroll));
+			g.enableScissor(x - 2, top, x + w + 2, top + viewH);
+			int bottom = hub.drawStatus(g, x, top - scroll, w - 8, viewH);
+			g.disableScissor();
+			int content = bottom - (top - scroll);
+			needed = content + 18;
 			available = h;
-			maxScroll = 0;
+			maxScroll = Math.max(0, content - viewH);
+			bodyX = x;
+			bodyY = top;
+			bodyW = w;
+			bodyH = viewH;
+			if (maxScroll > 0) {
+				TextUtil.Scroll sc = new TextUtil.Scroll().update(content, viewH);
+				sc.scrollBy(Integer.MIN_VALUE / 2);
+				sc.scrollBy(scroll);
+				Panels.scrollbar(g, x + w - 6, top, viewH, sc, false);
+			}
 			return;
 		}
 		drawHelp(g, x, top, w, h - 18, mx, my);
@@ -184,7 +200,7 @@ final class StatusPane implements HubPane {
 
 	@Override
 	public boolean keyPressed(KeyEvent e) {
-		if (view == View.HELP && (e.key() == com.mojang.blaze3d.platform.InputConstants.KEY_UP || e.key() == com.mojang.blaze3d.platform.InputConstants.KEY_DOWN)) {
+		if ((view == View.HELP || maxScroll > 0) && (e.key() == com.mojang.blaze3d.platform.InputConstants.KEY_UP || e.key() == com.mojang.blaze3d.platform.InputConstants.KEY_DOWN)) {
 			scroll = Math.max(0, Math.min(maxScroll, scroll + (e.key() == com.mojang.blaze3d.platform.InputConstants.KEY_UP ? -10 : 10)));
 			return true;
 		}
@@ -214,7 +230,7 @@ final class StatusPane implements HubPane {
 
 	@Override
 	public boolean mouseScrolled(double x, double y, int dir) {
-		if (view == View.HELP && maxScroll > 0 && x >= bodyX && x < bodyX + bodyW && y >= bodyY && y < bodyY + bodyH) {
+		if (maxScroll > 0 && x >= bodyX && x < bodyX + bodyW && y >= bodyY && y < bodyY + bodyH) {
 			scroll = Math.max(0, Math.min(maxScroll, scroll + dir * 12));
 			return true;
 		}
@@ -236,7 +252,7 @@ final class StatusPane implements HubPane {
 
 	@Override
 	public String[] hints() {
-		return view == View.HELP ? new String[] {"Tab", "next tab", "←→", "overview/help", "↑↓", "scroll", "Esc", "close"}
+		return view == View.HELP || maxScroll > 0 ? new String[] {"Tab", "next tab", "←→", "overview/help", "↑↓", "scroll", "Esc", "close"}
 			: new String[] {"Tab", "next tab", "←→", "overview/help", "Esc", "close"};
 	}
 
@@ -247,7 +263,7 @@ final class StatusPane implements HubPane {
 		JsonObject l = new JsonObject();
 		l.addProperty("needed", needed);
 		l.addProperty("available", available);
-		// help: needs a scroll; overview: runs past the footer (no scroll there)
+		// both views scroll when they do not fit: overflow = it scrolls (fine), never cut off
 		l.addProperty("overflow", needed > available);
 		l.addProperty("scroll", scroll);
 		l.addProperty("maxScroll", maxScroll);

@@ -179,11 +179,13 @@ public final class Toasts implements HudElement {
 		}
 		// never over the hotbar or the placement panel (426x240: the stack reached both); the rest wait their turn
 		int[] placing = dev.agentcraft.client.building.BuildPlacement.hudRect();
-		int limit = placing != null ? placing[1] - 4 : g.guiHeight() - 26;
+		// survival/Hardcore: hearts, armour, hunger and air sit above the hotbar (up to ~50 px from the bottom)
+		boolean bars = mc.gameMode != null && mc.gameMode.getPlayerMode().isSurvival();
+		int limit = placing != null ? placing[1] - 4 : g.guiHeight() - (bars ? 50 : 26);
 		for (Toast t : ACTIVE) {
 			int h = draw(g, font, t, now, y, limit);
 			if (h < 0) {
-				break;
+				continue; // a shorter one below may still fit
 			}
 			y += h + 4;
 		}

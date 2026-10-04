@@ -94,17 +94,18 @@ edits in `HubScreen`, `HubFeature`, `HubGoals`), pure + unit-tested `mod/src/mai
   `hub-hud.json repliesSeen`, set while the console is open, which shows every reply and so also covers goal
   replies), hold = `foreman.status.hold`. The feed is the Foreman's, not the world's: the first time a world is seen
   (no `hub-hud.json` entry) `repliesSeen` starts at now, so older replies never flood a new world or the first join
-  after the upgrade. **Merge step**: when
-  `InboxModel` lands, call `Alerts.setSource("inbox", () -> <its Needs-you counts as an AlertCounts>)` once (e.g. in
-  the inbox feature's init); the alert line, the away toast and every tab badge follow. The Inbox's read state then
-  replaces the console/goal marks above.
+  after the upgrade. **Merged** (layout pass): `HubFeature.init` calls `Alerts.setSource("inbox", <Inbox.counts() as an
+  AlertCounts, with prs>, Inbox::revision)`, so the alert line, the away toast and every tab badge count the Inbox's
+  Needs you (decisions + blocked + unread replies + PRs, +1 while a hold is on) and recount at once when read marks
+  change. The Inbox's read state replaces the console/goal marks above.
 - **Protocol mirror**: `Protocol.Hold(reason, until?, message?)` and `ForemanStatus.hold` (last component). The inbox
   stream needs the same: keep one.
 - **Alert line**: drawn by `GoalBar` under the decisions badge (the badge stays the `J` fast path, so decisions show in
   both), one tooltip-style row: each non-zero part with its status dot (decisions clay/waiting, blocked error,
   replies thinking, hold idle), " · " between, then the hub key's keycap + "open". Three widths picked per frame
-  (`AlertLine.fit`): full ("2 decisions · 1 blocked · 3 replies · usage paused until 14:20"), short ("2 dec · 1 blk ·
-  3 msg · paused → 14:20"), dots ("2 1 3 14:20" next to their dots, keycap only). Hold texts: usage "usage paused
+  (`AlertLine.fit`): full ("2 decisions · 1 blocked · 3 replies · 1 PR · usage paused until 14:20"), short ("2 dec ·
+  1 blk · 3 msg · 1 PR · paused → 14:20"), dots ("2 1 3 1 14:20" next to their dots, keycap only). PRs (layout pass)
+  use the working (teal) dot. Hold texts: usage "usage paused
   until 14:20" ("Mon 14:20" when not today, "usage paused" without `until`), auth "Claude sign-in needed", offline
   "Claude offline, retry 14:20". Hidden when nothing needs the player, with F1 (`mc.gui.hud.isHidden()`, the whole
   goal bar), and dimmed while the Foreman is stale. It uses the goal bar's pill-avoiding placement, so toasts stack
@@ -143,3 +144,13 @@ edits in `HubScreen`, `HubFeature`, `HubGoals`), pure + unit-tested `mod/src/mai
   `message` is carried (`dev.hud.state alert.holdMessage`) but not drawn (the line stays one compact row); the
   Status Overview has no scroll (18 px went to the chips): `statusTab.layout` reports whether it fits, the layout
   stream decides.
+
+## As implemented: layout pass (branch `wave2/layout`)
+At the user's setup (4K fullscreen, GUI scale auto = 9 = 426x240 GUI px; reproduced with `dev.window 1278x720` +
+`dev.review.guiScale 0`, mod/DEV.md "Layout checks") and at scales 2-4. Fixes: Inbox crash on any item (List.copyOf of
+the group headers), the HUD counts merge (PRs, hold, read-mark revision), the away digest strip at the top of the Inbox,
+DecisionScreen question shrinking, the wizard's blueprint step, the design form's scrolling left column, the
+placement/plot panels below the crosshair, toasts clear of the hotbar/survival bars/placement panel, the agent card down
+to one log row, the Buildings tab dropping minor facts, the Status Overview scrolling, cut text with ellipses and
+tooltips. Dev world for docs: `node tools/mac.mjs launch --backend sim --dev --world "Docs World" --preset normal`
+(tools/README.md).
