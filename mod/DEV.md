@@ -179,7 +179,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.displays` | `look?` = `paper` / `dark` / `split`, `reset?` | Monitor look (default dark; split alternates per monitor for comparisons), every laid-out monitor screen `{pos, agent, mode, style, size, ppb, rows, ageMs}`, and `stats` = display CPU cost per frame since the last reset (`monitor`/`board`: `usPerFrame`, `callsPerFrame`, `rebuilds`) |
 | `dev.taskwall` | `open?` (task id), `press?` (button id), `aim?` (task id), `board?` ("x y z" origin for `aim`), `lightFloor?` (0-15), `ppb?` (0-256, 0 = auto), `relayout?` | Task Wall boards and their cards (column counts, widths and cards per row, hidden ids, card positions, size full/brief/compact, title lines, state dot, glowing, `layoutUs` of the last re-plan). `lightFloor`/`ppb` override the block-light floor and the pixel density for A/B shots, `relayout` forces a re-plan. `open` opens that task's screen, `press` presses a button in the open task screen (`prev next retry prioritize reassign cancel to:<agent>`), `aim` returns the world point of a card and an eye 2.5 blocks in front (then `dev.camera` + `dev.key {mapping:"key.use"}` clicks it the real way; use `mode:"creative"`, spectators cannot click) |
 
-Registered screens (`dev.screen {open}`): `creative_agentcraft` (creative inventory on the AgentCraft tab), `agent` (agent card: last clicked agent, else whoever needs you), `task` (task detail: the last task opened, else the first doing one), `hub`, `hub_<tab>`, `hub_blueprints`, `hub_designs`, `hub_goal_{thread,plan,instructions,tasks}` (see "Hub"). Phase 3 features add theirs (see mod/FEATURES.md).
+Registered screens (`dev.screen {open}`): `creative_agentcraft` (creative inventory on the AgentCraft tab), `agent` (agent card: last clicked agent, else whoever needs you), `task` (task detail: the last task opened, else the first doing one), `hub`, `hub_<tab>`, `hub_blueprints`, `hub_designs`, `hub_goal_{thread,plan,instructions,tasks}`, `hub_settings_<group>`, `hub_repo_settings` (see "Hub"). Phase 3 features add theirs (see mod/FEATURES.md).
 
 ### Extending it from other mod code (client side)
 
@@ -288,6 +288,20 @@ A killed Foreman is noticed at once (connection reset) and its restart is picked
 backoff (about 3 s in the Phase 2 test). The model keeps the last known state while disconnected
 (`isStale()`): agents stay in place with a dimmed "Foreman offline" plate and the HUD says
 "Reconnecting to the Foreman".
+
+**Client token** (docs/HUB.md "Client token"). `hello` carries `token` when the mod finds one, so a newer Foreman
+gives the mod a full (not read-only) connection; an older Foreman never sees the field. `ClientToken.resolve`
+(pure, `ClientTokenTest`) runs on **every connect** (a restarted Foreman has a new token): the run file whose
+`port` is the port the mod connects to, looked for in `<home>/<AGENTCRAFT_PROFILE>/foreman.json`, then
+`<home>/foreman.json`, then every `<home>/<dir>/foreman.json` (home = `AGENTCRAFT_HOME`, else `~/.agentcraft`;
+`tools/mac.mjs` passes both); in it the first of the fields `clientTokenFile`, `tokenFile` (the Foreman's),
+`clientTokenPath`, `tokenPath`, `clientToken` that names a readable file (relative = to the run file's folder), else `client.token`
+in `<home>/<runfile.profile>/` or next to the run file. No run file / none of these = an older Foreman (no
+token sent). `AGENTCRAFT_CLIENT_TOKEN` overrides all of it (dev). The token is never logged; `dev.state.foreman`
+has `clientToken{sent, runFile, tokenFile, note}`, `readOnly`, `restartRequired[]`.
+A refusal whose error contains "read-only connection" marks the link read-only (`ForemanState.readOnly()`, cleared
+when the connection drops) and `Foreman.refusal` words it "Foreman did not accept the client token (read-only
+connection)"; the hub's footer then says so on every tab instead of key hints.
 
 ### Agents: client-side entities (architecture A), decided by measurement
 Two options were prototyped in the Phase 2 test room on the same six anchor-to-anchor routes
@@ -528,8 +542,8 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
 
 ### Hub (`H`, `/hub [tab]`)
 The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
-- `HubScreen` (not pausing): tabs from `HubTab` (Buildings, Repos, Goals, Team, Settings, Status; Team and
-  Settings draw a "coming next" panel from `HubTab.comingNext`). Repos and Goals are `HubPane`s
+- `HubScreen` (not pausing): tabs from `HubTab` (Buildings, Repos, Goals, Team, Settings, Status). Repos, Goals,
+  Team and Settings are `HubPane`s
   (`ReposTab`, `GoalsTab`) with their own state: the hub hands them keys, typed characters, clicks and the
   wheel first; while one of their text fields has focus every key goes to it (typing "h" never closes the hub;
   `isInputCaptured`, SDL text input on), Esc unfocuses, Tab moves between the view's fields, Ctrl+Enter sends. Tab / Shift+Tab cycle tabs, Left /
@@ -665,6 +679,98 @@ The contract is docs/HUB.md "Repos and Goals tabs" (+ its multi-repo amendment);
   `{action:"repo_add", path:"/abs/path"}`, `{action:"repo_remove", repoId, confirm:true}`. For an older
   Foreman's paths, inject (`dev.foreman.hold {on:true}` + `dev.foreman.inject`) goals without the new fields.
   Shoot each at GUI scale 2, 3 and 4 (`dev.review.guiScale {scale}`) and check `layout.overflow`.
+
+#### Team and Settings tabs
+The contract is docs/HUB.md "Team and Settings tabs, config get/set"; code in `client.hub` (`TeamTab`, `SettingsTab`,
+`SettingsForm` = the one form renderer, `ConfigScope` = one config.get/config.set scope, `HubConfig` = the scopes +
+restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef` / `SettingsLogic` / `Staged`
+(unit-tested in `SettingsLogicTest`).
+- Protocol mirror: `Foreman.configGet(repoId?)`, `configSet(repoId?, changes)`, `restart()`, `repoAgents(repoId)`;
+  `ForemanStatus.restartRequired`, `config.changed` (`ForemanState.configRevision()`, `restartRequired()`,
+  `ForemanListener.onConfigChanged`), `Protocol.RepoAgentFile`.
+- `ConfigScope` (global, or one repo's `repoSettings`; kept for the session, so staged edits survive closing the hub):
+  loads on first show, after `config.changed` and after every new snapshot (reconnect, restart), **rebasing** staged
+  edits (an edit is dropped only when it now equals the current value). Edits: `set(key, json)` (the mod validates
+  at once: type, int min/max, a choice among `options`, list entries, leads start with marlow) and `setText(key,
+  text)` (text that does not parse stays as a parse problem, the staged value unchanged). Keys the Foreman does not
+  list are synthesised where the mod knows them: a repo's `roles.<agent>` (current value from `Repo.settings.roles`)
+  and `claude.agents.<id>.{title,prompt,model,effort}` (model/effort options from the lead/worker defaults).
+- Apply (`HubConfig.applyAll`): refuses while a field has a problem; if any staged change widens what agents may do
+  (`SettingsLogic.widening`: permission mode away from `policy` (an unknown mode counts as the loosest), a deny rule
+  removed, an allow rule added, any change of `claude.useClaudeLogin`) a confirm bar names each one and nothing is
+  sent until "Confirm and apply"; then one `config.set` per dirty scope, global first, stopping at the first refusal
+  (**not atomic across scopes**: the Team tab's per-repo roles are each repo's own config.set). An ok ack: values
+  taken as current, `restartRequired` added to `ForemanState.restartRequired()`, `overridden` shown as notes, reload.
+  A refusal: per-field errors from `result.errors` ([{key, error}] or {key: msg}) else from the error text
+  ("key: problem; …", longest key first), shown under each field; the rest goes to the note line.
+- "Not set": `SettingsLogic.unsetValue` = the default when it is "" or "default" (a repo role, per-agent
+  model/effort), else `null` (the Foreman removes the key); `null` always passes the mod's check.
+- Restart banner when `restartRequired` is not empty: "N settings wait for a Foreman restart: keys…" + **Restart
+  Foreman** (`foreman.restart`). Then "Restarting the Foreman… reconnecting (attempt n) · s" until the link is synced
+  with a newer snapshot than at the restart; an ack lost to the closing socket ("connection lost") counts as
+  restarting, not failed. Every scope reloads after it.
+- Read-only: `config.get` refused as read-only -> the banner "Foreman did not accept the client token…" in place of
+  the form; Apply/Restart disabled. An older Foreman (unknown `config.get`) -> "Editing settings needs a newer
+  Foreman"; `repo.agents` unknown -> the role is a text field ("the roles picker needs a newer Foreman").
+- `SettingsForm` rows: bool = checkbox; enum/model/effort = chips from `options` (effort without options: low,
+  medium, high, max; model/effort with no default get a "not set" chip); int = − [typed value] + stepper with the
+  range; string = field (multi-line for `*.prompt` / `*Instructions`); stringList = multi-line field, one per line;
+  agentList = toggle chips (leads numbered in order, marlow fixed); a repo's `roles.<agent>` = chips "not set" + the
+  repo's agent files (`repo.agents`, loaded once per scope and snapshot); map and unknown types read-only. Each row:
+  label, badges (changed, restart when not `live`, the source file/flag/env/default), help (one line in compact),
+  "Overridden by --flag…" and its problem in red. The form scrolls (wheel); Tab cycles its fields, Enter ends a
+  single-line field, Ctrl+Enter applies, Esc unfocuses.
+- Settings tab: group chips General / Permissions / Context / Subagents / PRs / Usage (• = staged edits in it) and the
+  config file; a group = the global settings whose `SettingsLogic.groupOf` is it (Team keys excluded; `group` from the
+  Foreman, else by key prefix). Context lists the MCP servers read-only (`mcpServers` of the ack, else a `map`
+  setting named `*mcpServers`); Usage starts with the Status tab's usage windows (`HubScreen.drawUsage`, shared).
+- Team tab: roster (`PaneList`): "Models and limits", the leads (staged `claude.leads` order, then the cast's other
+  leads "not in use"; building via `Leads.view().buildingOf`, model · effort) and the workers (cast + Foreman +
+  configured; on/off = staged `claude.workers`), each with its face, state dot and a second line. Detail: framed
+  portrait, live state (state · activity, station, task, goal, lead / building), In use + ↑↓ (leads; marlow always
+  first) or On the team (workers), then the form: Profile (`claude.agents.<id>.title/prompt/model/effort`) and Role
+  per repo (one row per repo, each repo's scope). Models: lead/worker/design model + effort, task-size models,
+  concurrency, then any other Team key (`claude.leadReview`, …). Apply covers the global scope and every repo scope.
+- Repos tab: **Edit settings…** opens the repo's form in place of the tab (Done / Esc back), in the Foreman's groups:
+  Landing (`land`, `baseBranch`, `pr.*`), Worktrees (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`, `env`
+  read-only), Agents (`subagents`, `roles.<agent>` for every roster agent: chips of the agent file ids), Review
+  (`prReview.*`).
+- Layout: compact under 470 × 200 GUI px like Repos/Goals (Team: list or detail with "‹ Team"); banners collapse to
+  one line each; only the form scrolls. `dev.hub.state` `teamTab.layout` / `settingsTab.layout` = `{guiWidth,
+  guiHeight, guiScale, compact, needed, available, overflow}` where `needed` is the fixed parts (chips, banners,
+  Apply row) plus room for two rows: overflow means the form has no room at all, not that it scrolls.
+- DevBridge:
+  - `dev.hub.open {tab:"team", agentId?: <id>|models}`, `{tab:"settings", group?}`, `{tab:"repos", repoId, edit:true}`.
+  - `dev.hub.state` adds `teamTab` (selected, detailOpen, roster[{id, role, inUse, order, title, model, building,
+    live[], portrait}], scopes[] (each: phase, error, unsupported, readOnly, file, staged{}, errors{}, overridden{},
+    widening[], confirm[], agents[] for repos), form{focus, note, scroll, rows[{scope, key, type, value, current,
+    staged, source, live, overriddenBy, problem, editable, y, visible}], chips[]}, config{restartRequired[],
+    restarting, restartingForMs, readOnly, …}, layout) and `settingsTab` (group, groups, scope, form, config, layout);
+    `reposTab.editing` (+ scope, form, config while editing).
+  - `dev.hub.action` (`set`, `apply`, `revert`, `confirm`, `restart` are aliases of `settings_set`, `settings_apply`,
+    `settings_revert`, `settings_confirm`, `foreman_restart`): `settings_set {key, value (JSON, null = not set), repoId?}`, `settings_text {key, text,
+    repoId?}` (as typed), `settings_focus {key}`, `settings_apply {confirm?}` (the shown tab's scopes; a widening
+    change without confirm replies `ok:false, "confirm needed: …"`), `settings_confirm`, `settings_confirm_back`,
+    `settings_revert`, `settings_group {group}`, `settings_reload {repoId?}`, `foreman_restart`, `team_select
+    {agentId?}`, `team_back`, `team_on {agentId, on}`, `team_lead {agentId, inUse?, move?: -1|1}`, `repo_settings
+    {repoId?}`, `repo_settings_done`; `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
+    `group:<g>`, `team:on_team:<id>`, `team:lead_up:<id>`, …; see `*.form.chips`) and buttons `settings_apply`,
+    `settings_revert`, `settings_confirm`, `foreman_restart`, `settings_retry`, `repo_edit_settings`. Foreman actions
+    reply after the ack with `result{ok, message, unsupported, result}`.
+  - Fakes (no Foreman side needed): `settings_fake {result:{file, settings:[SettingDef…], mcpServers?}, repoId?}`
+    loads a config.get result into a scope; `settings_fake_agents {repoId, agents:[name | {name, path, description,
+    model}]}` fakes repo.agents. Apply still sends a real config.set.
+  - Screens: `hub_team`, `hub_settings`, `hub_settings_<group>`, `hub_repo_settings` (the first repo).
+- Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`, once the Foreman side is merged):
+  `dev.hub.open {tab:"settings", group:"permissions"}` -> `settings_set {key:"claude.permissions.allow",
+  value:["Bash(npm test)"]}` -> `settings_apply` (confirm bar: shoot it) -> `settings_confirm`; `settings_set
+  {key:"claude.useClaudeLogin", value:true}` + apply/confirm -> the restart banner -> `foreman_restart` (watch
+  `settingsTab.config.restarting` go false). Team: `dev.hub.open {tab:"team", agentId:"kit"}`, `settings_set
+  {key:"claude.agents.kit.model", value:"default"}`, `team_on {agentId:"kit", on:false}`, `settings_set
+  {key:"roles.kit", repoId:"demo", value:"<agent file>"}`, `settings_apply`. Repo: `dev.hub.open {tab:"repos",
+  repoId:"demo", edit:true}`. Against an older Foreman the forms show "needs a newer Foreman"; drive them with
+  `settings_fake`. Read-only: start the Foreman with token checking and the mod with `AGENTCRAFT_CLIENT_TOKEN=wrong`.
+  Shoot each at GUI scale 2, 3 and 4 and check `layout.overflow`.
 
 ### Generated buildings (design form, plot marking, design progress)
 The contract is docs/HUB.md "Generated buildings"; code in `dev.agentcraft.client.design` plus

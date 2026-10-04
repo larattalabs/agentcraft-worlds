@@ -70,6 +70,10 @@ public final class ForemanLink {
 	private volatile int attempt;
 	private CompletableFuture<?> sendChain = CompletableFuture.completedFuture(null);
 	private final Object sendLock = new Object();
+	/** Finds the client token for {@code hello} (read again on every connect: a restarted Foreman has a new one). */
+	private volatile java.util.function.Supplier<dev.agentcraft.hub.ClientToken.Found> tokenSource = () -> new dev.agentcraft.hub.ClientToken.Found(null,
+		null, null, "no token source");
+	private volatile dev.agentcraft.hub.ClientToken.@Nullable Found lastToken;
 
 	public ForemanLink(URI uri, String modVersion, ForemanState state, Executor clientThread, boolean enabled) {
 		this.uri = uri;
@@ -137,6 +141,16 @@ public final class ForemanLink {
 		return uri;
 	}
 
+	/** Where the client token for {@code hello} comes from (see {@link dev.agentcraft.hub.ClientToken}). */
+	public void setTokenSource(java.util.function.Supplier<dev.agentcraft.hub.ClientToken.Found> source) {
+		tokenSource = source;
+	}
+
+	/** What the last connect found for the client token (null before the first connect). Never log {@code token()}. */
+	public dev.agentcraft.hub.ClientToken.@Nullable Found lastToken() {
+		return lastToken;
+	}
+
 	/** Messages received since the game started. */
 	public long messageCount() {
 		return messages;
@@ -177,7 +191,16 @@ public final class ForemanLink {
 					lastInbound = System.currentTimeMillis();
 					lastPing = lastInbound;
 					publish(status.with(Phase.HANDSHAKE, null, 0));
-					JsonObject hello = ForemanJson.msg("hello").put("modVersion", modVersion).put("protocol", Protocol.VERSION).put("client", "mod").json();
+					dev.agentcraft.hub.ClientToken.Found tok;
+					try {
+						tok = tokenSource.get();
+					} catch (RuntimeException e) {
+						tok = new dev.agentcraft.hub.ClientToken.Found(null, null, null, "token lookup failed: " + e);
+					}
+					lastToken = tok;
+					// only with a token: an older Foreman never sees the field
+					JsonObject hello = ForemanJson.msg("hello").put("modVersion", modVersion).put("protocol", Protocol.VERSION).put("client", "mod")
+						.put("token", tok.token()).json();
 					sendRaw(socket, hello.toString());
 				});
 		} catch (Throwable t) {
@@ -340,6 +363,10 @@ public final class ForemanLink {
 					CompletableFuture<Ack> f = ack.re() == null ? null : pendingAcks.remove(ack.re());
 					if (f != null) {
 						f.complete(ack);
+					}
+					if (!ack.ok() && ForemanState.isReadOnlyError(ack.error())) {
+						String err = ack.error();
+						clientThread.execute(() -> state.markReadOnly(err));
 					}
 				}
 				case "diff" -> {

@@ -120,10 +120,13 @@ final class HubDev {
 		switch (action) {
 			case "press" -> {
 				String id = f.nonBlank("button");
-				boolean ok = s.press(id) || s.goals.pressChip(id);
+				// only the shown tab's chips (a hidden form keeps last frame's hit list)
+				boolean ok = s.press(id) || s.tab() == HubTab.GOALS && s.goals.pressChip(id) || s.tab() == HubTab.TEAM && s.team.form.press(id)
+					|| s.tab() == HubTab.SETTINGS && s.settings.form.press(id) || s.tab() == HubTab.REPOS && s.repos.editing() != null && s.repos.form
+						.press(id);
 				if (!ok) {
 					throw new DevBridge.DevException("button: no enabled button or chip '" + id + "' was drawn last frame (see dev.hub.state buttons"
-						+ " and goalsTab.chips)");
+						+ ", goalsTab.chips and the forms' chips: teamTab/settingsTab/reposTab .form.chips)");
 				}
 				return done(action, "pressed " + id);
 			}

@@ -38,7 +38,9 @@ import org.jspecify.annotations.Nullable;
  * setup commands, PR options, protected files, roles, review defaults, env keys) and its goals. Actions:
  * Add repo (path -> {@code repo.add}), Remove (two-step -> {@code repo.remove}), Place a building (the
  * wizard with this repo picked), Refresh PRs ({@code pr.refresh}), New goal (the Goals tab's form for it).
- * Editing settings waits for the Settings tab.
+ * "Edit settings…" opens the repo's {@code repoSettings} as a form ({@link SettingsForm} on the repo's
+ * {@link ConfigScope}: land, base branch, CI/setup, copy, protect, subagents, PR options, review defaults,
+ * roles picked from the repo's {@code .claude/agents}; env read-only), applied with one {@code config.set {repoId}}.
  */
 final class ReposTab implements HubPane {
 	static final long CONFIRM_MS = 6000;
@@ -62,9 +64,101 @@ final class ReposTab implements HubPane {
 	private boolean compact;
 	private int needed;
 	private int available;
+	/** The repo whose settings are being edited (the detail shows the form), null = none. */
+	private @Nullable String editing;
+	final SettingsForm form;
 
 	ReposTab(HubScreen hub) {
 		this.hub = hub;
+		this.form = new SettingsForm(hub, "repo");
+		form.onCtrlEnter(() -> {
+			if (editing != null) {
+				form.apply(List.of(HubConfig.repo(editing)), false);
+			}
+		});
+	}
+
+	@Nullable String editing() {
+		return editing;
+	}
+
+	/** Opens (or closes, null) the settings form of a repo. */
+	void edit(@Nullable String repoId) {
+		if (repoId != null) {
+			select(repoId);
+			form.toTop();
+		}
+		form.setFocus(null);
+		editing = repoId;
+	}
+
+	/** The repo form's rows: landing and checks, pull requests, review, roles (a row per agent), other, env (read-only). */
+	List<SettingsForm.Row> editorRows(String repoId) {
+		ConfigScope sc = HubConfig.repo(repoId);
+		List<SettingsForm.Row> rows = new ArrayList<>();
+		if (sc.phase() != ConfigScope.Phase.READY) {
+			if (sc.phase() != ConfigScope.Phase.FAILED) {
+				rows.add(new SettingsForm.Text(Foreman.connected() ? "Loading " + repoId + "'s settings…" : "The Foreman is not connected.", false));
+			}
+			return rows;
+		}
+		// the Foreman's repo groups (landing, worktrees, agents, review), in that order, then any other group
+		java.util.LinkedHashMap<String, List<String>> groups = new java.util.LinkedHashMap<>();
+		for (String g : List.of("landing", "worktrees", "agents", "review")) {
+			groups.put(g, new ArrayList<>());
+		}
+		for (dev.agentcraft.hub.SettingDef d : sc.view().settings()) {
+			String g = d.group().isBlank() ? d.key().startsWith("prReview.") ? "review" : d.key().startsWith("pr.") || d.key().equals("land")
+				|| d.key().equals("baseBranch") ? "landing" : d.key().startsWith("roles.") || d.key().equals("subagents") ? "agents" : "worktrees"
+				: d.group().toLowerCase(java.util.Locale.ROOT);
+			groups.computeIfAbsent(g, k -> new ArrayList<>()).add(d.key());
+		}
+		// a role row for every roster agent, even when the Foreman lists only some
+		List<String> agentKeys = groups.get("agents");
+		for (String a : TeamTab.roster()) {
+			if (!agentKeys.contains("roles." + a)) {
+				agentKeys.add("roles." + a);
+			}
+		}
+		groups.forEach((g, keys) -> section(rows, sc, switch (g) {
+			case "landing" -> "Landing (merge or pull request)";
+			case "worktrees" -> "Worktrees, setup and tests";
+			case "agents" -> "Agents (roles: one of the repo's .claude/agents files each)";
+			case "review" -> "PR review";
+			default -> Character.toUpperCase(g.charAt(0)) + g.substring(1);
+		}, keys, null));
+		return rows;
+	}
+
+	private static void section(List<SettingsForm.Row> rows, ConfigScope sc, String title, List<String> keys, @Nullable String none) {
+		if (keys.isEmpty()) {
+			return;
+		}
+		rows.add(new SettingsForm.Section(title));
+		for (String k : keys) {
+			rows.add(new SettingsForm.Setting(sc, k, null));
+		}
+	}
+
+	private void drawEditor(GuiGraphicsExtractor g, Repo r, int x, int y, int w, int h, int mx, int my) {
+		int y0 = y;
+		ConfigScope sc = HubConfig.repo(r.id());
+		sc.tick();
+		String done = "Done";
+		int dw = hub.bw(done);
+		g.text(font(), TextUtil.ellipsize(font(), "Settings of " + r.id() + (sc.view().file() != null && !compact ? "  ·  " + sc.view().file() : ""),
+			w - dw - 6), x, y + 6, UiBits.ink(), false);
+		hub.button(g, "repo_settings_done", done, x + w - dw, y, dw, false, false, false, mx, my, () -> edit(null));
+		y += 23;
+		List<ConfigScope> scopes = List.of(sc);
+		y += form.banners(g, scopes, x, y, w, mx, my);
+		int actionsY = y0 + h - 20;
+		int formH = actionsY - 4 - y;
+		needed += y - y0 + 24 + 30;
+		if (formH > 12) {
+			form.draw(g, editorRows(r.id()), x, y, w, formH, mx, my);
+		}
+		form.actions(g, scopes, x, actionsY, w, mx, my);
 	}
 
 	private Font font() {
@@ -192,6 +286,15 @@ final class ReposTab implements HubPane {
 	@Override
 	public boolean keyPressed(KeyEvent e) {
 		int k = e.key();
+		if (editing != null) {
+			if (form.keyPressed(e)) {
+				return true;
+			}
+			if (e.isEscape()) {
+				edit(null);
+				return true;
+			}
+		}
 		if (focused) {
 			if (e.isEscape()) {
 				setFocus(false);
@@ -236,11 +339,14 @@ final class ReposTab implements HubPane {
 			path.model.insert(e.codepointAsString());
 			return true;
 		}
-		return false;
+		return editing != null && form.charTyped(e);
 	}
 
 	@Override
 	public boolean mouseClicked(double x, double y, boolean doubleClick) {
+		if (editing != null && form.mouseClicked(x, y)) {
+			return true;
+		}
 		if (adding && path.click(font(), x, y)) {
 			setFocus(true);
 			return true;
@@ -263,6 +369,9 @@ final class ReposTab implements HubPane {
 
 	@Override
 	public boolean mouseScrolled(double x, double y, int dir) {
+		if (editing != null && form.mouseScrolled(x, y, dir)) {
+			return true;
+		}
 		if (detailArea[2] > 0 && x >= detailArea[0] && x < detailArea[0] + detailArea[2] && y >= detailArea[1] && y < detailArea[1] + detailArea[3]) {
 			detailScroll.scrollBy(dir * 20);
 			return true;
@@ -272,12 +381,16 @@ final class ReposTab implements HubPane {
 
 	@Override
 	public @Nullable String focus() {
+		if (editing != null && form.focusKey() != null) {
+			return form.focusKey();
+		}
 		return focused ? path.id : null;
 	}
 
 	@Override
 	public void unfocus() {
 		setFocus(false);
+		form.setFocus(null);
 	}
 
 	@Override
@@ -288,6 +401,10 @@ final class ReposTab implements HubPane {
 	public String[] hints() {
 		if (focused) {
 			return new String[] {"Enter", "add", "Esc", "done typing"};
+		}
+		if (editing != null) {
+			return form.focus() != null ? new String[] {"Ctrl+Enter", "apply", "Tab", "next field", "Esc", "done typing"} : new String[] {"Ctrl+Enter",
+				"apply", "Esc", "done"};
 		}
 		return compact && detailOpen ? new String[] {"↑↓", "repo", "Esc", "back"} : new String[] {"Tab", "next tab", "↑↓", "repo", "Esc", "close"};
 	}
@@ -345,11 +462,13 @@ final class ReposTab implements HubPane {
 
 	@Override
 	public void draw(GuiGraphicsExtractor g, int x, int y, int w, int h, int mx, int my) {
+		form.begin();
 		goalRects.clear();
 		goalIds.clear();
 		path.beginFrame();
 		detailArea = new int[4];
 		compact = w < 470 || h < 200;
+		form.compact(compact);
 		available = h;
 		needed = 0;
 		int muted = UiBits.muted();
@@ -363,6 +482,15 @@ final class ReposTab implements HubPane {
 		if (cur == null && !rs.isEmpty()) {
 			cur = rs.get(0);
 			selected = cur.id();
+		}
+		if (editing != null && (cur == null || !cur.id().equals(editing))) {
+			editing = null;
+		}
+		if (editing != null) {
+			// the repo's settings form takes the whole tab
+			list.hide();
+			drawEditor(g, cur, x, y, w, h, mx, my);
+			return;
 		}
 		boolean showList = !compact || !detailOpen || cur == null;
 		boolean showDetail = cur != null && (!compact || detailOpen);
@@ -496,7 +624,6 @@ final class ReposTab implements HubPane {
 					.prReview().autoSeverities())) + (st.prReview().maxRounds() != null ? " · max " + st.prReview().maxRounds() + " rounds" : "")});
 			}
 			rows.add(new String[] {"Env", st.envKeys().isEmpty() ? "none" : String.join(", ", st.envKeys()) + " (values hidden)"});
-			rows.add(new String[] {" ", "Editing settings comes with the Settings tab."});
 		}
 		rows.add(new String[] {"", "Goals"});
 		List<Goal> goals = new ArrayList<>();
@@ -600,6 +727,9 @@ final class ReposTab implements HubPane {
 			hub.button(g, "repo_place", pl, bx, buttonsY, hub.bw(pl), false, !sp, false, mx, my, () -> placeBuilding(id));
 			bx += hub.bw(pl) + 4;
 		}
+		String es = compact ? "Settings…" : "Edit settings…";
+		hub.button(g, "repo_edit_settings", es, bx, buttonsY, hub.bw(es), false, !Foreman.connected(), false, mx, my, () -> edit(id));
+		bx += hub.bw(es) + 4;
 		boolean armedHere = armed(id);
 		String rm = armedHere ? "Confirm remove" : "Remove…";
 		int rmw = hub.bw(rm);
@@ -630,6 +760,12 @@ final class ReposTab implements HubPane {
 		o.addProperty("busy", busy);
 		o.addProperty("note", note);
 		o.addProperty("noteError", noteError);
+		o.addProperty("editing", editing);
+		if (editing != null) {
+			o.add("scope", HubConfig.repo(editing).state());
+			o.add("form", form.state());
+			o.add("config", HubConfig.state());
+		}
 		JsonObject layout = new JsonObject();
 		layout.addProperty("guiWidth", hub.width);
 		layout.addProperty("guiHeight", hub.height);

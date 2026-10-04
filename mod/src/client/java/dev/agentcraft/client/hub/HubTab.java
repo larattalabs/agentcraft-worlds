@@ -12,14 +12,8 @@ public enum HubTab {
 	BUILDINGS("buildings", "Buildings", true, List.of()),
 	REPOS("repos", "Repos", true, List.of()),
 	GOALS("goals", "Goals", true, List.of()),
-	TEAM("team", "Team", false, List.of(
-		"The agents: role, model, effort and shift.",
-		"Pause, resume, put on or take off shift.",
-		"Until then: /pause, /resume, /stop and /spawn in the console.")),
-	SETTINGS("settings", "Settings", false, List.of(
-		"Permissions, context, connectors and session history.",
-		"Usage limits and what happens when one is reached.",
-		"Until then: the Foreman's profile settings and launch flags.")),
+	TEAM("team", "Team", true, List.of()),
+	SETTINGS("settings", "Settings", true, List.of()),
 	STATUS("status", "Status", true, List.of());
 
 	public final String id;

@@ -111,6 +111,8 @@ public final class HubScreen extends Screen {
 	private int descTotal;
 	final ReposTab repos = new ReposTab(this);
 	final GoalsTab goals = new GoalsTab(this);
+	final TeamTab team = new TeamTab(this);
+	final SettingsTab settings = new SettingsTab(this);
 	private boolean opened;
 	private boolean textInput;
 
@@ -124,6 +126,8 @@ public final class HubScreen extends Screen {
 		return switch (t) {
 			case REPOS -> repos;
 			case GOALS -> goals;
+			case TEAM -> team;
+			case SETTINGS -> settings;
 			default -> null;
 		};
 	}
@@ -646,12 +650,19 @@ public final class HubScreen extends Screen {
 			case STATUS -> drawStatus(g, cx, y, cw, footerY - 4 - y);
 			case REPOS -> repos.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			case GOALS -> goals.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
+			case TEAM -> team.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
+			case SETTINGS -> settings.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			default -> drawComingNext(g, cx, y, cw, footerY - 4 - y);
 		}
 		HubPane hp = pane();
 		String[] hints = hp != null ? hp.hints() : tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "buildings/blueprints/designs", "↑↓", "select",
 			"Esc", "close"} : new String[] {"Tab", "next tab", "Esc", "close"};
-		if (UiBits.hintsWidth(font, hints) <= cw) {
+		ForemanState fst = Foreman.state();
+		if (fst != null && fst.readOnly()) {
+			// never fail silently: every action is refused on a read-only connection
+			g.text(font, TextUtil.ellipsize(font, UiBits.CROSS + " " + Foreman.READ_ONLY + ": actions are refused", cw), cx, footerY + 1,
+				UiBits.errorText(), false);
+		} else if (UiBits.hintsWidth(font, hints) <= cw) {
 			UiBits.hints(g, font, cx, footerY, false, hints);
 		}
 	}
@@ -1224,6 +1235,26 @@ public final class HubScreen extends Screen {
 		int rx = x + colW + 12;
 		int ry = y;
 		ry = section(g, "Plan usage", rx, ry, colW);
+		ry += drawUsage(g, rx, ry, colW);
+		if (st != null && st.costUsd() != null && st.costUsd() > 0) {
+			ry = fact(g, "Spend", String.format(Locale.ROOT, "$%.2f (estimated, this profile)", st.costUsd()), rx, ry, colW);
+		}
+		ry += 6;
+		ry = section(g, "Versions", rx, ry, colW);
+		ry = fact(g, "Mod", modVersion(), rx, ry, colW);
+		ry = fact(g, "Foreman", st == null ? "?" : st.version(), rx, ry, colW);
+		ry += 6;
+		ry = section(g, "DevBridge", rx, ry, colW);
+		fact(g, "", DevBridge.status(), rx, ry, colW);
+	}
+
+	/** The plan usage windows (bars, percent, reset time), as on the Status tab; returns the height. Also the Settings tab's Usage group. */
+	int drawUsage(GuiGraphicsExtractor g, int rx, int ry, int colW) {
+		int y0 = ry;
+		int ink = UiBits.ink();
+		int muted = UiBits.muted();
+		ForemanState s = Foreman.state();
+		ForemanStatus st = s == null ? null : s.status();
 		List<UsageWindow> windows = st == null || st.usage() == null ? List.of() : st.usage().windows();
 		if (windows.isEmpty()) {
 			for (String line : TextUtil.wrapPlain(font, st == null ? "Unknown until the Foreman reports."
@@ -1250,16 +1281,7 @@ public final class HubScreen extends Screen {
 				ry += 10;
 			}
 		}
-		if (st != null && st.costUsd() != null && st.costUsd() > 0) {
-			ry = fact(g, "Spend", String.format(Locale.ROOT, "$%.2f (estimated, this profile)", st.costUsd()), rx, ry, colW);
-		}
-		ry += 6;
-		ry = section(g, "Versions", rx, ry, colW);
-		ry = fact(g, "Mod", modVersion(), rx, ry, colW);
-		ry = fact(g, "Foreman", st == null ? "?" : st.version(), rx, ry, colW);
-		ry += 6;
-		ry = section(g, "DevBridge", rx, ry, colW);
-		fact(g, "", DevBridge.status(), rx, ry, colW);
+		return ry - y0;
 	}
 
 	static String modVersion() {
