@@ -743,7 +743,7 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
   the next world start).
 - Gotchas: the client's preview can be stale (the server plans again; a route the ground has broken since refuses with
   "preview the road again"); a building placed later over a road keeps those cells on Remove road (they belong to the
-  building's snapshot now); a cell shared with an older road belongs to that road; Enter lays only the confirmed ghost
+  building's snapshot now); a cell shared with an older road belongs to that road until it is removed, then to the road still running there (`Road.handover`); Enter lays only the confirmed ghost
   (the server's plan must hash the same, else "The ground changed since the preview").
 - QA at small sizes: at GUI scale 2, 3 and 4 (and a ~426x240 GUI px window) open `dev.hub.open {tab:"buildings",
   sub:"roads"}`, check `dev.roads.state ui.strip.overflow` and `ui.overflow` are false and screenshot the strip (at scale 4

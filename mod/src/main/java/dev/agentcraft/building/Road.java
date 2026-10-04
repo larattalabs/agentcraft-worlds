@@ -44,6 +44,71 @@ public record Road(String id, String a, String b, String dimension, int width, b
 		return changes.length / 3;
 	}
 
+	/**
+	 * Which of a removed road's changes another road still needs (removing an older road under a newer one that shares
+	 * its walkway left the newer road with holes: a road never changes another road's cells, so the newer one had left
+	 * them to the older). {@code changes} are the removed road's cells to give back (x, y, z triples); a cell goes to the
+	 * road with a walker cell nearest it: in its column or a neighbouring one, from two below the feet (the path block
+	 * under a slab) to three above (cleared headroom over a slab). Lanterns beside a road that stays go with it. Ties:
+	 * the newest road, then the id. Returns the change index -> the id of the road that keeps it; the rest go back.
+	 */
+	public static java.util.Map<Integer, String> handover(int[] changes, List<Road> others) {
+		java.util.Map<Long, List<int[]>> columns = new java.util.HashMap<>(); // column -> [road index, feet y]
+		for (int r = 0; r < others.size(); r++) {
+			int[] c = others.get(r).cells();
+			for (int i = 0; i + 2 < c.length; i += 3) {
+				columns.computeIfAbsent(column(c[i], c[i + 2]), k -> new ArrayList<>()).add(new int[] {r, c[i], c[i + 1], c[i + 2]});
+			}
+		}
+		java.util.Map<Integer, String> out = new java.util.LinkedHashMap<>();
+		if (columns.isEmpty()) {
+			return out;
+		}
+		for (int i = 0; i + 2 < changes.length; i += 3) {
+			int x = changes[i];
+			int y = changes[i + 1];
+			int z = changes[i + 2];
+			Road best = null;
+			int bestD = Integer.MAX_VALUE;
+			for (int dx = -1; dx <= 1; dx++) {
+				for (int dz = -1; dz <= 1; dz++) {
+					List<int[]> at = columns.get(column(x + dx, z + dz));
+					if (at == null) {
+						continue;
+					}
+					for (int[] w : at) {
+						int feet = w[2];
+						if (y < feet - 2 || y > feet + 3) {
+							continue;
+						}
+						Road q = others.get(w[0]);
+						int d = dx * dx + dz * dz;
+						if (best == null || d < bestD || d == bestD && (q.created() > best.created()
+							|| q.created() == best.created() && q.id().compareTo(best.id()) < 0)) {
+							best = q;
+							bestD = d;
+						}
+					}
+				}
+			}
+			if (best != null) {
+				out.put(i / 3, best.id());
+			}
+		}
+		return out;
+	}
+
+	private static long column(int x, int z) {
+		return ((long) x << 32) ^ (z & 0xFFFFFFFFL);
+	}
+
+	/** This road with {@code more} changes (x, y, z triples) it now owns, handed over by a removed road. */
+	public Road withChanges(int[] more) {
+		int[] c = java.util.Arrays.copyOf(changes, changes.length + more.length);
+		System.arraycopy(more, 0, c, changes.length, more.length);
+		return new Road(id, a, b, dimension, width, lanterns, bridge, created, length, cells, lanternCells, c, notes);
+	}
+
 	/** The other end. */
 	public String other(String building) {
 		return a.equals(building) ? b : a;

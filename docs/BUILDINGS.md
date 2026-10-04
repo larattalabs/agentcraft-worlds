@@ -474,7 +474,10 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   along the road and then every 12, on natural ground within a block of the road's height; when there is no room the
   other side, then the next route cells (up to 3 further) are tried, else it is noted.
 - **Shared cells**: a cell another road already changed is left to that road (the column is skipped, noted "already
-  part of another road"); removing the first road removes it.
+  part of another road"). Removing the first road hands the cells the other road still runs on to it (`Road.handover`:
+  a changed cell in or beside a column of the other road's walker cells, from 2 below its feet to 3 above; the nearest,
+  then the newest road takes it): they stay, go into that road's snapshot and changes, and its own removal restores
+  them ("…; 294 cells kept for road r13 (it runs there too)"). Before, they went back and left the other road with holes.
 - **Laying** (`Roads.lay(level, a, b, route, options, previewHash)`, server thread): the client sends the route and,
   from a preview, the fingerprint of the ghost the player confirmed (`RoadPlan.hash`: each change's x, y, z and block,
   in order). The server
@@ -505,11 +508,13 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   slabs the same block and slab type, waterlogged or not) gets its old block back, ground first, then what stood on it; cells the player changed since and cells a building now covers are left as
   they are ("Removed road r2 (b1 to b3): 140 cells back as they were; 3 cells you changed since left alone"). Refuses while
   a player or a pet stands where an old block comes back (a bush at head height suffocates). Crash safety as for
-  buildings: the removal is recorded under `pending` first (refused, nothing done, when the record cannot be written),
-  then the snapshot is renamed `<id>.removed-<ms>.nbt` (the record is put back when that fails), then the blocks
-  are restored; the next world start settles
-  it on the cells (`Road.settle`): most telling cells hold the old blocks -> the snapshot goes; most hold the road (the
-  removal never reached the disk) -> the record comes back; nothing readable -> kept. `forget` drops a record and leaves
+  buildings: the cells that go back are written to `<id>.removed-<ms>.nbt` and cells handed over are added to the
+  receiving roads' snapshots, then the removal is recorded under `pending` (refused, those files put back, when the
+  record cannot be written), then `<id>.before.nbt` goes, then the blocks are restored; the next world start settles
+  it on the cells (`Road.settle`), counting only cells no standing road changed (a road laid over the same ground
+  later shows road blocks there although the removal reached the disk: counting them brought removed roads back): most
+  telling cells hold the old blocks, or none tell -> the snapshot goes; most hold the road (the removal never reached
+  the disk) -> the record comes back, at most one per building pair; nothing readable -> kept. `forget` drops a record and leaves
   the blocks (for a road whose snapshot is gone). A pending removal whose snapshot was never renamed (a crash between
   the record and the rename) is settled on `<id>.before.nbt`.
 - **Buildings removed or moved** (any path: hub, command, Undo move): their roads now lead nowhere or to the old site.

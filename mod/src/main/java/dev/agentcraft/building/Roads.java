@@ -183,8 +183,12 @@ public final class Roads {
 
 	/** The cells ({@link WalkCell#pack}) every road in {@code dimension} changed (another road leaves them alone). */
 	public static LongSet changedCells(String dimension) {
+		return changedCells(state, dimension);
+	}
+
+	private static LongSet changedCells(State st, String dimension) {
 		LongOpenHashSet s = new LongOpenHashSet();
-		for (Road r : state.byId().values()) {
+		for (Road r : st.byId().values()) {
 			if (r.dimension().equals(dimension)) {
 				int[] c = r.changes();
 				for (int i = 0; i + 2 < c.length; i += 3) {
@@ -563,10 +567,13 @@ public final class Roads {
 	 * What {@link #remove} did: {@code restored} cells got their old block back, {@code changed} were left alone because
 	 * the player changed them since, {@code covered} because a building now covers them.
 	 */
-	public record Removed(Road road, int restored, int changed, int covered) {
+	public record Removed(Road road, int restored, int changed, int covered, Map<String, Integer> handed) {
 		public String message() {
 			String m = "Removed road " + road.id() + " (" + road.a() + " to " + road.b() + "): " + restored + " cell" + (restored == 1 ? "" : "s")
 				+ " back as they were";
+			for (Map.Entry<String, Integer> h : handed.entrySet()) {
+				m += "; " + h.getValue() + " cell" + (h.getValue() == 1 ? "" : "s") + " kept for road " + h.getKey() + " (it runs there too)";
+			}
 			if (changed > 0) {
 				m += "; " + changed + " cell" + (changed == 1 ? "" : "s") + " you changed since left alone";
 			}
@@ -584,7 +591,8 @@ public final class Roads {
 	/**
 	 * Removes road {@code id}: every cell that still holds what the road put there gets its old block back (in the order
 	 * ground first, then what stood on it); cells the player changed since and cells a building now covers are left as
-	 * they are. Refuses while a player or a pet stands where an old block comes back. The snapshot is kept (as a pending
+	 * they are. Cells another road still runs on ({@link Road#handover}: a newer road that shared this one's walkway left
+	 * them to it) stay, and that road takes them over (its snapshot and changes), so it keeps no holes. Refuses while a player or a pet stands where an old block comes back. The snapshot is kept (as a pending
 	 * removal) until the next world start confirms the restored cells reached the disk. Server thread.
 	 */
 	public static Removed remove(ServerLevel level, String id) throws RoadException {
@@ -622,6 +630,34 @@ public final class Roads {
 			}
 			restore.add(new Entry(e.x(), e.y(), e.z(), e.before(), now));
 		}
+		// cells another road still runs on stay and become that road's
+		List<Road> others = new ArrayList<>();
+		for (Road q : state.byId().values()) {
+			if (!q.id().equals(id) && q.dimension().equals(dim)) {
+				others.add(q);
+			}
+		}
+		int[] candidates = new int[restore.size() * 3];
+		for (int i = 0; i < restore.size(); i++) {
+			Entry e = restore.get(i);
+			candidates[3 * i] = e.x();
+			candidates[3 * i + 1] = e.y();
+			candidates[3 * i + 2] = e.z();
+		}
+		Map<Integer, String> handover = Road.handover(candidates, others);
+		Map<String, List<Entry>> given = new LinkedHashMap<>();
+		if (!handover.isEmpty()) {
+			List<Entry> back = new ArrayList<>();
+			for (int i = 0; i < restore.size(); i++) {
+				String to = handover.get(i);
+				if (to == null) {
+					back.add(restore.get(i));
+				} else {
+					given.computeIfAbsent(to, k -> new ArrayList<>()).add(restore.get(i));
+				}
+			}
+			restore = back;
+		}
 		restore.sort(Comparator.comparingInt(Entry::y));
 		List<RoadPlan.Op> ops = new ArrayList<>();
 		List<BlockState> from = new ArrayList<>();
@@ -632,33 +668,68 @@ public final class Roads {
 			to.add(e.before());
 		}
 		refuseOccupied(level, ops, from, to, "removing it");
-		// the record first (as a pending removal naming the snapshot's new name), then the snapshot, then the blocks: a
-		// crash in between leaves a pending removal that the next start settles on the cells
+		// the removal's snapshot (only the cells that go back: the next start settles on them, and cells handed over still
+		// show road blocks), then the receiving roads' snapshots, then the record (a pending removal naming the new file),
+		// then the old snapshot goes, then the blocks: a crash in between leaves a pending removal settled on the cells
 		Path kept = snap.resolveSibling(id + ".removed-" + System.currentTimeMillis() + ".nbt");
+		writeEntries(kept, restore);
+		Map<String, List<Entry>> previous = new LinkedHashMap<>();
 		State s = state;
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
 		map.remove(id);
-		List<Road.Pending> pending = new ArrayList<>(s.pending());
-		pending.add(new Road.Pending(r, kept.getFileName().toString(), System.currentTimeMillis()));
-		commit(server, s, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
 		try {
-			Files.move(snap, kept, StandardCopyOption.ATOMIC_MOVE);
-		} catch (IOException ex) {
-			AgentCraft.LOGGER.warn("Could not rename {}; the road stays", snap, ex);
-			try {
-				commit(server, state, s); // back as it was: the record names the snapshot's old name again
-			} catch (RoadException again) {
-				AgentCraft.LOGGER.warn("Could not put road {} back in {}", id, FILE, again);
+			for (Map.Entry<String, List<Entry>> g : given.entrySet()) {
+				Road q = s.byId().get(g.getKey());
+				Path qs = snapshotFile(server, q.id());
+				List<Entry> had = Files.exists(qs) ? readSnapshot(level, qs) : null;
+				if (had == null) {
+					throw new RoadException("The snapshot of " + q.id() + " is missing, so it cannot take over " + id + "'s cells");
+				}
+				previous.put(q.id(), had);
+				List<Entry> all = new ArrayList<>(had);
+				all.addAll(g.getValue());
+				writeEntries(qs, all);
+				int[] more = new int[g.getValue().size() * 3];
+				for (int i = 0; i < g.getValue().size(); i++) {
+					Entry e = g.getValue().get(i);
+					more[3 * i] = e.x();
+					more[3 * i + 1] = e.y();
+					more[3 * i + 2] = e.z();
+				}
+				map.put(q.id(), q.withChanges(more));
 			}
-			throw new RoadException("Could not move the snapshot of " + id + " (" + ex.getMessage() + "); nothing was removed");
+			List<Road.Pending> pending = new ArrayList<>(s.pending());
+			pending.add(new Road.Pending(r, kept.getFileName().toString(), System.currentTimeMillis()));
+			commit(server, s, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
+		} catch (RoadException ex) {
+			for (Map.Entry<String, List<Entry>> p : previous.entrySet()) {
+				try {
+					writeEntries(snapshotFile(server, p.getKey()), p.getValue());
+				} catch (RoadException again) {
+					AgentCraft.LOGGER.warn("Could not put road {}'s snapshot back", p.getKey(), again);
+				}
+			}
+			try {
+				Files.deleteIfExists(kept);
+			} catch (IOException ignored) {
+				// a stray .removed file names no road
+			}
+			throw ex;
+		}
+		try {
+			Files.deleteIfExists(snap);
+		} catch (IOException ex) {
+			AgentCraft.LOGGER.warn("Could not delete {} (the removal is recorded; it names {})", snap, kept.getFileName(), ex);
 		}
 		CellDrops drops = CellDrops.before(level, ops);
 		for (Entry e : restore) {
 			level.setBlock(m.set(e.x(), e.y(), e.z()), e.before(), FLAGS);
 		}
 		drops.clearNew(level);
-		Removed out = new Removed(r, restore.size(), changed, covered);
-		lastNote = changed + covered == 0 ? null : out.message();
+		Map<String, Integer> handed = new LinkedHashMap<>();
+		given.forEach((k, v) -> handed.put(k, v.size()));
+		Removed out = new Removed(r, restore.size(), changed, covered, Collections.unmodifiableMap(handed));
+		lastNote = changed + covered + handed.size() == 0 ? null : out.message();
 		AgentCraft.LOGGER.info("{}", out.message());
 		return out;
 	}
@@ -713,6 +784,19 @@ public final class Roads {
 		}
 	}
 
+	/** {@link #writeSnapshot} for snapshot entries (a removal's cells, or a road's cells with ones handed over). */
+	private static void writeEntries(Path file, List<Entry> entries) throws RoadException {
+		List<RoadPlan.Op> ops = new ArrayList<>(entries.size());
+		List<BlockState> before = new ArrayList<>(entries.size());
+		List<BlockState> after = new ArrayList<>(entries.size());
+		for (Entry e : entries) {
+			ops.add(new RoadPlan.Op(e.x(), e.y(), e.z(), RoadPlan.Block.AIR, 0));
+			before.add(e.before());
+			after.add(e.after());
+		}
+		writeSnapshot(file, ops, before, after);
+	}
+
 	private static List<Entry> readSnapshot(ServerLevel level, Path file) throws RoadException {
 		CompoundTag root;
 		try {
@@ -762,10 +846,19 @@ public final class Roads {
 			}
 			try {
 				List<Entry> entries = readSnapshot(level, snap);
+				// cells a standing road changed tell nothing about this removal: a road laid over the same ground later
+				// (the pair laid again, a road sharing the walkway) shows road blocks there although the removal reached
+				// the disk, and counting them brought removed roads back
+				LongSet standing = changedCells(s, p.road().dimension());
 				int atAfter = 0;
 				int atBefore = 0;
+				int telling = 0;
 				BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
 				for (Entry e : entries) {
+					if (standing.contains(WalkCell.pack(e.x(), e.y(), e.z()))) {
+						continue;
+					}
+					telling++;
 					BlockState now = level.getBlockState(m.set(e.x(), e.y(), e.z()));
 					if (stillOurs(now, e.after())) {
 						atAfter++;
@@ -773,10 +866,12 @@ public final class Roads {
 						atBefore++;
 					}
 				}
-				switch (Road.settle(atAfter, atBefore, entries.size())) {
+				switch (Road.settle(atAfter, atBefore, telling)) {
 					case RELEASE -> Files.deleteIfExists(snap);
 					case RECORD_BACK -> {
-						if (between(p.road().a(), p.road().b()) == null && !map.containsKey(p.road().id())) {
+						// against the records being rebuilt here: two removed roads of one pair never both come back
+						boolean pairTaken = map.values().stream().anyMatch(q -> q.between(p.road().a(), p.road().b()));
+						if (!pairTaken && !map.containsKey(p.road().id())) {
 							Files.move(snap, snapshotFile(server, p.road().id()), StandardCopyOption.REPLACE_EXISTING);
 							map.put(p.road().id(), p.road());
 							AgentCraft.LOGGER.warn("Road {}: its removal did not reach the disk (the road stands), so its record is back", p.road().id());
