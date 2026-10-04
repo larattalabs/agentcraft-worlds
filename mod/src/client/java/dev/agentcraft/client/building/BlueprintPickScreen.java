@@ -207,20 +207,22 @@ final class BlueprintPickScreen extends WizardScreen {
 	public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float a) {
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
-		int maxBody = Math.max(PREVIEW + 60, height - 110);
+		// at 426x240 (4K, auto GUI scale) a fixed 116 px preview pushed Place/Back below the screen: the preview shrinks first
+		int maxBody = Math.max(100, height - 110);
 		// the right column: preview, facts, description (wrapped to the column, scrolled when long)
 		int panelW = Math.min(MAX_W, width - 24);
 		int contentW = panelW - Kit.padding("panel_paper").left() - Kit.padding("panel_paper").right();
-		int rw = Math.max(PREVIEW, Math.min(DETAIL_MAX, contentW - 150));
+		int rw = Math.max(100, Math.min(DETAIL_MAX, contentW - 150));
 		Blueprint cur = current();
 		List<String> facts = cur == null ? List.of() : TextUtil.wrapPlain(font, "Entrance at the bottom \u2193 \u00b7 ground row " + cur.groundY(), rw);
 		List<String> desc = cur == null ? List.of()
 			: TextUtil.wrapPlain(font, cur.description().isEmpty() ? cur.id() : cur.description(), rw - 8);
 		int factsH = facts.size() * 10 + 3;
-		int descRoom = Math.max(3, (maxBody - 18 - PREVIEW - 4 - factsH) / 10);
+		int pv = Math.max(48, Math.min(Math.min(PREVIEW, rw), maxBody - 18 - 4 - factsH - 20));
+		int descRoom = Math.max(2, (maxBody - 18 - pv - 4 - factsH) / 10);
 		descRows = Math.min(desc.size(), descRoom);
 		descScroll = Math.max(0, Math.min(descScroll, desc.size() - descRows));
-		int detailH = PREVIEW + 4 + factsH + descRows * 10;
+		int detailH = pv + 4 + factsH + descRows * 10;
 		visibleRows = Math.max(1, Math.min(Math.max(1, list.size()), (maxBody - 30) / ROW));
 		int bodyH = 14 + Math.max(detailH, visibleRows * ROW) + 14;
 		int y = frame(g, "2/2  Choose a blueprint", bodyH);
@@ -267,10 +269,10 @@ final class BlueprintPickScreen extends WizardScreen {
 				descFor = cur.id();
 				descScroll = 0;
 			}
-			int px0 = pxl + (rw - PREVIEW) / 2;
-			Panels.inset(g, px0, y, PREVIEW, PREVIEW);
-			BlueprintPreview.draw(g, cur.id(), px0 + 4, y + 4, PREVIEW - 8);
-			int dy = y + PREVIEW + 4;
+			int px0 = pxl + (rw - pv) / 2;
+			Panels.inset(g, px0, y, pv, pv);
+			BlueprintPreview.draw(g, cur.id(), px0 + 4, y + 4, pv - 8);
+			int dy = y + pv + 4;
 			for (String line : facts) {
 				g.text(font, line, pxl, dy, muted, false);
 				dy += 10;
