@@ -289,6 +289,25 @@ public final class BuildingWizardFeature {
 		}
 	}
 
+	/** The hub's "Edit repos…": the repo step for building {@code id}; {@code onEdit} gets the new repos (wing order). */
+	public static void openEditRepos(String id, net.minecraft.client.gui.screens.@Nullable Screen back, java.util.function.Consumer<List<String>> onEdit) {
+		dev.agentcraft.building.Building b = Buildings.get(id);
+		if (b == null) {
+			return;
+		}
+		Minecraft.getInstance().gui.setScreen(RepoPickScreen.forEdit(b, onEdit, back));
+	}
+
+	/** The hub's "Move…": placement mode for building {@code id}. Returns why not, or null when the ghost is up. */
+	public static @Nullable String startMove(String id) {
+		try {
+			BuildPlacement.startMove(id);
+			return null;
+		} catch (IllegalArgumentException e) {
+			return e.getMessage();
+		}
+	}
+
 	private static void registerDev() {
 		DevBridge.register("dev.build.open", 10_000, "{step?: repos|blueprints, repos?: [..] | \"a,b\", blueprint?} - open a wizard screen "
 			+ "(blueprints: for repos, default the first Foreman repo without a building)", (req, mc) -> {

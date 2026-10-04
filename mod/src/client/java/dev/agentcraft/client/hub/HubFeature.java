@@ -183,10 +183,11 @@ public final class HubFeature {
 		DevBridge.register("dev.hub.state", 10_000, "{} - the hub: open, tab, sub, selections, armed remove, last action, buildings, blueprints, "
 			+ "rendered previews of the selected blueprint (paths tried, found, load state), buttons on screen", (req, mc) -> DevBridge.onClient(mc,
 				() -> state(mc)));
-		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|place_new|place|place_plot|design_new|"
+		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|edit_repos|move|undo_move|place_new|place|place_plot|design_new|"
 			+ "cancel_design|" + HubDev.ACTIONS + "|" + SettingsDev.ACTIONS + ", tab?, buildingId?, blueprint?, designId?, repos?: [..] | \"a,b\", view?, confirm?: bool} - press a hub button (opens the "
 			+ "hub when closed). home/teleport/remove/cancel_design reply after the server/Foreman answered; remove without confirm arms it (a "
-			+ "second remove for the same id confirms); place_plot = Place on the plot (with repos: straight to placement locked on the plot)",
+			+ "second remove for the same id confirms; refused over the player's things, a third forces it); edit_repos with repos sets them "
+			+ "(without: opens the repo screen); move puts up the ghost (then dev.build.*); place_plot = Place on the plot (with repos: straight to placement locked on the plot)",
 			(req, mc) -> {
 				Fields f = Fields.of(req);
 				String action = f.nonBlank("action").toLowerCase(Locale.ROOT);
@@ -249,6 +250,34 @@ public final class HubFeature {
 					return CompletableFuture.completedFuture(done);
 				}
 				return f.thenApply(HubFeature::resultJson);
+			}
+			case "edit_repos", "move", "undo_move" -> {
+				String id = building != null ? building : s.selectedBuilding();
+				if (id == null || Buildings.get(id) == null) {
+					throw new DevBridge.DevException("buildingId: no building " + id);
+				}
+				s.selectBuilding(id);
+				switch (action) {
+					case "edit_repos" -> {
+						if (repos.isEmpty()) {
+							s.editRepos(id); // the repo screen, as the button does
+							done.addProperty("opened", "repos of " + id);
+							return CompletableFuture.completedFuture(done);
+						}
+						return HubActions.setRepos(id, repos).thenApply(HubFeature::resultJson);
+					}
+					case "move" -> {
+						String why = s.move(id);
+						if (why != null) {
+							throw new DevBridge.DevException(why);
+						}
+						done.addProperty("placing", "move " + id + ": the ghost is up (dev.build.start-like: dev.build.nudge/lock/confirm)");
+						return CompletableFuture.completedFuture(done);
+					}
+					default -> {
+						return s.undoMove(id).thenApply(HubFeature::resultJson);
+					}
+				}
 			}
 			case "place_new" -> s.placeNew();
 			case "place" -> {
@@ -362,6 +391,7 @@ public final class HubFeature {
 		o.addProperty("selectedDesign", s == null ? null : s.selectedDesign());
 		o.addProperty("designNote", s == null ? null : s.designNote());
 		o.addProperty("armedRemove", s == null ? null : s.armedRemove());
+		o.addProperty("forceRemoveArmed", s != null && s.armedRemove() != null && s.forceArmed(s.armedRemove()));
 		o.addProperty("busy", s != null && s.busy());
 		o.addProperty("view", s == null ? null : s.view());
 		o.addProperty("designNewAvailable", designNew != null);
@@ -383,6 +413,18 @@ public final class HubFeature {
 			Anchors.Bounds box = b.box();
 			j.addProperty("box", box.minX() + "," + box.minY() + "," + box.minZ() + " .. " + box.maxX() + "," + box.maxY() + "," + box.maxZ());
 			j.addProperty("hasEntrance", b.anchors().containsKey("entrance"));
+			Anchors.Bounds rb = b.restoreBox();
+			j.addProperty("snapshotBox", rb.minX() + "," + rb.minY() + "," + rb.minZ() + " .. " + rb.maxX() + "," + rb.maxY() + "," + rb.maxZ());
+			j.addProperty("revision", b.revision());
+			if (b.movedFrom() != null) {
+				j.addProperty("movedFrom", b.movedFrom().x() + "," + b.movedFrom().y() + "," + b.movedFrom().z() + " " + b.movedFrom().rotation() + " "
+					+ b.movedFrom().dimension());
+			}
+			Buildings.Report rep = Buildings.reports().get(b.id());
+			if (rep != null) {
+				j.addProperty("check", rep.message());
+				j.addProperty("checkProblem", rep.problem());
+			}
 			String world = Buildings.worldId();
 			j.addProperty("leadKey", world == null ? null : dev.agentcraft.building.LeadRouting.key(world, b.id()));
 			j.addProperty("lead", dev.agentcraft.client.leads.Leads.view().leadOf(b.id()));

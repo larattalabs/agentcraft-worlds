@@ -44,6 +44,11 @@ final class RepoPickScreen extends WizardScreen {
 	/** Lock the ghost here after picking: {x, y, z, turns} (the hub's "Place on the plot"), or null. */
 	private final int @Nullable [] lockAt;
 	private @Nullable String error;
+	/** Edit mode (the hub's "Edit repos…"): the building whose repos are being changed, null = a new building. */
+	private @Nullable String editBuilding;
+	/** Edit mode: what confirming does with the chosen repos, and where Esc goes. */
+	private java.util.function.@Nullable Consumer<List<String>> onEdit;
+	private net.minecraft.client.gui.screens.@Nullable Screen back;
 	private final List<Row> rows = new ArrayList<>();
 	/** Picked repo ids in pick order (= wing order). */
 	private final List<String> picked = new ArrayList<>();
@@ -72,6 +77,31 @@ final class RepoPickScreen extends WizardScreen {
 		this.lockAt = lockAt;
 	}
 
+	/**
+	 * The repo step for changing building {@code id}'s repos (wing n = the n-th picked): its own repos are
+	 * preselected and enabled, other buildings' repos disabled; Next hands the choice to {@code onEdit}.
+	 */
+	static RepoPickScreen forEdit(Building b, java.util.function.Consumer<List<String>> onEdit, net.minecraft.client.gui.screens.@Nullable Screen back) {
+		RepoPickScreen s = new RepoPickScreen(b.repos(), b.blueprint(), null);
+		s.editBuilding = b.id();
+		s.onEdit = onEdit;
+		s.back = back;
+		return s;
+	}
+
+	@Nullable String editBuilding() {
+		return editBuilding;
+	}
+
+	@Override
+	public void onClose() {
+		if (editBuilding != null && minecraft != null) {
+			minecraft.gui.setScreen(back);
+			return;
+		}
+		super.onClose();
+	}
+
 	int @Nullable [] lockAt() {
 		return lockAt;
 	}
@@ -94,7 +124,8 @@ final class RepoPickScreen extends WizardScreen {
 		if (s != null) {
 			s.repos().values().stream().sorted(Comparator.comparing(Repo::name, String.CASE_INSENSITIVE_ORDER)).forEach(r -> {
 				Building b = Buildings.forRepo(r.id());
-				rows.add(new Row(r.id(), r.name(), r.branch(), b == null ? null : b.id() + " (" + b.blueprint() + ")"));
+				boolean mine = b != null && b.id().equals(editBuilding);
+				rows.add(new Row(r.id(), r.name(), r.branch(), b == null || mine ? null : b.id() + " (" + b.blueprint() + ")"));
 			});
 		}
 		for (String id : preselect) {
@@ -167,6 +198,11 @@ final class RepoPickScreen extends WizardScreen {
 		Blueprint bp = Blueprints.get(fixedBlueprint);
 		error = bp == null ? "Blueprint " + fixedBlueprint + " is no longer loaded" : fits(bp, c.size());
 		if (error != null) {
+			return;
+		}
+		if (editBuilding != null && onEdit != null) {
+			onEdit.accept(c);
+			minecraft.gui.setScreen(back);
 			return;
 		}
 		try {
@@ -273,7 +309,9 @@ final class RepoPickScreen extends WizardScreen {
 		int fieldH = textMode ? typedView.height(font, typed, Math.min(MAX_W, width - 24) - 24, fieldStyle) : 0;
 		int bodyH = 22 + (textMode ? 14 + fieldH + 4 : visibleRows * ROW) + 14;
 		Blueprint fixed = fixedBlueprint == null ? null : Blueprints.get(fixedBlueprint);
-		int y = frame(g, fixed != null ? "Repos for " + fixed.name() + (lockAt != null ? " (on the plot)" : "") : "1/2  Choose repos", bodyH);
+		int y = frame(g, editBuilding != null ? "Repos of " + editBuilding + (fixed != null ? " (" + fixed.name() + ", " + fixed.wings() + " wing"
+			+ (fixed.wings() == 1 ? "" : "s") + ")" : "") : fixed != null ? "Repos for " + fixed.name() + (lockAt != null ? " (on the plot)" : "")
+			: "1/2  Choose repos", bodyH);
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
 		g.text(font, "One repo: a single building. Several: a group building,", cx, y, muted, false);

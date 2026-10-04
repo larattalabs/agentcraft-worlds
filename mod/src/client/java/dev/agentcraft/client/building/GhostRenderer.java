@@ -17,6 +17,9 @@ import net.minecraft.world.phys.Vec3;
  * alpha, shaded by face direction so the shape reads;</li>
  * <li>cells that would replace a solid world block at or above the ground row in orange, block
  * entities that block placement in strong red (whole cubes, drawn a little larger);</li>
+ * <li>terrain fit ({@code TerrainFit}): the foundation the server adds below the floor in stone grey, natural
+ * terrain it clears above the ground row as a pale wash; fluids in and next to the footprint: water blue, lava
+ * bright amber (lava refuses);</li>
  * <li>the outline of the ghost's footprint ({@link GhostModel#outline}) as thin bars: sage when placement
  * would go ahead, red when it would be refused (plus the whole reserved box, faintly, when the refusal is
  * an overlap or the player standing in it), and a brass bar along the front-most entrance face at ground
@@ -29,6 +32,10 @@ final class GhostRenderer {
 	static final int GHOST_ALPHA = 0x5A; // ~35 %
 	static final int OBSTRUCTED = 0x70E0782A;
 	static final int BLOCKED = 0xB8E0302A;
+	static final int FOUNDATION = 0x78989490;
+	static final int CLEARED = 0x30F4EBD8;
+	static final int WATER = 0x803C78E6;
+	static final int LAVA = 0xC8FFB000;
 	static final float INFLATE = 0.005f;
 	static final float EDGE = 0.045f;
 
@@ -148,6 +155,10 @@ final class GhostRenderer {
 			float z = bz + m.z(i);
 			quads += cube(pose, vc, x - INFLATE, y - INFLATE, z - INFLATE, x + 1 + INFLATE, y + 1 + INFLATE, z + 1 + INFLATE, base, faces, true);
 		}
+		quads += cells(pose, vc, v.fill(), FOUNDATION, 0.008f, cx, cy, cz);
+		quads += cells(pose, vc, v.clear(), CLEARED, 0.006f, cx, cy, cz);
+		quads += cells(pose, vc, v.water(), WATER, 0.01f, cx, cy, cz);
+		quads += cells(pose, vc, v.lava(), LAVA, 0.02f, cx, cy, cz);
 		quads += cells(pose, vc, v.obstructed(), OBSTRUCTED, 0.012f, cx, cy, cz);
 		quads += cells(pose, vc, v.blocked(), BLOCKED, 0.03f, cx, cy, cz);
 
@@ -162,7 +173,8 @@ final class GhostRenderer {
 		// the whole box place() reserves, faintly, when a refusal is about the box itself (an overlap, the
 		// player standing in it, or block entities, which place() refuses anywhere in the box), so a corner the
 		// footprint leaves out still explains the refusal
-		if (refused && (v.blockedCount() > 0 || v.refusals().stream().anyMatch(r -> r.startsWith("overlaps") || r.equals(BuildPlacement.PLAYER_INSIDE)))) {
+		if (refused && (v.blockedCount() > 0 || v.playerInside() || v.refusals().stream().anyMatch(r -> r.startsWith("overlaps") || r.startsWith("pets")
+			|| r.startsWith("in the box") || r.startsWith("dropped items")))) {
 			int faint = UiStyle.withAlpha(0xFFD0402A, 0x60);
 			float w = m.sizeX;
 			float h = m.sizeY;
