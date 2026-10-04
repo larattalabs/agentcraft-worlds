@@ -631,6 +631,60 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
 - Block changes that mean the same to a walker (a door opened, a lamp lit) do not drop routes (the mixin
   compares the two states' cell codes).
 
+### Village routines (docs/VILLAGE.md V3, stream routines)
+
+Code: pure scheduling in `dev.agentcraft.routine` (`RoutineRules`, `BedPicker`, `BedRest`, `StandupTracker`,
+`LibraryVisits`, `RoutineSettings`; `RoutineLogicTest`, `BedRestTest`: the bed approach cell, staying in bed, arrival,
+the station per routine), client side `agents/Routines` (feeds them, beds in the world, lying, book,
+bubbles, DevBridge) hooked into `AgentManager.tick` in three places: `begin` (clock, library queue, due stand-ups),
+`plan` per building (the station key per agent for `StationAssigner`, beds) and `after` (lie down on arrival, start
+reading, gather and talk). `keepLying` skips retargeting while an agent sleeps; any other path that moves it (a
+relayout snap, a building change, a released lead leaving, the level or the link going away) gets it up first.
+
+- **Priorities** (`RoutineRules.decide`): waiting on the player (asking, or owning an open decision) or changing
+  building -> nothing; a running stand-up it is in (only in the stand-up's building) -> stand-up; a library visit
+  due and between steps (not `working`/`thinking`/`error`) -> library; night (13000 <= time of day < 23000, the
+  overworld clock, `Level.getOverworldClockTime`) + idle (no task and not mid-step, or off shift) -> rest; else its
+  own station. While the link is stale the previous routine stays.
+- **Rest**: beds = layout anchors `bed`, `bed_2`.. (also `bed:<repo>`) whose cell is a bed's head half, rechecked every
+  2 s (`occupied` = the player sleeps there: skipped; broken: gone); the approach cell = the first standable cell beside
+  the head, beside the foot, beyond the foot. `BedPicker`: sticky, else the free bed nearest the agent's wing
+  (`task_wall:<repo>`), desk or lounge. The agent walks to `<bed>@rest` (the approach cell), then is placed at
+  `<bed>@lie` (the head cell centre, bed floor + 0.6875, vanilla's sleeping spot) and drawn in vanilla's sleeping pose
+  (render state only: `Pose.SLEEPING`, `bedOrientation` = the bed's facing, posture `LIE`, head with the body, plate
+  0.95 above it, "resting"). No bed free: the lounge slots (the plate still says "resting").
+- **Stand-ups**: `StandupTracker` sees a goal `ACTIVE` with open assigned tasks, waits 60 ticks for the rest of the
+  first assignments, then the lead's building (where the lead is routed this tick, else the first routed worker)
+  hosts it: `meeting` slots, else `user`. Skipped with a reason (history in `dev.routines.state`): toggle off, no
+  participant routed here, no spot, the player > 64 blocks from the building box, the box's chunks not loaded. Gathered
+  when every participant routed there reached its slot (or after 8 s); then the lead (to all) and each worker (to the
+  lead) speak 3 s apart; it ends 5 s after the last line, 20-30 s after the start. A snapshot (or the first tick after
+  joining) seeds every goal that already has assigned tasks: no replays.
+- **Library**: `ForemanListener.onMemory` with `author` = an agent id (the sim and Claude backends write the author)
+  queues a visit (`LibraryVisits`, ignored within 60 s after a visit). It starts when the agent is between steps
+  (`library` station key, a vanilla book in its main hand while walking), reads at the shelves for 100 ticks (READ
+  pose, the open book), ends, or at 600 ticks whatever happened; work (or a stand-up) cancels it at once.
+- **Hub**: three toggles under the trophies one (`routine_toggle:<key>`), see docs/HUB.md; `routines.json`
+  (`{version, worlds: {<save>: {night, standups, library}}}`).
+- **DevBridge**: `dev.routines.state` (settings, clock/night, per agent routine/station/bed/lying/target/book/plate,
+  beds per layout with who sleeps where, stand-ups running/pending/history, library visits/history, hub row fit),
+  `dev.routines.toggle {toggle, on?}`, `dev.routines.time {ticks | at: night|midnight|morning|noon|dusk}` (the
+  integrated server's `time set`, like `dev.time`), `dev.routines.standup {goalId, force?}` (holds it now; `force`
+  ignores the distance and loading, not the toggle), `dev.routines.library {agent}` (as if it wrote a note, no
+  cooldown). `dev.state` has a `routines` summary.
+- **QA** (dev world: `node tools/mac.mjs launch --backend sim --dev --world "Village QA" --preset normal`):
+  scripted night/morning check: place a building with beds in the Overworld, then `node tools/routines-qa.mjs
+  [--timeout 90] [--shot]` (night on, `at:"night"`, polls `dev.routines.state` until an agent has `routine:
+  resting`, `lying: bed..`, `plate: resting` on its bed's head; `at:"morning"`, polls until nobody rests or lies and
+  the sleepers stand outside the bed; sets the old time back; exit 0 = both passed; checks in `tools/lib/routinesqa.mjs`,
+  tested). By hand: place a building (`dev.command {cmd:"agentcraft place workshop <repo>"}` or the wizard), `dev.routines.time
+  {at:"night"}`, wait ~10 s, `dev.routines.state` (idle agents `routine: resting`, `lying: bed..`), `dev.camera` at a bed
+  + `dev.screenshot`; `dev.routines.time {at:"morning"}` -> they get up. Stand-up: stand in the building, `dev.goals.submit
+  {text, repoId}`, then poll `dev.routines.state` (`standups.pending` -> `running`, bubbles in a screenshot), or
+  `dev.routines.standup {goalId, force:true}` for an existing goal. Library: `dev.routines.library {agent:"kit"}`, or
+  `dev.foreman.inject {message:{type:"memory.upsert", entry:{id:"qa-note", scope:"shared", title:"QA", body:"x",
+  updated:<ms>, author:"kit"}}}`, then `dev.routines.state` (`library.visits`, `agents[].book`).
+
 ### A lead per building (`dev.agentcraft.client.leads`)
 The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUILDINGS.md "Client (routing)".
 - Building key `"<worldId>/<buildingId>"`, worldId = the save folder name (`Buildings.worldId()`, from

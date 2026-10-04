@@ -241,3 +241,4 @@ Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.
 | `record.mjs`, `shots/*.json` | real-time shot player for screen recording (`dev.play`: camera paths, timed Foreman injections, typing); format in `shots/README.md` |
 | `qa.mjs`, `lib/contactsheet.mjs`, `scenes/qa.json` | QA suite, contact sheet (pngjs) |
 | `scenes/phase1.json`, `scenes/qa-selftest.json` | Phase 1 proof scene, runner self-test |
+| `routines-qa.mjs`, `lib/routinesqa.mjs` | village routines check against a running dev world: night rest in beds, morning return (mod/DEV.md "Village routines") |

@@ -24,6 +24,7 @@ import java.util.function.Consumer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
@@ -34,10 +35,12 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
+import net.minecraft.world.attribute.BedRule;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.block.AbstractBedBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
@@ -47,6 +50,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
@@ -429,6 +433,7 @@ public final class Buildings {
 			}
 			connectPanels(level, box);
 			rewriteBindings(level, box, repos);
+			BedsOut beds = removeUnsafeBeds(level, grid, turns, box);
 			BlockState foundation = foundationState(bp);
 			BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
 			for (int i = 0; i < plan.fill().length; i += 3) {
@@ -448,6 +453,10 @@ public final class Buildings {
 			}
 			drops.clearNew(level);
 			List<String> notes = new ArrayList<>();
+			String bedNote = BedSafety.note(beds.heads().size(), here);
+			if (bedNote != null) {
+				notes.add(bedNote);
+			}
 			String gone = Occupancy.removalNote(found);
 			if (gone != null && removed > 0) {
 				notes.add(gone);
@@ -474,8 +483,8 @@ public final class Buildings {
 				notes.add(shortOf);
 			}
 			return new Built(turns, box, snapBox, BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
-				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), pinFor(bp, grid, turns, box),
-				notes.isEmpty() ? null : String.join("; ", notes));
+				BedSafety.withoutBeds(BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), beds.heads()),
+				BedSafety.strip(pinFor(bp, grid, turns, box), beds.cells(), beds.heads(), box), notes.isEmpty() ? null : String.join("; ", notes));
 		} catch (RuntimeException e) {
 			// never leave a half-built, unrecorded box behind: put the snapshot back
 			AgentCraft.LOGGER.error("Placing {} at {} failed; restoring box {}", bp.id(), origin.toShortString(), str(snapBox), e);
@@ -487,6 +496,48 @@ public final class Buildings {
 			}
 			throw new BuildingException("Placing " + bp.id() + " failed (" + e.getMessage() + "); the area was restored");
 		}
+	}
+
+	/** The template's beds a placement left out ({@link #removeUnsafeBeds}): every removed cell and the head cells, as {@link BlockPos#asLong}. */
+	private record BedsOut(java.util.Set<Long> cells, java.util.Set<Long> heads) {
+	}
+
+	/**
+	 * Takes the template's own beds out again where the level's bed rule makes them dangerous (docs/BUILDINGS.md "Beds":
+	 * in the Nether and the End a bed explodes when used, which ends a Hardcore world): both halves become air (no drops,
+	 * {@link #FLAGS}). The rule is read at each bed's head cell, as vanilla does. Only cells the template wrote a bed to
+	 * are looked at, never a block of the player's. Server thread.
+	 */
+	private static BedsOut removeUnsafeBeds(ServerLevel level, TemplateGrid grid, int turns, Anchors.Bounds box) {
+		java.util.Set<Long> cells = new java.util.HashSet<>();
+		java.util.Set<Long> heads = new java.util.HashSet<>();
+		GhostModel m = grid.ghost(turns);
+		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+		for (int i = 0; i < m.count(); i++) {
+			if (!(grid.states()[i].getBlock() instanceof AbstractBedBlock)) {
+				continue;
+			}
+			BlockState s = level.getBlockState(p.set(box.minX() + m.x(i), box.minY() + m.y(i), box.minZ() + m.z(i)));
+			if (!(s.getBlock() instanceof AbstractBedBlock bed)) {
+				continue;
+			}
+			Direction facing = s.getValue(AbstractBedBlock.FACING);
+			BlockPos head = BedSafety.head(p.getX(), p.getY(), p.getZ(), s.getValue(AbstractBedBlock.PART) == BedPart.HEAD, facing.getStepX(),
+				facing.getStepZ());
+			BedRule rule = bed.getBedRule(level, head);
+			if (!BedSafety.unsafe(rule.canSleep() == BedRule.Rule.NEVER, rule.destroyOnUse(), rule.destroyOnLeave())) {
+				continue;
+			}
+			cells.add(p.asLong());
+			heads.add(head.asLong());
+		}
+		for (long c : cells) {
+			level.setBlock(BlockPos.of(c), Blocks.AIR.defaultBlockState(), FLAGS);
+		}
+		if (!cells.isEmpty()) {
+			AgentCraft.LOGGER.info("Left out {} bed(s) of {} in {}: beds are not safe there", heads.size(), grid.blueprint().id(), dimensionId(level));
+		}
+		return new BedsOut(java.util.Set.copyOf(cells), java.util.Set.copyOf(heads));
 	}
 
 	/**

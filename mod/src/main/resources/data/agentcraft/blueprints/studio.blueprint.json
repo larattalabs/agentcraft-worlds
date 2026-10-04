@@ -1,7 +1,7 @@
 {
   "id": "studio",
   "name": "Studio",
-  "description": "A premium one-repo office: double-height hall with skylights, a window wall behind five desks, task wall, decision podium, glass meeting room, library, lounge, terminal, test bench and merge station.",
+  "description": "A premium one-repo office: double-height hall with skylights, a window wall behind five desks, task wall, decision podium, glass meeting room, library, lounge, rest corner, terminal, test bench and merge station.",
   "kind": "single",
   "wings": 1,
   "size": {
@@ -334,6 +334,27 @@
       "y": 1,
       "z": 24.5,
       "yaw": 180,
+      "pitch": 0
+    },
+    "bed": {
+      "x": 12.5,
+      "y": 1,
+      "z": 26.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "bed_2": {
+      "x": 14.5,
+      "y": 1,
+      "z": 26.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "bed_3": {
+      "x": 16.5,
+      "y": 1,
+      "z": 26.5,
+      "yaw": 0,
       "pitch": 0
     },
     "entrance": {

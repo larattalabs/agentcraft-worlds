@@ -36,10 +36,18 @@ public final class StationAssigner {
 
 	/** Assign every agent (in order) and return agentId -> anchor (absent when the layout has nothing usable). */
 	public Map<String, Anchor> assign(List<Agent> agents, Anchors.Layout layout) {
+		return assign(agents, layout, StationAssigner::stationKey);
+	}
+
+	/**
+	 * {@link #assign(List, Anchors.Layout)} with the station key of each agent from {@code keyOf} (the village routines
+	 * send agents to the lounge, the library or the meeting table instead of their own station).
+	 */
+	public Map<String, Anchor> assign(List<Agent> agents, Anchors.Layout layout, java.util.function.Function<Agent, String> keyOf) {
 		Map<String, Anchor> out = new LinkedHashMap<>();
 		Map<String, List<Agent>> byStation = new LinkedHashMap<>();
 		for (Agent a : agents) {
-			String key = stationKey(a);
+			String key = keyOf.apply(a);
 			if (key.equals("desk")) {
 				Anchor desk = layout.get(AnchorNames.desk(a.id()));
 				if (desk != null) {

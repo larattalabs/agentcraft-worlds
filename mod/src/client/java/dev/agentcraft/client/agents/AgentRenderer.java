@@ -77,6 +77,17 @@ public class AgentRenderer extends AvatarRenderer<ClientAgentEntity> {
 		s.partialTick = partialTicks;
 		AgentLife life = entity.life();
 		life.extract(s, partialTicks);
+		Routines.BedSpot bed = life.lyingIn();
+		if (bed != null) {
+			// the night routine: vanilla's sleeping pose in the bed (the head on the pillow, the body along the bed's facing);
+			// a render state only, the entity keeps its size (still targetable for the card)
+			net.minecraft.client.renderer.entity.state.LivingEntityRenderState ls = s;
+			ls.pose = net.minecraft.world.entity.Pose.SLEEPING;
+			ls.bedOrientation = bed.facing();
+			s.eyeHeight = entity.getEyeHeight(net.minecraft.world.entity.Pose.STANDING);
+			s.sitDrop = 0f;
+			s.plateBase = (float) Nameplate.LYING_HEIGHT;
+		}
 		// Nameplates are world information (like the Task Wall), so they stay visible with the HUD hidden (F1, screenshots).
 		// PlateLayout (end of level extraction) picks full/compact, lift and depth nudge for this frame.
 		if (s.distanceToCameraSq < PLATE_DISTANCE * PLATE_DISTANCE) {

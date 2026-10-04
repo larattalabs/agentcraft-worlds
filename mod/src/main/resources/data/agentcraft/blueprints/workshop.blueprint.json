@@ -1,7 +1,7 @@
 {
   "id": "workshop",
   "name": "Workshop",
-  "description": "A one-repo office: five desks, a task wall, a decision podium, a meeting table, a small lounge, library, terminal, test bench and merge station.",
+  "description": "A one-repo office: five desks, a task wall, a decision podium, a meeting table, a small lounge, a rest corner, library, terminal, test bench and merge station.",
   "kind": "single",
   "wings": 1,
   "size": {
@@ -313,6 +313,27 @@
       "y": 1,
       "z": 19.5,
       "yaw": 180,
+      "pitch": 0
+    },
+    "bed": {
+      "x": 5.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "bed_2": {
+      "x": 7.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "bed_3": {
+      "x": 9.5,
+      "y": 1,
+      "z": 20.5,
+      "yaw": 0,
       "pitch": 0
     },
     "entrance": {

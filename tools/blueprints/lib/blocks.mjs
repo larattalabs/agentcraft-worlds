@@ -101,6 +101,9 @@ def('minecraft:potted_fern', {}, 'partial');
 def('minecraft:potted_flowering_azalea_bush', {}, 'partial');
 def('minecraft:barrel', { facing: H6, open: BOOL }, 'full', { facing: 'north', open: 'false' });
 def('minecraft:moss_block');
+// beds (the rest corners of docs/VILLAGE.md V3): two cells, `facing` points from the foot to the head (the pillow end)
+export const BED_COLORS = ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black'];
+for (const c of BED_COLORS) def(`minecraft:${c}_bed`, { facing: H4, occupied: BOOL, part: ['foot', 'head'] }, 'partial', { facing: 'north', occupied: 'false', part: 'foot' });
 
 export const BLOCKS = T;
 
@@ -217,3 +220,6 @@ export function collisionOf(state) {
 }
 
 export const isCube = (state) => T[state.name]?.collision === 'full';
+
+/** A vanilla bed half (`minecraft:<colour>_bed`). */
+export const isBed = (name) => /^minecraft:[a-z_]+_bed$/.test(name ?? '') && !!T[name];

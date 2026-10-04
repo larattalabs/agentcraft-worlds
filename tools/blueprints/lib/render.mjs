@@ -138,6 +138,18 @@ function makeSpec(id, props, unknown) {
     case 'small': spec.boxes = [{ b: mat.box }]; break;
     case 'lantern': spec.boxes = [{ b: props.hanging === 'true' ? [0.3, 0.1, 0.3, 0.7, 0.6, 0.7] : [0.3, 0, 0.3, 0.7, 0.5, 0.7] }]; break;
     case 'candle': spec.boxes = [{ b: [0.38, 0, 0.38, 0.62, 0.35, 0.62] }]; break;
+    case 'bed': { // a 9/16 high mattress; the head half carries a white pillow at its `facing` end
+      const top = 0.5625;
+      spec.boxes = [{ b: [0, 0, 0, 1, top, 1] }];
+      if (props.part === 'head') {
+        const f = props.facing ?? 'north';
+        const [p0, p1] = [0.08, 0.5];
+        const b = f === 'south' ? [0.1, top, 1 - p1, 0.9, top + 0.12, 1 - p0] : f === 'north' ? [0.1, top, p0, 0.9, top + 0.12, p1]
+          : f === 'east' ? [1 - p1, top, 0.1, 1 - p0, top + 0.12, 0.9] : [p0, top, 0.1, p1, top + 0.12, 0.9];
+        spec.boxes.push({ b, mat: { color: hexToRgb('#f2f0ea'), alpha: 1 } });
+      }
+      break;
+    }
     default: break;
   }
   void name;

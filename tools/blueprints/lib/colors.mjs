@@ -102,6 +102,23 @@ export const COLOR_TABLE = {
   'minecraft:red_carpet': '#a02722',
   'minecraft:yellow_carpet': '#f8c527',
   'minecraft:light_blue_carpet': '#3aafd9',
+  // beds (blanket colour; render.mjs adds the pillow on the head half)
+  'minecraft:white_bed': { c: '#e9ecec', shape: 'bed' },
+  'minecraft:orange_bed': { c: '#f07613', shape: 'bed' },
+  'minecraft:magenta_bed': { c: '#bd44b3', shape: 'bed' },
+  'minecraft:light_blue_bed': { c: '#3aafd9', shape: 'bed' },
+  'minecraft:yellow_bed': { c: '#f8c527', shape: 'bed' },
+  'minecraft:lime_bed': { c: '#70b919', shape: 'bed' },
+  'minecraft:pink_bed': { c: '#ed8dac', shape: 'bed' },
+  'minecraft:gray_bed': { c: '#3e4447', shape: 'bed' },
+  'minecraft:light_gray_bed': { c: '#8e8e86', shape: 'bed' },
+  'minecraft:cyan_bed': { c: '#157788', shape: 'bed' },
+  'minecraft:purple_bed': { c: '#7a2aa0', shape: 'bed' },
+  'minecraft:blue_bed': { c: '#35399d', shape: 'bed' },
+  'minecraft:brown_bed': { c: '#724728', shape: 'bed' },
+  'minecraft:green_bed': { c: '#546d1b', shape: 'bed' },
+  'minecraft:red_bed': { c: '#a02722', shape: 'bed' },
+  'minecraft:black_bed': { c: '#141519', shape: 'bed' },
 };
 
 const STATUS = { off: '#555b66', idle: '#6f7a88', thinking: '#e6c34a', working: '#4aa3e6', waiting: '#e69a3a', error: '#e45555', done: '#62d37a' };

@@ -604,6 +604,22 @@ export class Blueprint {
     return this;
   }
 
+  /**
+   * A vanilla bed for the night routine (docs/VILLAGE.md V3, docs/BUILDINGS.md "Beds"): the HEAD half at (x, z), the
+   * foot half one cell behind it (opposite `facing`); `facing` points from the foot to the head (the pillow end, put it
+   * against a wall). Adds the next `bed`, `bed_2`.. anchor: the head cell's centre at the feet row, yaw = `facing`.
+   * Needs free air above both halves and a free standable cell beside the bed (the checker says so otherwise).
+   */
+  bed(x, z, facing, { color = 'light_gray', y = this.feet } = {}) {
+    const f = DIR[facing];
+    const block = `minecraft:${color}_bed`;
+    this.set(x, y, z, block, { facing, part: 'head', occupied: 'false' });
+    this.set(x - f.dx, y, z - f.dz, block, { facing, part: 'foot', occupied: 'false' });
+    const name = this.slotName('bed');
+    this.anchor(name, x + 0.5, y, z + 0.5, yawOf(facing));
+    return name;
+  }
+
   /** Low coffee table (bottom slabs, nobody walks over it). */
   coffeeTable(x0, z0, x1, z1, { y = this.feet } = {}) {
     for (const [x, z] of cellsOf(x0, z0, x1, z1)) this.slab(x, y, z, 'bottom');

@@ -49,6 +49,14 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      agents teleport between buildings with a puff as before. Button id `walk_toggle`
      (`dev.hub.action {action:"press", button:"walk_toggle"}`, or `dev.walk.toggle`); its fit is in
      `dev.walk.state` `ui{needed, available, overflow, compact}`.
+     Village routines (docs/VILLAGE.md V3, stream routines): under the trophies toggle, one row of three
+     toggles, filled = on: **Night** ("Night routine": idle agents sleep in the building's beds at night),
+     **Stand-ups** (a goal's lead and its first workers gather when the tasks are assigned), **Library**
+     ("Library visits": an agent walks to the library after writing a memory note). Per world, client side
+     (`<gameDir>/agentcraft/routines.json`, default on); the list gives up one more row. Labels get tighter
+     ("tight") and then shorter ("Night Stand Lib", "short") when the column is narrow. Button ids
+     `routine_toggle:night|standups|library` (`dev.hub.action {action:"press", button:"routine_toggle:night"}`, or
+     `dev.routines.toggle`); the row's fit is in `dev.routines.state` `ui{needed, available, mode, overflow}`.
   2. **Repos** *(done, branch `mod/goals-tabs`)*: registered repos and their `repoSettings`.
   3. **Goals** *(done in the mod, branch `mod/goals-tabs`; Foreman side in `foreman/goals-tabs`)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the

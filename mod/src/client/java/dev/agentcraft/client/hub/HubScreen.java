@@ -894,6 +894,42 @@ public final class HubScreen extends Screen {
 		return 24;
 	}
 
+	/**
+	 * The village routines for this world (docs/VILLAGE.md V3, routines.json): one row of three toggles under the trophy
+	 * one, filled = on. "Night" (idle agents sleep in the building's beds at night), "Stand-ups" (a goal's lead and workers
+	 * gather when its first tasks are assigned), "Library" (an agent walks to the library after writing a memory note).
+	 * Normal buttons when they fit, else tighter ones, else shorter labels. Returns the height it takes.
+	 */
+	private int drawRoutineToggles(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
+		var routines = dev.agentcraft.client.agents.Routines.get();
+		var toggles = dev.agentcraft.routine.RoutineSettings.Toggle.values();
+		String[][] labels = {{"Night", "Stand-ups", "Library"}, {"Night", "Stand-ups", "Library"}, {"Night", "Stand", "Lib"}};
+		String[] modes = {"normal", "tight", "short"};
+		int mode = 0;
+		int[] ws = new int[toggles.length];
+		int needed = 0;
+		for (; mode < modes.length; mode++) {
+			needed = 0;
+			for (int i = 0; i < toggles.length; i++) {
+				ws[i] = mode == 0 ? bw(labels[mode][i]) : font.width(labels[mode][i]) + 12; // UiBits.button keeps 6 px each side
+				needed += ws[i] + (i > 0 ? 2 : 0);
+			}
+			if (needed <= w) {
+				break;
+			}
+		}
+		mode = Math.min(mode, modes.length - 1);
+		int bx = x;
+		for (int i = 0; i < toggles.length; i++) {
+			var t = toggles[i];
+			boolean on = routines.enabled(t);
+			button(g, "routine_toggle:" + t.key, labels[mode][i], bx, y, ws[i], on, false, false, mx, my, () -> routines.setEnabled(t, !routines.enabled(t)));
+			bx += ws[i] + 2;
+		}
+		routines.reportUi(needed, w, modes[mode]);
+		return 24;
+	}
+
 	void drawList(GuiGraphicsExtractor g, int x, int y, int w, int h, int count, int selected, int mx, int my, RowDrawer drawer) {
 		listX = x;
 		listY = y;
@@ -952,8 +988,9 @@ public final class HubScreen extends Screen {
 		}
 		int lw = Math.max(150, Math.min(220, w * 2 / 5));
 		// under the list column: "Agents walk between buildings" (per world, W8)
-		int trophyH = drawTrophyToggle(g, x, y + h - 20, lw, mx, my);
-		int toggleH = drawWalkToggle(g, x, y + h - 20 - trophyH, lw, mx, my) + trophyH;
+		int routineH = drawRoutineToggles(g, x, y + h - 20, lw, mx, my);
+		int trophyH = drawTrophyToggle(g, x, y + h - 20 - routineH, lw, mx, my);
+		int toggleH = drawWalkToggle(g, x, y + h - 20 - routineH - trophyH, lw, mx, my) + trophyH + routineH;
 		drawList(g, x, y, lw, h - toggleH, bs.size(), bs.indexOf(cur), mx, my, (i, rx, ry, rw) -> {
 			Building b = bs.get(i);
 			Blueprint bp = Blueprints.get(b.blueprint());
