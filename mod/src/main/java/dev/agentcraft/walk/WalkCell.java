@@ -14,7 +14,8 @@ package dev.agentcraft.walk;
  *       stand in, on or under it;</li>
  *   <li>{@link #DOOR}: doors, fence gates and trapdoors: agents pass through them (client-only entities open
  *       nothing in the world; they walk through the closed door like a ghost), never stand on them;</li>
- *   <li>{@link #LEAVES}: solid, but not a floor (routes never cross tree canopies);</li>
+ *   <li>{@link #LEAVES}: leaves and natural (unstripped) logs: solid, but not a floor (routes never cross tree canopies or
+ *       trunk tops); a head may brush through leaves;</li>
  *   <li>{@link #UNLOADED}: the chunk is not loaded on the client;</li>
  *   <li>{@link #BLOCKED}: below the world (solid, not a floor);</li>
  *   <li>{@link #SOLID}: a collision shape with that top (16 = a full block, 8 = a slab, 24 = a fence).</li>
@@ -59,13 +60,21 @@ public final class WalkCell {
 	}
 
 	/**
+	 * Can an agent's head be in this cell? As {@link #passable}, and leaves too: a low canopy brushes the head of a
+	 * client-only agent (it collides with nothing) instead of walling off a forest floor.
+	 */
+	public static boolean headroom(int code) {
+		return code == OPEN || code == DOOR || code == LEAVES;
+	}
+
+	/**
 	 * Feet height of an agent standing in cell (x,y,z), or NaN when it cannot stand there: a floor below (a
 	 * solid top of 14..16 sixteenths) with open or 1-deep water feet, or a low block in the feet cell (up to a
-	 * slab) with room above; the head cell must be open (no water: deeper than 1); hazards nowhere.
+	 * slab) with room above; the head cell must be open or leaves (no water: deeper than 1); hazards nowhere.
 	 */
 	public static double floor(Terrain t, int x, int y, int z) {
 		int head = t.at(x, y + 1, z);
-		if (!passable(head)) {
+		if (!headroom(head)) {
 			return Double.NaN;
 		}
 		int feet = t.at(x, y, z);
@@ -81,7 +90,7 @@ public final class WalkCell {
 			return y - (16 - top) / 16.0;
 		}
 		if (kind(feet) == SOLID && top(feet) <= STEP_IN) {
-			if (top(feet) > THIN && !passable(t.at(x, y + 2, z))) {
+			if (top(feet) > THIN && !headroom(t.at(x, y + 2, z))) {
 				return Double.NaN; // on a slab the head reaches into the cell above
 			}
 			return y + top(feet) / 16.0;

@@ -312,6 +312,21 @@ export function checkStructure(sidecar, structure) {
     else if (!BLOCKS[fb] || collisionOf({ name: fb, props: {} }) !== 'full' || opticsOf({ name: fb, props: {} }) !== 'opaque') err(`sidecar: foundationBlock '${fb}' must be a full, opaque block from lib/blocks.mjs`);
   }
 
+  if (sidecar.approach !== undefined && sidecar.approach !== false) {
+    const a = sidecar.approach;
+    if (typeof a !== 'object' || a === null) err("sidecar: 'approach' must be an object or false");
+    else {
+      if (a.length !== undefined && !(Number.isInteger(a.length) && a.length >= 0 && a.length <= 16)) err(`sidecar: approach.length ${a.length} must be an int 0..16`);
+      if (a.width !== undefined && !(Number.isInteger(a.width) && a.width >= 1 && a.width <= 7)) err(`sidecar: approach.width ${a.width} must be an int 1..7`);
+      for (const [k, want] of [['block', 'full'], ['slab', 'slab']]) {
+        const id = a[k];
+        if (id === undefined) continue;
+        if (typeof id !== 'string' || !id.startsWith('minecraft:')) err(`sidecar: approach.${k} '${id}' must be a vanilla block id (minecraft:...)`);
+        else if (BLOCKS[id] && collisionOf({ name: id, props: {} }) !== want) err(`sidecar: approach.${k} '${id}' must be a ${want === 'full' ? 'full block' : 'slab'}`);
+      }
+    }
+  }
+
   // ---- geometry helpers
   const cellAt = (x, y, z) => grid.get(`${x},${y},${z}`) ?? null;
   const cls = (c) => (c ? collisionOf(c) : 'unwritten');

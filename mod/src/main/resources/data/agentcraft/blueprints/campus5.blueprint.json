@@ -13,6 +13,12 @@
   "front": "south",
   "materials": "agentcraft",
   "foundationBlock": "minecraft:stone_bricks",
+  "approach": {
+    "length": 6,
+    "width": 3,
+    "block": "minecraft:stone_bricks",
+    "slab": "minecraft:stone_brick_slab"
+  },
   "walk": {
     "minX": 2,
     "minY": 1,

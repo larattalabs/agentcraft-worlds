@@ -16,8 +16,9 @@ import net.minecraft.world.level.material.FluidState;
  * <li><b>foundation</b>: below every floor-row cell of the footprint (template row {@code groundY - 1}), the cells
  * that are air, fluid or replaceable after the template is placed are filled downwards with the blueprint's
  * {@code foundationBlock} until solid ground, at most {@link #MAX_FILL} blocks; block entities stop it;</li>
- * <li><b>cleared</b>: natural terrain (dirt, stone, sand, gravel, plants...) at or above the ground row inside the
- * box that the template does not write is cleared to air, so a slope does not bury the walls;</li>
+ * <li><b>cleared</b>: natural terrain (dirt, grass, stone, sand, gravel, plants...) and trees (logs, leaves) at or above
+ * the ground row inside the box that the template does not write are cleared to air, so a slope does not bury the walls
+ * and a canopy does not fill the porch;</li>
  * <li><b>fluids</b>: water and lava in the box grown by one block sideways and one below (and in the fill) are
  * counted: lava refuses the placement, water is a warning.</li>
  * </ul>
@@ -39,6 +40,8 @@ public final class TerrainFit {
 	public static final int NATURAL = 8;
 	/** A block entity: never filled over or cleared. */
 	public static final int BLOCK_ENTITY = 16;
+	/** A log or leaves: solid, but not the ground ({@link Approach} looks through trees for the terrain). */
+	public static final int TREE = 32;
 
 	/** The world under a placement: {@link #flags} bits of a world cell. */
 	@FunctionalInterface
@@ -132,7 +135,7 @@ public final class TerrainFit {
 						continue;
 					}
 					int f = w.flags(ox + x, oy + y, oz + z);
-					if ((f & NATURAL) != 0 && (f & BLOCK_ENTITY) == 0 && (f & (WATER | LAVA)) == 0) {
+					if ((f & (NATURAL | TREE)) != 0 && (f & BLOCK_ENTITY) == 0 && (f & (WATER | LAVA)) == 0) {
 						clear.add(ox + x, oy + y, oz + z);
 					}
 				}
@@ -201,13 +204,19 @@ public final class TerrainFit {
 		}
 		if (natural(s)) {
 			f |= NATURAL;
+		} else if (s.is(BlockTags.LOGS) || s.is(BlockTags.LEAVES)) {
+			f |= TREE;
 		}
 		return f;
 	}
 
-	/** Natural ground and plants (what world generation puts there), not anything a player builds with. */
+	/**
+	 * Natural ground and plants (what world generation puts there), not anything a player builds with. In 26.x
+	 * {@code #dirt} no longer holds grass blocks, podzol, mycelium, moss or mud: {@code #substrate_overworld} does (before
+	 * it was used here, a grassy slope inside the box was never cleared and buried porches and doors).
+	 */
 	static boolean natural(BlockState s) {
-		return s.is(BlockTags.DIRT) || s.is(BlockTags.SAND) || s.is(BlockTags.BASE_STONE_OVERWORLD) || s.is(BlockTags.BASE_STONE_NETHER)
+		return s.is(BlockTags.SUBSTRATE_OVERWORLD) || s.is(BlockTags.DIRT) || s.is(BlockTags.SAND) || s.is(BlockTags.BASE_STONE_OVERWORLD) || s.is(BlockTags.BASE_STONE_NETHER)
 			|| s.is(BlockTags.FLOWERS) || s.is(BlockTags.SAPLINGS) || s.is(BlockTags.SNOW) || s.is(Blocks.GRAVEL) || s.is(Blocks.CLAY)
 			|| s.is(Blocks.SNOW_BLOCK) || s.is(Blocks.POWDER_SNOW) || s.is(Blocks.FARMLAND) || s.is(Blocks.DIRT_PATH) || s.is(Blocks.SANDSTONE)
 			|| s.is(Blocks.RED_SANDSTONE) || s.is(Blocks.SUGAR_CANE) || s.is(Blocks.CACTUS) || s.is(Blocks.PUMPKIN) || s.is(Blocks.MELON)

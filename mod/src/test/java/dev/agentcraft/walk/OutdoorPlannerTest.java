@@ -282,4 +282,74 @@ class OutdoorPlannerTest {
 		assertTrue(p.expanded() < Limits.DEFAULT.maxNodes(), "nodes " + p.expanded());
 		assertTrue(p.micros() < 3_000_000, "took " + p.micros() + " us"); // generous: CI machines vary
 	}
+
+	/** 2-block terraces everywhere except a 1-per-block ramp far to the side: a detour beyond the first search box. */
+	@Test
+	void terracesNeedTheRampAndAWiderBox() {
+		GridTerrain t = new GridTerrain((x, z) -> x < 10 ? 64 : z >= 20 && z <= 22 ? Math.min(66, 64 + Math.max(0, x - 9)) : 66);
+		Point a = p(0.5, 65, 0.5);
+		Point b = p(20.5, 67, 0.5);
+		OutdoorPlanner narrow = plan(t, a, b, SMALL);
+		assertEquals(Status.NO_PATH, narrow.status());
+		assertTrue(narrow.explain().contains("search box"), narrow.explain());
+		OutdoorPlanner wide = plan(t, a, b, new Limits(60_000, 6, 256, 32, 48));
+		assertEquals(Status.FOUND, wide.status(), wide.explain());
+		assertWalkable(t, wide);
+		assertTrue(wide.widenings() >= 1);
+		assertTrue(java.util.Arrays.stream(wide.cells()).anyMatch(c -> WalkCell.unpackZ(c) >= 20), "via the ramp");
+	}
+
+	/** A canopy at head height over the whole way: agents brush through leaves (they collide with nothing). */
+	@Test
+	void lowCanopyIsWalkedUnder() {
+		GridTerrain t = GridTerrain.flat();
+		for (int x = 5; x <= 15; x++) {
+			for (int z = -12; z <= 12; z++) {
+				t.set(x, 66, z, WalkCell.LEAVES);
+			}
+		}
+		OutdoorPlanner p = plan(t, p(0.5, 65, 0.5), p(20.5, 65, 0.5), SMALL);
+		assertEquals(Status.FOUND, p.status());
+		assertWalkable(t, p);
+	}
+
+	@Test
+	void aWalledInStartIsExplained() {
+		GridTerrain t = GridTerrain.flat();
+		for (int d = -2; d <= 2; d++) {
+			t.column(d, -2, 65, 66, WalkCell.solid(16)).column(d, 2, 65, 66, WalkCell.solid(16));
+			t.column(-2, d, 65, 66, WalkCell.solid(16)).column(2, d, 65, 66, WalkCell.solid(16));
+		}
+		OutdoorPlanner p = plan(t, p(0.5, 65, 0.5), p(20.5, 65, 0.5), Limits.DEFAULT);
+		assertEquals(Status.NO_PATH, p.status());
+		assertTrue(p.explain().contains("walled in"), p.explain());
+		assertNotNull(p.closestCell());
+	}
+
+	/** Steep sine mountains (slopes up to ~2 per block): routes wind along the contours; 150+ blocks. */
+	static int mountains(int x, int z) {
+		return 80 + (int) Math.round(14 * Math.sin(x / 8.0) * Math.cos(z / 11.0) + 6 * Math.sin((x - 2 * z) / 17.0));
+	}
+
+	@Test
+	void steepMountainsAreCrossed() {
+		GridTerrain t = new GridTerrain(OutdoorPlannerTest::mountains);
+		Point a = p(0.5, mountains(0, 0) + 1, 0.5);
+		Point b = p(160.5, mountains(160, 30) + 1, 30.5);
+		plan(t, a, b, Limits.DEFAULT); // JIT warm-up
+		OutdoorPlanner p = new OutdoorPlanner(t, a, b, Limits.DEFAULT);
+		long worst = 0;
+		while (true) {
+			long t0 = System.nanoTime();
+			Status s = p.step(2500, System.nanoTime() + 2_000_000);
+			worst = Math.max(worst, System.nanoTime() - t0);
+			if (s != Status.RUNNING) {
+				break;
+			}
+		}
+		assertEquals(Status.FOUND, p.status(), p.explain());
+		assertWalkable(t, p);
+		System.out.printf("W8 mountains 160: %d nodes, %.2f ms total, %d steps, worst step %.2f ms, route %.1f blocks, pad %d%n", p.expanded(),
+			p.micros() / 1000.0, p.steps(), worst / 1e6, p.length(), p.pad());
+	}
 }

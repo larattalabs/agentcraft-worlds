@@ -371,8 +371,10 @@ public final class Buildings {
 		Anchors.Bounds box = new Anchors.Bounds(bb.minX(), bb.minY(), bb.minZ(), bb.maxX(), bb.maxY(), bb.maxZ());
 		TemplateGrid grid = TemplateGrid.of(entry);
 		GhostModel model = grid.ghost(turns);
-		TerrainFit.Plan plan = TerrainFit.plan(model, box.minX(), box.minY(), box.minZ(), (x, y, z) -> TerrainFit.flags(level, new BlockPos(x, y, z)));
-		Anchors.Bounds snapBox = new Anchors.Bounds(box.minX(), Math.min(box.minY(), plan.minY()), box.minZ(), box.maxX(), box.maxY(), box.maxZ());
+		TerrainFit.World world = (x, y, z) -> TerrainFit.flags(level, new BlockPos(x, y, z));
+		TerrainFit.Plan plan = TerrainFit.plan(model, box.minX(), box.minY(), box.minZ(), world);
+		Approach.Plan approach = Approach.forBlueprint(bp, turns, box, world);
+		Anchors.Bounds snapBox = snapshotBox(box, plan, approach);
 		if (snapBox.minY() < level.getMinY() || box.maxY() > level.getMaxY()) {
 			throw new BuildingException("Box " + str(snapBox) + " leaves the build height (" + level.getMinY() + ".." + level.getMaxY() + ")");
 		}
@@ -385,6 +387,9 @@ public final class Buildings {
 			}
 		}
 		String lava = TerrainFit.lavaRefusal(plan);
+		if (lava == null) {
+			lava = Approach.lavaRefusal(approach);
+		}
 		if (lava != null) {
 			throw new BuildingException("Not here: " + lava + "; a building next to lava burns and floods");
 		}
@@ -431,6 +436,7 @@ public final class Buildings {
 			for (int i = 0; i < plan.clear().length; i += 3) {
 				level.setBlock(m.set(plan.clear()[i], plan.clear()[i + 1], plan.clear()[i + 2]), Blocks.AIR.defaultBlockState(), FLAGS);
 			}
+			applyApproach(level, bp, approach, foundation);
 			// a tall plant whose other half was inside the box (now gone) would float: take its outside half too
 			for (BlockPos half : plants) {
 				BlockState outside = level.getBlockState(half);
@@ -451,6 +457,20 @@ public final class Buildings {
 			}
 			if (plan.fillCount() > 0) {
 				notes.add(plan.fillCount() + " foundation block" + (plan.fillCount() == 1 ? "" : "s"));
+			}
+			if (plan.clearCount() > 0) {
+				notes.add(plan.clearCount() + " terrain block" + (plan.clearCount() == 1 ? "" : "s") + " cleared");
+			}
+			String wet = Approach.waterWarning(approach);
+			if (wet != null) {
+				notes.add(wet);
+			}
+			if (approach.rows() > 0) {
+				notes.add("entrance approach " + approach.rows() + " rows (" + approach.changed() + " blocks)");
+			}
+			String shortOf = Approach.shortWarning(approach);
+			if (shortOf != null) {
+				notes.add(shortOf);
 			}
 			return new Built(turns, box, snapBox, BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
 				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), pinFor(bp, grid, turns, box),
@@ -509,6 +529,49 @@ public final class Buildings {
 			}
 		}
 		return out;
+	}
+
+	/**
+	 * The box a placement snapshots and restores: the template's box, grown down to the lowest foundation cell and out
+	 * over the entrance approach (docs/BUILDINGS.md "Entrance approach").
+	 */
+	public static Anchors.Bounds snapshotBox(Anchors.Bounds box, TerrainFit.Plan plan, Approach.Plan approach) {
+		Anchors.Bounds u = approach.union(box);
+		return new Anchors.Bounds(u.minX(), Math.min(u.minY(), plan.minY()), u.minZ(), u.maxX(), u.maxY(), u.maxZ());
+	}
+
+	/** Builds the entrance approach: clears, fills with the foundation, lays the path and the half-step slabs. */
+	private static void applyApproach(ServerLevel level, Blueprint bp, Approach.Plan a, BlockState foundation) {
+		if (a.rows() == 0) {
+			return;
+		}
+		BlockState path = blockState(bp.approach().block(), Approach.DEFAULT_BLOCK, bp.id());
+		BlockState slab = blockState(bp.approach().slab(), Approach.DEFAULT_SLAB, bp.id());
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		BlockState air = Blocks.AIR.defaultBlockState();
+		for (int i = 0; i < a.clear().length; i += 3) {
+			level.setBlock(m.set(a.clear()[i], a.clear()[i + 1], a.clear()[i + 2]), air, FLAGS);
+		}
+		for (int i = 0; i < a.fill().length; i += 3) {
+			level.setBlock(m.set(a.fill()[i], a.fill()[i + 1], a.fill()[i + 2]), foundation, FLAGS);
+		}
+		for (int i = 0; i < a.path().length; i += 3) {
+			level.setBlock(m.set(a.path()[i], a.path()[i + 1], a.path()[i + 2]), path, FLAGS);
+		}
+		for (int i = 0; i < a.slabs().length; i += 3) {
+			level.setBlock(m.set(a.slabs()[i], a.slabs()[i + 1], a.slabs()[i + 2]), slab, FLAGS);
+		}
+	}
+
+	/** A block's default state by id, or {@code def}'s when the id is not a block (logged). */
+	private static BlockState blockState(@Nullable String id, String def, String bpId) {
+		Identifier key = id == null ? null : Identifier.tryParse(id);
+		Block b = key == null ? null : BuiltInRegistries.BLOCK.getOptional(key).orElse(null);
+		if (b == null || b == Blocks.AIR) {
+			AgentCraft.LOGGER.warn("Blueprint {}: approach block {} is not a block; using {}", bpId, id, def);
+			b = BuiltInRegistries.BLOCK.getValue(Identifier.parse(def));
+		}
+		return b.defaultBlockState();
 	}
 
 	/** The blueprint's foundation block, or the default when its id is unknown (logged). */

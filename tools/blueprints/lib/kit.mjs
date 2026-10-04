@@ -85,10 +85,12 @@ export class Blueprint {
   /**
    * @param {{id:string,name?:string,description?:string,kind?:'single'|'group',wings?:number,
    *   size:number[]|{x:number,y:number,z:number},groundY?:number,front?:string,materials?:string,
-   *   foundationBlock?:string,walk?:number[]|object}} o
+   *   foundationBlock?:string,walk?:number[]|object,approach?:false|{length?:number,width?:number,block?:string,slab?:string}}} o
    * `materials`: 'agentcraft' (default) = the AgentCraft look built from vanilla blocks (the B palette);
    * 'vanilla' = any vanilla look. Both use AgentCraft blocks only for the station blocks.
    * `foundationBlock`: the vanilla block the mod fills under the floor down to the ground on placement (contract C4).
+   * `approach`: the entrance approach the mod builds in front of the door on placement (docs/BUILDINGS.md "Entrance
+   * approach"): rows out from the box, cells across, the path block and the half-step slab; false = none.
    */
   constructor(o) {
     if (!/^[a-z0-9_]+$/.test(o.id ?? '')) throw new Error(`blueprint id must match [a-z0-9_]+ (got '${o.id}')`);
@@ -103,6 +105,8 @@ export class Blueprint {
     this.front = o.front ?? 'south';
     this.materials = o.materials ?? 'agentcraft';
     this.foundationBlock = o.foundationBlock ?? 'minecraft:stone_bricks';
+    this.approach = o.approach === false ? { length: 0, width: 3, block: 'minecraft:dirt_path', slab: 'minecraft:stone_brick_slab' }
+      : { length: 6, width: 3, block: 'minecraft:dirt_path', slab: 'minecraft:stone_brick_slab', ...(o.approach ?? {}) };
     this.cells = new Map(); // "x,y,z" -> { state:{name,props}, nbt }
     this.anchors = {};
     // `origin` shifts every design coordinate (set/get/anchor/walk) so a design can be written relative to its
@@ -635,6 +639,7 @@ export class Blueprint {
       front: this.front,
       materials: this.materials,
       foundationBlock: this.foundationBlock,
+      approach: { ...this.approach },
       walk: { ...this.walk },
       anchors: Object.fromEntries(Object.entries(this.anchors).map(([k, v]) => [k, { ...v }])),
     };

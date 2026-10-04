@@ -67,7 +67,9 @@ final class LevelTerrain implements Terrain {
 		if (b instanceof DoorBlock || b instanceof FenceGateBlock || b instanceof TrapDoorBlock) {
 			return WalkCell.DOOR; // agents pass through (they open nothing in the world)
 		}
-		if (b instanceof LeavesBlock) {
+		if (b instanceof LeavesBlock || s.is(net.minecraft.tags.BlockTags.OVERWORLD_NATURAL_LOGS)) {
+			// trees: solid, never a floor. A head may brush leaves, so without the trunks here a hillside route stepped
+			// out onto the log tops inside a canopy downslope
 			return WalkCell.LEAVES;
 		}
 		VoxelShape shape = s.getCollisionShape(level, pos);

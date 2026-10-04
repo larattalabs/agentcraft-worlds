@@ -20,7 +20,7 @@ import org.jspecify.annotations.Nullable;
  * chunks and found nothing reports {@link Status#UNLOADED} (the caller teleports instead).
  *
  * <p>The cell path is string-pulled (line of sight on one level, the agent's 0.6 width) into straight
- * segments, also incrementally, at most {@link Limits#smoothAhead} cells per segment.
+ * segments, also incrementally: from each point the farthest point within {@link Limits#smoothAhead} in plain sight.
  */
 public final class OutdoorPlanner {
 	/** The outcome so far. Everything but {@link #RUNNING} is final. */
@@ -43,13 +43,19 @@ public final class OutdoorPlanner {
 	}
 
 	/**
-	 * @param maxNodes expansions before giving up ({@link Status#BUDGET})
+	 * @param maxNodes expansions before giving up ({@link Status#BUDGET}), over all widenings
 	 * @param pad horizontal blocks the search may stray outside the endpoints' box (vertical: {@code 2 * pad} / 3)
 	 * @param maxDistance horizontal distance between the endpoints beyond which nothing is searched
 	 * @param smoothAhead the longest straight segment (in path cells) string pulling tries
+	 * @param maxPad when the search runs out of cells after pressing against its box's edge, it starts again with the
+	 *               pad doubled, up to this (a ridge or a lake wider than the box is walked around)
 	 */
-	public record Limits(int maxNodes, int pad, int maxDistance, int smoothAhead) {
-		public static final Limits DEFAULT = new Limits(60_000, 40, 256, 24);
+	public record Limits(int maxNodes, int pad, int maxDistance, int smoothAhead, int maxPad) {
+		public static final Limits DEFAULT = new Limits(120_000, 32, 256, 24, 128);
+
+		public Limits(int maxNodes, int pad, int maxDistance, int smoothAhead) {
+			this(maxNodes, pad, maxDistance, smoothAhead, pad);
+		}
 	}
 
 	private static final double SQRT2 = Math.sqrt(2);
@@ -83,7 +89,23 @@ public final class OutdoorPlanner {
 	private int phase;
 	private int expanded;
 	private int unloadedHits;
+	private int pad;
+	private int widenings;
+	/** Neighbours skipped because they lie outside the search box (this round). */
+	private int edgeHits;
+	/** The expanded node nearest the goal (horizontal distance), for explaining a failure. */
+	private int closeX;
+	private int closeY;
+	private int closeZ;
+	private double closeDist = Double.MAX_VALUE;
+	/** The horizontal box of every expanded cell (min x, min z, max x, max z), for explaining a failure. */
+	private final int[] reached = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
+	/** Start / goal cells, once found. */
+	private int sx;
+	private int sy;
+	private int sz;
 	private long nanos;
+	private long worstStep;
 	private int steps;
 	// smoothing
 	private final List<Point> raw = new ArrayList<>();
@@ -98,6 +120,7 @@ public final class OutdoorPlanner {
 		this.from = from;
 		this.to = to;
 		this.limits = limits;
+		this.pad = limits.pad();
 		floors.defaultReturnValue(UNKNOWN);
 		best.defaultReturnValue(Double.MAX_VALUE);
 		codes.defaultReturnValue(Integer.MIN_VALUE);
@@ -125,6 +148,11 @@ public final class OutdoorPlanner {
 		return nanos / 1000;
 	}
 
+	/** The longest single {@link #step} call so far (microseconds): the planner's worst cost in one tick. */
+	public long worstStepMicros() {
+		return worstStep / 1000;
+	}
+
 	/** {@link #step} calls so far (= ticks when the caller steps once per tick). */
 	public int steps() {
 		return steps;
@@ -133,6 +161,64 @@ public final class OutdoorPlanner {
 	/** Lookups that hit an unloaded chunk. */
 	public int unloadedHits() {
 		return unloadedHits;
+	}
+
+	/** The search box's horizontal pad now (it doubles when a search presses against the box's edge and fails). */
+	public int pad() {
+		return pad;
+	}
+
+	/** How often the search started again in a wider box. */
+	public int widenings() {
+		return widenings;
+	}
+
+	/** Neighbours the last round skipped because they were outside the search box. */
+	public int edgeHits() {
+		return edgeHits;
+	}
+
+	/** Horizontal distance from the expanded cell nearest the goal to the goal ({@link Double#MAX_VALUE} before any). */
+	public double closest() {
+		return closeDist;
+	}
+
+	/** The expanded cell nearest the goal (x, y, z), or null before any. */
+	public int @Nullable [] closestCell() {
+		return closeDist == Double.MAX_VALUE ? null : new int[] {closeX, closeY, closeZ};
+	}
+
+	/**
+	 * Why a finished search found nothing, in words (for dev.walk.state and the log), or null while running / found:
+	 * how far it got, whether the start was enclosed, whether it pressed against its box, unloaded chunks.
+	 */
+	public @Nullable String explain() {
+		return switch (status) {
+			case RUNNING, FOUND -> null;
+			case TOO_FAR -> "entrances more than " + limits.maxDistance() + " blocks apart";
+			case NO_START -> "no standable cell at the start " + fmt(from) + " (its door or step is blocked)";
+			case NO_GOAL -> "no standable cell at the goal " + fmt(to) + " (its door or step is blocked)";
+			case UNLOADED -> "the route needs chunks the client has not loaded (" + unloadedHits + " lookups)";
+			case BUDGET -> "searched " + expanded + " cells (the budget) and got within " + Math.round(closeDist) + " blocks of the goal at "
+				+ cell(closeX, closeY, closeZ) + "; a long detour (a ridge, a lake, a cliff band) or a maze of trees";
+			case NO_PATH -> {
+				String where = closeDist == Double.MAX_VALUE ? "" : ", got within " + Math.round(closeDist) + " blocks of the goal at "
+					+ cell(closeX, closeY, closeZ);
+				if (expanded < 64) {
+					yield "the start is walled in: only " + expanded + " cells reachable from " + cell(sx, sy, sz) + where;
+				}
+				yield "every reachable cell searched (" + expanded + ", x " + reached[0] + ".." + reached[2] + " z " + reached[1] + ".." + reached[3] + ")" + where + (edgeHits > 0 ? "; the search box (pad " + pad
+					+ ") was the limit " + edgeHits + " times" : "; the goal's side is cut off (a cliff over 3 blocks, a step over 1, water deeper than 1)");
+			}
+		};
+	}
+
+	private static String fmt(Point p) {
+		return cell((int) Math.floor(p.x()), (int) Math.floor(p.y()), (int) Math.floor(p.z()));
+	}
+
+	private static String cell(int x, int y, int z) {
+		return "(" + x + ", " + y + ", " + z + ")";
 	}
 
 	/** The smoothed route (first = from, last = to exactly) once {@link Status#FOUND}, else null. */
@@ -192,13 +278,17 @@ public final class OutdoorPlanner {
 					smoothOne();
 				}
 				work++;
-				if ((work & 31) == 0 && System.nanoTime() >= deadlineNanos) {
+				// a smoothing unit tries up to smoothAhead line-of-sight checks (hundreds of lookups): check the clock
+				// after each; expansions are cheap, so every 32
+				if ((phase == 2 || (work & 31) == 0) && System.nanoTime() >= deadlineNanos) {
 					break;
 				}
 			}
 			return status;
 		} finally {
-			nanos += System.nanoTime() - t0;
+			long dt = System.nanoTime() - t0;
+			nanos += dt;
+			worstStep = Math.max(worstStep, dt);
 		}
 	}
 
@@ -215,7 +305,6 @@ public final class OutdoorPlanner {
 		int tz = (int) Math.floor(to.z);
 		int fy = WalkCell.cellY(from.y);
 		int ty = WalkCell.cellY(to.y);
-		int pad = limits.pad();
 		int vpad = Math.max(6, pad * 2 / 3);
 		minX = Math.min(fx, tx) - pad;
 		maxX = Math.max(fx, tx) + pad;
@@ -236,6 +325,9 @@ public final class OutdoorPlanner {
 		gx = g[0];
 		gy = g[1];
 		gz = g[2];
+		sx = s[0];
+		sy = s[1];
+		sz = s[2];
 		best.put(WalkCell.pack(s[0], s[1], s[2]), 0.0);
 		open.add(new Node(s[0], s[1], s[2], 0, h(s[0], s[1], s[2]), null));
 	}
@@ -288,6 +380,10 @@ public final class OutdoorPlanner {
 	private void searchOne() {
 		Node n = open.poll();
 		if (n == null) {
+			if (edgeHits > 0 && pad < limits.maxPad() && unloadedHits == 0) {
+				widen();
+				return;
+			}
 			status = unloadedHits > 0 ? Status.UNLOADED : Status.NO_PATH;
 			return;
 		}
@@ -303,12 +399,27 @@ public final class OutdoorPlanner {
 			return;
 		}
 		expanded++;
+		reached[0] = Math.min(reached[0], n.x);
+		reached[1] = Math.min(reached[1], n.z);
+		reached[2] = Math.max(reached[2], n.x);
+		reached[3] = Math.max(reached[3], n.z);
+		double hd = Math.hypot(n.x - gx, n.z - gz);
+		if (hd < closeDist) {
+			closeDist = hd;
+			closeX = n.x;
+			closeY = n.y;
+			closeZ = n.z;
+		}
 		double f0 = floor(n.x, n.y, n.z);
-		boolean roomToStepUp = WalkCell.passable(code(n.x, n.y + 2, n.z));
+		boolean roomToStepUp = WalkCell.headroom(code(n.x, n.y + 2, n.z));
 		for (int[] d : DIRS) {
 			boolean diagonal = d[0] != 0 && d[1] != 0;
 			int nx = n.x + d[0];
 			int nz = n.z + d[1];
+			if (nx < minX || nx > maxX || nz < minZ || nz > maxZ) {
+				edgeHits++;
+				continue;
+			}
 			if (diagonal && (Double.isNaN(floor(n.x + d[0], n.y, n.z)) || Double.isNaN(floor(n.x, n.y, n.z + d[1])))) {
 				continue; // never cut corners
 			}
@@ -336,7 +447,8 @@ public final class OutdoorPlanner {
 				}
 				int feet = code(nx, ny, nz);
 				double cost = (diagonal ? SQRT2 : 1.0) + (rise > 0.01 ? 0.5 * rise : 0) + (rise < -0.01 ? 0.25 * -rise : 0)
-					+ (feet == WalkCell.WATER ? 1.5 : 0) + (feet == WalkCell.DOOR || code(nx, ny + 1, nz) == WalkCell.DOOR ? 0.3 : 0);
+					+ (feet == WalkCell.WATER ? 1.5 : 0) + (feet == WalkCell.DOOR || code(nx, ny + 1, nz) == WalkCell.DOOR ? 0.3 : 0)
+					+ (code(nx, ny + 1, nz) == WalkCell.LEAVES ? 0.6 : 0);
 				double g = n.g + cost;
 				long key = WalkCell.pack(nx, ny, nz);
 				if (g < best.get(key) - 1e-9) {
@@ -346,6 +458,32 @@ public final class OutdoorPlanner {
 				break; // one landing per column (the standable cells of a column are 3+ apart)
 			}
 		}
+	}
+
+	/**
+	 * The open set ran dry against the search box's edge: start again with the pad doubled (the terrain lookups stay
+	 * cached; the floors outside the old box are recomputed). The expansions so far count towards the budget.
+	 */
+	private void widen() {
+		pad = Math.min(limits.maxPad(), pad * 2);
+		widenings++;
+		edgeHits = 0;
+		floors.clear();
+		best.clear();
+		open.clear();
+		int fx = (int) Math.floor(from.x);
+		int fz = (int) Math.floor(from.z);
+		int tx = (int) Math.floor(to.x);
+		int tz = (int) Math.floor(to.z);
+		int vpad = Math.max(6, pad * 2 / 3);
+		minX = Math.min(fx, tx) - pad;
+		maxX = Math.max(fx, tx) + pad;
+		minZ = Math.min(fz, tz) - pad;
+		maxZ = Math.max(fz, tz) + pad;
+		minY = Math.min(sy, gy) - vpad;
+		maxY = Math.max(sy, gy) + vpad;
+		best.put(WalkCell.pack(sx, sy, sz), 0.0);
+		open.add(new Node(sx, sy, sz, 0, h(sx, sy, sz), null));
 	}
 
 	/** Stepping off a ledge into column (x,z): every cell from above the landing's head up to our head is open. */
@@ -399,9 +537,14 @@ public final class OutdoorPlanner {
 			status = Status.FOUND;
 			return;
 		}
+		// the farthest point within smoothAhead in plain sight, tried from the far end down: one check on a long straight
+		// stretch instead of re-checking the growing segment for every point (that was quadratic: ~10 ms in one tick)
 		int j = si + 1;
-		while (j + 1 <= last && j + 1 - si <= limits.smoothAhead() && clear(raw.get(si), raw.get(j + 1))) {
-			j++;
+		for (int k = Math.min(last, si + limits.smoothAhead()); k > si + 1; k--) {
+			if (clear(raw.get(si), raw.get(k))) {
+				j = k;
+				break;
+			}
 		}
 		smooth.add(raw.get(j));
 		si = j;

@@ -73,6 +73,14 @@ final class PlacementHud implements HudElement {
 			String terrain = (v.fillCount() == 0 ? "no foundation needed" : v.fillCount() + " foundation block" + (v.fillCount() == 1 ? "" : "s") + " (grey)")
 				+ (v.clearCount() == 0 ? "" : " · " + v.clearCount() + " terrain cleared (pale)") + (v.lavaCount() == 0 ? "" : " · " + v.lavaCount() + " lava (amber)");
 			lines.add(new Line(TextUtil.ellipsize(font, terrain, inner), v.lavaCount() > 0 ? RED : soft, null, 0));
+			if (v.approach().rows() > 0) {
+				dev.agentcraft.building.Approach.Plan ap = v.approach();
+				int[] feet = ap.feet();
+				int rise = feet[feet.length - 1] - feet[0];
+				String path = "Entrance path " + ap.rows() + " blocks (tan)" + (rise == 0 ? ", level" : rise > 0 ? ", up " + rise : ", down " + -rise)
+					+ (ap.fillCount() == 0 ? "" : " · " + ap.fillCount() + " filled") + (ap.clearCount() == 0 ? "" : " · " + ap.clearCount() + " cut");
+				lines.add(new Line(TextUtil.ellipsize(font, path, inner), soft, null, 0));
+			}
 			for (String n : v.notes()) {
 				lines.add(new Line(TextUtil.ellipsize(font, "Note: " + n, inner), WATER_INK, null, 0));
 			}

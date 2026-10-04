@@ -337,7 +337,8 @@ public final class BuildingWizardFeature {
 				});
 			});
 		DevBridge.register("dev.build.start", 10_000, "{blueprint, repos: [..] | \"a,b\", origin?: [x,y,z] (rotated box minimum; locks the ghost "
-			+ "there), turns?: 0-3 | rotation name} - enter placement mode", (req, mc) -> {
+			+ "there), ground?: false (origin's y replaced by the footprint's median surface, as the wizard puts it), turns?: 0-3 | rotation name} "
+			+ "- enter placement mode", (req, mc) -> {
 				Fields f = Fields.of(req);
 				String bp = f.nonBlank("blueprint");
 				List<String> repos = repoList(f, "repos");
@@ -345,6 +346,7 @@ public final class BuildingWizardFeature {
 					throw new DevBridge.DevException("repos: name at least one repo");
 				}
 				int[] origin = f.has("origin") ? xyz(f, "origin") : null;
+				boolean ground = f.optBool("ground", false);
 				int turns = 0;
 				if (f.has("turns")) {
 					JsonElement t = f.json().get("turns");
@@ -361,7 +363,7 @@ public final class BuildingWizardFeature {
 						throw new DevBridge.DevException(e.getMessage());
 					}
 					if (origin != null) {
-						BuildPlacement.lockAt(origin[0], origin[1], origin[2], fturns);
+						BuildPlacement.lockAt(origin[0], origin[1], origin[2], fturns, ground);
 					} else if (fturns != 0) {
 						BuildPlacement.rotate(fturns);
 					}

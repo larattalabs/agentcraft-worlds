@@ -171,6 +171,12 @@ public final class Nameplate {
 			}
 			WorldUi.submitSprite(poseStack, collector, WorldUi.Layer.OVERLAY, Kit.dot(d.family(), false), cx, ty + 1, DOT, DOT, 0.15f, 0xFFFFFFFF, light);
 		}
+		// the text sits a hair in front of its plate. The plate and the glyphs are coplanar and face the camera, so each
+		// glyph quad has one depth; the font's polygon offset does not separate them here (opaque text goes to the solid
+		// pass), and at close range whole glyphs lost to the plate ("Marlow" read "M r o"). A real lift, a fixed small
+		// fraction of the camera distance (well under PlateLayout's per-rank nudge), always wins the depth test.
+		poseStack.pushPose();
+		poseStack.translate(0f, 0f, textLift(s, camera));
 		WorldUi.submitText(poseStack, collector, d.nameSeq(), cx + DOT + GAP, ty, d.stale() ? UiStyle.withAlpha(d.nameColor(), 0xB0) : d.nameColor(),
 			light);
 		if (d.row2Width() > 0) {
@@ -183,5 +189,19 @@ public final class Nameplate {
 			}
 		}
 		poseStack.popPose();
+		poseStack.popPose();
+	}
+
+	/** Text lift towards the camera as a fraction of the plate's camera distance (PlateLayout.NUDGE_PER_RANK is 0.0015). */
+	static final float TEXT_LIFT = 0.0003f;
+
+	/** {@link #TEXT_LIFT} of the plate's camera distance, in plate pixels (plate space +z faces the camera). */
+	static float textLift(AgentRenderState s, CameraRenderState camera) {
+		double dx = s.x - camera.pos.x;
+		double dy = s.y + s.plateBase - camera.pos.y;
+		double dz = s.z - camera.pos.z;
+		double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+		float px = WorldUi.PX * s.plateScale * (1 - Math.max(0f, Math.min(0.5f, s.plateNudge)));
+		return px <= 0 ? 0f : (float) (TEXT_LIFT * dist / px);
 	}
 }
