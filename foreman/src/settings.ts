@@ -212,6 +212,8 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'claude.maxBudgetUsdPerTurn', group: 'usage', type: 'int', min: 0, max: 1000, label: 'Budget per turn (USD)', help: 'Stop an agent turn that costs more than this many dollars. 0: no cap. From the next turn.', live: true, flags: ['max-budget'], def: 0, get: (cfg) => cfg.claude.maxBudgetUsdPerTurn ?? 0, normalize: (v) => ({ value: v === 0 ? undefined : v }) },
     { key: 'claude.usageReserve.fiveHourPct', group: 'usage', type: 'int', min: 0, max: 100, label: 'Reserve: 5-hour window (%)', help: 'With your claude.ai login: no new agent turn starts while the 5-hour usage window is at or above this, until it resets, so some is left for you. 0: no reserve.', live: true, def: 85, get: g('claude.usageReserve.fiveHourPct') },
     { key: 'claude.usageReserve.sevenDayPct', group: 'usage', type: 'int', min: 0, max: 100, label: 'Reserve: 7-day window (%)', help: 'Same for the 7-day window. 0: no reserve.', live: true, def: 80, get: g('claude.usageReserve.sevenDayPct') },
+    { key: 'claude.leadSession.maxDays', group: 'usage', type: 'int', min: 0, max: 365, label: 'Fresh lead session after (days)', help: 'A lead\'s session for a goal starts over (seeded with the plan, the task board and the last thread messages) once it is this old. 0: never.', live: true, def: 7, get: g('claude.leadSession.maxDays') },
+    { key: 'claude.leadSession.maxTurns', group: 'usage', type: 'int', min: 0, max: 1000, label: 'Fresh lead session after (turns)', help: 'Same, after this many lead turns in one session. 0: never.', live: true, def: 40, get: g('claude.leadSession.maxTurns') },
     { key: 'claude.useClaudeLogin', group: 'usage', type: 'bool', label: 'Use your claude.ai login', help: 'Run the agents on your local claude CLI login (your plan) instead of an API key. Personal use only. After a restart.', live: false, flags: ['use-claude-login'], envs: ['AGENTCRAFT_USE_CLAUDE_LOGIN'], def: false, get: g('claude.useClaudeLogin') },
   ];
   // per agent: role title, specialty prompt, model, effort
@@ -626,6 +628,7 @@ export function applyLive(running: Config, next: Config): void {
   c.prWatch = n.prWatch;
   c.prPollSeconds = n.prPollSeconds;
   Object.assign(c.usageReserve, n.usageReserve);
+  Object.assign(c.leadSession, n.leadSession);
   if (n.maxConcurrentTurns) c.maxConcurrentTurns = n.maxConcurrentTurns;
   else delete c.maxConcurrentTurns;
   if (n.maxBudgetUsdPerTurn) c.maxBudgetUsdPerTurn = n.maxBudgetUsdPerTurn;

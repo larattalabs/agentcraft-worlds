@@ -87,7 +87,15 @@ export interface ClaudeConfig {
    * window resets. Default 85 (5-hour) / 80 (7-day).
    */
   usageReserve: UsageReserve;
+  /**
+   * A lead's session for a goal is replaced by a fresh one (seeded with the plan note, the task
+   * board and the goal thread's last messages) once it is older than maxDays or has run maxTurns
+   * turns. 0 = no limit. Default 7 days / 40 turns.
+   */
+  leadSession: { maxDays: number; maxTurns: number };
 }
+
+export const DEFAULT_LEAD_SESSION = { maxDays: 7, maxTurns: 40 };
 
 export interface UsageReserve {
   fiveHourPct: number;
@@ -569,6 +577,11 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       prWatch: prWatchMode(flags['pr-watch'] ?? env.AGENTCRAFT_PR_WATCH ?? fileClaude.prWatch),
       prPollSeconds: Math.max(15, num(flags['pr-poll-seconds'] ?? fileClaude.prPollSeconds, 180)),
       usageReserve: usageReserve(fileClaude.usageReserve),
+      leadSession: ((v: unknown) => {
+        const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+        const n = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : d);
+        return { maxDays: n(o.maxDays, DEFAULT_LEAD_SESSION.maxDays), maxTurns: Math.floor(n(o.maxTurns, DEFAULT_LEAD_SESSION.maxTurns)) };
+      })(fileClaude.leadSession),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),

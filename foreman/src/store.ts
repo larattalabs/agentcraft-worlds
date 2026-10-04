@@ -33,8 +33,17 @@ export interface SessionRecord {
   sessionId?: string;
   model?: string;
   turns: number;
+  /** spend of every session this key had (earlier sessions + the current one) */
   costUsd: number;
   updatedAt: number;
+  /** when the current session id started (absent on records from before rotation: clock starts at next use) */
+  startedAt?: number;
+  /** agent turns (jobs) run in the current session */
+  sessionTurns?: number;
+  /** cumulative cost the current session reported (its total_cost_usd) */
+  sessionCostUsd?: number;
+  /** spend of the earlier sessions of this key (lead session rotation) */
+  baseCostUsd?: number;
   /** why the last turn ended (for resume decisions) */
   lastResult?: string;
 }

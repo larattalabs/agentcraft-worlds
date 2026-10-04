@@ -50,6 +50,7 @@ import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
 import { pruneUsage, readPlanUsage, reserveHold, usageLine, withWindow } from './usage.js';
 import { classifyFailure, isAuthText, probeFailure } from './failures.js';
 import type { ForemanHold } from '../../protocol.js';
+import type { SessionRecord } from '../../store.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
@@ -176,6 +177,19 @@ export function agentEnv(base: NodeJS.ProcessEnv = process.env, who: { agentId?:
     },
     who.cwd ? { ceiling: path.dirname(path.resolve(who.cwd)) } : {},
   );
+}
+
+/**
+ * Lead session rotation (claude.leadSession): why the stored session should be replaced by a fresh
+ * one, or undefined. A record from before rotation existed (no startedAt) is not rotated: its clock
+ * starts at its next use.
+ */
+export function rotationDue(rec: SessionRecord | undefined, limits: { maxDays: number; maxTurns: number }, now = Date.now()): string | undefined {
+  if (!rec?.sessionId || rec.startedAt === undefined) return undefined;
+  const days = (now - rec.startedAt) / 86_400_000;
+  if (limits.maxDays > 0 && days >= limits.maxDays) return `${Math.floor(days)} days old`;
+  if (limits.maxTurns > 0 && (rec.sessionTurns ?? 0) >= limits.maxTurns) return `${rec.sessionTurns} turns`;
+  return undefined;
 }
 
 export interface ClaudeBackendOptions {
@@ -1383,7 +1397,19 @@ export class ClaudeBackend implements Backend {
       const roleDir = cwd;
       const roleOf = (id: string) => this.repoRole(id, repoId, roleDir);
       const session = this.fm.store.data.sessions[job.sessionKey];
-      const resume = !job.fresh && session?.sessionId ? session.sessionId : undefined;
+      let resume = !job.fresh && session?.sessionId ? session.sessionId : undefined;
+      // a lead's long-lived session for a goal: start over once it is old or long (seeded below)
+      let rotated = '';
+      if (resume && role === 'lead' && session) {
+        session.startedAt ??= Date.now();
+        const why = rotationDue(session, this.cfg.leadSession);
+        if (why) {
+          resume = undefined;
+          rotated = this.rotationSeed(job, why);
+          this.fm.log.info(`${agentId}: fresh session for ${job.sessionKey} (the last one is ${why})`);
+          this.fm.agentLog(agentId, 'text', `Starting a fresh session for ${job.goalId ?? 'this work'} (the last one is ${why}); seeded with the plan, the board and the latest messages`);
+        }
+      }
       this.st.inflight[agentId] = { kind: job.kind, sessionKey: job.sessionKey, startedAt: Date.now(), ...(job.taskId ? { taskId: job.taskId } : {}), ...(job.goalId ? { goalId: job.goalId } : {}) };
       this.fm.store.markDirty();
 
@@ -1449,7 +1475,7 @@ export class ClaudeBackend implements Backend {
       const unread = this.fm.bus.inbox(agentId, { markRead: true });
       // a goal another lead worked on before: what this lead takes over
       const takeover = role === 'lead' ? this.takeoverNote(agentId, job.goalId) : '';
-      const withSetup = [setupNote, takeover, job.prompt].filter(Boolean).join('\n\n');
+      const withSetup = [setupNote, takeover, rotated, job.prompt].filter(Boolean).join('\n\n');
       const prompt = unread.length ? `${withSetup}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : withSetup;
       try {
         const q = this.queryFn({ prompt, options });
@@ -1552,22 +1578,53 @@ export class ClaudeBackend implements Backend {
 
   private recordSession(key: string, sessionId: string, model: string, stats?: TurnStats): void {
     const s = (this.fm.store.data.sessions[key] ??= { turns: 0, costUsd: 0, updatedAt: Date.now() });
-    s.sessionId = sessionId;
+    if (s.sessionId !== sessionId) {
+      // a new session under this key (fresh plan, rotation): the earlier sessions' spend is kept
+      if (s.sessionId) s.baseCostUsd = s.costUsd;
+      s.sessionId = sessionId;
+      s.startedAt = Date.now();
+      s.sessionTurns = 0;
+      s.sessionCostUsd = 0;
+    }
     s.model = model;
     s.updatedAt = Date.now();
     if (stats) {
       s.turns += stats.numTurns ?? 0;
+      s.sessionTurns = (s.sessionTurns ?? 0) + 1;
       if (typeof stats.costUsd === 'number') {
-        // total_cost_usd is cumulative per session (resumes continue from the saved total)
-        const prev = this.lastCost.get(sessionId) ?? s.costUsd;
+        // total_cost_usd is cumulative per session (resumes continue from the saved total); records
+        // from before rotation have no sessionCostUsd: their costUsd is that session's total
+        const sessionSoFar = s.sessionCostUsd ?? s.costUsd - (s.baseCostUsd ?? 0);
+        const prev = this.lastCost.get(sessionId) ?? sessionSoFar;
         const delta = Math.max(0, stats.costUsd - prev);
         this.lastCost.set(sessionId, stats.costUsd);
-        s.costUsd = Math.max(s.costUsd, stats.costUsd);
+        s.sessionCostUsd = Math.max(sessionSoFar, stats.costUsd);
+        s.costUsd = (s.baseCostUsd ?? 0) + s.sessionCostUsd;
         this.fm.setStatus({ costUsd: Math.round(((this.fm.status.costUsd ?? 0) + delta) * 1000) / 1000 });
       }
       s.lastResult = stats.subtype;
     }
     this.fm.store.markDirty();
+  }
+
+  /**
+   * What a lead's fresh session (rotation) starts from: the goal's plan note, its task board and the
+   * last messages of its thread. The earlier session is not available to it any more.
+   */
+  private rotationSeed(job: Job, why: string): string {
+    const goal = job.goalId ? this.fm.goal(job.goalId) : undefined;
+    const thread = this.fm.store.data.messages
+      .filter((m) => (goal ? m.goalId === goal.id : true) && (m.from === job.agentId || m.to === job.agentId))
+      .slice(-6)
+      .map((m) => `- ${m.from === 'user' ? userName() : this.fm.nameOf(m.from)} -> ${m.to === 'user' ? userName() : this.fm.nameOf(m.to)}: ${truncate(m.text.replace(/\s+/g, ' '), 400)}`);
+    return [
+      `(This is a fresh session${goal ? ` for goal ${goal.id} "${truncate(goal.text.replace(/\s+/g, ' '), 160)}"` : ''}: the previous one was ${why}, so it was retired. Below is what carries over; read anything else from the task board, shared memory and the repositories.)`,
+      goal ? `# The plan (shared memory)\n${planText(this.fm, goal, this.planIdOf(goal.id))}` : '',
+      `# Task board${goal ? ' for the goal' : ''}\n${boardSummary(this.fm, goal?.id)}`,
+      thread.length ? `# Latest messages\n${thread.join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   /** The CLI is spawned by us (same as the SDK's local spawn) so its pid is known: an aborted turn's whole process tree can be ended. */
