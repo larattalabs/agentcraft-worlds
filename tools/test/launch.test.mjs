@@ -13,7 +13,9 @@ import {
 } from '../lib/prismcfg.mjs';
 import { decideStart, devCheckoutConflict, expandHome, lockIsStale, LOCK_STALE_MS } from '../lib/daemonplan.mjs';
 import { parseArgs as parseDaemonArgs } from '../foreman-daemon.mjs';
-import { setup, parseArgs as parseSetupArgs, chooseSource, resolveRemoteRef, realDeps } from '../hardcore-setup.mjs';
+import {
+  setup, parseArgs as parseSetupArgs, chooseSource, resolveRemoteRef, realDeps, DAEMON_FILES, parseStatusLine, gameProcesses, cwdProcesses,
+} from '../hardcore-setup.mjs';
 import { spawnSync } from 'node:child_process';
 
 const tmp = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `ac-${name}-`));
@@ -198,6 +200,7 @@ function fakeWorld() {
   fs.mkdirSync(path.join(stable, 'tools'), { recursive: true });
   fs.mkdirSync(path.join(stable, 'mod'), { recursive: true });
   fs.writeFileSync(path.join(stable, 'mod', 'gradle.properties'), 'minecraft_version=26.3\n');
+  for (const f of DAEMON_FILES) fs.writeFileSync(path.join(stable, f), '# stub\n');
   const jar = path.join(dir, 'agentcraft-0.1.0.jar');
   fs.writeFileSync(jar, 'new jar');
   const backupScript = path.join(dir, 'backup-world.sh');
@@ -222,7 +225,7 @@ function treeHash(dir) {
   return h.digest('hex');
 }
 
-function deps({ prism = false } = {}) {
+function deps({ prism = false, game = [], foreman = { running: false } } = {}) {
   const calls = [];
   const lines = [];
   return {
@@ -230,6 +233,9 @@ function deps({ prism = false } = {}) {
     query: () => null,
     exec: (cmd, args, opts) => calls.push([cmd, ...args, opts?.cwd ?? '']),
     prismRunning: () => prism,
+    gameRunning: () => game,
+    foremanStatus: () => foreman,
+    foremanStop: (stable, o) => calls.push(['foreman-stop', stable, o.profile]),
     now: () => new Date(2026, 9, 3, 12, 0, 0),
     log: (l) => lines.push(l),
   };
@@ -350,12 +356,21 @@ test('setup clones, then updates the stable checkout to the source\'s new commit
     return r.stdout.trim();
   };
   fs.mkdirSync(path.join(src, 'mod'), { recursive: true });
+  fs.mkdirSync(path.join(src, 'tools'), { recursive: true });
   fs.writeFileSync(path.join(src, 'mod', 'gradle.properties'), 'minecraft_version=26.3\n');
+  for (const f of DAEMON_FILES) fs.writeFileSync(path.join(src, f), '# stub\n');
   git(src, 'init', '-q', '-b', 'main');
   git(src, 'add', '.');
   git(src, 'commit', '-q', '-m', 'one');
   const stable = path.join(w.dir, 'stable');
-  const d = { ...realDeps, exec: (cmd, args, opts = {}) => realDeps.exec(cmd, args, { ...opts, stdio: 'ignore' }), prismRunning: () => false, log: () => {}, now: () => new Date(2026, 9, 3) };
+  const order = [];
+  const d = {
+    ...realDeps,
+    exec: (cmd, args, opts = {}) => { order.push(args[0]); realDeps.exec(cmd, args, { ...opts, stdio: 'ignore' }); },
+    prismRunning: () => false, gameRunning: () => [], log: () => {}, now: () => new Date(2026, 9, 3),
+    foremanStatus: () => ({ running: true, pid: 42 }),
+    foremanStop: () => order.push('foreman-stop'),
+  };
   const args = (extra = []) => parseSetupArgs(['--instance', w.instance, '--stable', stable, '--source', src, '--home', w.home, '--jar', w.jar,
     '--backup-script', path.join(w.dir, 'no-such-backup.sh'), '--backup-dir', w.backupDir, '--skip-deps', ...extra]);
   await setup(args(['--apply']), d);
@@ -367,6 +382,135 @@ test('setup clones, then updates the stable checkout to the source\'s new commit
   await setup(args(), { ...d, log: (l) => lines.push(l) });
   assert.ok(lines.some((l) => /would fetch .* check out main/.test(l)));
   assert.notEqual(git(stable, 'rev-parse', 'HEAD'), git(src, 'rev-parse', 'HEAD'));
+  order.length = 0;
   await setup(args(['--apply']), d);
   assert.equal(git(stable, 'rev-parse', 'HEAD'), git(src, 'rev-parse', 'HEAD'));
+  // the running stable Foreman is stopped after the fetch and before the checkout changes its code
+  assert.deepEqual(order, ['fetch', 'foreman-stop', 'checkout']);
+
+  // a ref without the daemon: refused before anything changes (instance, mods, stable HEAD, Foreman)
+  const good = git(stable, 'rev-parse', 'HEAD');
+  git(src, 'rm', '-q', ...DAEMON_FILES);
+  git(src, 'commit', '-q', '-m', 'old tools');
+  const instanceBefore = treeHash(w.instance);
+  order.length = 0;
+  const dry = [];
+  await assert.rejects(setup(args(), { ...d, log: (l) => dry.push(l) }), /has no tools\/foreman-daemon\.sh/);
+  await assert.rejects(setup(args(['--apply']), d), /has no tools\/foreman-daemon\.sh/);
+  assert.deepEqual(order, []);
+  assert.equal(git(stable, 'rev-parse', 'HEAD'), good);
+  assert.equal(treeHash(w.instance), instanceBefore);
+  // the same with a source the commit is not in yet (a URL): checked in the stable after the fetch
+  const remote = { ...d, query: (cmd, a, o = {}) => (o.cwd === src && a[0] === 'cat-file' ? null : realDeps.query(cmd, a, o)) };
+  const lines2 = [];
+  await assert.rejects(setup(args(['--apply']), { ...remote, log: (l) => lines2.push(l) }), /after the fetch; nothing else was changed/);
+  assert.ok(lines2.some((l) => /checked after the fetch/.test(l)));
+  assert.deepEqual(order, ['fetch']);
+  assert.equal(git(stable, 'rev-parse', 'HEAD'), good);
+  assert.equal(treeHash(w.instance), instanceBefore);
+  // and a fresh clone of it: refused before the instance is touched
+  await assert.rejects(setup(parseSetupArgs(['--instance', w.instance, '--stable', path.join(w.dir, 'stable2'), '--source', src, '--home', w.home, '--jar', w.jar, '--skip-deps', '--apply']), d), /has no tools\/foreman-daemon/);
+  assert.equal(treeHash(w.instance), instanceBefore);
+});
+
+test('setup stops a running stable Foreman before npm ci, and lists it in the dry run', async () => {
+  const w = fakeWorld();
+  const args = (extra) => parseSetupArgs(['--instance', w.instance, '--stable', w.stable, '--home', w.home, '--jar', w.jar,
+    '--backup-script', w.backupScript, '--backup-dir', w.backupDir, '--skip-checkout', ...extra]);
+  const dry = deps({ foreman: { running: true, pid: 4242 } });
+  await setup(args([]), dry);
+  assert.ok(dry.lines.some((l) => /would stop the hardcore Foreman \(pid 4242\)/.test(l)));
+  assert.deepEqual(dry.calls, []);
+  const d = deps({ foreman: { running: true, pid: 4242 } });
+  await setup(args(['--apply']), d);
+  const kinds = d.calls.map((c) => (c[0] === 'foreman-stop' ? 'stop' : c[0] === 'npm' ? 'npm' : c[0]));
+  assert.ok(kinds.indexOf('stop') >= 0 && kinds.indexOf('stop') < kinds.indexOf('npm'), kinds.join(','));
+  assert.equal(kinds.filter((k) => k === 'stop').length, 1);
+  // unknown status: stopped anyway; not running: left alone
+  const unknown = deps({ foreman: null });
+  await setup(args(['--apply']), unknown);
+  assert.ok(unknown.calls.some((c) => c[0] === 'foreman-stop'));
+  const idle = deps();
+  await setup(args(['--apply']), idle);
+  assert.ok(!idle.calls.some((c) => c[0] === 'foreman-stop'));
+  // --skip-deps with --skip-checkout changes nothing the Foreman runs: no stop
+  const nodeps = deps({ foreman: { running: true, pid: 1 } });
+  await setup(args(['--apply', '--skip-deps']), nodeps);
+  assert.ok(!nodeps.calls.some((c) => c[0] === 'foreman-stop'));
+});
+
+test('setup refuses a stable checkout without the daemon scripts (--skip-checkout)', async () => {
+  const w = fakeWorld();
+  fs.rmSync(path.join(w.stable, 'tools', 'foreman-daemon.sh'));
+  const before = treeHash(w.dir);
+  await assert.rejects(setup(setupArgs(w), deps()), /has no tools\/foreman-daemon\.sh/);
+  await assert.rejects(setup(setupArgs(w, ['--apply']), deps()), /has no tools\/foreman-daemon\.sh/);
+  assert.equal(treeHash(w.dir), before);
+});
+
+test('setup refuses --apply while the game runs from the instance (Prism closed or not)', async () => {
+  const w = fakeWorld();
+  const before = treeHash(w.dir);
+  await assert.rejects(setup(setupArgs(w, ['--apply']), deps({ game: [777] })), /game is running .*777/);
+  assert.equal(treeHash(w.dir), before);
+  const d = deps({ game: [777] });
+  await setup(setupArgs(w), d);
+  assert.ok(d.lines.some((l) => /game is running/.test(l)));
+});
+
+test('gameProcesses / cwdProcesses find the instance\'s java, not other processes or this script', () => {
+  const inst = '/Users/me/Library/Application Support/PrismLauncher/instances/Hardcore-World';
+  const ps = [
+    `  101 /Users/me/Library/Application Support/PrismLauncher/java/java-runtime-delta/bin/java -Xmx4G -Djava.library.path=${inst}/natives -cp x org.prismlauncher.EntryPoint`,
+    `  102 /opt/homebrew/bin/node tools/hardcore-setup.mjs --instance ${inst}`,
+    '  103 /usr/bin/java -jar other.jar',
+    `  104 /opt/java/bin/java -Djava.library.path=${inst}-copy/natives`,
+    `  105 java -Dx=${inst}/natives`,
+  ].join('\n');
+  assert.deepEqual(gameProcesses(ps, inst, [105]), [101]);
+  assert.deepEqual(gameProcesses(ps, inst), [101, 105]);
+  const lsof = `p201\nfcwd\nn${inst}/.minecraft\np202\nfcwd\nn/Users/me\np203\nfcwd\nn${inst}-copy/.minecraft\n`;
+  assert.deepEqual(cwdProcesses(lsof, inst), [201]);
+  assert.deepEqual(cwdProcesses('', inst), []);
+});
+
+test('parseStatusLine takes the last JSON status line and ignores shell noise', () => {
+  assert.deepEqual(parseStatusLine('noise\n{"running":false}\n{"running":true,"pid":9}\n'), { running: true, pid: 9 });
+  assert.equal(parseStatusLine('Welcome!\n'), null);
+  assert.equal(parseStatusLine('{"nope":1}'), null);
+  assert.equal(parseStatusLine('{broken'), null);
+  assert.equal(parseStatusLine(undefined), null);
+});
+
+test('setup carries Prism\'s global commands and JVM args over when the instance did not override them', async () => {
+  const w = fakeWorld();
+  const cfgFile = path.join(w.instance, 'instance.cfg');
+  const own = setGeneral(CFG, { OverrideCommands: 'false', OverrideJavaArgs: 'false', PostExitCommand: '/stale/leftover.sh', JvmArgs: '-Xstale' });
+  fs.writeFileSync(cfgFile, own);
+  // no global settings file: refused
+  await assert.rejects(setup(setupArgs(w, ['--apply']), deps()), /--prism-cfg/);
+  assert.equal(fs.readFileSync(cfgFile, 'utf8'), own);
+  const globalCfg = path.join(w.dir, 'prismlauncher.cfg');
+  const globalPost = `"${BACKUP}" "$INST_MC_DIR" "/Users/me/MinecraftBackups/global"`;
+  fs.writeFileSync(globalCfg, setGeneral('[General]\nJvmArgs=\nPostExitCommand=\nPreLaunchCommand=\nWrapperCommand=\n', {
+    PostExitCommand: globalPost, WrapperCommand: '/usr/bin/caffeinate -i', JvmArgs: '-XX:+UseZGC',
+  }));
+  // found next to instances/ by default
+  await setup(setupArgs(w, ['--apply']), deps());
+  let g = readGeneral(fs.readFileSync(cfgFile, 'utf8'));
+  assert.equal(g.PostExitCommand, globalPost);
+  assert.equal(g.WrapperCommand, '/usr/bin/caffeinate -i');
+  assert.match(g.JvmArgs, /^-XX:\+UseZGC -Dagentcraft\.port=7880/);
+  assert.doesNotMatch(g.JvmArgs, /stale/);
+  assert.equal(g.OverrideCommands, 'true');
+  const after = fs.readFileSync(cfgFile, 'utf8');
+  assert.equal((await setup(setupArgs(w, ['--apply']), deps())).cfg, after);
+  // --stop-on-exit wraps the global backup
+  await setup(setupArgs(w, ['--apply', '--stop-on-exit']), deps());
+  g = readGeneral(fs.readFileSync(cfgFile, 'utf8'));
+  assert.deepEqual(splitCommand(g.PostExitCommand).slice(-3), splitCommand(globalPost));
+  // a foreign global PreLaunchCommand is refused like an instance one
+  fs.writeFileSync(cfgFile, own);
+  fs.writeFileSync(path.join(w.dir, 'elsewhere.cfg'), '[General]\nPreLaunchCommand=/usr/local/bin/other\n');
+  await assert.rejects(setup(setupArgs(w, ['--apply', '--prism-cfg', path.join(w.dir, 'elsewhere.cfg')]), deps()), /global settings .* not ours/);
 });

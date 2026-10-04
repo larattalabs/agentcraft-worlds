@@ -4,9 +4,12 @@
 // change. --apply does it. See tools/README.md "Playing in a Hardcore world".
 //
 // Steps (each can be skipped, see --help):
-//   1. checks: instance, game dir, Minecraft version, Fabric API, Prism not running (for --apply),
-//      the instance's current PreLaunchCommand is empty or ours
-//   2. stable checkout: clone (or fetch) --source into --stable and check out --ref, detached
+//   1. checks: instance, game dir, Minecraft version, Fabric API, Prism and the game not running (for
+//      --apply), the instance's effective PreLaunchCommand is empty or ours (Prism's global one when
+//      the instance does not override commands)
+//   2. stable checkout: clone (or fetch) --source into --stable and check out --ref, detached; the
+//      ref must contain tools/foreman-daemon.sh/.mjs (the PreLaunchCommand points there). A Foreman
+//      running from the stable checkout is stopped before its code or node_modules change.
 //   3. npm dependencies in <stable>/foreman and <stable>/tools
 //   4. build the mod jar in <stable>/mod
 //   5. backups: the world saves (backup-world.sh), and instance.cfg + mods/ into
@@ -65,7 +68,9 @@ function usage(code = 0) {
   --jar PATH            install this jar instead of building one
   --skip-checkout       use --stable as it is (no clone/fetch/checkout)
   --skip-deps           do not run npm ci
-  --apply               make the changes (Prism must be closed: it rewrites instance.cfg)`);
+  --prism-cfg PATH      Prism's global settings file, read when the instance does not override
+                        commands or JVM arguments (default: prismlauncher.cfg two levels above --instance)
+  --apply               make the changes (Prism and the game must be closed: it rewrites instance.cfg)`);
   process.exit(code);
 }
 
@@ -110,7 +115,7 @@ function defaultSource() {
 export function parseArgs(argv) {
   const out = { ...DEFAULTS, apply: false };
   const flags = new Set(['apply', 'stop-on-exit', 'devbridge', 'skip-checkout', 'skip-deps']);
-  const values = new Set(['instance', 'stable', 'source', 'ref', 'profile', 'port', 'home', 'backup-dir', 'backup-script', 'dev-port', 'jar']);
+  const values = new Set(['instance', 'stable', 'source', 'ref', 'profile', 'port', 'home', 'backup-dir', 'backup-script', 'dev-port', 'jar', 'prism-cfg']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') return { help: true };
@@ -122,7 +127,7 @@ export function parseArgs(argv) {
       out[camel(key)] = argv[++i];
     } else throw new Error(`unknown option: ${a}`);
   }
-  for (const k of ['instance', 'stable', 'home', 'backupDir', 'backupScript', 'jar']) {
+  for (const k of ['instance', 'stable', 'home', 'backupDir', 'backupScript', 'jar', 'prismCfg']) {
     if (out[k]) out[k] = path.resolve(expandHome(out[k]));
   }
   out.port = Number(out.port);
@@ -159,9 +164,69 @@ export const realDeps = {
     const r = spawnSync('pgrep', ['-f', 'Prism Launcher.app/Contents/MacOS/|/prismlauncher( |$)'], { encoding: 'utf8' });
     return r.status === 0;
   },
+  /** pids of a game (java) running from this instance, even with Prism closed */
+  gameRunning(instance) {
+    const ps = spawnSync('ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' });
+    const byArgs = gameProcesses(ps.stdout, instance, [process.pid, process.ppid]);
+    if (byArgs.length) return byArgs;
+    const lsof = spawnSync('lsof', ['-a', '-d', 'cwd', '-c', 'java', '-Fpn'], { encoding: 'utf8' });
+    return cwdProcesses(lsof.stdout, instance);
+  },
+  /** the stable Foreman's status line ({ running, pid, ... }), or null when it cannot be read */
+  foremanStatus(stable, { profile, home }) {
+    const r = spawnSync(process.execPath, [path.join(stable, 'tools', 'foreman-daemon.mjs'), 'status', '--profile', profile, '--home', home], { cwd: stable, encoding: 'utf8', timeout: 30_000 });
+    return parseStatusLine(r.stdout);
+  },
+  /** stop it (verified pids of that profile only); throws when the stop fails */
+  foremanStop(stable, { profile, home }) {
+    const r = spawnSync(process.execPath, [path.join(stable, 'tools', 'foreman-daemon.mjs'), 'stop', '--profile', profile, '--home', home], { cwd: stable, stdio: 'inherit', timeout: 60_000 });
+    if (r.status !== 0) throw new Error(`could not stop the Foreman for profile ${profile} (exit ${r.status}); stop it with ${path.join(stable, 'tools', 'foreman-daemon.sh')} stop and re-run`);
+  },
   now: () => new Date(),
   log: (line) => console.log(line),
 };
+
+/** The files the instance's PreLaunchCommand needs in the stable checkout. */
+export const DAEMON_FILES = ['tools/foreman-daemon.sh', 'tools/foreman-daemon.mjs'];
+
+/** The last JSON line of `foreman-daemon.mjs status` output, or null. */
+export function parseStatusLine(stdout) {
+  const line = String(stdout ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('{')).at(-1);
+  if (!line) return null;
+  try { const s = JSON.parse(line); return typeof s?.running === 'boolean' ? s : null; } catch { return null; }
+}
+
+const underDir = (p, dir) => p === dir || p.startsWith(dir.endsWith('/') ? dir : `${dir}/`);
+
+/**
+ * pids from `ps -o pid=,command=` output whose java command line mentions the instance directory
+ * (Prism passes -Djava.library.path=<instance>/natives, and mods/config paths live under it).
+ */
+export function gameProcesses(psText, instance, selfPids = []) {
+  const dirs = [...new Set([path.resolve(instance), realpath(instance)])];
+  const out = [];
+  for (const raw of String(psText ?? '').split('\n')) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(raw);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const cmd = m[2];
+    if (selfPids.includes(pid) || !/(^|\/)java(\s|$)/.test(cmd)) continue;
+    if (dirs.some((d) => cmd.includes(`${d}/`) || cmd.endsWith(d) || cmd.includes(`${d} `))) out.push(pid);
+  }
+  return out;
+}
+
+/** pids from `lsof -a -d cwd -c java -Fpn` output whose working directory is inside the instance. */
+export function cwdProcesses(lsofText, instance) {
+  const dirs = [...new Set([path.resolve(instance), realpath(instance)])];
+  const out = [];
+  let pid = null;
+  for (const line of String(lsofText ?? '').split('\n')) {
+    if (line.startsWith('p')) pid = Number(line.slice(1));
+    else if (line.startsWith('n') && pid && dirs.some((d) => underDir(line.slice(1), d)) && !out.includes(pid)) out.push(pid);
+  }
+  return out;
+}
 
 function stampOf(date) {
   const p = (n) => String(n).padStart(2, '0');
@@ -222,12 +287,37 @@ export async function setup(opt, deps = realDeps) {
   const mods = fs.readdirSync(modsDir);
   if (!mods.some((n) => /^fabric-api-.*\.jar$/.test(n))) warn('no fabric-api jar in mods/: AgentCraft needs Fabric API');
   const pre = general.PreLaunchCommand ?? '';
-  if (pre.trim() && !isOurPreLaunch(pre)) throw new Error(`the instance already has a PreLaunchCommand that is not ours: ${pre}\nRemove it in Prism (Edit instance > Settings > Custom commands) or fold it in by hand.`);
-  if (general.WrapperCommand?.trim()) warn(`the instance has a WrapperCommand (${general.WrapperCommand}); it is kept`);
+  // Without OverrideCommands / OverrideJavaArgs the instance runs Prism's GLOBAL commands / JVM
+  // arguments. Turning the overrides on (we must, to set ours) would silently drop those, e.g. a
+  // world backup in the global PostExitCommand, so the effective values are carried over.
+  const overrideCmds = general.OverrideCommands === 'true';
+  const overrideJava = general.OverrideJavaArgs === 'true';
+  let globalCfg = {};
+  if (!overrideCmds || !overrideJava) {
+    const which = [!overrideCmds && 'custom commands', !overrideJava && 'JVM arguments'].filter(Boolean).join(' and ');
+    const file = opt.prismCfg ?? path.join(path.dirname(path.dirname(opt.instance)), 'prismlauncher.cfg');
+    if (!fs.existsSync(file)) throw new Error(`the instance uses Prism's global ${which} (not overridden), but Prism's settings file is not at ${file}; pass --prism-cfg PATH, or set the instance's own ${which} in Prism first`);
+    globalCfg = readGeneral(fs.readFileSync(file, 'utf8'));
+    say(`  the instance uses Prism's global ${which}: ${file}`);
+  }
+  const effective = {
+    pre: overrideCmds ? pre : globalCfg.PreLaunchCommand ?? '',
+    post: overrideCmds ? general.PostExitCommand ?? '' : globalCfg.PostExitCommand ?? '',
+    wrapper: overrideCmds ? general.WrapperCommand ?? '' : globalCfg.WrapperCommand ?? '',
+    jvm: overrideJava ? general.JvmArgs ?? '' : globalCfg.JvmArgs ?? '',
+  };
+  const preWhere = overrideCmds ? 'the instance' : 'Prism\'s global settings (the instance does not override commands)';
+  if (effective.pre.trim() && !isOurPreLaunch(effective.pre)) throw new Error(`${preWhere} already has a PreLaunchCommand that is not ours: ${effective.pre}\nRemove it in Prism (Edit instance > Settings > Custom commands) or fold it in by hand.`);
+  if (effective.wrapper.trim()) warn(`the instance runs a WrapperCommand (${effective.wrapper}); it is kept`);
   const prism = deps.prismRunning();
   if (prism) {
     if (apply) throw new Error('Prism Launcher is running. Quit it first (it keeps instance settings in memory and would overwrite instance.cfg).');
     warn('Prism Launcher is running: quit it before --apply');
+  }
+  const game = deps.gameRunning(opt.instance) ?? [];
+  if (game.length) {
+    if (apply) throw new Error(`the game is running from this instance (pid ${game.join(', ')}). Quit it first: the world is being written and its mods are loaded.`);
+    warn(`the game is running from this instance (pid ${game.join(', ')}): quit it before --apply`);
   }
   const config = (() => { try { return JSON.parse(fs.readFileSync(path.join(opt.home, 'config.json'), 'utf8')); } catch { return null; } })();
   const repos = (Array.isArray(config?.repos) ? config.repos : []).map((r) => realpath(expandHome(String(r))));
@@ -236,11 +326,33 @@ export async function setup(opt, deps = realDeps) {
 
   // 2. stable checkout
   say(`\n2. stable checkout ${opt.stable}`);
+  // A Foreman already running from the stable checkout runs its code and node_modules (the agent SDK
+  // spawns a binary from there on every turn): it is stopped before either changes, and starts again
+  // with the next game launch. Its status comes from the checkout's own script, before any update.
+  const stableDaemonMjs = path.join(opt.stable, 'tools', 'foreman-daemon.mjs');
+  const fmStatus = fs.existsSync(stableDaemonMjs) ? deps.foremanStatus(opt.stable, { profile: opt.profile, home: opt.home }) : { running: false };
+  let foremanStopped = false;
+  const stopForeman = () => {
+    if (foremanStopped || fmStatus?.running === false) return;
+    foremanStopped = true;
+    plan(fmStatus
+      ? `stop the ${opt.profile} Foreman (pid ${fmStatus.pid}) before its checkout changes; it starts again with the next game launch`
+      : `stop the ${opt.profile} Foreman if it is running (its status could not be read) before its checkout changes`);
+    if (apply) deps.foremanStop(opt.stable, { profile: opt.profile, home: opt.home });
+  };
+  if (fmStatus?.running === false && fs.existsSync(stableDaemonMjs)) say(`  the ${opt.profile} Foreman is not running`);
+  const missingDaemon = (rev, where) => new Error(`${opt.ref} (${String(rev).slice(0, 9)}) has no ${DAEMON_FILES.join(' / ')} (checked in ${where}). The instance's PreLaunchCommand points there, so every launch would fail. Use a --ref that contains the launch tools (merge them first).`);
+  const daemonIn = (repo, rev) => DAEMON_FILES.every((f) => deps.query('git', ['cat-file', '-e', `${rev}:${f}`], { cwd: repo }) !== null);
+  const hasCommit = (repo, rev) => deps.query('git', ['cat-file', '-e', `${rev}^{commit}`], { cwd: repo }) !== null;
+  const daemonOnDisk = () => DAEMON_FILES.every((f) => fs.existsSync(path.join(opt.stable, f)));
   let commit = null;
   if (opt.skipCheckout) {
     if (!fs.existsSync(opt.stable)) throw new Error(`--skip-checkout: ${opt.stable} does not exist`);
     commit = deps.query('git', ['rev-parse', 'HEAD'], { cwd: opt.stable });
     say(`  using it as it is (${commit ? commit.slice(0, 9) : 'not a git checkout'})`);
+    if (!daemonOnDisk()) throw missingDaemon(commit ?? 'working tree', opt.stable);
+    say(`  ${DAEMON_FILES.join(' and ')}: present`);
+    if (!opt.skipDeps) stopForeman();
   } else {
     // ls-remote: read-only, current (no stale remote-tracking refs), works for a path or a URL;
     // an abbreviated SHA is resolved in a local source
@@ -248,21 +360,42 @@ export async function setup(opt, deps = realDeps) {
     if (!target && /^[0-9a-f]{4,39}$/i.test(opt.ref)) target = deps.query('git', ['rev-parse', '--verify', `${opt.ref}^{commit}`], { cwd: opt.source });
     if (!target) throw new Error(`cannot resolve ${opt.ref} in ${opt.source}`);
     const exists = fs.existsSync(path.join(opt.stable, '.git'));
+    // does the target ref contain the daemon? true / false / null (only known after the fetch)
+    let daemonOk = null;
+    let checkedIn = null;
+    if (hasCommit(opt.source, target)) { daemonOk = daemonIn(opt.source, target); checkedIn = opt.source; }
+    else if (exists && hasCommit(opt.stable, target)) { daemonOk = daemonIn(opt.stable, target); checkedIn = opt.stable; }
+    if (daemonOk === false) throw missingDaemon(target, checkedIn);
+    say(daemonOk ? `  ${opt.ref} (${target.slice(0, 9)}) has ${DAEMON_FILES.join(' and ')} (checked in ${checkedIn})`
+      : `  ${opt.ref} (${target.slice(0, 9)}) is not available locally: ${DAEMON_FILES.join(' and ')} are checked after the ${exists ? 'fetch' : 'clone'}, before anything else changes`);
+    const verifyAfterFetch = () => {
+      if (daemonOk === null && !daemonIn(opt.stable, target)) throw missingDaemon(target, `${opt.stable} after the fetch; nothing else was changed`);
+    };
     if (exists) {
       const dirty = deps.query('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: opt.stable });
       if (dirty) throw new Error(`${opt.stable} has local changes; commit or discard them first:\n${dirty}`);
       const current = deps.query('git', ['rev-parse', 'HEAD'], { cwd: opt.stable });
-      if (current === target) say(`  already at ${opt.ref} (${target.slice(0, 9)})`);
-      else plan(`fetch ${opt.source} and check out ${opt.ref} (${target.slice(0, 9)}, was ${current?.slice(0, 9) ?? '?'}) detached`);
-      if (apply && current !== target) {
-        deps.exec('git', ['fetch', '--quiet', opt.source, '+refs/heads/*:refs/remotes/origin/*', '--tags'], { cwd: opt.stable });
-        deps.exec('git', ['checkout', '--quiet', '--detach', target], { cwd: opt.stable });
+      if (current === target) {
+        say(`  already at ${opt.ref} (${target.slice(0, 9)})`);
+        if (!daemonOnDisk()) throw missingDaemon(target, opt.stable);
+        if (!opt.skipDeps) stopForeman();
+      } else {
+        plan(`fetch ${opt.source} and check out ${opt.ref} (${target.slice(0, 9)}, was ${current?.slice(0, 9) ?? '?'}) detached`);
+        // fetch (touches neither the working tree nor node_modules) -> verify -> stop -> checkout,
+        // so a refused run leaves the running Foreman alone
+        if (apply) {
+          deps.exec('git', ['fetch', '--quiet', opt.source, '+refs/heads/*:refs/remotes/origin/*', '--tags'], { cwd: opt.stable });
+          verifyAfterFetch();
+        }
+        stopForeman();
+        if (apply) deps.exec('git', ['checkout', '--quiet', '--detach', target], { cwd: opt.stable });
       }
     } else {
       if (fs.existsSync(opt.stable) && fs.readdirSync(opt.stable).length) throw new Error(`${opt.stable} exists and is not a git checkout`);
       plan(`clone ${opt.source} into ${opt.stable} and check out ${opt.ref} (${target.slice(0, 9)}) detached`);
       if (apply) {
         deps.exec('git', ['clone', '--quiet', opt.source, opt.stable]);
+        verifyAfterFetch();
         deps.exec('git', ['checkout', '--quiet', '--detach', target], { cwd: opt.stable });
       }
     }
@@ -332,7 +465,7 @@ export async function setup(opt, deps = realDeps) {
   say('\n7. instance.cfg');
   const updates = {
     PreLaunchCommand: preLaunchCommand({ daemon, profile: opt.profile, port: opt.port, home: opt.home }),
-    JvmArgs: mergeJvmArgs(general.JvmArgs ?? '', {
+    JvmArgs: mergeJvmArgs(effective.jvm, {
       'agentcraft.port': opt.port,
       'agentcraft.profile': opt.profile,
       'agentcraft.home': path.resolve(opt.home) === path.join(HOME, '.agentcraft') ? null : opt.home,
@@ -342,11 +475,12 @@ export async function setup(opt, deps = realDeps) {
     OverrideCommands: 'true',
     OverrideJavaArgs: 'true',
   };
-  const post = general.PostExitCommand ?? '';
+  const post = effective.post;
   updates.PostExitCommand = opt.stopOnExit ? wrapPostExit(post, { daemon, profile: opt.profile, home: opt.home }) : unwrapPostExit(post);
+  if (!overrideCmds) updates.WrapperCommand = effective.wrapper;
   if (!post.trim()) warn('the instance has no PostExitCommand (no world backup after each session)');
-  if (general.OverrideJavaArgs !== 'true') warn('OverrideJavaArgs was off: Prism\'s global JVM arguments stop applying to this instance');
-  if (general.OverrideCommands !== 'true' && !pre.trim()) warn('OverrideCommands was off: Prism\'s global custom commands stop applying to this instance');
+  if (!overrideCmds) say('  OverrideCommands was off: Prism\'s global PostExitCommand and WrapperCommand are copied into the instance');
+  if (!overrideJava) say('  OverrideJavaArgs was off: Prism\'s global JvmArgs are copied into the instance');
   const newText = setGeneral(cfgText, updates);
   for (const [key, value] of Object.entries(updates)) {
     const before = general[key] ?? '';
@@ -364,7 +498,8 @@ export async function setup(opt, deps = realDeps) {
   say(`Log: ${path.join(opt.stable, 'artifacts', 'logs', `foreman-daemon-${opt.profile}.log`)}`);
   const rollbackFrom = fs.existsSync(original) || !isOurPreLaunch(pre) ? original : backup;
   say(`Rollback (Prism closed): cp "${path.join(rollbackFrom, 'instance.cfg')}" "${cfgFile}"; rm "${modsDir}"/agentcraft*.jar; cp "${path.join(rollbackFrom, 'mods')}"/agentcraft*.jar "${modsDir}"/ (only if there were any); then "${daemon}" stop`);
-  if (!apply) say('\nDry run: nothing was changed. Re-run with --apply (Prism closed).');
+  if (apply && foremanStopped) say(`The ${opt.profile} Foreman was stopped for the update: it starts with the next game launch, or now with "${daemon}" start`);
+  if (!apply) say('\nDry run: nothing was changed. Re-run with --apply (Prism and the game closed).');
   return { changes, warnings, backup: apply ? backup : null, original, cfg: newText };
 }
 
