@@ -442,3 +442,69 @@ describe('worktree .git tampering and a moved HEAD', () => {
     expect(await gitOut(wt.path, ['log', '-1', '--format=%s'])).toBe('agentcraft: normal');
   });
 });
+
+describe('commitIdentity: whose name the agents\' commits carry', () => {
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach(rmrf));
+
+  async function workerCommit(args: string[], setup: (repo: string) => void = () => {}, repoSettings?: Record<string, unknown>) {
+    const home2 = tempDir();
+    const repo = await demoRepo();
+    dirs.push(home2, path.dirname(repo));
+    setup(repo);
+    if (repoSettings) fs.writeFileSync(path.join(home2, 'config.json'), JSON.stringify({ repoSettings: { [repo]: repoSettings } }));
+    const h2 = makeForeman(home2, ['--backend', 'claude', ...args]);
+    const r = await h2.fm.repos.add(repo);
+    const t = h2.fm.tasks.create({ title: 'A change', createdBy: 'marlow', repoId: r.id, assignee: 'kit' });
+    const wt = await h2.fm.repos.createWorktree(r.id, 'kit', t);
+    fs.writeFileSync(path.join(wt.path, 'CHANGELOG.md'), '# 0.2.0\n');
+    await h2.fm.repos.commitAll(r.id, wt.id, 'Add changelog');
+    const author = await gitOut(wt.path, ['log', '-1', '--format=%an <%ae> | %cn <%ce>']);
+    const env = h2.fm.repos.commitIdentityEnv(r.id, 'kit');
+    await h2.fm.close();
+    return { author, env };
+  }
+  const own = (repo: string) => {
+    execFileSync('git', ['-C', repo, 'config', 'user.name', 'Sam Example']);
+    execFileSync('git', ['-C', repo, 'config', 'user.email', 'sam@example.com']);
+  };
+
+  it('defaults to the agent identity', async () => {
+    const { author, env } = await workerCommit([], own);
+    expect(author).toBe('AgentCraft Kit <kit@agentcraft.local> | AgentCraft Kit <kit@agentcraft.local>');
+    expect(env.GIT_AUTHOR_EMAIL).toBe('kit@agentcraft.local');
+  });
+
+  it('"user": commits (and the turn env) carry the repo\'s own git identity', async () => {
+    const { author, env } = await workerCommit(['--commit-identity', 'user'], own);
+    expect(author).toBe('Sam Example <sam@example.com> | Sam Example <sam@example.com>');
+    expect(env.GIT_AUTHOR_NAME).toBe('Sam Example');
+    expect(env.GIT_COMMITTER_EMAIL).toBe('sam@example.com');
+  });
+
+  it('per repo: repoSettings.commitIdentity overrides the global setting', async () => {
+    const { author } = await workerCommit([], own, { commitIdentity: 'user' });
+    expect(author).toMatch(/^Sam Example <sam@example.com>/);
+    const back = await workerCommit(['--commit-identity', 'user'], own, { commitIdentity: 'agent' });
+    expect(back.author).toMatch(/^AgentCraft Kit/);
+  });
+
+  it('"user" without any git identity (repo or global) falls back to the agent identity', async () => {
+    // git also reads the user's global config: hide it so the machine running the tests doesn't matter
+    const saved = { g: process.env.GIT_CONFIG_GLOBAL, s: process.env.GIT_CONFIG_NOSYSTEM };
+    process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+    process.env.GIT_CONFIG_NOSYSTEM = '1';
+    try {
+      const { author } = await workerCommit(['--commit-identity', 'user'], (repo) => {
+        execFileSync('git', ['-C', repo, 'config', '--unset', 'user.name'], { stdio: 'ignore' });
+        execFileSync('git', ['-C', repo, 'config', '--unset', 'user.email'], { stdio: 'ignore' });
+      });
+      expect(author).toMatch(/^AgentCraft Kit <kit@agentcraft.local>/);
+    } finally {
+      if (saved.g === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = saved.g;
+      if (saved.s === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = saved.s;
+    }
+  });
+});

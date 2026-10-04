@@ -164,6 +164,8 @@ export interface RepoSettings {
    * "pr" = the Foreman pushes the branch and opens a pull request into the base branch
    */
   land?: 'merge' | 'pr';
+  /** whose git identity commits made for this repo carry (overrides the top-level commitIdentity) */
+  commitIdentity?: 'user' | 'agent';
   /** pull request options (land "pr") */
   pr?: PrSettings;
   /** how review comments on the PRs are triaged (PR watching) */
@@ -244,6 +246,13 @@ export interface Config {
   repoPollMs: number;
   /** approved merges: a merge commit (keeps the agents' commits) or one squashed commit */
   mergeStyle: 'merge' | 'squash';
+  /**
+   * whose git identity the commits AgentCraft makes carry: "agent" (default) = a placeholder per agent
+   * ("AgentCraft Kit <kit@agentcraft.local>"); "user" = the user's own name/email from each repo's git
+   * config (falls back to the agent identity, with a warning, when the repo has none). Per repo:
+   * repoSettings.commitIdentity.
+   */
+  commitIdentity: 'user' | 'agent';
   /** sign approved merge commits when the repo's own git config says commit.gpgsign=true */
   signMerges: boolean;
   claude: ClaudeConfig;
@@ -426,7 +435,7 @@ function effort(v: unknown, d: EffortLevel): EffortLevel {
 /** Every flag loadConfig reads (the `no-` prefix is stripped by parseFlags). */
 export const KNOWN_FLAGS = new Set([
   'home', 'backend', 'profile', 'user-name', 'use-claude-login', 'repo', 'workers', 'model', 'port', 'goal', 'autostart', 'reset', 'notify',
-  'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges',
+  'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges', 'commit-identity',
   'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
   'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns', 'client-token',
@@ -448,7 +457,7 @@ function checkArgs(flags: Flags, positional: string[]): void {
 /** Every environment variable loadConfig reads (only their presence is recorded: Config.overrides). */
 export const CONFIG_ENV_VARS = [
   'AGENTCRAFT_HOME', 'AGENTCRAFT_BACKEND', 'AGENTCRAFT_PROFILE', 'AGENTCRAFT_WORKERS', 'AGENTCRAFT_USER_NAME', 'AGENTCRAFT_PORT',
-  'AGENTCRAFT_NOTIFY', 'AGENTCRAFT_TOAST_SILENT', 'AGENTCRAFT_DEBUG', 'AGENTCRAFT_MERGE_STYLE', 'AGENTCRAFT_SIGN_MERGES',
+  'AGENTCRAFT_NOTIFY', 'AGENTCRAFT_TOAST_SILENT', 'AGENTCRAFT_DEBUG', 'AGENTCRAFT_MERGE_STYLE', 'AGENTCRAFT_SIGN_MERGES', 'AGENTCRAFT_COMMIT_IDENTITY',
   'AGENTCRAFT_LEAD_MODEL', 'AGENTCRAFT_WORKER_MODEL', 'AGENTCRAFT_DESIGN_MODEL', 'AGENTCRAFT_LEADS', 'AGENTCRAFT_USE_CLAUDE_LOGIN',
   'AGENTCRAFT_PR_WATCH', 'AGENTCRAFT_SIM_SPEED',
 ];
@@ -521,6 +530,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       if (str(o.baseBranch) && /^[\w./-]+$/.test(o.baseBranch as string)) s.baseBranch = o.baseBranch as string;
       if (Array.isArray(o.protect)) s.protect = o.protect.filter((x): x is string => typeof x === 'string' && x.length > 0 && !x.startsWith('/') && !x.split(/[\\/]/).includes('..'));
       if (o.land === 'pr' || o.land === 'merge') s.land = o.land;
+      if (o.commitIdentity === 'user' || o.commitIdentity === 'agent') s.commitIdentity = o.commitIdentity;
       if (o.pr && typeof o.pr === 'object') {
         const q = o.pr as Record<string, unknown>;
         const pr: PrSettings = {};
@@ -575,6 +585,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
     clientToken: bool(flags['client-token'], true),
     repoPollMs: Math.max(500, num(pick('repo-poll-ms'), 10_000)),
     mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE', 'mergeStyle')),
+    commitIdentity: pick('commit-identity', 'AGENTCRAFT_COMMIT_IDENTITY', 'commitIdentity') === 'user' ? 'user' : 'agent',
     // the sim answers merges unattended (screenshot QA, --auto-answer): never sign there
     signMerges: bool(pick('sign-merges', 'AGENTCRAFT_SIGN_MERGES', 'signMerges'), backend === 'claude'),
     claude: {

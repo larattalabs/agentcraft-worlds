@@ -163,8 +163,8 @@ const WAKE_INTERVAL_MS = 60_000;
 /**
  * Environment for an agent's CLI process (and every command it runs): git refuses all
  * transports (no push, ever) and never signs; git does not walk up out of the agent's cwd; the
- * agent's commits carry its own placeholder identity ("AgentCraft Kit <kit@agentcraft.local>"),
- * never the user's; and each Bash call starts in the agent's own cwd, so a `cd` in one command
+ * agent's commits carry its own placeholder identity ("AgentCraft Kit <kit@agentcraft.local>"; a turn's
+ * env then applies the repo's commitIdentity, see RepoManager.commitIdentityEnv); and each Bash call starts in the agent's own cwd, so a `cd` in one command
  * cannot carry the next one out of the worktree.
  */
 export function agentEnv(base: NodeJS.ProcessEnv = process.env, who: { agentId?: string; cwd?: string } = {}): Record<string, string | undefined> {
@@ -1462,7 +1462,7 @@ export class ClaudeBackend implements Backend {
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
         abortController: abort,
         // the repository's env (e.g. a PATH for its Node version) on top; GIT_* never comes from it
-        env: scrubEnv(withAuthMode({ ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) }, this.cfg.useClaudeLogin)),
+        env: scrubEnv(withAuthMode({ ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId), ...this.fm.repos.commitIdentityEnv(repoId, agentId) }, this.cfg.useClaudeLogin)),
         // we spawn the CLI ourselves (same as the SDK's local spawn) so its pid is known: a stopped
         // turn's whole process tree can then be ended before its worktree is handed on
         spawnClaudeCodeProcess: this.spawner(entry, agentId),

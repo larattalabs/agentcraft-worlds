@@ -200,7 +200,7 @@ export class Foreman {
     this.memory = new Memory(this.ctx, path.join(opts.config.dataDir, 'memory'));
     this.decisions = new DecisionQueue(this.ctx);
     this.designs = new DesignBook(this.ctx);
-    this.repos = new RepoManager(this.ctx, path.join(opts.config.dataDir, 'worktrees'), { mergeStyle: opts.config.mergeStyle, signMerges: opts.config.signMerges, settings: opts.config.repoSettings });
+    this.repos = new RepoManager(this.ctx, path.join(opts.config.dataDir, 'worktrees'), { mergeStyle: opts.config.mergeStyle, signMerges: opts.config.signMerges, commitIdentity: opts.config.commitIdentity, settings: opts.config.repoSettings });
     this.notifier =
       opts.notifier ??
       new Notifier({ enabled: opts.config.notify, silent: opts.config.toastSilent, log: this.log, now });
@@ -1306,6 +1306,7 @@ export class Foreman {
     this.notifier.setEnabled(c.notify);
     this.notifier.setSilent(c.toastSilent);
     this.repos.setMergeOptions(c.mergeStyle, c.signMerges);
+    this.repos.setCommitIdentity(c.commitIdentity);
     this.setStatus({ userName: userName() });
     for (const m of this.cast) {
       const title = c.claude.agents[m.id]?.title;

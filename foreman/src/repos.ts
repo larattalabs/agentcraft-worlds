@@ -152,6 +152,8 @@ export interface RepoOptions {
   mergeStyle?: 'merge' | 'squash';
   /** sign the approved merge commit if the repo's git config says commit.gpgsign=true */
   signMerges?: boolean;
+  /** whose identity AgentCraft's commits carry (config commitIdentity; per repo: repoSettings.commitIdentity) */
+  commitIdentity?: 'user' | 'agent';
   /** per-repo settings keyed by absolute repo path (config.json repoSettings) */
   settings?: Record<string, RepoSettings>;
   /** runs `az` / `gh` to open pull requests (tests inject a fake) */
@@ -166,11 +168,11 @@ export interface PrepareResult {
 }
 
 /** the user's git identity as their own git sees it in that repo (falls back to AgentCraft). */
-async function userIdentity(repoPath: string): Promise<{ env: NodeJS.ProcessEnv; who: string }> {
+async function userIdentity(repoPath: string): Promise<{ env: NodeJS.ProcessEnv; who: string; own: boolean }> {
   const name = await gitConfigGet(repoPath, 'user.name');
   const email = await gitConfigGet(repoPath, 'user.email');
-  if (name && email) return { env: identityEnv(name, email), who: `${name} <${email}>` };
-  return { env: agentIdentity('user'), who: 'AgentCraft <user@agentcraft.local>' };
+  if (name && email) return { env: identityEnv(name, email), who: `${name} <${email}>`, own: true };
+  return { env: agentIdentity('user'), who: 'AgentCraft <user@agentcraft.local>', own: false };
 }
 
 export class RepoManager {
@@ -185,6 +187,42 @@ export class RepoManager {
     private opts: RepoOptions = {},
   ) {
     this.worktreeRoot = ensureDir(worktreeRoot);
+  }
+
+  /** repoId -> the user's own git identity in that repo (null: none configured), read at refresh */
+  private userIds = new Map<string, NodeJS.ProcessEnv | null>();
+  private warnedNoIdentity = new Set<string>();
+
+  /** config.set: commitIdentity for the next commit */
+  setCommitIdentity(mode: 'user' | 'agent'): void {
+    this.opts.commitIdentity = mode;
+  }
+
+  /** "user" or "agent": whose identity commits for this repo carry (repoSettings.commitIdentity, else the config) */
+  commitIdentityMode(repoId: string): 'user' | 'agent' {
+    return this.settingsFor(repoId).commitIdentity ?? this.opts.commitIdentity ?? 'agent';
+  }
+
+  /**
+   * The git identity env (GIT_AUTHOR_* and GIT_COMMITTER_* vars) for a commit an agent makes in this repo, its own
+   * `git commit` in a turn and the Foreman's commit of its work alike: the user's own identity when the repo's
+   * mode is "user" and the repo's git config has one, else the agent's placeholder identity.
+   */
+  commitIdentityEnv(repoId: string, agentId: string): NodeJS.ProcessEnv {
+    if (this.commitIdentityMode(repoId) === 'user') {
+      const own = this.userIds.get(repoId);
+      if (own) return own;
+      if (own === null && !this.warnedNoIdentity.has(repoId)) {
+        this.warnedNoIdentity.add(repoId);
+        this.ctx.log.warn(`commitIdentity "user": ${repoId} has no git user.name/user.email; its commits use the agent identity`);
+      }
+    }
+    return agentIdentity(agentId);
+  }
+
+  private async loadUserIdentity(repoId: string, repoPath: string): Promise<void> {
+    const u = await userIdentity(repoPath);
+    this.userIds.set(repoId, u.own ? u.env : null);
   }
 
   /** config.set: mergeStyle / signMerges for the next approved merge */
@@ -355,6 +393,7 @@ export class RepoManager {
   async refresh(repoId: string): Promise<Repo> {
     const r = this.require(repoId);
     await this.applyBase(r);
+    await this.loadUserIdentity(repoId, r.path);
     const h = await git(r.path, ['rev-parse', '--short', `refs/heads/${r.branch}`], { allowFail: true });
     if (h.code === 0) r.head = h.stdout.trim();
     r.dirty = await this.isDirty(r.path);
@@ -612,7 +651,8 @@ export class RepoManager {
     const v = await this.verifyWorktreeGit(r, w);
     if (!v.ok) throw new RepoError(`${TAMPERED} ${w.id}: ${v.reason}`, 'refused');
     const ref = `refs/heads/${w.branch}`;
-    const identity = agentIdentity(w.agentId);
+    if (!this.userIds.has(repoId)) await this.loadUserIdentity(repoId, r.path);
+    const identity = this.commitIdentityEnv(repoId, w.agentId);
     const keep = this.protectedPaths(repoId);
     // protected paths stay out of every commit AgentCraft makes (they may be modified in the worktree)
     const unstage = async (env?: NodeJS.ProcessEnv) => {
