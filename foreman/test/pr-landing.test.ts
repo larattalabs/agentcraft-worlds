@@ -209,7 +209,7 @@ describe('a goal across repositories', () => {
 });
 
 describe("the lead's view of the base", () => {
-  it('follows the base branch, not the checkout, and refreshes on every call', async () => {
+  it('follows the base branch, not the checkout, and refreshes once its cache is stale', async () => {
     const home = tempDir();
     const repo = await demoRepo();
     try {
@@ -232,6 +232,11 @@ describe("the lead's view of the base", () => {
       write(path.join(repo, 'LANDED.md'), 'merged\n');
       g(repo, 'add', '.');
       g(repo, 'commit', '-qm', 'landed');
+      // within the cache window the view is reused as it is (no fetch / checkout per lead turn)
+      expect(await h.fm.repos.leadView('demo-app')).toBe(view);
+      expect(fs.existsSync(path.join(view, 'LANDED.md'))).toBe(false);
+      // stale: the next call shows the moved base
+      h.fm.repos.leadViewTtlMs = 0;
       expect(await h.fm.repos.leadView('demo-app')).toBe(view);
       expect(fs.existsSync(path.join(view, 'LANDED.md'))).toBe(true);
       expect(h.fm.repos.viewPath('demo-app')).toBe(view);

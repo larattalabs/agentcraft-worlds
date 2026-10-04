@@ -809,6 +809,9 @@ export class RepoManager {
     if (push.code !== 0) throw new RepoError(`push to ${remote}/${remoteBranch} failed: ${(push.stderr || push.stdout).trim().split('\n').slice(-2).join(' ')}`, 'refused');
     meta.prBranch = remoteBranch;
     meta.prPushedSha = await gitOut(r.path, ['rev-parse', src]);
+    // persisted now: a crash before the bookkeeping below must not forget what is on the remote
+    // (the next push's lease and the PR watcher's "is it still ours" check rely on it)
+    this.ctx.store.markDirty();
 
     // 4. the pull request (once; later approvals update the same branch)
     const updated = !!meta.prUrl;
@@ -832,6 +835,7 @@ export class RepoManager {
     }
     w.status = 'merged';
     this.ctx.store.markDirty();
+    this.viewFresh.delete(r.id);
     await this.removeWorktreeDir(r, w);
     await this.refresh(r.id);
     return { ...(meta.prUrl ? { url: meta.prUrl } : {}), remoteBranch, base: target, branch: w.branch, updated, sha: meta.prPushedSha };
@@ -904,6 +908,7 @@ export class RepoManager {
       mergedSha: mergeSha,
     };
     w.status = 'merged';
+    this.viewFresh.delete(r.id);
     await this.removeWorktreeDir(r, w);
     await this.refresh(r.id);
     return { sha: mergeSha.slice(0, 7), base: w.base, branch: w.branch, files };
@@ -1036,16 +1041,26 @@ export class RepoManager {
 
   /** repo id -> the lead's read-only view of the base (see leadView) */
   private views = new Map<string, string>();
+  /** repo id -> what the view was last refreshed to, and when (leadView's cache) */
+  private viewFresh = new Map<string, { key: string; at: number }>();
+  /** how long a lead view counts as fresh (no fetch / checkout); merges and landings invalidate it */
+  leadViewTtlMs = 3 * 60_000;
 
   /**
    * A read-only view of the repository's base for the lead: a detached worktree at the base
    * (PR repos: the freshly fetched origin/<base>) under <worktrees>/<repo>/_lead, refreshed on every
    * call. The lead plans and reviews against what workers start from, not against the user's
    * checkout, which may be on another branch with work in progress. Nothing is ever written there.
+   * A view refreshed to the same branch within leadViewTtlMs is reused as it is (every lead turn
+   * asks for every repository's view: no fetch per turn); a merge or landing invalidates it.
    */
   leadView(repoId: string, branch?: string): Promise<string> {
     return this.serial(repoId, async () => {
       const r = this.require(repoId);
+      const fresh = this.viewFresh.get(r.id);
+      const cached = this.views.get(r.id);
+      const key = `${branch ?? ''}|${r.branch}`;
+      if (fresh && cached && fresh.key === key && this.ctx.now() - fresh.at < this.leadViewTtlMs && fs.existsSync(cached)) return cached;
       const pr = this.landsAsPr(r.id) && !branch;
       if (pr) await this.fetchBase(r);
       const sha = await gitOut(r.path, ['rev-parse', '--verify', branch ? `refs/heads/${branch}` : pr ? `refs/remotes/${this.remoteOf(r.id)}/${r.branch}` : `refs/heads/${r.branch}`]);
@@ -1061,6 +1076,7 @@ export class RepoManager {
         await git(r.path, [...lf, 'worktree', 'add', '-q', '--detach', dir, sha]);
       }
       this.views.set(r.id, dir);
+      this.viewFresh.set(r.id, { key, at: this.ctx.now() });
       return dir;
     });
   }
