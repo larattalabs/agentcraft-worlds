@@ -944,15 +944,18 @@ agent log, `InboxDev` = DevBridge), `client.decisions.AnswerPanel` and the pure 
     subKind, until}]`, and with the Inbox open `selected`, `mode` (list|detail|list+detail), `detailOpen`, `focus`,
     `note`, `reply`, `groups{needs_you, updates}`, `item`, `panel` (AnswerPanel: decisionId, armed, highlight,
     textFocused, requestChanges, text, confirmReject, confirmMerge, sending, note, buttons[]), `log` (agent view:
-    entries, fetched, pages, more, loading, error, unsupported, oldestTs, newestTs, scrollRow, viewRows, last[]),
-    `chips[]`, `layout`. `dev.hub.state` has the same under `inboxTab`.
+    entries, fetched, pages, more, loading, filling, gap, gapFills, full, retryInMs, error, unsupported, oldestTs,
+    newestTs, scrollRow, viewRows, last[]), `chips[]`, `layout` (`needed`, `available`, `overflow`, `detail{flow,
+    offset, max, bodyH, pinnedY, contentH, actionsInTopBar, fieldLines}`, `logRebuilds`, `tabStrip`). `overflow` with
+    `detail.flow` = it does not fit but scrolls (fine); `overflow` without it is a bug. `dev.hub.state` has the same under `inboxTab`.
   - `dev.hub.action`: `inbox_filter {filter}`, `inbox_select {item}`, `inbox_back`, `inbox_mark_all_read`,
     `inbox_reset_read`, `inbox_answer {item?, option, text?}` (the panel's guards: Merge / Reject need a second call;
     Request changes with text sends), `inbox_answer_text {item?, text}`, `inbox_answer_press {item?, button:
     opt:<option>|diff|send|cancel}` (a button drawn last frame), `inbox_reply {item?, text?}` (reply / agent view; replies
     after the ack), `inbox_retry {item?}`, `inbox_open_task`, `inbox_open_card`, `inbox_open_thread`, `inbox_open_tasks`,
     `inbox_open_diff`, `inbox_open_decision`, `inbox_refresh_prs`, `inbox_log_older {item?}` (replies once the page is in),
-    `inbox_log_scroll {rows}` (negative = up; up at the top loads older), `inbox_focus {field: reply|answer}`; `press
+    `inbox_log_scroll {rows}` (negative = up; up at the top loads older), `inbox_detail_scroll {rows}` (a flowing
+    detail's column, in text lines; negative = up), `inbox_focus {field: reply|answer}`; `press
     {button}` also presses the Inbox's chips (`filter:all`, `filter:needs_you`, `filter:building`, `filter:agent`,
     `filter:podium`) and hub buttons (`inbox_mark_all_read`, `inbox_back`, `inbox_retry`, `inbox_reply_send`, ...).
   - `dev.agent.log {agentId, older?}`: opens the agent view and replies once the first (or the older) page is in.

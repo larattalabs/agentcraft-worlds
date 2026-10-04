@@ -101,6 +101,8 @@ public final class AnswerPanel {
 
 	private final Host host;
 	private final Options opts;
+	/** the text box's line cap now (the host may lower it: the Inbox at compact sizes uses 1) */
+	private int fieldLines;
 	private final TextModel text = new TextModel(4000);
 	private final TextFieldView textView = new TextFieldView();
 	private @Nullable String decisionId;
@@ -127,6 +129,12 @@ public final class AnswerPanel {
 	public AnswerPanel(Host host, Options opts) {
 		this.host = host;
 		this.opts = opts;
+		this.fieldLines = opts.fieldLines();
+	}
+
+	/** Caps the text box at {@code n} lines from now on (compact hosts: 1; the box scrolls to keep the caret in view). */
+	public void fieldLines(int n) {
+		fieldLines = Math.max(1, n);
 	}
 
 	// ------------------------------------------------------------------ state
@@ -602,7 +610,7 @@ public final class AnswerPanel {
 	private TextFieldView.Style style(Decision d) {
 		String ph = requestChanges ? "What should change? (Enter sends it to the worker)" : d.options().isEmpty() ? "Type your answer… (Enter sends)"
 			: "Or type your own answer…";
-		return new TextFieldView.Style(null, 0, ph, null, null, 0, Math.max(1, opts.fieldLines()));
+		return new TextFieldView.Style(null, 0, ph, null, null, 0, Math.max(1, fieldLines));
 	}
 
 	/** The buttons for {@code d} at width {@code w}, positions relative to (0, 0) (rows {@value #ROW_H} apart). */

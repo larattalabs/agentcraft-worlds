@@ -22,6 +22,7 @@ import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.hub.DetailLayout;
 import dev.agentcraft.hub.InboxModel;
 import dev.agentcraft.hub.InboxModel.Filter;
 import dev.agentcraft.hub.InboxModel.FilterType;
@@ -84,6 +85,23 @@ final class InboxTab implements HubPane {
 	private int logFrom;
 	/** Display rows of the list (null entries = group headers). */
 	private final List<@Nullable Row> display = new ArrayList<>();
+
+	// a flowing detail (DetailLayout): its scroll offset, its visible column, the clip for clickable buttons
+	private int flowOffset;
+	private int[] flowArea = new int[4];
+	private int clipTop = Integer.MIN_VALUE;
+	private int clipBottom = Integer.MAX_VALUE;
+	private boolean flowTyping;
+	private @Nullable DetailLayout lastLayout;
+	/** compact, detail only: the top bar's room right of "‹ Inbox" {x, y, w} (the detail's actions go there) */
+	private int @Nullable [] topSlot;
+	private boolean actionsInTopBar;
+	// the agent log's wrapped lines (rebuilt when its entries or the width change)
+	private @Nullable String logKey;
+	private List<LogLine> logLines = List.of();
+	private int logPrependedRows;
+	private boolean logRebuilt;
+	private int logRebuilds;
 
 	// layout (DevBridge)
 	private boolean compact;
@@ -453,13 +471,15 @@ final class InboxTab implements HubPane {
 		}
 		Item it = currentItem();
 		Decision d = it == null ? null : decisionOf(it);
-		if (d != null && panel.mouseClicked(font(), d, x, y, false)) {
+		// a flowing detail: its answer box, buttons and reply box only take clicks inside the visible column
+		boolean hidden = flowArea[2] > 0 && !inside(flowArea, x, y);
+		if (d != null && !hidden && panel.mouseClicked(font(), d, x, y, false)) {
 			if (panel.textFocused()) {
 				focus = null;
 			}
 			return true;
 		}
-		if (reply.click(font(), x, y)) {
+		if (!hidden && reply.click(font(), x, y)) {
 			focus(reply);
 			return true;
 		}
@@ -482,11 +502,20 @@ final class InboxTab implements HubPane {
 			scrollLog(dir * 3);
 			return true;
 		}
+		if (inside(flowArea, x, y)) {
+			scrollDetail(dir * 3);
+			return true;
+		}
 		if (inside(bodyArea, x, y)) {
 			bodyScroll.scrollBy(dir * 3);
 			return true;
 		}
 		return list.scroll(x, y, dir);
+	}
+
+	/** Scrolls a flowing detail (one that does not fit: DetailLayout) by {@code rows} lines. */
+	void scrollDetail(int rows) {
+		flowOffset = Math.max(0, flowOffset + rows * DetailLayout.LINE_H); // clamped by the next frame's layout
 	}
 
 	/** Scrolls the agent log by {@code rows}; scrolling up at the top asks for the page before. */
@@ -599,7 +628,12 @@ final class InboxTab implements HubPane {
 		reply.beginFrame();
 		bodyArea = new int[4];
 		logArea = new int[4];
+		flowArea = new int[4];
+		lastLayout = null;
+		topSlot = null;
+		actionsInTopBar = false;
 		compact = w < 470 || h < 200;
+		panel.fieldLines(compact ? 1 : AnswerPanel.Options.EMBEDDED.fieldLines());
 		available = h;
 		width = w;
 		needed = 0;
@@ -631,7 +665,9 @@ final class InboxTab implements HubPane {
 		}
 		// top bar
 		if (compact && showDetail && !showList) {
-			hub.button(g, "inbox_back", "‹ Inbox", x, y, hub.bw("‹ Inbox"), false, false, false, mx, my, this::back);
+			int backW = hub.bw("‹ Inbox");
+			hub.button(g, "inbox_back", "‹ Inbox", x, y, backW, false, false, false, mx, my, this::back);
+			topSlot = new int[] {x + backW + 8, y, w - backW - 8};
 		} else {
 			drawFilters(g, x, y, w, mx, my);
 		}
@@ -804,6 +840,7 @@ final class InboxTab implements HubPane {
 			bodyFor = it.key();
 			bodyScroll.toTop();
 			logScroll.toBottom();
+			flowOffset = 0;
 		}
 		int bottom = y + h;
 		int ink = UiBits.ink();
@@ -838,11 +875,74 @@ final class InboxTab implements HubPane {
 		}
 	}
 
-	/** A scrolled text well from y to {@code bottom}: the lines with their colours. */
+	/** A detail's text: wrapped lines and their colours. */
+	private record Body(List<String> lines, List<Integer> colors) {
+		Body() {
+			this(new ArrayList<>(), new ArrayList<>());
+		}
+	}
+
+	/** A detail's pinned area (answer panel, reply box, note, actions), laid out for a width. */
+	private interface Pinned {
+		int height(int w);
+
+		void draw(int x, int y, int w);
+	}
+
+	/**
+	 * Lays a detail out under its header ({@link DetailLayout}): the body on top, the pinned area at the bottom; when the
+	 * body would get fewer than three lines, the whole column scrolls instead (a scrollbar on its right), so nothing is
+	 * ever drawn over the header.
+	 */
+	private void layoutDetail(GuiGraphicsExtractor g, java.util.function.IntFunction<Body> body, Pinned pinned, int x, int y, int w, int bottom) {
+		int avail = bottom - y;
+		Body b = body.apply(w - 14);
+		int ph = pinned.height(w);
+		DetailLayout l = DetailLayout.of(avail, ph, b.lines().size(), flowOffset);
+		needed += DetailLayout.needed(ph, b.lines().size());
+		boolean typing = focus != null || panel.textFocused();
+		if (!l.flow()) {
+			lastLayout = l;
+			flowTyping = typing;
+			drawBody(g, b.lines(), b.colors(), x, y, w, y + l.bodyH());
+			pinned.draw(x, y + l.pinnedY(), w);
+			return;
+		}
+		// flows: one column at natural height under a scrollbar
+		int cw = w - DetailLayout.BAR;
+		b = body.apply(cw - 14);
+		ph = pinned.height(cw);
+		l = DetailLayout.of(avail, ph, b.lines().size(), flowOffset);
+		if (typing && !flowTyping) {
+			l = DetailLayout.of(avail, ph, b.lines().size(), l.offsetShowingPinned(avail)); // a field took focus: show it
+		}
+		flowTyping = typing;
+		flowOffset = l.offset();
+		lastLayout = l;
+		flowArea = new int[] {x, y, w, avail};
+		int top = y - l.offset();
+		clipTop = y;
+		clipBottom = bottom;
+		g.enableScissor(x, y, x + w, bottom);
+		try {
+			drawBody(g, b.lines(), b.colors(), x, top, cw, top + l.bodyH());
+			pinned.draw(x, top + l.pinnedY(), cw);
+		} finally {
+			g.disableScissor();
+			clipTop = Integer.MIN_VALUE;
+			clipBottom = Integer.MAX_VALUE;
+		}
+		bodyArea = new int[4]; // the column scrolls, not the body
+		TextUtil.Scroll bar = new TextUtil.Scroll().update(l.contentH(), avail);
+		bar.scrollBy(l.offset() - bar.max());
+		Panels.scrollbar(g, x + w - 6, y + 1, avail - 2, bar, false);
+	}
+
+	/** A text well from y to {@code bottom}: the lines with their colours (scrolls inside when they do not fit). */
 	private void drawBody(GuiGraphicsExtractor g, List<String> lines, List<Integer> colors, int x, int y, int w, int bottom) {
 		int areaH = Math.max(12, bottom - y);
 		Panels.inset(g, x, y, w, areaH);
-		int view = Math.max(1, (areaH - 6) / 10);
+		int view = Math.max(1, (areaH - DetailLayout.PAD) / DetailLayout.LINE_H);
 		bodyScroll.update(lines.size(), view);
 		if (bodyScroll.following() && lines.size() > view && bodyScroll.offset() == bodyScroll.max()) {
 			bodyScroll.toTop();
@@ -852,11 +952,10 @@ final class InboxTab implements HubPane {
 		int ly = y + 4;
 		for (int i = bodyScroll.offset(); i < Math.min(lines.size(), bodyScroll.offset() + view); i++) {
 			g.text(font(), lines.get(i), x + 5, ly, colors.get(i), false);
-			ly += 10;
+			ly += DetailLayout.LINE_H;
 		}
 		g.disableScissor();
 		Panels.scrollbar(g, x + w - 7, y + 1, areaH - 2, bodyScroll, false);
-		needed += Math.min(areaH, 32);
 	}
 
 	private void wrapInto(List<String> lines, List<Integer> colors, String text, int w, int color) {
@@ -869,6 +968,28 @@ final class InboxTab implements HubPane {
 				lines.add(l);
 				colors.add(color);
 			}
+		}
+	}
+
+	private void wrapInto(Body b, String text, int w, int color) {
+		wrapInto(b.lines(), b.colors(), text, w, color);
+	}
+
+	private static void blank(Body b) {
+		b.lines().add("");
+		b.colors().add(UiBits.ink());
+	}
+
+	/**
+	 * A hub button that only takes clicks when it is wholly inside the detail's visible column (a flowing detail
+	 * scrolls buttons under the top bar; those are drawn, clipped, but not clickable).
+	 */
+	private void button(GuiGraphicsExtractor g, String id, String label, int x, int y, int w, boolean primary, boolean disabled, int mx, int my,
+		Runnable r) {
+		if (y >= clipTop && y + 20 <= clipBottom) {
+			hub.button(g, id, label, x, y, w, primary, disabled, false, mx, my, r);
+		} else {
+			UiBits.button(g, font(), label, 0, x, y, w, primary, disabled ? UiBits.ButtonState.DISABLED : UiBits.ButtonState.NORMAL, false);
 		}
 	}
 
@@ -885,7 +1006,7 @@ final class InboxTab implements HubPane {
 				rows++;
 			}
 			bx -= bw;
-			hub.button(g, (String) b[0], label, bx, y, bw, (Boolean) b[2], (Boolean) b[3], false, mx, my, (Runnable) b[4]);
+			button(g, (String) b[0], label, bx, y, bw, (Boolean) b[2], (Boolean) b[3], mx, my, (Runnable) b[4]);
 			bx -= 4;
 		}
 		return rows * 24;
@@ -903,6 +1024,26 @@ final class InboxTab implements HubPane {
 			bx -= bw + 4;
 		}
 		return rows * 24;
+	}
+
+	/**
+	 * Compact, detail only: the action buttons go into the top bar right of "‹ Inbox" when they fit there (they leave
+	 * the pinned area to the answer or reply). Returns true when drawn there.
+	 */
+	private boolean toTopBar(GuiGraphicsExtractor g, List<Object[]> buttons, int mx, int my) {
+		if (topSlot == null || buttons.isEmpty()) {
+			return false;
+		}
+		int total = -4;
+		for (Object[] b : buttons) {
+			total += hub.bw((String) b[1]) + 4;
+		}
+		if (total > topSlot[2]) {
+			return false;
+		}
+		actions(g, topSlot[0], topSlot[1], topSlot[2], mx, my, buttons);
+		actionsInTopBar = true;
+		return true;
 	}
 
 	private static Object[] btn(String id, String label, boolean primary, boolean disabled, Runnable r) {
@@ -930,42 +1071,47 @@ final class InboxTab implements HubPane {
 			btns.add(btn("inbox_open_thread", compact ? "Thread" : "Open thread", false, false, () -> openThread(it)));
 		}
 		btns.add(btn("inbox_open_decision", compact ? "Full view" : "Decision screen", false, false, () -> openDecisionScreen(d.id())));
-		int actH = actionsHeight(w, btns);
-		int panelH = d.isOpen() ? panel.height(font(), d, w, readOnly, true) : 12;
-		int pinned = panelH + actH + 8;
-		needed += pinned + 30;
+		boolean inTop = toTopBar(g, btns, mx, my);
 		// body: the question, then the context
-		List<String> lines = new ArrayList<>();
-		List<Integer> colors = new ArrayList<>();
-		wrapInto(lines, colors, d.question(), w - 14, UiBits.ink());
-		if (!d.isOpen()) {
-			String st = d.status() == Protocol.DecisionStatus.CANCELLED ? "withdrawn" : d.answer() != null ? "answered: " + (d.answer().option() != null
-				? d.answer().option() : "") + (d.answer().text() != null ? " " + UiBits.oneLine(d.answer().text()) : "") : d.status().wire();
-			lines.add("");
-			colors.add(UiBits.ink());
-			wrapInto(lines, colors, st, w - 14, UiBits.okText());
-		} else if (DecisionsFeature.isAnswering(d.id())) {
-			lines.add("");
-			colors.add(UiBits.ink());
-			lines.add("sending your answer…");
-			colors.add(UiBits.muted());
-		}
-		if (d.context() != null && !d.context().isBlank()) {
-			lines.add("");
-			colors.add(UiBits.ink());
-			wrapInto(lines, colors, d.context().strip(), w - 14, UiBits.muted());
-		}
-		int bodyBottom = bottom - pinned;
-		drawBody(g, lines, colors, x, y, w, bodyBottom);
-		int py = bodyBottom + 4;
-		if (d.isOpen()) {
-			py += panel.draw(g, font(), d, x, py, w, mx, my, readOnly);
-		} else {
-			panel.hide();
-			panel.focusText(false);
-			py += 12;
-		}
-		actions(g, x, py + 2, w, mx, my, btns);
+		java.util.function.IntFunction<Body> body = tw -> {
+			Body b = new Body();
+			wrapInto(b, d.question(), tw, UiBits.ink());
+			if (!d.isOpen()) {
+				String st = d.status() == Protocol.DecisionStatus.CANCELLED ? "withdrawn" : d.answer() != null ? "answered: " + (d.answer().option() != null
+					? d.answer().option() : "") + (d.answer().text() != null ? " " + UiBits.oneLine(d.answer().text()) : "") : d.status().wire();
+				blank(b);
+				wrapInto(b, st, tw, UiBits.okText());
+			} else if (DecisionsFeature.isAnswering(d.id())) {
+				blank(b);
+				b.lines().add("sending your answer…");
+				b.colors().add(UiBits.muted());
+			}
+			if (d.context() != null && !d.context().isBlank()) {
+				blank(b);
+				wrapInto(b, d.context().strip(), tw, UiBits.muted());
+			}
+			return b;
+		};
+		layoutDetail(g, body, new Pinned() {
+			@Override
+			public int height(int pw) {
+				return (d.isOpen() ? panel.height(font(), d, pw, readOnly, true) : 12) + (inTop ? 0 : actionsHeight(pw, btns) + 2);
+			}
+
+			@Override
+			public void draw(int px, int py, int pw) {
+				if (d.isOpen()) {
+					py += panel.draw(g, font(), d, px, py, pw, mx, my, readOnly);
+				} else {
+					panel.hide();
+					panel.focusText(false);
+					py += 12;
+				}
+				if (!inTop) {
+					actions(g, px, py + 2, pw, mx, my, btns);
+				}
+			}
+		}, x, y, w, bottom);
 	}
 
 	private void drawReplyBox(GuiGraphicsExtractor g, Item it, int x, int y, int w, int mx, int my, int lines) {
@@ -975,44 +1121,77 @@ final class InboxTab implements HubPane {
 		reply.placeholder(it.kind() == Kind.AGENT ? "Message " + UiBits.agentName(it.agentId()) + "… (Ctrl+Enter sends)" : it.goalId() != null
 			? "Reply in goal " + it.goalId() + "'s thread… (Ctrl+Enter)" : "Reply to " + UiBits.agentName(it.agentId()) + "… (Ctrl+Enter)");
 		int fh = reply.draw(g, font(), x, y, fw, lines, focus == reply);
-		hub.button(g, "inbox_reply_send", send, x + w - sw, y + Math.max(0, fh - 20), sw, true, sending || !Foreman.connected(), false, mx, my,
-			() -> sendReply(it));
+		button(g, "inbox_reply_send", send, x + w - sw, y + Math.max(0, fh - 20), sw, true, sending || !Foreman.connected(), mx, my, () -> sendReply(it));
+	}
+
+	/** The reply box's line cap: one line at compact sizes (it scrolls to keep the caret in view). */
+	private int replyLines(boolean agentView) {
+		return compact ? 1 : agentView ? 2 : 3;
 	}
 
 	private void drawReply(GuiGraphicsExtractor g, Item it, int x, int y, int w, int bottom, int mx, int my) {
 		List<Object[]> btns = new ArrayList<>();
 		if (it.goalId() != null && HubGoals.goal(it.goalId()) != null) {
-			btns.add(btn("inbox_open_thread", "Open thread", false, false, () -> openThread(it)));
+			btns.add(btn("inbox_open_thread", compact ? "Thread" : "Open thread", false, false, () -> openThread(it)));
 		}
 		btns.add(btn("inbox_open_card", compact ? "Card" : "Open card", false, false, () -> openCard(it.agentId())));
-		int lines = compact ? 2 : 3;
-		int fh = reply.height(font(), w - hub.bw("Send") - 4, lines);
-		int actH = actionsHeight(w, btns);
+		boolean inTop = toTopBar(g, btns, mx, my);
+		int lines = replyLines(false);
 		int noteH = note != null ? 11 : 0;
-		int pinned = fh + 4 + noteH + actH;
-		needed += pinned + 30;
-		List<String> ls = new ArrayList<>();
-		List<Integer> cs = new ArrayList<>();
-		wrapInto(ls, cs, it.detail(), w - 14, UiBits.ink());
-		int bodyBottom = bottom - pinned - 4;
-		drawBody(g, ls, cs, x, y, w, bodyBottom);
-		int py = bodyBottom + 4;
-		drawReplyBox(g, it, x, py, w, mx, my, lines);
-		py += fh + 2;
-		if (noteH > 0) {
-			drawNoteAt(g, x, py + 1, w);
-			py += noteH;
-		}
-		actions(g, x, py, w, mx, my, btns);
+		layoutDetail(g, tw -> {
+			Body b = new Body();
+			wrapInto(b, it.detail(), tw, UiBits.ink());
+			return b;
+		}, new Pinned() {
+			@Override
+			public int height(int pw) {
+				return reply.height(font(), pw - hub.bw("Send") - 4, lines) + 2 + noteH + (inTop ? 0 : actionsHeight(pw, btns));
+			}
+
+			@Override
+			public void draw(int px, int py, int pw) {
+				drawReplyBox(g, it, px, py, pw, mx, my, lines);
+				py += reply.height(font(), pw - hub.bw("Send") - 4, lines) + 2;
+				if (noteH > 0) {
+					drawNoteAt(g, px, py + 1, pw);
+					py += noteH;
+				}
+				if (!inTop) {
+					actions(g, px, py, pw, mx, my, btns);
+				}
+			}
+		}, x, y, w, bottom);
 	}
 
-	private void drawFacts(List<String> ls, List<Integer> cs, String[][] facts, int w) {
+	private void drawFacts(Body b, String[][] facts, int w) {
 		for (String[] f : facts) {
 			if (f[1] == null || f[1].isBlank()) {
 				continue;
 			}
-			wrapInto(ls, cs, f[0] + ": " + f[1], w, UiBits.ink());
+			wrapInto(b, f[0] + ": " + f[1], w, UiBits.ink());
 		}
+	}
+
+	/** The pinned area of the kinds whose pinned part is a note and the actions (blocked, PR, hold). */
+	private Pinned noteAndActions(GuiGraphicsExtractor g, List<Object[]> btns, boolean inTop, boolean withNote, int mx, int my) {
+		int noteH = withNote && note != null ? 11 : 0;
+		return new Pinned() {
+			@Override
+			public int height(int pw) {
+				return noteH + (inTop ? 0 : actionsHeight(pw, btns));
+			}
+
+			@Override
+			public void draw(int px, int py, int pw) {
+				if (noteH > 0) {
+					drawNoteAt(g, px, py, pw);
+					py += noteH;
+				}
+				if (!inTop) {
+					actions(g, px, py, pw, mx, my, btns);
+				}
+			}
+		};
 	}
 
 	private void drawBlocked(GuiGraphicsExtractor g, Item it, int x, int y, int w, int bottom, int mx, int my) {
@@ -1026,30 +1205,20 @@ final class InboxTab implements HubPane {
 		if (it.agentId() != null) {
 			btns.add(btn("inbox_open_card", compact ? "Card" : "Open card", false, false, () -> openCard(it.agentId())));
 		}
-		int actH = actionsHeight(w, btns);
-		int noteH = note != null ? 11 : 0;
-		needed += actH + noteH + 30;
-		List<String> ls = new ArrayList<>();
-		List<Integer> cs = new ArrayList<>();
-		wrapInto(ls, cs, it.title(), w - 14, UiBits.ink());
-		ls.add("");
-		cs.add(UiBits.ink());
-		wrapInto(ls, cs, "Why: " + (it.detail().isBlank() ? "no reason given" : it.detail()), w - 14, UiBits.errorText());
-		if (t != null) {
-			drawFacts(ls, cs, new String[][] {{"Assignee", t.assignee() == null ? "nobody" : UiBits.agentName(t.assignee())}, {"Repo", t.repoId()},
-				{"Branch", t.branch()}, {"Updated", UiBits.ago(t.updatedAt())}}, w - 14);
-		}
-		ls.add("");
-		cs.add(UiBits.ink());
-		wrapInto(ls, cs, "Retry puts it back on the board for its worker to try again; the reason above goes with it.", w - 14, UiBits.muted());
-		int bodyBottom = bottom - actH - noteH - 4;
-		drawBody(g, ls, cs, x, y, w, bodyBottom);
-		int py = bodyBottom + 4;
-		if (noteH > 0) {
-			drawNoteAt(g, x, py, w);
-			py += noteH;
-		}
-		actions(g, x, py, w, mx, my, btns);
+		boolean inTop = toTopBar(g, btns, mx, my);
+		layoutDetail(g, tw -> {
+			Body b = new Body();
+			wrapInto(b, it.title(), tw, UiBits.ink());
+			blank(b);
+			wrapInto(b, "Why: " + (it.detail().isBlank() ? "no reason given" : it.detail()), tw, UiBits.errorText());
+			if (t != null) {
+				drawFacts(b, new String[][] {{"Assignee", t.assignee() == null ? "nobody" : UiBits.agentName(t.assignee())}, {"Repo", t.repoId()},
+					{"Branch", t.branch()}, {"Updated", UiBits.ago(t.updatedAt())}}, tw);
+			}
+			blank(b);
+			wrapInto(b, "Retry puts it back on the board for its worker to try again; the reason above goes with it.", tw, UiBits.muted());
+			return b;
+		}, noteAndActions(g, btns, inTop, true, mx, my), x, y, w, bottom);
 	}
 
 	private void drawHold(GuiGraphicsExtractor g, Item it, int x, int y, int w, int bottom, int mx, int my) {
@@ -1062,19 +1231,16 @@ final class InboxTab implements HubPane {
 			}));
 		}
 		btns.add(btn("inbox_status", compact ? "Status" : "Status tab", false, false, () -> hub.setTab(HubTab.STATUS)));
-		int actH = actionsHeight(w, btns);
-		needed += actH + 30;
-		List<String> ls = new ArrayList<>();
-		List<Integer> cs = new ArrayList<>();
-		wrapInto(ls, cs, it.title() + ": " + InboxModel.holdText(hold, ZoneId.systemDefault()), w - 14, UiBits.ink());
-		for (String p : InboxModel.holdExplain(hold, ZoneId.systemDefault())) {
-			ls.add("");
-			cs.add(UiBits.ink());
-			wrapInto(ls, cs, p, w - 14, UiBits.muted());
-		}
-		int bodyBottom = bottom - actH - 4;
-		drawBody(g, ls, cs, x, y, w, bodyBottom);
-		actions(g, x, bodyBottom + 4, w, mx, my, btns);
+		boolean inTop = toTopBar(g, btns, mx, my);
+		layoutDetail(g, tw -> {
+			Body b = new Body();
+			wrapInto(b, it.title() + ": " + InboxModel.holdText(hold, ZoneId.systemDefault()), tw, UiBits.ink());
+			for (String p : InboxModel.holdExplain(hold, ZoneId.systemDefault())) {
+				blank(b);
+				wrapInto(b, p, tw, UiBits.muted());
+			}
+			return b;
+		}, noteAndActions(g, btns, inTop, false, mx, my), x, y, w, bottom);
 	}
 
 	private void drawPr(GuiGraphicsExtractor g, Item it, int x, int y, int w, int bottom, int mx, int my) {
@@ -1087,28 +1253,20 @@ final class InboxTab implements HubPane {
 		}
 		btns.add(btn("inbox_refresh_prs", compact ? "Refresh" : "Refresh PRs", false, sending || !Foreman.connected(), this::refreshPrs));
 		btns.add(btn("inbox_open_task", compact ? "Task" : "Open task", false, t == null, () -> openTask(tid)));
-		int actH = actionsHeight(w, btns);
-		int noteH = note != null ? 11 : 0;
-		needed += actH + noteH + 30;
-		List<String> ls = new ArrayList<>();
-		List<Integer> cs = new ArrayList<>();
-		wrapInto(ls, cs, it.title(), w - 14, UiBits.ink());
-		wrapInto(ls, cs, "Needs you: " + it.detail(), w - 14, UiBits.errorText());
-		if (t != null && t.pr() != null) {
-			Protocol.TaskPr pr = t.pr();
-			drawFacts(ls, cs, new String[][] {{"State", pr.status()}, {"Checks", pr.checks()}, {"Threads", pr.threads() == null ? null : pr.threads().open()
-				+ " open" + (pr.threads().newCount() != null && pr.threads().newCount() > 0 ? ", " + pr.threads().newCount() + " new" : "")}, {"Branch",
-				pr.branch() == null ? null : pr.branch() + (pr.target() != null ? " → " + pr.target() : "")}, {"Link", pr.url()}, {"Updated", pr.updatedAt() > 0
-				? UiBits.ago(pr.updatedAt()) : null}}, w - 14);
-		}
-		int bodyBottom = bottom - actH - noteH - 4;
-		drawBody(g, ls, cs, x, y, w, bodyBottom);
-		int py = bodyBottom + 4;
-		if (noteH > 0) {
-			drawNoteAt(g, x, py, w);
-			py += noteH;
-		}
-		actions(g, x, py, w, mx, my, btns);
+		boolean inTop = toTopBar(g, btns, mx, my);
+		layoutDetail(g, tw -> {
+			Body b = new Body();
+			wrapInto(b, it.title(), tw, UiBits.ink());
+			wrapInto(b, "Needs you: " + it.detail(), tw, UiBits.errorText());
+			if (t != null && t.pr() != null) {
+				Protocol.TaskPr pr = t.pr();
+				drawFacts(b, new String[][] {{"State", pr.status()}, {"Checks", pr.checks()}, {"Threads", pr.threads() == null ? null : pr.threads().open()
+					+ " open" + (pr.threads().newCount() != null && pr.threads().newCount() > 0 ? ", " + pr.threads().newCount() + " new" : "")}, {"Branch",
+					pr.branch() == null ? null : pr.branch() + (pr.target() != null ? " → " + pr.target() : "")}, {"Link", pr.url()}, {"Updated",
+					pr.updatedAt() > 0 ? UiBits.ago(pr.updatedAt()) : null}}, tw);
+			}
+			return b;
+		}, noteAndActions(g, btns, inTop, true, mx, my), x, y, w, bottom);
 	}
 
 	/** The agent view: card summary on top, the full log (paged back on scroll up), a message box and Open card. */
@@ -1117,9 +1275,25 @@ final class InboxTab implements HubPane {
 		ForemanState s = Foreman.state();
 		Protocol.Agent a = s == null ? null : s.agent(agentId);
 		AgentLogView lv = log(agentId);
-		lv.start();
+		lv.maintain();
 		int ink = UiBits.ink();
 		int muted = UiBits.muted();
+		// bottom first (the log gets what is left): message box, note, buttons (compact: buttons in the top bar)
+		List<Object[]> btns = new ArrayList<>();
+		btns.add(btn("inbox_open_card", compact ? "Card" : "Open card", false, a == null, () -> openCard(agentId)));
+		if (lv.more()) {
+			btns.add(btn("inbox_log_older", lv.loading() ? "Loading…" : compact ? "Older" : "Load older", false, lv.loading(), lv::loadOlder));
+		}
+		boolean inTop = toTopBar(g, btns, mx, my);
+		int lines = replyLines(true);
+		int fh = reply.height(font(), w - hub.bw("Send") - 4, lines);
+		int actH = inTop ? 0 : actionsHeight(w, btns);
+		int noteH = note != null ? 11 : 0;
+		int pinned = fh + 4 + noteH + actH;
+		int minLog = DetailLayout.bodyHeight(DetailLayout.MIN_LINES);
+		// the activity line only when the log keeps its three lines with it
+		boolean actLine = a != null && bottom - y - 24 - 12 - pinned - 4 >= minLog;
+		needed += 24 + minLog + pinned + 4;
 		// summary
 		UiBits.framedPortrait(g, agentId, x, y, 1);
 		int tx = x + 26;
@@ -1132,27 +1306,15 @@ final class InboxTab implements HubPane {
 		}
 		g.text(font(), TextUtil.ellipsize(font(), sub, w - 26 - 60), tx, y + 11, muted, false);
 		y += 24;
-		if (a != null) {
+		if (actLine) {
 			String act = a.activity().isBlank() ? "-" : a.activity();
 			Task t = a.taskId() == null || s == null ? null : s.task(a.taskId());
 			String line = act + (t != null ? "  ·  " + t.id() + " " + UiBits.oneLine(t.title()) : "") + (it.buildingId() != null ? "  ·  " + it.buildingId() : "");
 			g.text(font(), TextUtil.ellipsize(font(), line, w), x, y, ink, false);
 			y += 12;
 		}
-		needed += 36;
-		// bottom: message box + buttons
-		List<Object[]> btns = new ArrayList<>();
-		btns.add(btn("inbox_open_card", compact ? "Card" : "Open card", false, a == null, () -> openCard(agentId)));
-		if (lv.more()) {
-			btns.add(btn("inbox_log_older", lv.loading() ? "Loading…" : compact ? "Older" : "Load older", false, lv.loading(), lv::loadOlder));
-		}
-		int lines = compact ? 1 : 2;
-		int fh = reply.height(font(), w - hub.bw("Send") - 4, lines);
-		int actH = actionsHeight(w, btns);
-		int noteH = note != null ? 11 : 0;
-		int pinned = fh + 4 + noteH + actH;
-		needed += pinned + 30;
-		int logBottom = bottom - pinned - 4;
+		// the log keeps at least a line even when the box is short; the pinned area never climbs above it
+		int logBottom = Math.max(y + DetailLayout.bodyHeight(1), bottom - pinned - 4);
 		drawLog(g, lv, x, y, w, logBottom);
 		int py = logBottom + 4;
 		drawReplyBox(g, it, x, py, w, mx, my, lines);
@@ -1161,10 +1323,65 @@ final class InboxTab implements HubPane {
 			drawNoteAt(g, x, py + 1, w);
 			py += noteH;
 		}
-		actions(g, x, py, w, mx, my, btns);
+		if (!inTop) {
+			actions(g, x, py, w, mx, my, btns);
+		}
 	}
 
-	private record LogLine(String time, String text, int color) {
+	/** A wrapped log line; its colour is resolved when drawn (a theme change shows at once). */
+	private record LogLine(String time, String text, Protocol.LogKind kind, char sign) {
+		int color() {
+			return switch (kind) {
+				case TOOL -> UiStyle.color("paper.path", 0xFF6C5415);
+				case RESULT -> UiBits.muted();
+				case ERROR -> UiBits.errorText();
+				case DIFF -> sign == '+' ? UiStyle.color("paper.add_fg", 0xFF455746) : sign == '-' ? UiStyle.color("paper.del_fg", 0xFF873C2A)
+					: UiBits.muted();
+				default -> UiBits.ink();
+			};
+		}
+	}
+
+	/** The wrapped log lines, rebuilt only when the entries or the width change (not every frame). */
+	private List<LogLine> wrappedLog(AgentLogView lv, int textW) {
+		String key = lv.agentId + "/" + textW + "/" + lv.cacheKey();
+		if (key.equals(logKey)) {
+			logRebuilt = false;
+			return logLines;
+		}
+		List<LogEntry> entries = lv.entries();
+		List<LogLine> lines = new ArrayList<>();
+		int prepended = lv.takePrepended();
+		int prependedRows = 0;
+		for (int i = 0; i < entries.size(); i++) {
+			LogEntry e = entries.get(i);
+			int before = lines.size();
+			boolean first = true;
+			int n = 0;
+			for (String para : e.text().split("\n")) {
+				char sign = e.kind() == Protocol.LogKind.DIFF && !para.isEmpty() ? para.charAt(0) : ' ';
+				for (String l : TextUtil.wrapPlain(font(), para, textW)) {
+					if (n++ >= 8) {
+						break;
+					}
+					lines.add(new LogLine(first ? UiBits.clock(e.ts()) : "", l, e.kind(), sign));
+					first = false;
+				}
+				if (n >= 8) {
+					lines.add(new LogLine("", "…", Protocol.LogKind.RESULT, ' '));
+					break;
+				}
+			}
+			if (i < prepended) {
+				prependedRows += lines.size() - before;
+			}
+		}
+		logKey = key;
+		logLines = lines;
+		logPrependedRows = prependedRows;
+		logRebuilt = true;
+		logRebuilds++;
+		return lines;
 	}
 
 	private void drawLog(GuiGraphicsExtractor g, AgentLogView lv, int x, int y, int w, int bottom) {
@@ -1173,49 +1390,11 @@ final class InboxTab implements HubPane {
 		logArea = new int[] {x, y, w, areaH};
 		int timeW = font().width("00:00 ");
 		int textW = w - 14 - timeW;
-		List<LogEntry> entries = lv.entries();
-		List<LogLine> lines = new ArrayList<>();
-		int path = UiStyle.color("paper.path", 0xFF6C5415);
-		int addFg = UiStyle.color("paper.add_fg", 0xFF455746);
-		int delFg = UiStyle.color("paper.del_fg", 0xFF873C2A);
-		int prepended = lv.takePrepended();
-		int prependedRows = 0;
-		for (int i = 0; i < entries.size(); i++) {
-			LogEntry e = entries.get(i);
-			int color = switch (e.kind()) {
-				case TOOL -> path;
-				case RESULT -> UiBits.muted();
-				case ERROR -> UiBits.errorText();
-				default -> UiBits.ink();
-			};
-			int before = lines.size();
-			boolean first = true;
-			int n = 0;
-			for (String para : e.text().split("\n")) {
-				int c = color;
-				if (e.kind() == Protocol.LogKind.DIFF) {
-					c = para.startsWith("+") ? addFg : para.startsWith("-") ? delFg : UiBits.muted();
-				}
-				for (String l : TextUtil.wrapPlain(font(), para, textW)) {
-					if (n++ >= 8) {
-						break;
-					}
-					lines.add(new LogLine(first ? UiBits.clock(e.ts()) : "", l, c));
-					first = false;
-				}
-				if (n >= 8) {
-					lines.add(new LogLine("", "…", UiBits.muted()));
-					break;
-				}
-			}
-			if (i < prepended) {
-				prependedRows += lines.size() - before;
-			}
-		}
+		List<LogLine> lines = wrappedLog(lv, textW);
 		int view = Math.max(1, (areaH - 6) / 10);
 		logScroll.update(lines.size(), view);
-		if (prependedRows > 0 && !logScroll.following()) {
-			logScroll.scrollBy(prependedRows); // keep the lines that were on screen where they were
+		if (logRebuilt && logPrependedRows > 0 && !logScroll.following()) {
+			logScroll.scrollBy(logPrependedRows); // keep the lines that were on screen where they were
 		}
 		logFrom = logScroll.offset();
 		logRowsShown = view;
@@ -1318,6 +1497,18 @@ final class InboxTab implements HubPane {
 		l.addProperty("needed", needed);
 		l.addProperty("available", available);
 		l.addProperty("overflow", needed > available);
+		JsonObject detail = new JsonObject();
+		DetailLayout dl = lastLayout;
+		detail.addProperty("flow", dl != null && dl.flow());
+		detail.addProperty("offset", dl == null ? 0 : dl.offset());
+		detail.addProperty("max", dl == null ? 0 : dl.maxOffset());
+		detail.addProperty("bodyH", dl == null ? 0 : dl.bodyH());
+		detail.addProperty("pinnedY", dl == null ? 0 : dl.pinnedY());
+		detail.addProperty("contentH", dl == null ? 0 : dl.contentH());
+		detail.addProperty("actionsInTopBar", actionsInTopBar);
+		detail.addProperty("fieldLines", compact ? 1 : AnswerPanel.Options.EMBEDDED.fieldLines());
+		l.add("detail", detail);
+		l.addProperty("logRebuilds", logRebuilds);
 		JsonObject tabs = new JsonObject();
 		tabs.addProperty("needed", hub.tabStripNeeded());
 		tabs.addProperty("available", hub.tabStripAvailable());

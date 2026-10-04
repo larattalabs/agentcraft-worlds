@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 final class InboxDev {
 	static final String ACTIONS = "inbox_filter|inbox_select|inbox_back|inbox_mark_all_read|inbox_answer|inbox_answer_press|inbox_answer_text|inbox_reply|"
 		+ "inbox_retry|inbox_open_task|inbox_open_card|inbox_open_thread|inbox_open_tasks|inbox_open_diff|inbox_open_decision|inbox_refresh_prs|"
-		+ "inbox_log_older|inbox_log_scroll|inbox_focus|inbox_reset_read";
+		+ "inbox_log_older|inbox_log_scroll|inbox_detail_scroll|inbox_focus|inbox_reset_read";
 	private static final Set<String> NAMES = Set.of(ACTIONS.split("\\|"));
 
 	private InboxDev() {
@@ -259,6 +259,12 @@ final class InboxDev {
 				int rows = (int) f.integer("rows", -100_000, 100_000);
 				t.scrollLog(rows);
 				return done(action, "scrolled " + rows);
+			}
+			case "inbox_detail_scroll" -> {
+				// a detail that does not fit flows (layout.detail.flow): its whole column scrolls; rows are text lines
+				int rows = (int) f.integer("rows", -100_000, 100_000);
+				t.scrollDetail(rows);
+				return done(action, "scrolled the detail " + rows + " lines (see layout.detail.offset/max after a frame)");
 			}
 			case "inbox_focus" -> {
 				String field = f.nonBlank("field");

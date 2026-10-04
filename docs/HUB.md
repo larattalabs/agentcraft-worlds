@@ -532,12 +532,23 @@ The first hub tab: everything that needs the player or happened for them, in one
   Foreman's stored log (`agent.logs.request`, 200 per page, both rotation files) joined with the live tail;
   scrolling up at the top loads the page before (the view keeps its place), "Load older" does the same; a message
   box (`user.message`) and Open card. An older Foreman shows the live tail with "older lines need a newer Foreman".
+  A failed first page is asked for again after 5 s. When more entries arrive than the live tail keeps (200) while
+  the view is open, it pages back from the tail until it meets the fetched pages, so the log has no hole
+  (`LogJoin`); the fetched pages stop at 2,000 entries (older ones: the Foreman's `logs/<agent>.jsonl`). The
+  wrapped lines are cached and rebuilt only when the entries or the width change.
 - **Deep links** (W4): podium right-click -> Inbox on that podium's decisions; monitor right-click (empty hand or a
   non-block item; with a block in hand the click places it, so monitor walls still build) -> the Inbox view of the
   agent that panel shows (the feed monitor: the Inbox); console `/inbox [@agent]`; `J` still opens
   the decision screen (the fast path), which hosts the same AnswerPanel.
 - **Layout**: compact under 470 × 200 GUI px (GUI scale 4 at 1080p, 4K with auto scale ~426 × 240): the list or
-  the detail with "‹ Inbox", shorter chip and button labels; `dev.inbox.state` `layout` = `{guiWidth, guiHeight,
-  guiScale, compact, width, needed, available, overflow, tabStrip{needed, available, overflow}}` (the tab strip's
+  the detail with "‹ Inbox", shorter chip and button labels; in the compact detail the item's action buttons
+  (Thread / Full view, Card, Retry, ...) sit in the top bar next to "‹ Inbox" when they fit there, and the answer
+  and reply boxes are one line (they scroll to the caret). Every detail is laid out by `DetailLayout`: the body
+  keeps at least three lines (or all of a shorter text) above the pinned answer / reply area; when that does not
+  fit, the whole detail flows and scrolls as one column (wheel, `inbox_detail_scroll`), focusing a box scrolls it
+  into view, and buttons scrolled under the top bar are not clickable. Nothing is drawn over the pill, title and
+  agent line. `dev.inbox.state` `layout` = `{guiWidth, guiHeight, guiScale, compact, width, needed, available,
+  overflow, detail{flow, offset, max, bodyH, pinnedY, contentH, actionsInTopBar, fieldLines}, logRebuilds,
+  tabStrip{needed, available, overflow}}` (the tab strip's
   seven labels are measured too: the hud stream adds badges to them).
 
