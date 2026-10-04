@@ -149,7 +149,16 @@ bed nearest their wing's task wall or their desk; `@<n>` anchors of a wing witho
   treat them as the building's (a bed the player adds is still "move this first"); the snapshot restores them like
   any block (no drops: the restore flags suppress them, both halves are in the box);
 - agents never change the world: lying is a render pose of the client-only agent; a bed the player sleeps in
-  (`occupied=true`) is skipped. The player can sleep in them too (it is a normal bed: spawn point, night skip).
+  (`occupied=true`) is skipped. In the Overworld the player can sleep in them too (a normal bed: spawn point, night
+  skip);
+- **beds only where they are safe**: Place and Move read the level's bed rule (`BedRule`, vanilla's per-position
+  environment attribute) at each template bed's head. Where nobody can sleep or a bed is destroyed on use or on
+  leaving (the Nether and the End: right-clicking a bed there is a power-5 explosion with fire, the end of a Hardcore
+  world), both halves are written as air (no drops), the bed's anchor is dropped from the building (agents rest in the
+  lounge there), the pin forgets the cells (a bed the player brings later is theirs: Remove lists it) and its
+  `wingAnchors` (a repo change does not bring the anchor back), and the placement note says "N beds left out (beds
+  explode in <dimension>; ...)". Logic in `BedSafety` (`BedSafetyTest`); a building moved back to the Overworld gets
+  its beds again (Move re-places the template);
 - Regenerated bundled blueprints change the template fingerprint: buildings placed before have a pin from the old
   version (the world-start check notes "the blueprint changed since it was placed" and does not check); Move
   re-places them from the current blueprint (with beds).
