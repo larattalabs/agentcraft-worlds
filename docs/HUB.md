@@ -27,6 +27,10 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      cutaway}.png` from the user folder, else the mod's `data/<ns>/blueprints/`), Place (repo step with
      the blueprint fixed, then placement mode) and **Design new** (below). *(done)*
      A third list, **Designs**, shows the building designs (below). *(done)*
+     **Fixtures** (village stream `board`, docs/VILLAGE.md V2): the second list, "Fixtures N": placed village boards with where
+     they stand, Teleport (C7), Remove (asks twice, restores the terrain), Move, Undo move; the top-right button is
+     **Place village board…** ("Place board…" when the row is narrow), which puts up the board's ghost at once (no repo step).
+     Fixtures take no repos, have no lead and are never home. *(done, branch `village/board`)*
      Buildings record their dimension (`Building.dimension`): remove and teleport refuse, naming both
      dimensions, when the player is elsewhere; records from before the field fall back to requiring
      AgentCraft stations in the box in the player's dimension. Remove also refuses while the player

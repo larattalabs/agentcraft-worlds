@@ -31,6 +31,7 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 | `client.leads` | leads | a lead per building: `lead.assign/sync/release`, podium and wall routing |
 | `client.monitor` | monitor specialist | `MonitorRenderer` (BER): live agent log on desk monitors |
 | `client.taskwall` | task wall specialist | `TaskBoardRenderer` (BER): kanban cards |
+| `client.village` | board (village) | `VillageBoardRenderer` (BER): the village board fixture (buildings, milestones, holds), right-click to the hub, `dev.board.*` |
 | `client.decisions` | decisions specialist | `DecisionPodiumRenderer` + decision GUI |
 | `client.console` | console specialist | console screen + keybind, `ConsoleTerminalRenderer` |
 | `client.diff` | diff specialist | diff/merge review screen, `MergeStationRenderer` |
@@ -538,6 +539,14 @@ from the model + a quiet "off shift"/"screen off" label in room light).
   nameplate from the desk camera (in the test room the agent stands in front of its 1x1 monitor).
 - `lit` is driven by the HQ client feature (see `HqClientFeature`); the renderer handles both.
 
+**Village board** (`VillageBoardFeature`, `VillageBoardRenderer`, `BoardView`, content in `village.VillageBoard`;
+docs/VILLAGE.md V2): the `village_board` fixture's 5 x 3 display. A dark walnut slate: header "Village board · N buildings ·
+page"; a paper card per building (name + home, PRs open / merged this week right, lead portrait + name + repos, active goal +
+percent, a progress bar on the card's bottom edge); the newest milestones on the right (brass dot = its trophy hangs); a clay
+hold banner; a footer naming what a right-click does (Inbox when something needs you, else hub > Buildings). Pages turn every
+10 s; density `round(156/h)` (52 on 5 x 3), light floor 13. Prepared per panel origin, rebuilt only on change; extract and
+submit under `Guard`. QA: `dev.board.state`, `dev.board.set`, `dev.board.aim`, `dev.board.use`.
+
 **Task Wall** (`TaskWallFeature`, `TaskBoardRenderer`, model in `TaskBoard`, `TaskScreen`): a
 kanban of `Foreman.state().tasks()` on every connected task_board panel: Todo / Doing / Review /
 Done with counts (red dot when a column holds blocked cards), blocked tasks as red `card_blocked`
@@ -597,7 +606,7 @@ and ~42 us/frame for all boards, extract + submit, rebuilds included; a full boa
 
 - Screens: `DevBridge.registerScreen("console", mc -> new ConsoleScreen())` in your `init()`, then
   `dev.screen {open:"console"}` (or a scene shot with `"screen":"console"`). Names in use or reserved:
-  `console`, `diff`, `decision`, `library`, `permission`, `task`, `creative_agentcraft`.
+  `console`, `diff`, `decision`, `library`, `permission`, `task`, `creative_agentcraft`, `hub_fixtures`.
 - Cameras: add `cam_<name>` anchors in the HQ builder and shoot with `dev.camera {anchor}`.
 - State: `dev.state` has `foreman` (link, backend, auth, counts, goal) and `agents` (count, moving);
   `dev.foreman` (+ `reconnect:true`), `dev.foreman.send {message:{type,...}}` (drive the Foreman

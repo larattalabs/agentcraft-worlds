@@ -50,3 +50,63 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
   steps; never interrupts a running task's position more than that).
 - Settings: per-world toggles in hub > Buildings: "Night routine", "Stand-ups", "Library visits" (default on).
 - DevBridge: `dev.routines.state`, `dev.routines.time {ticks}` (or reuse /time in dev worlds), `dev.routines.standup {goalId}`.
+
+## As implemented: board stream (branch `village/board`)
+
+**Fixtures** (`kind: "fixture"`, `wings: 0`; docs/BUILDINGS.md "Fixtures"):
+- A fixture is a `Building` record with **no repos** (`Building.isFixture()`), in the same `agentcraft-buildings.json`, the same
+  `b<n>` id sequence and the same snapshot folder, so place, ghost, terrain fit, snapshot, Remove (asks twice, restores exactly),
+  Move, Undo move, crash safety and the world-start check work unchanged.
+- `Buildings.all()` leaves fixtures out (routing sites, leads and `lead.sync`, trophies, the Inbox, Goals, the HUD welcome rule
+  and every other building consumer stay as they were); `Buildings.fixtures()` lists them; `Buildings.everything()` is both.
+  **Use `everything()` for overlap and collision** (the ghost does; roads should too: a road laid through a fixture's snapshot
+  box would be overwritten when the fixture is removed). `Buildings.get(id)` returns either.
+- A fixture is never home (place, rehome, load and reconcile skip it), refuses Make home and Edit repos, and takes no repos
+  (`place` refuses any; `move` skips the repo checks). One building per repo is untouched.
+- Placing: hub > Buildings > **Fixtures** > **Place village board…** (compact "Place board…"), a fixture blueprint's **Place**
+  in the Blueprints list, `/agentcraft place village_board [-] [rotation] [force]`, or `dev.build.start {blueprint:
+  "village_board"}` (no repos). The ghost and the HUD say "Placing Village board" (no "for"); the ghost's overlap check covers
+  buildings and fixtures (`GhostModel.refusals(fixture, ...)`). The repo and blueprint wizard steps never offer fixtures.
+
+**The block** `agentcraft:village_board` (`VillageBoardBlock extends PanelBlock`, depth 3, own block entity
+`VillageBoardBlockEntity`, binding empty): connects like the task board (same block, same facing, adjacent; recomputed after
+placement by `Buildings.connectPanels`), never to a task board. Its blockstate and item reuse the task board's models (the
+renderer draws its own slate over the linen); no loot table, so breaking it drops nothing (no free items in survival).
+
+**The blueprint** `tools/blueprints/designs/village_board.mjs` (7 x 7 x 4, front south, approach off): a 5 x 3 display on a
+stone plinth between stripped dark-oak posts, a dark-oak plank wall behind every display cell, a dark-oak slab hood, lanterns on
+the posts, a paved reading strip in front (walk). Anchors: `board` (centre of the display surface, kit `villageBoard()`),
+`spawn` (on the strip, facing the board; Teleport lands there), `cam_overview`. Checker rules for fixtures: `board` + `spawn`
+required, `board` on a village_board with matching yaw; no walk/light/"reachable through the walls" rules (it stands outdoors);
+the no-mod shell leak check stays, plus a full opaque vanilla block behind every AgentCraft cell; no `repo:`/`ci:` bindings; no
+trophy slots; a warning without any vanilla light source.
+
+**Content** (`dev.agentcraft.village.VillageBoard`, pure, `VillageBoardTest`):
+- One row per building, home first, then placement order: `b3 Workshop` (+ "· home"), the lead's portrait and name (the hub's
+  `LeadsFeature.leadLabel`), the repos by their Foreman names, the **active goal** = the newest open (planning/active) goal that
+  belongs to the building by `Displays.goalBelongs` (its repos or lead; home takes the rest) with its progress (bar along the
+  card's bottom, `55%`, `+N` other open goals), **open PRs** (red when an open PR's checks fail) and **PRs merged this week**
+  (the local Monday 00:00; a PR's repo is the task's, else its goal's).
+- **Milestones**, newest first, at most 12 (as many as fit are drawn): `TrophyEvents.catchUp` of the Foreman state (goal done,
+  PR merged, task merged locally: the trophy keys), each marked with a brass dot when its trophy hangs on a wall; hung trophies
+  whose key the Foreman no longer has (an older database) show from their sign lines.
+- **Hold** (C9): a clay banner "Agents paused: usage paused until 14:20" (`InboxModel.holdText`).
+- Footer: "Needs you: 2 decisions · 1 blocked · right-click for the Inbox" while the Inbox's Needs you is above 0, else
+  "Right-click: hub > Buildings". Header: "Village board", the building count and the page.
+- **Paging**: rows that do not fit turn pages every 10 s (`VillageBoard.page`). **Density**: `round(156 / height)` px per block,
+  40..64 (52 on the bundled 5 x 3: 260 x 156 px, text 8 px = 0.154 blocks, about 1.1° at 8 blocks; 3 building rows per page (2 while the hold banner shows) and 4
+  milestones on the bundled board). Light floor 13 like the task wall.
+- Data: the Foreman state, buildings and leads on the client thread; the trophy ledger is copied on the server thread every 5 s
+  while a board was drawn in the last 30 s (`Trophies.hung()`), never read across threads. The content is rebuilt only when the
+  Foreman revision, the buildings, the ledger copy, the Inbox revision, the link or the 30 s clock changed; the per-board drawing
+  (`BoardView`) only when the content, page, size or density changed. Extract and submit run under `Guard`.
+
+**Right-click** (`StationInteractions`, guarded): the Inbox on "Needs you" when something needs the player, else the hub on
+Buildings. Sneak-right-click places blocks as usual.
+
+**DevBridge**: `dev.board.state` (content, each board drawn in the last 30 s: origin, size, ppb, `textHeightBlocks`,
+`rowsPerPage`, `twoColumns`, `milestoneSlots`, page/pages, rows and milestones shown, every text on it; the placed fixtures),
+`dev.board.set {page?, ppb?, lightFloor?}`, `dev.board.aim {board?, distance?: 8}` (an eye 8 blocks in front of the centre for
+`dev.camera`), `dev.board.use` (the right-click's action, returns where it went); hub: `dev.hub.open {sub: "fixtures"}`,
+`dev.hub.action {action: "place_board"}` (then `dev.build.*`), remove/move/undo_move/teleport act on a fixture id; screen
+`hub_fixtures`.
