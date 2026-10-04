@@ -277,6 +277,7 @@ public final class DecisionsFeature {
 			sc.addProperty("scope", ds.scopeLabel());
 			sc.addProperty("scoped", ds.scoped());
 			sc.addProperty("parent", ds.parent() == null ? null : ds.parent().getClass().getSimpleName());
+			sc.add("panel", ds.panel().state());
 			o.add("screen", sc);
 		} else {
 			o.add("screen", null);
