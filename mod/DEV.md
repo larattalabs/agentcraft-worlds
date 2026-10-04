@@ -957,7 +957,9 @@ agent log, `InboxDev` = DevBridge), `client.decisions.AnswerPanel` and the pure 
     `inbox_log_scroll {rows}` (negative = up; up at the top loads older), `inbox_detail_scroll {rows}` (a flowing
     detail's column, in text lines; negative = up), `inbox_focus {field: reply|answer}`; `press
     {button}` also presses the Inbox's chips (`filter:all`, `filter:needs_you`, `filter:building`, `filter:agent`,
-    `filter:podium`) and hub buttons (`inbox_mark_all_read`, `inbox_back`, `inbox_retry`, `inbox_reply_send`, ...).
+    `filter:podium`) and hub buttons (`inbox_mark_all_read`, `inbox_back`, `inbox_retry`, `inbox_reply_send`, ...);
+    in a flowing detail (`layout.detail.flow`) a hub button scrolled out of the column is not registered, so `press`
+    on it fails: use the action (`inbox_reply`, `inbox_retry`, ...) or `inbox_detail_scroll` first.
   - `dev.agent.log {agentId, older?}`: opens the agent view and replies once the first (or the older) page is in.
   - `dev.monitor.open {x, y, z}`: a monitor's right-click (the agent it shows, else the Inbox).
   - `dev.decision {podium:[x,y,z]}` now opens the Inbox on that podium (as the right-click); `screen:true` = the

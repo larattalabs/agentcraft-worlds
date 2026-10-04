@@ -92,6 +92,10 @@ final class AgentLogView {
 			List<LogEntry> got = new ArrayList<>(page.entries());
 			got.addAll(collected);
 			if (LogJoin.fill(fetched, got, LogEntry::ts) >= 0) {
+				if (LogJoin.trimOldest(fetched) > 0) {
+					more = true; // the oldest went (the cap); scrolling up loads them again
+					full = false;
+				}
 				filling = false;
 				gapFills++;
 				version++;
@@ -101,6 +105,10 @@ final class AgentLogView {
 				// nothing older is stored (rotated away): keep what is fetched and add the newer entries
 				long last = fetched.get(fetched.size() - 1).ts();
 				got.stream().filter(e -> e.ts() > last).forEach(fetched::add);
+				if (LogJoin.trimOldest(fetched) > 0) {
+					more = true;
+					full = false;
+				}
 				filling = false;
 				gapFills++;
 				version++;

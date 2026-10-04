@@ -99,6 +99,19 @@ public final class LogJoin {
 	}
 
 	/**
+	 * Gap fills (a busy agent while the view is open) append at the newest end: past {@link #MAX_FETCHED} the oldest
+	 * entries go (the viewer is at the bottom then; scrolling up loads them again). Returns how many were dropped.
+	 */
+	public static <T> int trimOldest(List<T> fetched) {
+		int drop = fetched.size() - MAX_FETCHED;
+		if (drop <= 0) {
+			return 0;
+		}
+		fetched.subList(0, drop).clear();
+		return drop;
+	}
+
+	/**
 	 * How many fetched entries to keep: the ones the live tail also holds (newer than its first entry) are dropped when
 	 * there is no gap, since {@link #join} shows them from the tail. Returns the new size.
 	 */

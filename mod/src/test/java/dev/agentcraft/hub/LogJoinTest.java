@@ -73,4 +73,15 @@ class LogJoinTest {
 		// a gap: nothing is dropped (the tail does not cover what is missing)
 		assertEquals(300, LogJoin.keepBeforeLive(fetched, range(350, 400), TS));
 	}
+
+	@Test
+	void gapFillsStayUnderTheCapByDroppingTheOldest() {
+		List<E> fetched = new ArrayList<>(range(1, LogJoin.MAX_FETCHED - 50));
+		assertEquals(0, LogJoin.trimOldest(fetched));
+		LogJoin.fill(fetched, range(LogJoin.MAX_FETCHED - 50, LogJoin.MAX_FETCHED + 150), TS);
+		assertEquals(150, LogJoin.trimOldest(fetched));
+		assertEquals(LogJoin.MAX_FETCHED, fetched.size());
+		assertEquals(151, fetched.get(0).ts());
+		assertEquals(LogJoin.MAX_FETCHED + 150, fetched.get(fetched.size() - 1).ts());
+	}
 }

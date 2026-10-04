@@ -373,12 +373,11 @@ function* readLinesBackward(file: string, chunk = 64 * 1024): Generator<Buffer> 
       fs.readSync(fd, buf, 0, len, pos);
       const data = rest.length ? Buffer.concat([buf, rest]) : buf;
       let end = data.length;
-      for (let i = data.length - 1; i >= 0; i--) {
-        if (data[i] === 0x0a) {
-          const line = data.subarray(i + 1, end);
-          if (!isBlank(line)) yield line;
-          end = i;
-        }
+      // native newline search (no per-byte loop in JS)
+      for (let i = data.lastIndexOf(0x0a, end - 1); i >= 0; i = i > 0 ? data.lastIndexOf(0x0a, i - 1) : -1) {
+        const line = data.subarray(i + 1, end);
+        if (!isBlank(line)) yield line;
+        end = i;
       }
       rest = Buffer.from(data.subarray(0, end)); // a copy: `data` is not kept
     }
@@ -389,6 +388,9 @@ function* readLinesBackward(file: string, chunk = 64 * 1024): Generator<Buffer> 
 }
 
 function isBlank(b: Buffer): boolean {
-  for (const c of b) if (c !== 0x20 && c !== 0x0d && c !== 0x09) return false;
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i];
+    if (c !== 0x20 && c !== 0x0d && c !== 0x09) return false; // stops at the first byte of a real line
+  }
   return true;
 }
