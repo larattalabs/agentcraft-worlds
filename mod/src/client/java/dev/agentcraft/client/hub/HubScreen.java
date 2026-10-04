@@ -760,11 +760,35 @@ public final class HubScreen extends Screen {
 		}
 		y += 26;
 		h -= 26;
+		if (sub == Sub.BUILDINGS) {
+			h -= drawWalkToggle(g, x, y + h - 20, w, mx, my);
+		}
 		switch (sub) {
 			case BUILDINGS -> drawBuildings(g, bs, x, y, w, h, mx, my);
 			case BLUEPRINTS -> drawBlueprints(g, bps, x, y, w, h, mx, my);
 			case DESIGNS -> drawDesigns(g, ds, x, y, w, h, mx, my);
 		}
+	}
+
+	/**
+	 * "Agents walk between buildings" for this world (docs/WAVE2.md W8, client side, walking.json): a toggle at
+	 * the bottom of the Buildings list; a short label when the row is narrow. Returns the height it takes.
+	 */
+	private int drawWalkToggle(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
+		dev.agentcraft.client.agents.OutdoorRoutes walk = dev.agentcraft.client.agents.OutdoorRoutes.get();
+		boolean on = walk.enabled();
+		String full = "Agents walk between buildings: " + (on ? "On" : "Off");
+		boolean compact = bw(full) > w * 3 / 5;
+		String label = compact ? "Walking: " + (on ? "On" : "Off") : full;
+		int lw = Math.min(w, bw(label));
+		button(g, "walk_toggle", label, x, y, lw, on, false, false, mx, my, () -> walk.setEnabled(!walk.enabled()));
+		String note = on ? "Off: they teleport between buildings instead." : "Agents teleport between buildings (puff of smoke).";
+		int nx = x + lw + 6;
+		if (x + w - nx > 30) {
+			g.text(font, TextUtil.ellipsize(font, note, x + w - nx), nx, y + 6, UiBits.muted(), false);
+		}
+		walk.reportUi(lw, w, compact);
+		return 24;
 	}
 
 	void drawList(GuiGraphicsExtractor g, int x, int y, int w, int h, int count, int selected, int mx, int my, RowDrawer drawer) {

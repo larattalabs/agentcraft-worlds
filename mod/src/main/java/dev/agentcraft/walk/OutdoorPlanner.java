@@ -371,6 +371,15 @@ public final class OutdoorPlanner {
 			if (i > 0 && i < nodes.size() - 1) {
 				raw.add(new Point(n.x + 0.5, floor(n.x, n.y, n.z), n.z + 0.5));
 			}
+			if (i < nodes.size() - 1) {
+				// a step up or a drop: walk to the edge of this cell on its own level first, so the agent climbs or
+				// drops at the edge instead of gliding through the block's corner
+				Node m = nodes.get(i + 1);
+				double f = floor(n.x, n.y, n.z);
+				if (Math.abs(floor(m.x, m.y, m.z) - f) > 0.3) {
+					raw.add(new Point(n.x + 0.5 + 0.42 * (m.x - n.x), f, n.z + 0.5 + 0.42 * (m.z - n.z)));
+				}
+			}
 		}
 		raw.add(to);
 		smooth.add(raw.getFirst());

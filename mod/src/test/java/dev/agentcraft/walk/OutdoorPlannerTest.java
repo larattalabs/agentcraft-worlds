@@ -81,6 +81,9 @@ class OutdoorPlannerTest {
 		OutdoorPlanner up = plan(one, p(0.5, 65, 0.5), p(20.5, 66, 0.5), SMALL);
 		assertEquals(Status.FOUND, up.status());
 		assertWalkable(one, up);
+		// the agent reaches the edge on the low level, then steps up (no gliding through the block's corner)
+		assertTrue(up.path().contains(p(9.92, 65, 0.5)), up.path().toString());
+		assertTrue(up.path().contains(p(10.5, 66, 0.5)), up.path().toString());
 		GridTerrain two = new GridTerrain((x, z) -> x >= 10 ? 66 : 64);
 		assertEquals(Status.NO_PATH, plan(two, p(0.5, 65, 0.5), p(20.5, 67, 0.5), SMALL).status());
 	}
