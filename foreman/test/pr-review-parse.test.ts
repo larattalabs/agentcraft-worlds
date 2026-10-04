@@ -1,9 +1,8 @@
 // The automated "Claude Code Review" comments (a review pipeline) and the PR host adapters (az / gh),
 // with a fake command runner: nothing here reaches a host.
 //
-// The fixtures in fixtures/claude-review were produced by the pipeline's own renderer
-// (its render-review.sh) from structured review
-// JSON, wrapped the way the pipeline wraps them for the PR comment.
+// The fixtures in fixtures/claude-review follow the markdown a Claude review pipeline renders from
+// structured review JSON, wrapped the way it posts them as a PR comment.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

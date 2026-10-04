@@ -36,7 +36,7 @@ Applies to tasks landed as pull requests (`repoSettings.land: "pr"`; the Foreman
 ### Automated reviews ("Claude Code Review")
 
 Observed on an Azure DevOps PR with a Claude review pipeline (2026-10-03):
-- The reviewer posts as **Project Collection Build Service (contoso)**, one PR-level thread (no file
+- The reviewer posts as **Project Collection Build Service (<org>)** (ADO's standard build identity), one PR-level thread (no file
   anchor) per review run, a new thread after every push; body starts `**Claude Code Review**` and has
   fixed sections: `### 🔍 Critical Findings`, `### ⚠️ Important Suggestions`, `### 💡 Minor
   Improvements`, `### 📚 Teachable Moments`, `### ✅ Testing Recommendations`, `### 📈 Performance
@@ -119,9 +119,11 @@ landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-f
     is not done (needs GraphQL).
 - **Review parsing** follows the review pipeline's renderer format: a
   context-aware review's final block is the one used; refactoring opportunities count as minor;
-  teachable moments never reach the lead. Bot identity: `Project Collection Build Service ...`;
-  the review is recognised by its `**Claude Code Review**` header, the changelog thread by
-  `<!-- changelog-draft -->`; other build-service threads and system threads are ignored.
+  teachable moments never reach the lead. Which threads are automated reviews is per repo,
+  `repoSettings.prReview.bots` (see foreman/README.md); the defaults recognise the review by its
+  `**Claude Code Review**` header (from any author), ignore the changelog thread
+  (`<!-- changelog-draft -->`) and other threads by `Project Collection Build Service ...`; system
+  threads are always ignored.
 - **New**: per thread the count of human comments seen (comments AgentCraft posted are remembered
   by id and never count); the newest automated review by publish time, once. Items found while a
   triage is still waiting stay for the poll after it. A triage turn that ends without verdicts is

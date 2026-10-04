@@ -21,7 +21,7 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 | Date | Decision |
 |---|---|
 | 2026-10-03 | Public fork, so generic fixes can go upstream as PRs. |
-| 2026-10-03 | Hardcore world moves to MC 26.3 via a **new cloned Prism instance**; the 26.2 instance stays untouched as a fallback until the clone has soaked. |
+| 2026-10-03 | The Hardcore world moves to MC 26.3 via a **new cloned Prism instance**; the old instance stays untouched as a fallback until the clone has soaked. |
 | 2026-10-03 | `main` = upstream + every topic branch merged; topic branches stay for upstream PRs. New work: topic branch off `upstream/main`, then merge into `main`. |
 | 2026-10-03 | Build order below. Phase 0 (verification) deferred by choice; Phase 1 starts now. Phase 0 must pass before anything enters the Hardcore world. |
 | 2026-10-03 | Personal setup is relaxed: auto mode (classifier) instead of AgentCraft's ask-everything policy, web tools, subagents (incl. gate-verifier, design-critic), second-opinion skill with `Bash(codex exec:*)` allowed, global CLAUDE.md on, no Haiku. Guardrails kept: policy denies, git internals, writes into registered checkouts / AgentCraft state. Upstream default stays `policy`. |

@@ -20,7 +20,7 @@
 // name), the last check state, the automated-review fold-in rounds, poll failures/backoff.
 import type { Foreman } from './foreman.js';
 import type { Decision, Task, TaskPr } from './protocol.js';
-import { BUILD_SERVICE, CHANGELOG_MARKER, findingCounts, isAutomatedReview, parseAutomatedReview, SEVERITIES, type FindingSeverity, type ParsedReview, type ReviewFinding } from './prreview.js';
+import { DEFAULT_REVIEW_BOTS, findingCounts, isAutomatedReview, parseAutomatedReview, SEVERITIES, type FindingSeverity, type ParsedReview, type ReviewBot, type ReviewFinding } from './prreview.js';
 import { parsePrUrl, readPr, replyToThread, setThreadStatus, type HostComment, type HostPr, type HostThread, type PrRef, type RunFn } from './prs.js';
 import { run } from './util/proc.js';
 import { truncate } from './util/text.js';
@@ -150,24 +150,29 @@ export interface Classified {
 
 const TFS = /^Microsoft\.VisualStudio\.Services\.TFS$/i;
 
-/** Sort a PR's threads: what is new from humans, the newest automated review, what to ignore. */
-export function classify(host: HostPr, seen: Record<string, number>, ours: Set<string>): Classified {
+/**
+ * Sort a PR's threads: what is new from humans, the newest automated review, what to ignore.
+ * `bots`: the repo's automated reviewers (repoSettings.prReview.bots, default DEFAULT_REVIEW_BOTS).
+ */
+export function classify(host: HostPr, seen: Record<string, number>, ours: Set<string>, bots: ReviewBot[] = DEFAULT_REVIEW_BOTS): Classified {
   const out: Classified = { open: 0, human: [], ignored: 0 };
-  let newest: { thread: HostThread; at: number; n: number } | undefined;
+  const matchers = bots.map((b) => ({ marker: b.marker, author: b.author ? new RegExp(b.author, 'i') : undefined, ignore: b.ignoreMarkers ?? [] }));
+  let newest: { thread: HostThread; at: number; n: number; marker: string } | undefined;
   for (const t of host.threads) {
     const first = t.comments[0];
     if (!first || t.comments.every((c) => c.system) || TFS.test(first.author)) {
       out.ignored++;
       continue;
     }
-    if (isAutomatedReview(first.text)) {
+    const reviewer = matchers.find((m) => (!m.author || m.author.test(first.author)) && isAutomatedReview(first.text, m.marker));
+    if (reviewer) {
       if (t.active) out.open++;
       const atMs = first.at ?? 0;
       const n = Number(t.id.replace(/\D/g, '')) || 0;
-      if (!newest || atMs > newest.at || (atMs === newest.at && n > newest.n)) newest = { thread: t, at: atMs, n };
+      if (!newest || atMs > newest.at || (atMs === newest.at && n > newest.n)) newest = { thread: t, at: atMs, n, marker: reviewer.marker };
       continue;
     }
-    if (first.text.includes(CHANGELOG_MARKER) || BUILD_SERVICE.test(first.author)) {
+    if (matchers.some((m) => m.ignore.some((x) => first.text.includes(x)) || m.author?.test(first.author))) {
       out.ignored++;
       continue;
     }
@@ -177,7 +182,7 @@ export function classify(host: HostPr, seen: Record<string, number>, ours: Set<s
     if (t.active && human.length > known) out.human.push({ thread: t, fresh: human.slice(known), earlier: human.slice(0, known) });
   }
   if (newest) {
-    const parsed = parseAutomatedReview(newest.thread.comments[0]!.text);
+    const parsed = parseAutomatedReview(newest.thread.comments[0]!.text, newest.marker);
     if (parsed) out.review = { thread: newest.thread, parsed };
   }
   return out;
@@ -352,7 +357,7 @@ export class PrWatcher {
       return;
     }
 
-    const c = classify(host, s.seen, new Set(s.ours));
+    const c = classify(host, s.seen, new Set(s.ours), (cur.repoId ? this.fm.repos.settingsFor(cur.repoId).prReview?.bots : undefined) ?? DEFAULT_REVIEW_BOTS);
     const reviewNew = !!c.review && c.review.thread.id !== s.review;
     const checksTurnedFailing = host.checks === 'failing' && s.checks !== 'failing';
     const pending = !!s.triage && !s.triage.stale;

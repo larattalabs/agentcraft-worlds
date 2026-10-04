@@ -70,4 +70,4 @@ visibility, hub badges, onboarding/help, 4K/auto-scale layout pass, walking rout
   backend holds new turns (wave 2 shows it persistently; wave 1 just provides it).
 - C10 Discord: config `notify.discord: { script, ping: string[], silent: string[] }` (off by default;
   levels from `notify` kinds); the notifier runs the script (`script <level> <title> <body>` or the
-  script's real interface - read ~/.agentcraft/discord-notify.sh) without blocking.
+  script's real interface - read the configured script) without blocking.
