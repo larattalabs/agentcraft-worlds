@@ -188,7 +188,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.team.release` | `world` | The Team tab's Release for a world holding leads (`lead.releaseWorld {world}`; the hub must be open); returns the note |
 | `dev.agents.fx` | `agent`, `fx` = `confetti`/`puff`/`sparkle`/`say`, `text?`, `to?` | Plays an agent effect now (QA preview; `say` shows a local speech bubble, nothing is sent) |
 | `dev.agents.keys` | `keys` (comma-separated: key names `space return escape back tab left right`, or text typed letter by letter, a-z 0-9 space) | **Test only** (`AGENTCRAFT_DEV_TEST=1`): presses keys as SDL reports a keyboard (SDL events queued for the game window, one key every 3 frames, through Minecraft's SDL event loop; printable keys produce text events only while SDL text input is on). Returns `{pressed, textEvents, screen, input?, textInputActive}`. `tools/agents-typing.mjs` uses it to check the agent card's message line |
-| `dev.walk.state` | | Walking between buildings (W8): `enabled, world, walking, planning, trips[{agent, from, to, phase planning\|walking, length, ticks, limit, target, pos, remainingPoints}], jobs, cache{size, hits, misses, invalidations, blockChanges, routes[{key, length, points, cells, nodes, micros}]}, planner{plans, found, tickNodes, tickBudgetUs, lastTickUs, maxTickUs, last{key, status, nodes, micros, ticks, length, points, unloadedHits}}, reasons{walk\|disabled\|other_dimension\|no_entrance\|too_far\|unloaded\|player_far\|no_path\|no_door_path\|budget\|blocked\|stuck\|rerouted\|settled: count}, recent[{agent, from, to, outcome walk\|teleport, reason, why, length?}], ui{drawn, needed, available, overflow, compact}` (also `dev.state.walk`) |
+| `dev.walk.state` | `reset?` (false: zeroes `maxTickUs` after this read) | Walking between buildings (W8): `enabled, world, walking, planning, trips[{agent, from, to, phase planning\|walking, length, ticks, limit, target, pos, remainingPoints}], jobs, cache{size, hits, misses, invalidations, blockChanges, routes[{key, length, points, cells, nodes, micros}]}, planner{plans, found, tickNodes, tickBudgetUs, lastTickUs, maxTickUs, last{key, status, nodes, micros, ticks, length, points, unloadedHits, pad, widenings, worstStepUs, why?, closest?, closestCell?}, failures[the last 12 failed plans, same fields]}, reasons{walk\|disabled\|other_dimension\|no_entrance\|too_far\|unloaded\|player_far\|no_path\|no_door_path\|budget\|blocked\|stuck\|rerouted\|settled: count}, recent[{agent, from, to, outcome walk\|teleport, reason, why, detail? (the planner's explanation), length?}], ui{drawn, needed, available, overflow, compact}` (also `dev.state.walk`) |
 | `dev.walk.plan` | `from`, `to` (building id or `home`), `fresh?` (false), `show?` (true) | Plans entrance to entrance with the agents' planner and cache (replies when the incremental job finishes): `{decision, key, status found\|no_path\|unloaded\|budget\|too_far\|no_start\|no_goal, cached, nodes, micros, ticks, length, cells, from, to, points[[x,y,z]]}` or `reason`; `show` draws the route with end-rod particles for 20 s (screenshots) |
 | `dev.walk.send` | `agent`, `to` (building id, `home`, or null) | QA: routes that agent to that building regardless of its work (sticky until `to:null` or a level change), so it changes building by the normal rules (walks or teleports); returns `{agent, to, canHost, note?, sends}` (`canHost` false: the building has no desk, station or lounge for it, it stays home) |
 | `dev.walk.toggle` | `on?` (bool; omit = flip) | "Agents walk between buildings" for this world (`walking.json`); returns `{enabled, world}` |
@@ -498,7 +498,8 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   reports `render.faces`, `conflictFaces`, `lastFrameMicros`, `maxFrameMicros`. Placement is refused
   on the client while the player stands in the box.
   DevBridge: `dev.build.open {step: repos|blueprints, repos?, blueprint?}`, `dev.build.start
-  {blueprint, repos, origin?: [x,y,z] (rotated box minimum, locks there), turns?}`, `dev.build.state`,
+  {blueprint, repos, origin?: [x,y,z] (rotated box minimum, locks there), ground?: false (the origin's y
+  replaced by the footprint's median surface, as the wizard puts it: QA on natural terrain), turns?}`, `dev.build.state`,
   `dev.build.rotate {turns?}`, `dev.build.nudge {forward?, right?, up?}`, `dev.build.lock {on?}`,
   `dev.build.confirm {force?}` (replies with the server's result), `dev.build.cancel`; screens
   `build_repos`, `build_blueprints` for `dev.screen`.
@@ -510,7 +511,12 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   fingerprint, the world-start reports) and `dev.buildings.failNextRename` (the next move's snapshot rename
   fails: the move must roll back). `dev.build.state.conflicts` adds
   `water, lava, foundation, cleared, snapshotMinY, notes[]` and `moving`; refusals include occupants, lava
-  and doors cut by the box edge. `dev.build.pick {action: split|design_new}` on the blueprint step when no
+  and doors cut by the box edge. Entrance approach (docs/BUILDINGS.md "Entrance approach", `building.Approach`,
+  `ApproachTest`): `conflicts.snapshotBox` and `conflicts.approach{rows, path, slabs, fill, cleared, water, lava,
+  blockEntities, feet[] (per row, 0 = the template's row at the door), ground, short (the "ends N blocks
+  below the ground" warning or null), end[x,y,z]}`; the ghost draws its path in tan, the HUD adds an "Entrance
+  path" line. QA recipe used for the approach: `dev.build.start {origin:[x,0,z], ground:true, turns}`, read
+  `approach.feet`, `dev.build.confirm`, then `dev.walk.plan {from, to, fresh:true}` for every pair. `dev.build.pick {action: split|design_new}` on the blueprint step when no
   blueprint has enough wings (`screen.tooFewWings`, `maxWings`). `dev.hub.action`: `edit_repos {buildingId,
   repos}` (without repos: opens the repo screen), `move {buildingId}` (then `dev.build.lock/nudge/confirm`),
   `undo_move {buildingId}`, `remove` a third time after a "Move these" refusal forces it
@@ -549,20 +555,35 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
   ends (as before), the reason counted in `dev.walk.state`.
 - **Route**: A* from entrance to entrance over `WalkCell` codes. Standable: a floor below (collision top
   14..16 sixteenths: full blocks, dirt path, soul sand) with open, door or 1-deep water feet, or a block up
-  to a bottom slab in the feet cell; the head cell open (water there = too deep). Never a floor: leaves,
+  to a bottom slab in the feet cell; the head cell open or leaves (a low canopy brushes the head; water there =
+  too deep). Never a floor: leaves and natural (unstripped) logs (`WalkCell.LEAVES`: no walking on tree tops),
   fences/walls (top > 16), trapdoors, water. Hazards (lava, fire, magma, powder snow, campfire, cactus,
   berry bush, wither rose) are avoided as floor, feet and head. Moves: 8 directions (diagonals on one level,
   no corner cutting), step up <= 1 (with headroom), drop <= 3 (the column above the landing open), so
   cliffs over 3 are never taken; wading costs extra, doors a little. **Doors, fence gates and trapdoors are
   passed through visually** (decision: client-only agents open nothing in the world; routing around closed
-  doors would make every iron-door building unreachable). Search box: the endpoints +-40 blocks (y +-26),
-  60 000 expansions max; then string pulling (agent width 0.6, at most 24 cells a segment) with an extra
-  waypoint at the edge of every step/drop (the agent climbs or drops at the edge, not through the corner).
+  doors would make every iron-door building unreachable). Search box: the endpoints +-32 blocks (y +-21);
+  when the search runs dry after pressing against the box's edge it starts again with the pad doubled, up to
+  128 (`Limits.maxPad`, a ridge or lake wider than the box); 120 000 expansions over all rounds. Then string
+  pulling (agent width 0.6): from each point the farthest point within 24 cells in plain sight, tried from the far
+  end down, with an extra waypoint at the edge of every step/drop (the agent climbs or drops at the edge, not
+  through the corner).
+- **Explaining a failure**: the planner keeps the expanded cell nearest the goal, the box the search reached and
+  how often the box's edge was the limit; `OutdoorPlanner.explain()` turns that into words ("the start is walled
+  in: only 774 cells reachable", "every reachable cell searched (999, x .. z ..), got within 35 blocks of the goal
+  at (x, y, z); the goal's side is cut off (a cliff over 3 blocks, a step over 1, water deeper than 1)", "searched
+  120000 cells (the budget) ..."). It is in `dev.walk.state planner.failures[]` (last 12 failed plans with
+  `closest`, `closestCell`), `dev.walk.plan` (`why`), the trip's `recent[].detail` and the log.
 - **Budget**: `OutdoorRoutes.tick` (from `AgentManager.tick`, client thread) steps the queued jobs with
   2 500 expansions and 2 ms per tick, whichever runs out first; one job per building pair, shared by every
   agent making that trip. Measured (unit test `corridor256Performance`, hills + a 2-deep river with fords +
-  tree clumps, a 253-block corridor): ~22 000 expansions, ~18-20 ms in total over ~15 ticks, worst tick
-  2.0 ms, a 288-block route of ~97 points. No snapshotting or threads: the level is read on the client thread.
+  tree clumps, a 253-block corridor): ~22 000 expansions, ~18-40 ms in total over ~15-20 ticks, worst tick
+  ~2.2 ms, a 288-block route of ~95 points. The clock is checked after every smoothing unit (a unit is up to 24
+  line-of-sight checks) and every 32 expansions. In game (branch `fix/approach`, 2026-10-04; seed 2026 and
+  seed 8675309, natural terrain, studio / workshop / campus2 on hillsides, 6 pairs each, 78-411 block routes,
+  774-38 000 expansions): every pair found; warm worst single step 2.0-2.9 ms, worst tick (`maxTickUs`, which also
+  covers finishing a job) 2.1-4.3 ms; one cold outlier of 131 ms right after placing new buildings (fresh chunks,
+  JIT), not reproduced on repeat. No snapshotting or threads: the level is read on the client thread.
 - **Trip** (`AgentManager.Trip`): planning (the agent stays where it is) -> walking: one route handed to
   `AgentMotion` = inside A to its entrance (`GridPathfinder`, standing up first) + outdoor points + inside B
   from its entrance to the spot (seat approach and the last step onto the seat). Normal retargeting is

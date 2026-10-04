@@ -30,6 +30,7 @@ Where they live:
   "front": "south",
   "materials": "agentcraft",
   "foundationBlock": "minecraft:stone_bricks",
+  "approach": { "length": 6, "width": 3, "block": "minecraft:stone_bricks", "slab": "minecraft:stone_brick_slab" },
   "walk": { "minX": 1, "minY": 1, "minZ": 1, "maxX": 19, "maxY": 7, "maxZ": 15 },
   "anchors": {
     "desk_kit": { "x": 4.5, "y": 1.0, "z": 3.5, "yaw": 180.0, "pitch": 0.0 },
@@ -60,6 +61,11 @@ Where they live:
   ground on placement (default `minecraft:stone_bricks` when absent). Bundled: `stone_bricks` (studio,
   campus*), `cobblestone` (workshop). Must be a full, opaque `minecraft:` block.
   An unknown id falls back to the default (logged, and a sidecar warning).
+- `approach` (see "Entrance approach"): the path placement builds from the door to the terrain: `length` rows
+  out from the box (0..16, default 6; `false` = no approach), `width` cells across (1..7, default 3, centred on the
+  `entrance` anchor), `block` the path block (default `minecraft:dirt_path`), `slab` the half-step slab (default
+  `minecraft:stone_brick_slab`). Absent = the defaults. The bundled blueprints continue their stone porch path
+  (`stone_bricks` / `stone_brick_slab`).
 - `kind`: `single` (one repo) or `group` (up to `wings` repos; wing `n` is the n-th repo chosen).
 - `walk`: the walkable region (becomes the building's layout bounds after placement).
 - `anchors`: the names and meanings of `dev.agentcraft.layout.AnchorNames` (spots = feet position,
@@ -168,15 +174,54 @@ lava amber.
 - **Foundation**: below every floor-row cell of the footprint (template row `groundY - 1`), the cells that are
   air, fluid or replaceable after the template is placed are filled downwards with `foundationBlock` until
   solid ground, at most 12 blocks; block entities stop it. A template's own foundation rows stop it at once.
-- **Cleared**: natural terrain (dirt, stone, sand, gravel, snow, ores, plants...) at or above the ground row
-  inside the box that the template does not write is cleared to air, so a slope no longer buries walls (the
-  box corners beside a porch included).
-- The snapshot box extends down to the lowest foundation cell (`snapshotBox`), so Remove restores all of it.
+- **Cleared**: natural terrain (dirt, grass, podzol, moss, mud, stone, sand, gravel, snow, ores, plants...) and
+  trees (logs, leaves) at or above the ground row inside the box that the template does not write are cleared to
+  air, so a slope no longer buries walls (the box corners beside a porch included) and a canopy does not fill
+  the porch. (Until 2026-10-04 grass blocks were missed: 26.x moved them from `#dirt` to `#grass_blocks`, so on
+  hills the porch kept turf at head height and agents could not leave the door; `natural()` now uses
+  `#substrate_overworld`.)
+- The snapshot box extends down to the lowest foundation cell and out over the entrance approach
+  (`snapshotBox`), so Remove restores all of it.
 - The wizard puts the ground row on the **median surface** of the footprint's columns (motion-blocking,
   fluids count, leaves do not; columns more than 12 blocks from the looked-at spot are ignored), not on the
   looked-at spot; PgUp/PgDn still raise and lower it.
 - The ghost draws the foundation grey and the cleared cells pale; the HUD counts both. Pure logic:
   `building.TerrainFit` (`TerrainFitTest`).
+
+### Entrance approach
+
+Levelling the footprint is not enough on a hill: the door opened onto a bank or a drop, and agents walking
+between buildings found no way out (QA: `no_path` after 499 nodes). So placement also builds an **approach**
+(`building.Approach`, pure, `ApproachTest`), shared by the server and the ghost:
+- **Where**: a strip `width` cells wide (3), centred on the `entrance` anchor's column, from the box's front face
+  outwards (the bundled templates' stone path reaches that face), `length` rows (6), plus up to 8 more rows
+  while the path has not met the ground.
+- **Profile**: row 0 is the template's own row at the door's feet height. Each row aims for the median ground
+  height of its columns (one above the highest solid block that is not a log or leaves, searched from 12 above
+  the previous row down to 13 below; a water surface counts as ground; nothing found = a deep drop, keep going
+  down) and moves towards it by **at most one block per row**.
+- **Per row and column**: the path `block` one below the feet; a bottom `slab` in the feet cell of a row that is
+  lower than the row before it (going down from the door) or at the foot of a climb from a level stretch, so steps
+  read as half steps and no walked step is ever more than a block (`Approach.floor`); `foundationBlock` filled below
+  the path down to solid ground (at most 12, like the foundation); **headroom** of 3 cells above the path cleared
+  to air (terrain, plants, logs, leaves, a player's blocks; water stays and is a warning); natural terrain above
+  that (a bank) cleared up to 8 above the path so the cut is open to the sky, not a tunnel.
+- **Checks, same rules as the box**: the snapshot box grows to cover the approach, so block entities on the strip
+  refuse (force overwrites them; they come back on remove), other buildings' boxes overlap, players and pets in
+  the way refuse, doors cut by its edge refuse; lava on or beside the strip refuses; water is a note.
+- **Too steep**: a slope steeper than one block per block may still leave the path short of the ground after 14
+  rows; the ghost and the place note say "the entrance path ends N blocks below/above the ground (too steep here:
+  turn or move the building)".
+- **Ghost**: the path and slabs in tan, its fill and cut with the foundation (grey) and cleared terrain (pale);
+  the HUD line "Entrance path 6 blocks (tan), up 5 · 25 cut"; `dev.build.state.conflicts.approach`.
+- **Where the player stands**: `/agentcraft place` puts the approach's end 2 blocks ahead of the player (the
+  building beyond it) and the wizard puts it on the looked-at block, while the entrance faces the player (turned
+  away with R, the near edge is there as before).
+- **Side effects of one snapshot box**: the box is the union of the template's box, the foundation and the
+  approach, so it spans the building's whole width across the approach's rows. A neighbour placed in front
+  overlaps sooner; Remove puts back that whole strip as it was at placement (a player's later changes there
+  are reverted, like inside the box), and removal blockers (containers, beds, dropped items) and the "player
+  standing in the site" refusal cover it too.
 
 ### Safe remove
 
@@ -394,7 +439,9 @@ explicit interior air, bindings, and C5:
 - doors: written closed; a door next to an outside cell is iron; every iron door has a stone button
   on each side on a full, opaque, redstone-conductive block (not glowstone or a sea lantern) touching one of its
   halves;
-- `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block.
+- `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block; `approach` an object or
+  `false`, `length` 0..16, `width` 1..7, `block` a `minecraft:` full block, `slab` a `minecraft:` slab (when the kit
+  knows them).
 
 ## Verify loop (tools)
 

@@ -25,7 +25,10 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 |---|---|---|
 | `client.foreman` | core | WebSocket link, protocol mirror, state model, `Foreman` facade |
 | `client.agents` | agents specialist | agent NPCs: manager, motion, pathfinding, renderer, nameplate, hooks |
-| `client.hud` | hud specialist | connection banner (done), goal boss bar, in-game toasts |
+| `client.hud` | hud specialist | connection banner, goal bar, alert line, toasts, away digest, welcome card, Keys & help |
+| `client.hub` | hub | the hub screen (`H`): Inbox, Buildings, Repos, Goals, Team, Settings, Status |
+| `client.design` | hub | generated buildings: the design form, plot marking, the Designs list |
+| `client.leads` | leads | a lead per building: `lead.assign/sync/release`, podium and wall routing |
 | `client.monitor` | monitor specialist | `MonitorRenderer` (BER): live agent log on desk monitors |
 | `client.taskwall` | task wall specialist | `TaskBoardRenderer` (BER): kanban cards |
 | `client.decisions` | decisions specialist | `DecisionPodiumRenderer` + decision GUI |
@@ -33,7 +36,8 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 | `client.diff` | diff specialist | diff/merge review screen, `MergeStationRenderer` |
 | `client.library` | library specialist | memory screen, `MemoryArchiveRenderer` |
 | `client.permissions` | permissions specialist | permission decision UX |
-| `client.building` | buildings | placement wizard: repo/blueprint screens, ghost, placement keys (docs/BUILDINGS.md) |
+| `client.building` | buildings | placement wizard: repo/blueprint screens, ghost (terrain fit, entrance approach), placement keys (docs/BUILDINGS.md) |
+| `building`, `walk` (main) | buildings / walking | buildings in a world (place, move, remove, snapshots, terrain fit, approach); the pure outdoor planner |
 | `client.hq` + `hq` (main) | HQ specialist | the real HQ builder (main), world blocks driven by state (client), `StatusLampRenderer` |
 | `client.ui` | core (additive) | kit drawing, style tokens, text utils (screens + world) |
 | `client.world` | core (additive) | `StationRenderer` base, `ServerTasks`, `StationInteractions`, dev helpers |
@@ -303,6 +307,10 @@ plate on screen once settled:
   stacked above.
 - Draw such billboards opaque (`WorldUi.Layer.SOLID`); translucent billboards let other plates'
   text ghost through (DEV.md "Phase 2 gotchas").
+- Text on a camera-facing plate needs a real lift towards the camera: the font's polygon offset does not
+  separate it from a coplanar plate, and at close range whole glyphs lost the depth test ("Marlow" read
+  "M r o"). `Nameplate` lifts its text by `TEXT_LIFT` (0.0003) x the camera distance, well under the per-rank
+  nudge; do the same for other billboard text.
 
 `dev.agents {settle?}` lists positions/targets/paths and each laid-out plate (`plate{mode, lift,
 rank, rect, ...}`); `settle:true` snaps walkers to their targets and plates to their final layout
@@ -416,9 +424,78 @@ hard-code colours; ask `UiStyle`. Sprites are 1 texel = 1 GUI px (GUI scale 3 at
 
 ## HUD (`client.hud`)
 
-`HudElementRegistry.addLast(AgentCraft.id("hud/<name>"), element)`. Phase 2 ships the connection
-banner (top right: "Foreman · sim" / "Reconnecting to the Foreman" / "Foreman not running"; loud
-paper banner at the top centre when claude auth failed). Phase 3: goal boss bar, toasts for `notify`.
+`HudElementRegistry.addLast(AgentCraft.id("hud/<name>"), element)`. Contract: docs/WAVE2.md W5-W7 and
+"As implemented: hud". Pure rules in `dev.agentcraft.hud` (`AlertLine`, `HudRules`, `HudPrefs`; unit-tested).
+- **Connection banner** (top right: "Foreman · sim" / "Reconnecting to the Foreman" / "Foreman not running"; a
+  loud paper banner at the top centre when claude auth failed).
+- **Goal bar** (`GoalBar`): the open goals ranked by urgency (decisions + blocked tasks), an urgent one pinned, the
+  others taking turns every 8 s, "+N more"; task counts per goal; the decisions badge (`J`) under it.
+- **Alert line** (W5): one compact row under the goal bar while anything needs the player: "2 decisions · 1
+  blocked · 3 replies · 1 PR · usage paused until 14:20" (each part only when non-zero, full / short / dots widths
+  by `AlertLine.fit`) and the hub key. Counts = the Inbox's Needs you (`Alerts`, source `Inbox.counts()`); hidden
+  with F1, dimmed while the Foreman is stale.
+- **Toasts** (`Toasts`): `notify` and need-you events with a key hint (`J answer`, `H open hub`); **away digest**
+  (W6): after >= 10 minutes without the hub, "Since you were away: 2 goals moved, 1 needs you" (`goal.digest`),
+  then `H` opens the Inbox. State per world in `hub-hud.json`.
+- **Welcome card** (`WelcomeScreen`, W7): on joining a singleplayer world without buildings: what AgentCraft is,
+  the H / J / console keys (live bindings), "Place your first building: H > Buildings > Place new"; dismissed
+  for good per world (`AGENTCRAFT_WELCOME=0` for scripted QA). **Keys & help** (Status tab, `HelpContent`): every
+  AgentCraft key, every in-world interaction, "Show the welcome card".
+- DevBridge: `dev.hud.state`, `dev.onboarding`; mod/DEV.md "HUD check-in (wave 2)".
+
+## Hub (`client.hub`, key `H`, console `/hub [tab]`)
+
+Contract: docs/HUB.md. One screen, tabs in order (badges from the alert counts: Inbox needs-you, Goals unread,
+Repos failing CI, Team blocked agents; `H` reopens the world's last tab, or the Inbox after an away toast):
+- **Inbox** (docs/HUB.md "Inbox", W1-W4): decisions, unread agent replies, blocked tasks, the Foreman's hold
+  and PRs needing attention, grouped Needs you / Updates, filters (all, needs you, building, agent, podium),
+  a detail per kind with the shared `AnswerPanel` (also in DecisionScreen, the goal thread and the agent
+  card), reply boxes, Retry, and the agent view with the paged full log (`agent.logs.request`). Deep links:
+  podium right-click (that podium's decisions), monitor right-click (that agent's log), `/inbox [@agent]`.
+  Read state in `hub-seen.json`; the pure model is `dev.agentcraft.hub.InboxModel`.
+- **Buildings**: the world's buildings (blueprint, repos, lead, home), Place new / Place / Place on the plot,
+  Make home, Teleport (gated: commands or creative), Edit repos…, Move… / Undo move, Remove (twice; "Remove
+  anyway" after a "move these first" refusal); the blueprint browser with plan and rendered previews; Design
+  new and the Designs list (below); the "Agents walk between buildings" toggle.
+- **Repos**: registered repos (branch, CI lamp, worktrees, building, lead, open PRs), Add / Remove, Edit
+  settings, Refresh PRs, New goal, Place a building.
+- **Goals**: submit (repo, continue a branch, instructions); per goal the thread with its lead, the plan
+  (editable), standing instructions, tasks with PR state, the "since you were away" digest, Cancel.
+- **Team**: leads and workers (on/off, title, specialty, model, effort, per-repo roles), live state, the agent
+  card, leads held by other worlds (Release). **Settings**: General, Permissions, Context, Subagents, PRs, Usage
+  as forms (Apply / Revert, second confirm for widening changes, restart banner).
+- **Status**: Foreman link, backend, auth, usage windows, versions, DevBridge; the Keys & help view.
+- DevBridge: `dev.hub.open {tab}`, `dev.hub.state`, `dev.hub.action`; screens `hub`, `hub_<tab>`
+  (mod/DEV.md "Hub").
+
+## Buildings, generated buildings, leads (`client.building`, `client.design`, `client.leads`, `building`)
+
+Contract: docs/BUILDINGS.md (placement, terrain fit, entrance approach, safe remove, crash safety, move,
+repos), docs/HUB.md "Generated buildings", docs/PRWATCH.md "A lead per building".
+- One building per repo (a campus takes a repo per wing); placed from a blueprint by the wizard (ghost with
+  conflicts, foundation, cleared terrain, the entrance approach in tan, the refusals `place()` would give) or
+  `/agentcraft place`. Placement levels the footprint (C4), builds a path from the door down or up to the
+  terrain, and snapshots everything it changes; Remove / Move restore it.
+- **Generated buildings**: Design new opens a form (for one repo or a group, style, materials, features, size or
+  "Fit a plot…" marked in the world); `design.request` runs a Foreman design job that writes a blueprint with
+  previews; the Designs list shows its progress; on done the blueprint reloads and Place / Place on the plot
+  open placement mode.
+- **A lead per building**: Marlow leads home; every other building gets its own lead (Ines, Bram, Cass), sent as
+  `lead.assign` / `lead.sync`; each podium shows its lead's decisions, the task wall names the lead, the lead
+  stands at its building's podium.
+- **PR watching** (docs/PRWATCH.md, Foreman): tasks landed as PRs stay in status `pr` while the Foreman polls
+  the PR (GitHub / Azure DevOps: state, checks, threads) and triages new review threads; the mod shows PR state
+  on tasks, the Goals tab and the Repos tab, and PRs that need the player in the Inbox.
+
+## Walking between buildings (`client.agents`: `OutdoorRoutes`, `LevelTerrain`; `walk` main)
+
+Contract: docs/WAVE2.md W8; notes in mod/DEV.md "Walking". When an agent changes building and both are in the
+player's dimension, within 256 blocks and loaded, it walks: inside to its entrance, an outdoor route
+(`OutdoorPlanner`: A* over block codes, step up 1, drop <= 3, wade 1 deep, no hazards, leaves only at head height,
+never on tree tops; the search box widens when a ridge needs it; spread over ticks at ~2 ms each) and inside
+the other building to its spot. Routes are cached per building pair and dropped on block changes near them.
+Otherwise (walking off, too far, no route) it teleports with a puff; `dev.walk.state` says why, with the
+planner's explanation of a failed route. Per-world toggle in the hub's Buildings tab (`walking.json`).
 
 ## Displays (`client.monitor`, `client.taskwall`)
 
