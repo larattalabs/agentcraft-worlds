@@ -91,6 +91,8 @@ export interface StateData {
   permissionRules: Record<string, string[]>; // agentId -> rule keys always allowed
   /** lead id -> its building (every lead but marlow that leads one); see leads.ts */
   leads: Record<string, LeadRecord>;
+  /** world id -> when it last talked to the Foreman about leads (lead.sync / assign / release) */
+  leadWorlds?: Record<string, number>;
   /** opaque backend-owned state (e.g. sim progress) */
   backend: Record<string, unknown>;
 }

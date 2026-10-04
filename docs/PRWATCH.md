@@ -185,9 +185,12 @@ Client -> Foreman:
 - `lead.release { building }` -> ack `{}`: frees that lead; its open goals move to marlow.
 - `lead.sync { world, buildings: [{ building, repos }] }`: sent by the mod on connect for its world;
   assigns missing ones and releases any `"<world>/..."` building not in the list.
+- `lead.releaseWorld { world }` -> ack `{ released: [leadId] }`: frees every lead held by that world
+  (fix wave C2; worlds not synced for `claude.leadWorldTtlDays`, default 14, expire by themselves).
 Foreman -> client:
 - `leads.update { leads: LeadAssignment[] }` (full list; also `snapshot.leads`), `LeadAssignment =
-  { leadId, building?, repos: string[] }` (marlow listed with no building).
+  { leadId, building?, repos: string[], world?, lastSync? }` (marlow listed with no building).
+- Goal adoption (C3): a lead assigned a building takes the open goals of its repositories.
 - Agents with role `lead` appear in `snapshot.agents` only while assigned (marlow always).
 
 ### Mod

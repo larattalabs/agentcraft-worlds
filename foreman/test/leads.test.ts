@@ -122,7 +122,7 @@ describe('lead.assign / lead.release / lead.sync', () => {
     const up = h.events.flatMap((m) => (m.type === 'agent.upsert' && m.agent.id === 'ines' ? [m.agent] : []));
     expect(up.at(-1)?.active).toBe(true);
     const s = h.fm.snapshot();
-    expect(s.type === 'snapshot' && s.leads).toEqual([{ leadId: 'marlow', repos: [] }, { leadId: 'ines', building: 'w1/b1', repos: ['app'] }]);
+    expect(s.type === 'snapshot' && s.leads).toEqual([{ leadId: 'marlow', repos: [] }, { leadId: 'ines', building: 'w1/b1', repos: ['app'], world: 'w1', lastSync: expect.any(Number) }]);
     await ack(h, { type: 'lead.release', building: 'w1/b1' });
     // one last upsert: off shift, so the mod walks it home
     const last = h.events.filter((m) => m.type === 'agent.upsert' && m.agent.id === 'ines').at(-1);
@@ -130,20 +130,85 @@ describe('lead.assign / lead.release / lead.sync', () => {
     expect(snapAgents()).toEqual(['marlow']);
   });
 
-  it('sets a goal\'s lead from its repository at submit and keeps it when repos move', async () => {
+  it('sets a goal\'s lead from its repository at submit; when the repository moves, its open goals follow (C3)', async () => {
     const h = fresh();
-    await ack(h, { type: 'lead.assign', building: 'w1/b1', repos: ['app'] });
+    await ack(h, { type: 'lead.assign', building: 'w1/b1', repos: ['app', 'api'] });
     const g1 = h.fm.createGoal('in the building', 'app');
     const g2 = h.fm.createGoal('elsewhere', 'other');
     const g3 = h.fm.createGoal('no repo');
+    const done = h.fm.createGoal('finished', 'app');
+    h.fm.setGoal(done.id, { status: 'done' });
     expect([g1.leadId, g2.leadId, g3.leadId]).toEqual(['ines', undefined, undefined]);
     expect([h.fm.leadOf(g1), h.fm.leadOf(g2), h.fm.leadOf(g3)]).toEqual(['ines', 'marlow', 'marlow']);
     await ack(h, { type: 'lead.assign', building: 'w1/b2', repos: ['app'] });
-    expect(h.fm.goal(g1.id)!.leadId).toBe('ines');
-    expect(h.fm.leadOfTask(h.fm.tasks.create({ title: 'x', createdBy: 'user', goalId: g1.id }))).toBe('ines');
+    expect(h.fm.goal(g1.id)!.leadId).toBe('bram');
+    expect(h.fm.goal(done.id)!.leadId).toBe('ines'); // history keeps who ran it
+    expect(h.fm.store.data.feed.some((f) => /Bram takes over g1 "in the building" from Ines \(its repository is in Bram's building\)/.test(f.text))).toBe(true);
+    expect(h.fm.leadOfTask(h.fm.tasks.create({ title: 'x', createdBy: 'user', goalId: g1.id }))).toBe('bram');
     expect(h.fm.leadOfTask(h.fm.tasks.create({ title: 'adhoc', createdBy: 'user', repoId: 'app' }))).toBe('bram');
-    expect(h.fm.currentGoalOf('ines')?.id).toBe(g1.id);
+    expect(h.fm.currentGoalOf('bram')?.id).toBe(g1.id);
     expect(h.fm.currentGoalOf('marlow')?.id).toBe(g3.id);
+    expect(leadsOf(h)).toEqual(['marlow:', 'ines@w1/b1:api', 'bram@w1/b2:app']); // ines keeps api
+  });
+
+  it('adopts marlow\'s open goals when their repository gets a building (re-placed building, C3)', async () => {
+    const h = fresh();
+    const g = h.fm.createGoal('before the building', 'app');
+    h.fm.bus.send('user', 'marlow', 'how is it going?', { goalId: g.id, goalMessage: true });
+    expect(h.fm.leadOf(g)).toBe('marlow');
+    await ack(h, { type: 'lead.assign', building: 'w1/b1', repos: ['app'] });
+    expect(h.fm.goal(g.id)!.leadId).toBe('ines');
+    expect(h.fm.bus.goalInbox('ines', g.id).map((m) => m.text)).toEqual(['how is it going?']); // unread message follows
+    expect(h.fm.bus.goalInbox('marlow', g.id)).toEqual([]);
+    // idempotent: the same assign again moves nothing
+    const feed = h.fm.store.data.feed.length;
+    await ack(h, { type: 'lead.assign', building: 'w1/b1', repos: ['app'] });
+    expect(h.fm.store.data.feed.length).toBe(feed);
+  });
+
+  it('a building left without repositories frees its lead (moved away, or assigned [])', async () => {
+    const h = fresh();
+    await ack(h, { type: 'lead.assign', building: 'w1/b1', repos: ['app'] });
+    await ack(h, { type: 'lead.assign', building: 'w1/b2', repos: ['web'] });
+    expect(leadsOf(h)).toEqual(['marlow:', 'ines@w1/b1:app', 'bram@w1/b2:web']);
+    // b2 takes app: b1 has nothing left -> ines is free again
+    await ack(h, { type: 'lead.assign', building: 'w1/b2', repos: ['web', 'app'] });
+    expect(leadsOf(h)).toEqual(['marlow:', 'bram@w1/b2:web+app']);
+    expect(h.fm.store.data.feed.some((f) => /Ines no longer leads building b1 \(its building has no repositories left\)/.test(f.text))).toBe(true);
+    // the building's repos were all taken away by the user
+    expect((await ack(h, { type: 'lead.assign', building: 'w1/b2', repos: [] })).result).toEqual({ leadId: 'marlow' });
+    expect(leadsOf(h)).toEqual(['marlow:']);
+    expect((await ack(h, { type: 'lead.assign', building: 'w1/b3', repos: ['x'] })).result).toEqual({ leadId: 'ines' });
+  });
+
+  it('lead.releaseWorld frees another world\'s leads; worlds not synced for leadWorldTtlDays expire (C2)', async () => {
+    const home = tempDir();
+    const h = fresh([], home);
+    await ack(h, { type: 'lead.sync', world: 'Dev HQ', buildings: [{ building: 'Dev HQ/b1', repos: ['app'] }] });
+    await ack(h, { type: 'lead.sync', world: 'Hardcore', buildings: [{ building: 'Hardcore/b1', repos: ['web'] }] });
+    const g = h.fm.createGoal('in the dev world', 'app');
+    expect(h.fm.leadOf(g)).toBe('ines');
+    const listed = h.fm.leads.list();
+    expect(listed.find((l) => l.leadId === 'ines')).toMatchObject({ world: 'Dev HQ', lastSync: expect.any(Number) });
+    const a = await ack(h, { type: 'lead.releaseWorld', world: 'Dev HQ' });
+    expect(a.result).toEqual({ released: ['ines'] });
+    expect(leadsOf(h)).toEqual(['marlow:', 'bram@Hardcore/b1:web']);
+    expect(h.fm.goal(g.id)!.leadId).toBeUndefined(); // marlow's again
+    expect((await ack(h, { type: 'lead.releaseWorld', world: 'Nowhere' })).result).toEqual({ released: [] });
+    // expiry: Hardcore last synced 20 days ago
+    h.fm.store.data.leadWorlds!['Hardcore'] = Date.now() - 20 * 86_400_000;
+    expect(h.fm.expireLeadWorlds()).toEqual(['bram']);
+    expect(leadsOf(h)).toEqual(['marlow:']);
+  });
+
+  it('a world with leads but no lastSync yet (older state) starts its clock instead of expiring', async () => {
+    const h = fresh();
+    await ack(h, { type: 'lead.assign', building: 'old/b1', repos: ['app'] });
+    delete h.fm.store.data.leadWorlds!['old'];
+    h.fm.store.data.leads['ines']!.assignedAt = Date.now() - 100 * 86_400_000;
+    expect(h.fm.expireLeadWorlds()).toEqual([]);
+    expect(h.fm.store.data.leadWorlds!['old']).toBeGreaterThan(Date.now() - 5000);
+    expect(leadsOf(h)).toEqual(['marlow:', 'ines@old/b1:app']);
   });
 
   it('release frees the lead and moves its open goals to marlow', async () => {
@@ -160,7 +225,7 @@ describe('lead.assign / lead.release / lead.sync', () => {
     expect(h.fm.store.data.feed.some((f) => /Marlow takes over g\d+ "open one" from Ines/.test(f.text))).toBe(true);
     expect(leadsOf(h)).toEqual(['marlow:']);
     // the freed lead is the first free one again
-    expect((await ack(h, { type: 'lead.assign', building: 'w1/b9', repos: [] })).result).toEqual({ leadId: 'ines' });
+    expect((await ack(h, { type: 'lead.assign', building: 'w1/b9', repos: ['z'] })).result).toEqual({ leadId: 'ines' });
     // unknown building: nothing to do
     expect((await ack(h, { type: 'lead.release', building: 'w1/nope' })).ok).toBe(true);
   });

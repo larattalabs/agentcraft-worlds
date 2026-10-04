@@ -282,6 +282,8 @@ export const LeadAssignment = z.object({
   leadId: Id.describe('a lead agent id, e.g. "ines"'),
   building: BuildingKey.optional().describe('the building this lead leads; absent for "marlow" (home, repositories without a building, everything not tied to a repository)'),
   repos: z.array(Id).describe('repository ids of the building (a repository is in at most one building); empty for marlow'),
+  world: z.string().optional().describe('the world (save folder name) the building is in; absent for marlow'),
+  lastSync: Ts.optional().describe('when that world last talked to the Foreman (lead.sync / lead.assign / lead.release). Assignments of worlds not seen for `claude.leadWorldTtlDays` (default 14) are dropped'),
 });
 export type LeadAssignment = z.infer<typeof LeadAssignment>;
 
@@ -644,6 +646,7 @@ export const LeadAssignMsg = z.object({
   repos: z.array(Id).describe('repository ids the building holds'),
 });
 export const LeadReleaseMsg = z.object({ ...envelope('lead.release'), building: BuildingKey });
+export const LeadReleaseWorldMsg = z.object({ ...envelope('lead.releaseWorld'), world: z.string().min(1).regex(/^[^/]+$/).describe('the world id (save folder name) whose leads to release') });
 export const LeadSyncMsg = z.object({
   ...envelope('lead.sync'),
   world: z.string().min(1).regex(/^[^/]+$/).describe('the world id (save folder name)'),
@@ -680,6 +683,7 @@ export const ClientMessage = z.discriminatedUnion('type', [
   LeadAssignMsg,
   LeadReleaseMsg,
   LeadSyncMsg,
+  LeadReleaseWorldMsg,
   GoalMessageMsg,
   GoalInstructionsMsg,
   GoalPlanMsg,
@@ -775,13 +779,14 @@ export const CLIENT_MESSAGES = {
   'design.request': { schema: DesignRequestMsg, doc: 'Design a new building blueprint (hub: Buildings -> Design new). Acked with `{designId}`; progress arrives as `design.upsert`. One design runs at a time; later ones queue.' },
   'design.cancel': { schema: DesignCancelMsg, doc: 'Cancel a queued or running design (the design agent\'s turn is stopped; nothing is written to outDir).' },
   'pr.refresh': { schema: PrRefreshMsg, doc: 'Poll the pull request(s) of tasks in status `pr` now instead of at the next interval (claude backend with PR watching on). Changes arrive as `task.upsert`.' },
-  'lead.assign': { schema: LeadAssignMsg, doc: 'A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it. New goals in these repositories go to that lead; goals already running keep theirs.' },
+  'lead.assign': { schema: LeadAssignMsg, doc: 'A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it; a building left with no repository (here with `repos: []`, or because its last one moved) frees its lead. Open goals (planning / active) whose repository (`repoId`, else `repos[0]`) is in the building move to its lead (feed line per goal); new goals in these repositories go to that lead too.' },
   'lead.release': { schema: LeadReleaseMsg, doc: 'The building was removed. Acked with `{}` (also for a building that has no lead). Its lead goes off shift; its open goals move to marlow (feed line; marlow gets the plan note when it takes over).' },
   'config.get': { schema: ConfigGetMsg, doc: 'The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository\'s repoSettings. Never contains secret values (environment values, tokens, MCP server env or arguments).' },
   'config.set': { schema: ConfigSetMsg, doc: 'Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo\'s path as config.json spells it, else its absolute path>]`.' },
   'foreman.restart': { schema: ForemanRestartMsg, doc: 'Restart the Foreman with the same arguments, environment and working directory (except `--reset`, `--goal` and `--autostart`). Acked with `{}` first; then the server closes (clients see the connection drop and reconnect), running turns are interrupted and resumed on start (`resumeOnStart`), and a new Foreman process (new pid, new client token: read the run file again) takes over the same port.' },
   'repo.agents': { schema: RepoAgentsMsg, doc: 'The repository\'s Claude Code agent files (`.claude/agents/*.md` in its checkout), for the roles picker. Acked with `{agents: [{id, name, path, description?, model?}]}`: `id` is the file name without `.md` (the value to store in `roles.<agent>`), `name` the front matter name (else the id), `path` repo-relative.' },
-  'lead.sync': { schema: LeadSyncMsg, doc: 'Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id).' },
+  'lead.sync': { schema: LeadSyncMsg, doc: 'Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id). Also records the world\'s `lastSync`.' },
+  'lead.releaseWorld': { schema: LeadReleaseWorldMsg, doc: 'Release every lead held by buildings of another world (hub Team tab "Release" next to a world in `leads.update` that is not the current one). Acked with `{released: [leadId]}`; their open goals move to marlow as with `lead.release`. Worlds that have not synced for `claude.leadWorldTtlDays` (default 14; 0 = never) are released automatically at start and daily.' },
 } as const;
 
 export const ENTITY_SCHEMAS = {

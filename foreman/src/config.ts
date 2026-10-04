@@ -93,6 +93,8 @@ export interface ClaudeConfig {
    * turns. 0 = no limit. Default 7 days / 40 turns.
    */
   leadSession: { maxDays: number; maxTurns: number };
+  /** building leads of a world that has not synced (lead.sync / assign / release) for this many days are released (0 = never; default 14) */
+  leadWorldTtlDays: number;
 }
 
 export const DEFAULT_LEAD_SESSION = { maxDays: 7, maxTurns: 40 };
@@ -582,6 +584,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
         const n = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : d);
         return { maxDays: n(o.maxDays, DEFAULT_LEAD_SESSION.maxDays), maxTurns: Math.floor(n(o.maxTurns, DEFAULT_LEAD_SESSION.maxTurns)) };
       })(fileClaude.leadSession),
+      leadWorldTtlDays: Math.max(0, num(fileClaude.leadWorldTtlDays, 14)),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),

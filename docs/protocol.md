@@ -252,6 +252,8 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `leadId` | string | yes | a lead agent id, e.g. "ines" |
 | `building` | string (#RRGGBB) | no | the building this lead leads; absent for "marlow" (home, repositories without a building, everything not tied to a repository) |
 | `repos` | string[] | yes | repository ids of the building (a repository is in at most one building); empty for marlow |
+| `world` | string | no | the world (save folder name) the building is in; absent for marlow |
+| `lastSync` | integer | no | when that world last talked to the Foreman (lead.sync / lead.assign / lead.release). Assignments of worlds not seen for `claude.leadWorldTtlDays` (default 14) are dropped |
 
 ### <a id="feeditem"></a>FeedItem
 
@@ -1179,15 +1181,19 @@ Lead assignments changed (lead.assign / lead.release / lead.sync, or the Foreman
       "building": "New World/b3",
       "repos": [
         "demo-app"
-      ]
+      ],
+      "world": "New World",
+      "lastSync": 1790850060000
     },
     {
       "leadId": "bram",
-      "building": "New World/b7",
+      "building": "Dev HQ/b7",
       "repos": [
         "api",
         "web"
-      ]
+      ],
+      "world": "Dev HQ",
+      "lastSync": 1790418000000
     }
   ]
 }
@@ -1632,7 +1638,7 @@ Poll the pull request(s) of tasks in status `pr` now instead of at the next inte
 
 ### `lead.assign`
 
-A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it. New goals in these repositories go to that lead; goals already running keep theirs.
+A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it; a building left with no repository (here with `repos: []`, or because its last one moved) frees its lead. Open goals (planning / active) whose repository (`repoId`, else `repos[0]`) is in the building move to its lead (feed line per goal); new goals in these repositories go to that lead too.
 
 | field | type | required | notes |
 | --- | --- | --- | --- |
@@ -1759,7 +1765,7 @@ The repository's Claude Code agent files (`.claude/agents/*.md` in its checkout)
 
 ### `lead.sync`
 
-Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id).
+Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id). Also records the world's `lastSync`.
 
 | field | type | required | notes |
 | --- | --- | --- | --- |
@@ -1788,6 +1794,24 @@ Sent by the mod on connect for its world: every `"<world>/..."` building not in 
       ]
     }
   ]
+}
+```
+
+### `lead.releaseWorld`
+
+Release every lead held by buildings of another world (hub Team tab "Release" next to a world in `leads.update` that is not the current one). Acked with `{released: [leadId]}`; their open goals move to marlow as with `lead.release`. Worlds that have not synced for `claude.leadWorldTtlDays` (default 14; 0 = never) are released automatically at start and daily.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `world` | string (#RRGGBB) | yes | the world id (save folder name) whose leads to release |
+
+```json
+{
+  "v": 1,
+  "type": "lead.releaseWorld",
+  "id": "c35",
+  "world": "Dev HQ"
 }
 ```
 

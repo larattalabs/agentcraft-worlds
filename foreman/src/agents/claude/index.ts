@@ -703,7 +703,10 @@ export class ClaudeBackend implements Backend {
     // goals still planning with nobody planning them
     for (const g of this.fm.goals().filter((x) => x.status === 'planning')) {
       const lead = this.fm.leadOf(g);
-      const leadOnIt = st.inflight[lead]?.goalId === g.id || this.hasQueued(lead, (j) => j.goalId === g.id) || this.openQuestion(lead) !== undefined;
+      // (another lead's plan for it still running or waiting, e.g. the goal moved to a new building's
+      // lead mid-plan: that plan settles the goal, no second one)
+      const otherPlanning = this.leadsOnDuty().some((l) => l !== lead && ((st.inflight[l]?.goalId === g.id && st.inflight[l]?.kind === 'plan') || this.hasQueued(l, (j) => j.goalId === g.id && j.kind === 'plan')));
+      const leadOnIt = otherPlanning || st.inflight[lead]?.goalId === g.id || this.hasQueued(lead, (j) => j.goalId === g.id) || this.openQuestion(lead) !== undefined;
       if (leadOnIt || this.isStopped(lead)) continue;
       if (this.fm.tasks.forGoal(g.id).length) this.promoteGoal(g, 'recovered');
       else {
@@ -2380,6 +2383,33 @@ export class ClaudeBackend implements Backend {
     if (this.isStopped(leadId)) this.setStopped(leadId, false);
     this.deliverPending(leadId);
     this.queueGoalMessages(leadId);
+    this.tick();
+  }
+
+  /**
+   * Open goals moved to `leadId` (its building has their repository, C3). Work the previous lead had
+   * QUEUED for them (reviews, triage) is dropped and picked up again for the new lead (sweepReviews,
+   * PR triage); a turn already running finishes (its plan still settles the goal). The new lead's
+   * first turn on each gets the takeover note.
+   */
+  onGoalsAdopted(leadId: string, goals: Goal[], from: Record<string, string>): void {
+    const ids = new Set(goals.map((g) => g.id));
+    const mine = (j: Job) => !!j.goalId && ids.has(j.goalId) && (j.kind === 'review' || j.kind === 'triage');
+    for (const prev of new Set(Object.values(from))) {
+      if (prev === leadId) continue;
+      const q = this.queues.get(prev);
+      if (q) this.queues.set(prev, q.filter((j) => !mine(j)));
+      const p = this.pausedJobs.get(prev);
+      if (p && mine(p)) this.pausedJobs.delete(prev);
+      this.dropDelayed((id, j) => id === prev && mine(j));
+    }
+    if (this.stopping || this.authFailed) return;
+    this.reconcile();
+    for (const t of this.prs.watched()) {
+      if (!t.goalId || !ids.has(t.goalId)) continue;
+      const items = this.prs.pendingItems(t.id);
+      if (items.length && !this.triaging(t.id)) void this.enqueueTriage(t.id, items);
+    }
     this.tick();
   }
 

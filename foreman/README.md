@@ -375,10 +375,20 @@ pool every lead assigns from.
   free lead in `claude.leads` order (default Ines, Bram, Cass); with none free Marlow leads it (the
   ack says `overflow`, nothing is stored). The same building again only updates its repositories; a
   repository listed by another building moves there. Assignments live in `state.json` `leads`.
-- A goal belongs to the lead of its repository's building when it is submitted (`Goal.leadId`;
-  absent = Marlow) and keeps that lead, even if repositories move later. Only releasing the lead
-  moves its open goals to Marlow, whose first turn on each gets the plan and the board (a takeover
-  note). Leads not in `claude.leads` any more are released at start.
+- A goal belongs to the lead of its repository's building (`Goal.leadId`; absent = Marlow). When a
+  building is placed or its repositories change, open goals (planning / active) whose repository
+  (`repoId`, else `repos[0]`) is in it move to its lead, with their unread goal messages (a feed line
+  each; a plan already running finishes, no second plan). Releasing a lead moves its open goals to
+  Marlow. The new lead's first turn on each gets the plan and the board (a takeover note). Leads
+  not in `claude.leads` any more are released at start.
+- A building left without repositories (its last one moved to another building, or `lead.assign`
+  with `repos: []`) frees its lead.
+- Lead worlds: every `lead.sync` / `lead.assign` / `lead.release` records the world's `lastSync`
+  (`LeadAssignment.world` / `lastSync` in `leads.update`). At start and daily the leads of worlds not
+  seen for `claude.leadWorldTtlDays` (default 14; 0 = never) are released, so a dev world, a test
+  save or a deleted world cannot hold the leads forever. `lead.releaseWorld {world}` (hub Team tab
+  "Release") frees a world's leads at once; acked with `{released: [leadId]}`. Worlds from before
+  `lastSync` existed start their clock at the first start.
 - Every lead has its own job queue (plan, review, follow-up, PR triage) and session per goal
   (`<lead>:<goal>`), and leads run in parallel. Merge decisions, questions, feed lines and PR triage
   carry the goal's lead (the mod shows them at that building's podium). A plain console message goes

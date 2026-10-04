@@ -145,6 +145,7 @@ function globalSpecs(x: SpecCtx): Spec[] {
       get: g('claude.leads'),
       normalize: (v) => ({ value: leadsList(v) }),
     },
+    { key: 'claude.leadWorldTtlDays', group: 'team', type: 'int', min: 0, max: 365, label: 'Release leads of unused worlds after (days)', help: 'Building leads held by a world that has not been opened for this many days go back (checked at start and daily). 0: never. A world can also be released by hand from the Team tab.', live: true, def: 14, get: g('claude.leadWorldTtlDays') },
     { key: 'claude.leadReview', group: 'team', type: 'bool', label: 'Lead reviews finished work', help: 'The lead reviews each finished task (diff and tests) before the merge decision reaches you. Off: the decision comes straight after the tests.', live: true, flags: ['lead-review'], def: true, get: g('claude.leadReview') },
     // models
     { key: 'claude.leadModel', group: 'models', type: 'model', label: 'Lead model', help: 'The model the leads plan and review with (unless a lead has its own). From the next turn.', options: models, live: true, flags: ['lead-model', 'model'], envs: ['AGENTCRAFT_LEAD_MODEL'], def: 'opus', get: g('claude.leadModel') },
@@ -629,6 +630,7 @@ export function applyLive(running: Config, next: Config): void {
   c.prPollSeconds = n.prPollSeconds;
   Object.assign(c.usageReserve, n.usageReserve);
   Object.assign(c.leadSession, n.leadSession);
+  c.leadWorldTtlDays = n.leadWorldTtlDays;
   if (n.maxConcurrentTurns) c.maxConcurrentTurns = n.maxConcurrentTurns;
   else delete c.maxConcurrentTurns;
   if (n.maxBudgetUsdPerTurn) c.maxBudgetUsdPerTurn = n.maxBudgetUsdPerTurn;

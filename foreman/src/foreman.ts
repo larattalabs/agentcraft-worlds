@@ -10,7 +10,7 @@ import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, type Ctx, type Logger } from './context.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
-import { HOME_LEAD, LeadBook } from './leads.js';
+import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
 import { Memory, MemoryError } from './memory.js';
 import { Notifier } from './notifier.js';
 import type {
@@ -85,6 +85,11 @@ export interface Backend {
    * end, and `goals` (its open goals) are marlow's now.
    */
   onLeadReleased?(leadId: string, goals: Goal[]): void;
+  /**
+   * A lead was assigned a building (or its repositories changed) and open goals in those
+   * repositories moved to it from other leads (C3): `from` maps goal id -> the previous lead.
+   */
+  onGoalsAdopted?(leadId: string, goals: Goal[], from: Record<string, string>): void;
   /**
    * goal.message: the user's message (unread in bus.goalInbox(leadId, goal.id)) to `leadId` about
    * `goal`: answer it in a turn of the lead's session for the goal, replies tagged with the goal.
@@ -176,6 +181,7 @@ export class Foreman {
   private logTimer: NodeJS.Timeout | undefined;
   private goalTimers = new Set<string>();
   private closed = false;
+  private dailyTimer: NodeJS.Timeout | undefined;
 
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
@@ -595,13 +601,21 @@ export class Foreman {
 
   /** lead.assign: see LeadBook.assign. */
   assignLead(building: string, repos: string[], opts: { quiet?: boolean } = {}): { leadId: string; overflow?: true } {
-    const r = this.leads.assign(building, repos);
+    this.leads.touchWorld(worldOf(building));
     const where = building.slice(building.indexOf('/') + 1);
+    if (!new Set(repos).size) {
+      // a building with no repository needs no lead: free its slot if it had one
+      const held = this.leads.leadOfBuilding(building);
+      if (held) this.releaseLead(held, 'its building has no repositories any more', opts);
+      return { leadId: HOME_LEAD };
+    }
+    const r = this.leads.assign(building, repos);
     if (r.overflow) {
       this.bus.feed('system', `No free lead for building ${where}: ${this.nameOf(HOME_LEAD)} leads it`, { agentId: HOME_LEAD });
       return { leadId: HOME_LEAD, overflow: true };
     }
     for (const m of r.moved) this.bus.feed('system', `${m.repo} moved from ${this.nameOf(m.from)}'s building to ${this.nameOf(r.leadId)}'s`, { agentId: r.leadId });
+
     if (r.created) {
       const a = this.agent(r.leadId);
       if (a) {
@@ -623,12 +637,89 @@ export class Foreman {
         this.log.error(`backend.onLeadAssigned: ${(e as Error).message}`);
       }
     }
-    if (r.changed && !opts.quiet) this.emitLeads();
+    // C3: open goals in these repositories are this lead's (idempotent: nothing moves twice)
+    this.adoptGoals(r.leadId, this.leads.record(r.leadId)?.repos ?? []);
+    // a building whose last repository moved here has nothing left to lead: free that lead
+    for (const from of new Set(r.moved.map((m) => m.from))) {
+      if (from !== r.leadId && this.leads.record(from) && !this.leads.record(from)!.repos.length) this.releaseLead(from, 'its building has no repositories left', { quiet: true });
+    }
+    if ((r.changed || r.moved.length) && !opts.quiet) this.emitLeads();
     return { leadId: r.leadId };
+  }
+
+  /**
+   * C3: open goals (planning / active) whose repository (repoId, else repos[0]) is in `repos` move to
+   * `leadId` (a feed line each), with their unread goal messages; the backend hands the work over.
+   */
+  private adoptGoals(leadId: string, repos: string[]): Goal[] {
+    if (!repos.length) return [];
+    const moved: Goal[] = [];
+    const from: Record<string, string> = {};
+    for (const g of this.store.data.goals) {
+      if (g.status !== 'planning' && g.status !== 'active') continue;
+      const primary = g.repoId ?? g.repos?.[0];
+      if (!primary || !repos.includes(primary)) continue;
+      const before = this.leadOf(g);
+      if (before === leadId) continue;
+      if (leadId === HOME_LEAD) delete g.leadId;
+      else g.leadId = leadId;
+      g.updatedAt = this.ctx.now();
+      this.store.markDirty();
+      this.emit({ type: 'goal.upsert', goal: goalCopy(g) });
+      this.bus.feed('goal', `${this.nameOf(leadId)} takes over ${g.id} "${truncate(g.text, 60)}" from ${this.nameOf(before)} (its repository is in ${this.nameOf(leadId)}'s building)`, { agentId: leadId, goalId: g.id });
+      from[g.id] = before;
+      moved.push(g);
+      // goal messages the previous lead had not read yet go to the new one
+      const unread = this.bus.goalInbox(before, g.id);
+      for (const m of unread) m.to = leadId;
+    }
+    if (!moved.length) return moved;
+    try {
+      this.backend?.onGoalsAdopted?.(leadId, moved, from);
+    } catch (e) {
+      this.log.error(`backend.onGoalsAdopted: ${(e as Error).message}`);
+    }
+    for (const g of moved) {
+      if (!this.bus.goalInbox(leadId, g.id).length) continue;
+      try {
+        this.backend?.onGoalMessage?.(g, this.goalLead(g));
+      } catch (e) {
+        this.log.error(`backend.onGoalMessage: ${(e as Error).message}`);
+      }
+    }
+    return moved;
+  }
+
+  /** lead.releaseWorld (C2): free every lead held by that world's buildings. */
+  releaseWorld(world: string, why = 'released from the Team tab'): string[] {
+    const released: string[] = [];
+    for (const b of this.leads.buildingsOf(world)) {
+      this.releaseLead(b.leadId, why, { quiet: true });
+      released.push(b.leadId);
+    }
+    const w = this.store.data.leadWorlds;
+    if (w && world in w) {
+      delete w[world];
+      this.store.markDirty();
+    }
+    if (released.length) this.emitLeads();
+    return released;
+  }
+
+  /** C2: release the leads of worlds that have not synced for claude.leadWorldTtlDays (start, daily). */
+  expireLeadWorlds(): string[] {
+    const days = this.config.claude.leadWorldTtlDays;
+    const out: string[] = [];
+    for (const w of this.leads.expiredWorlds(days * 86_400_000)) {
+      this.log.info(`releasing the leads of world "${w}" (not opened for ${days}+ days)`);
+      out.push(...this.releaseWorld(w, `world "${w}" not opened for ${days}+ days`));
+    }
+    return out;
   }
 
   /** lead.release by building key (unknown building: nothing happens). */
   releaseBuilding(building: string, opts: { quiet?: boolean } = {}): string | undefined {
+    if (building.includes('/')) this.leads.touchWorld(worldOf(building));
     const id = this.leads.leadOfBuilding(building);
     if (id) this.releaseLead(id, 'its building was removed', opts);
     return id;
@@ -681,6 +772,7 @@ export class Foreman {
 
   /** lead.sync: release the world's buildings that are gone, then assign every listed one. */
   syncLeads(world: string, buildings: Array<{ building: string; repos: string[] }>): Record<string, string> {
+    this.leads.touchWorld(world);
     const keep = new Set(buildings.map((b) => b.building));
     const before = JSON.stringify(this.leads.list());
     for (const b of this.leads.buildingsOf(world)) if (!keep.has(b.building)) this.releaseLead(b.leadId, 'its building is gone', { quiet: true });
@@ -1035,6 +1127,8 @@ export class Foreman {
         return {};
       case 'lead.sync':
         return { leads: this.syncLeads(msg.world, msg.buildings) };
+      case 'lead.releaseWorld':
+        return { released: this.releaseWorld(msg.world) };
       case 'config.get':
         return configGet({ cfg: this.config, cast: this.cast, ...(msg.repoId ? { repo: this.repoTarget(msg.repoId) } : {}) }) as unknown as Record<string, unknown>;
       case 'config.set':
@@ -1266,6 +1360,10 @@ export class Foreman {
     }
     this.repos.startPolling(this.config.repoPollMs);
     await backend.start();
+    // leads held by worlds nobody opened for a long time (a dev world, a test or dead save)
+    this.expireLeadWorlds();
+    this.dailyTimer = setInterval(() => this.daily(), 86_400_000);
+    this.dailyTimer.unref?.();
     // designs that were queued or running when the Foreman stopped
     for (const d of this.designs.active()) {
       if (!backend.onDesignRequest) {
@@ -1277,9 +1375,19 @@ export class Foreman {
     }
   }
 
+  /** Once a day (and at start): housekeeping. */
+  private daily(): void {
+    try {
+      this.expireLeadWorlds();
+    } catch (e) {
+      this.log.error(`daily: ${(e as Error).message}`);
+    }
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.dailyTimer) clearInterval(this.dailyTimer);
     this.repos.stopPolling();
     try {
       await this.backend?.stop();
