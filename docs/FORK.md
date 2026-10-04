@@ -100,6 +100,13 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   security-reviewed (GPT-6.1, two passes; the Bash guard is best effort by decision, agent-run code
   can still read the token). Nothing has run against real Claude yet.
 - **Audit 2026-10-03 (docs/AUDIT-2026-10-03.md): not ready for Hardcore yet; fix its blockers first.**
+- **Fix wave 1 merged 2026-10-03 (docs/FIXWAVE.md, branches fix/{ui,world,blueprints,foreman,launch}):** all
+  audit blockers and should-fixes addressed, each stream independently reviewed + fixed; checks green
+  (Foreman 750, tools 72, mod build, blueprint checker incl. no-mod shell + vanilla lighting). Verified in
+  the dev world: placement refuses mobs/drops in the box, Remove refuses and lists a filled chest.
+  Config hardened (backup ~/.agentcraft/config.json.pre-audit-2026-10-03); Iris disabled in the instance.
+  Open: wave 2 (Inbox/Team surface, persistent HUD alerts, away digest, badges/onboarding, 4K layout pass,
+  walking routes), real-Claude shakedown, then `node tools/hardcore-setup.mjs --apply` with Prism closed.
 - **Next (in order):** (1) Phase 0 step 3 shakedown on the real Claude backend: a small real goal in
   agentcraft or another personal repo (parallel leads, goal threads/plan/instructions, token + guards, usage
   limits) and the first real design job; (2) work-project rollout step 2: one real goal in `prWatch: observe`,
