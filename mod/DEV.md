@@ -473,7 +473,10 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
 - Fix wave 1, stream world (docs/BUILDINGS.md "Occupancy", "Fluids", "Terrain fit", "Safe remove", "Crash
   safety", "Change a building's repos", "Move a building"): `building.Occupancy`, `TerrainFit`, `TemplateGrid`
   (the template's written cells and block entities, shared by server and ghost; `TemplateCells` colours it),
-  `Reconcile`, `Displays`; tests `TerrainFitTest`, `BuildingLifecycleTest`. `dev.build.state.conflicts` adds
+  `Reconcile`, `Displays`; tests `TerrainFitTest`, `BuildingLifecycleTest`, `PinAndReconcileTest`.
+  `dev.buildings.pending` (pending sites with `snapshotExists`, the snapshot files, each building's pin
+  fingerprint, the world-start reports) and `dev.buildings.failNextRename` (the next move's snapshot rename
+  fails: the move must roll back). `dev.build.state.conflicts` adds
   `water, lava, foundation, cleared, snapshotMinY, notes[]` and `moving`; refusals include occupants, lava
   and doors cut by the box edge. `dev.build.pick {action: split|design_new}` on the blueprint step when no
   blueprint has enough wings (`screen.tooFewWings`, `maxWings`). `dev.hub.action`: `edit_repos {buildingId,

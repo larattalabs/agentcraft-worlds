@@ -112,18 +112,21 @@ A placed blueprint is a building:
 - More fields (fix wave 1): `snapshotBox` (the box the snapshot covers when the foundation reaches below
   `box`; absent = `box`), `revision` (the layout revision; absent = `placedAt`; bumped by a repo change or a
   move so agents pick up the new anchors), `movedFrom {x, y, z, rotation, dimension}` (the site before the
-  last move: the hub's Undo move), and in the file `pending: [{building, snapshot, at, why}]` (see "Crash
-  safety").
+  last move: the hub's Undo move), `pin` (see "Blueprint versions"), and in the file `pending: [{building,
+  snapshot, at, why}]` (see "Crash safety").
 
 ### Occupancy (who is in the way)
 
 `Buildings.place` (and `move`) refuse, naming them, when the box (foundation included) holds: a player whose
 box grown by one block touches it; tamed, owned or leashed animals; villagers, armor stands, item frames,
-minecarts and any other entity that may matter (named mobs, mobs that picked up loot); dropped items ("pick
-them up first"). Hostile mobs that would despawn anyway (no name, not persistent) and stray projectiles/XP are
-removed with a note ("removes 2 × zombie in the box"): the player cannot shoo a creeper out of a box at
+minecarts and any other entity that may matter (named mobs, mobs that picked up loot); dropped items, a thrown
+trident and an arrow that can be picked up ("pick them up first": an enchanted trident is never discarded).
+Hostile mobs that would despawn anyway (no name, not persistent), arrows nobody can pick up (a skeleton's, a
+creative or Infinity shot) and XP are removed with a note ("removes 2 × zombie in the box"): the player cannot shoo a creeper out of a box at
 night, and that is the safer UX; anything the player might care about refuses instead. The ghost uses the
-same rules (`building.Occupancy`), so the HUD says what the server will say. A door cut in half by the box's
+same rules (`building.Occupancy`), so the HUD says what the server will say; the one gap is an arrow's
+`pickup`, which the client is not told: the ghost counts an arrow as the player's when it knows a player shot
+it, so the server may still refuse one the ghost did not flag. A door cut in half by the box's
 top or bottom face refuses too (raise or lower the building); a tall plant cut that way loses its outside
 half.
 
@@ -155,8 +158,9 @@ lava amber.
 Remove refuses, listing them ("Move these out of b3 first: chest at 1,64,2 (12 items), white bed at ...,
 3 dropped item stacks. Or confirm again with force: they are lost"), when the box (foundation included)
 holds what the building did not bring: block entities at positions where the template has none (a chest,
-furnace, bed or barrel the player placed), template containers or lecterns the player filled, dropped items,
-pets, villagers, item frames, paintings and armor stands. Remove, Move and Undo move also refuse while a player stands in or
+furnace, bed or barrel the player placed; the template's own positions come from the building's pin, see
+"Blueprint versions"), template containers or lecterns the player filled, dropped items (a trident or a
+pickable arrow named with its position), pets, villagers, item frames, paintings and armor stands. Remove, Move and Undo move also refuse while a player stands in or
 next to the site getting its old terrain back (every path, `/agentcraft remove` included: it would bury
 them). Forcing is a further explicit confirm: the hub's
 button turns into "Remove anyway", `/agentcraft remove <id> force`. Nothing is deleted silently. Drops are
@@ -167,26 +171,60 @@ lying there.
 ### Crash safety
 
 Removing a building (or moving it away) restores its site at once, but the restored chunks only reach the disk
-with the next world save. The snapshot is therefore kept, and the site recorded under `pending` in
-`agentcraft-buildings.json`, until a flushed save (stop, `save-all flush`) or the second save since (autosaves
-queue chunk writes without waiting for them); then the snapshot is deleted. At world start every building is
-checked against the world (by block, not state: lamps, podiums, monitors and doors change states; at least
-80 % of the template's blocks must be in place):
-(a building whose blueprint or dimension is not loaded cannot be checked and is skipped)
-- a building whose template does not stand is reported in the hub (Buildings tab "Check", `/agentcraft
-  buildings`): Remove restores the terrain saved before it was placed, Forget only drops the record; nothing
-  is deleted automatically;
-- a move that did not reach the disk (the new site is empty, the old one stands): the old record comes back
-  with its snapshot (the unused one is kept as `<id>.unused-<ms>.nbt`);
-- a removal that did not reach the disk (the building stands again): its record comes back.
+with some later save, and a save does not promise it: an autosave or a pause save (singleplayer saves every time
+the game pauses: the Esc menu, any AgentCraft screen) skips chunks saved in the last few seconds and does not
+wait for the writes. So the snapshot is kept, and the site recorded under `pending` in
+`agentcraft-buildings.json`, until the **next world start**, which settles each pending site on evidence
+(`Reconcile.decide`, unit-tested), never on a count of saves:
+- **released** (snapshot deleted): the site shows its snapshot again (at least 90 % of the cells where the
+  snapshot and the building differ hold the snapshot's block; the building's own template when its pin
+  matches, else its pinned block-entity positions), or a standing building covers the whole site (that
+  building's own snapshot holds the same terrain);
+- **record back**: a removal that did not reach the disk (the building stands again) gets its record back; a
+  move that did not reach the disk (the old site stands, the new one does not) gets the old record and its
+  snapshot back (the unused one is kept as `<id>.unused-<ms>.nbt`);
+- **reported, snapshot kept**: a move saved at both sites (two copies of the building), or a taken-down
+  building standing partly under another building: it is never re-added over another one;
+- **kept silently** for the next start: anything that cannot be told (blueprint changed or missing, dimension
+  not loaded, a site neither standing nor restored).
+Placing on a just-removed site in the same session is allowed (the rules above sort it out at the next start).
+
+At world start every building is also checked against the world (by block, not state: lamps, podiums,
+monitors and doors change states; at least 80 % of the template's blocks must be in place). A building whose
+own template does not stand is reported in the hub (Buildings tab "Check", `/agentcraft buildings`): Remove
+restores the terrain saved before it was placed, Forget only drops the record; nothing is deleted
+automatically. A building whose blueprint changed since it was placed, or whose blueprint or dimension is not
+loaded, cannot be checked: it gets a note, never a "does not match" (see "Blueprint versions").
+`dev.buildings.pending` shows the pending sites, the snapshot files, the pins and the reports.
+
+### Blueprint versions
+
+A blueprint can be regenerated under the same id (a new bundled version, a redesign). A building record
+therefore pins what it was placed from (`pin` in the record): the template's fingerprint
+(`TemplateGrid.fingerprint`: SHA-256 of its cells, order-free), the wing count and kind, every sidecar anchor in
+world space with its raw `name@n`, and the template's own block-entity positions. Everything about an
+existing building uses its pin, never the current blueprint:
+- **Edit repos** derives the anchors from the pinned ones (`BlueprintTransform.renameWings`) and checks the
+  pinned wing count, so agents keep routing to the desks that stand there;
+- **Remove / Move** tell the building's own chests, barrels and lecterns from the player's by the pinned
+  positions;
+- **the world-start check** compares the world with the template only while the fingerprint matches; else
+  it notes "the blueprint changed since it was placed" and does not check.
+Records placed before pins existed get one at world start when the current blueprint stands there and gives
+the same anchors; otherwise they get a note, keep their anchor positions on Edit repos (names are only
+renamed, `BlueprintTransform.rebindAnchors`, and they take at most as many repos as they have), and Remove
+lists every block entity but the stations (with a note saying why). Move re-places a building from the
+current blueprint (and pins that), so it is the way to bring an old building up to date; it refuses when the
+current blueprint has fewer wings than the building has repos.
 
 ### Change a building's repos
 
 `Buildings.setRepos(server, id, repos)` (hub "Edit repos…", `/agentcraft repos <id> <repo>[,<repo>...]`):
 wing n becomes `repos[n-1]`. Station bindings `repo:<old wing n repo>` / `ci:<old wing n repo>` and unfilled
 `repo:#n` / `ci:#n` are rebound to the new wing n repo, a wing that loses its repo goes back to `#n`
-(`BlueprintTransform.rebindBinding`); the per-wing anchors are derived again from the blueprint. Refuses
-more repos than wings, a repo that has another building and a blueprint that is not loaded. The lead sync
+(`BlueprintTransform.rebindBinding`); the per-wing anchors are derived again from the building's pin (the
+blueprint as it was at placement, "Blueprint versions"), so the blueprint need not be loaded. Refuses more
+repos than wings and a repo that has another building. The lead sync
 (`LeadsFeature`'s listener) then sends `lead.assign` with the new repos.
 
 ### Move a building
@@ -194,8 +232,11 @@ more repos than wings, a repo that has another building and a blueprint that is 
 The hub's "Move…" puts up the ghost of the building's blueprint (its repos, "Moving b3" in the HUD); Enter
 runs `Buildings.move(level, id, origin, rotation, force)`: every check of `place` at the new site (it may not
 overlap the building's current site), the old site's safe-remove check (Shift+Enter forces after a refusal),
-then the template at the new site, then the old site restored from its snapshot (kept until the next save, as
-for a removal). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
+then the template at the new site, then the snapshots renamed (the old one to `<id>.moved-<ms>.nbt`, the new
+one to `<id>.before.nbt`), then the old site restored from the renamed snapshot (kept until the next world start,
+as for a removal). A failure at any step undoes the steps before it (files renamed back, the new site restored
+from its snapshot) and records nothing, so the record never points at a site whose snapshot is another site's
+terrain (`dev.buildings.failNextRename` injects a rename failure). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
 old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step).
 
 ## Server API (mod, `dev.agentcraft.building`)
