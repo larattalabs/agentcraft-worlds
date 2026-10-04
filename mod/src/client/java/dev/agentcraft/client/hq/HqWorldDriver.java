@@ -94,7 +94,10 @@ public final class HqWorldDriver {
 	 * its podium is the home one, and its stations' signal-bulb centres.
 	 */
 	record Area(Anchors.Bounds b, boolean building, @Nullable String buildingId, boolean home, List<BlockPos> podiumSignals,
-		List<BlockPos> mergeSignals) {
+		List<BlockPos> mergeSignals, String dimension) {
+		Area(Anchors.Bounds b, boolean building, @Nullable String buildingId, boolean home, List<BlockPos> podiumSignals, List<BlockPos> mergeSignals) {
+			this(b, building, buildingId, home, podiumSignals, mergeSignals, dev.agentcraft.building.Building.OVERWORLD);
+		}
 	}
 
 	private static @Nullable Wanted last;
@@ -148,9 +151,21 @@ public final class HqWorldDriver {
 					}
 				}
 				areas.add(new Area(r.area(), r.building(), site == null ? null : site.buildingId(), site == null || site.home(),
-					signalCenters(r.layout(), AnchorNames.DECISION_PODIUM), signalCenters(r.layout(), AnchorNames.MERGESTATION)));
+					signalCenters(r.layout(), AnchorNames.DECISION_PODIUM), signalCenters(r.layout(), AnchorNames.MERGESTATION), r.dimension()));
 			}
-			ServerTasks.run(level -> lastChanged = apply(level, w, areas));
+			// each building in its own dimension (the studio is in the overworld)
+			Map<String, List<Area>> byDim = new java.util.LinkedHashMap<>();
+			for (Area a : areas) {
+				byDim.computeIfAbsent(a.dimension(), k -> new ArrayList<>()).add(a);
+			}
+			int[] total = {0};
+			for (var e : byDim.entrySet()) {
+				List<Area> in = List.copyOf(e.getValue());
+				ServerTasks.run(e.getKey(), level -> {
+					total[0] += apply(level, w, in);
+					lastChanged = total[0];
+				});
+			}
 		}
 	}
 
@@ -380,11 +395,11 @@ public final class HqWorldDriver {
 	 * outside every box, by the scanned area.
 	 */
 	private static boolean podiumOpenAt(Wanted w, BlockPos p, Area area) {
-		Routing.Site site = Routing.siteAt(Buildings.sites(), p.getX(), p.getY(), p.getZ(), 0);
+		Routing.Site site = Routing.siteAt(Buildings.sites(), area.dimension(), p.getX(), p.getY(), p.getZ(), 0);
 		if (site == null) {
 			return w.podiumOpen(area);
 		}
-		return w.podiumOpen(new Area(site.box(), true, site.buildingId(), site.home(), List.of(), List.of()));
+		return w.podiumOpen(new Area(site.box(), true, site.buildingId(), site.home(), List.of(), List.of(), site.dimension()));
 	}
 
 	private static @Nullable BlockState wantedState(BlockEntity be, BlockState s, Wanted w, Area area) {

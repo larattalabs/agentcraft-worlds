@@ -153,8 +153,13 @@ public final class DecisionsFeature {
 			return;
 		}
 		BlockPos p = pos.immutable();
+		Minecraft mc = Minecraft.getInstance();
+		if (mc.level == null) {
+			return;
+		}
 		PODIUM_PENDING.put(p, wantOpen);
-		ServerTasks.run(level -> {
+		// the podium is in the player's level (a renderer only sees that one): set it in that dimension
+		ServerTasks.run(mc.level.dimension(), level -> {
 			BlockState s = level.getBlockState(p);
 			if (s.getBlock() instanceof DecisionPodiumBlock && s.getValue(DecisionPodiumBlock.OPEN) != wantOpen) {
 				level.setBlock(p, s.setValue(DecisionPodiumBlock.OPEN, wantOpen), Block.UPDATE_CLIENTS);

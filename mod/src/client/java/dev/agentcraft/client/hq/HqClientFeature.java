@@ -146,8 +146,8 @@ public final class HqClientFeature {
 		waitingLamps.clear();
 		openPodiums.clear();
 		Set<BlockPos> seen = new HashSet<>();
-		// the HQ studio and every building
-		for (Routing.Region r : Buildings.regions()) {
+		// the HQ studio and every building of the player's dimension
+		for (Routing.Region r : Routing.regionsIn(Buildings.regions(), level.dimension().identifier().toString())) {
 			scan(level, r.area(), seen);
 		}
 	}

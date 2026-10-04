@@ -169,7 +169,10 @@ public final class AgentManager {
 			removeAll();
 			return;
 		}
-		Anchors.Layout current = Anchors.current();
+		// only the buildings of the player's dimension: agents route and spawn there; home in another dimension = hidden
+		String dim = lvl.dimension().identifier().toString();
+		Anchors.Layout current = Buildings.currentIn(dim);
+		boolean homeElsewhere = current.isEmpty() && !Buildings.all().isEmpty();
 		long sig = Buildings.regionsSignature() * 31 + current.revision();
 		if (sig != regionsSignature) {
 			regionsSignature = sig;
@@ -188,7 +191,7 @@ public final class AgentManager {
 			agents.add(a);
 		}
 		// route: agent -> its building's layout; group by layout name (Foreman order kept within a group)
-		List<Routing.Site> sites = Buildings.sites();
+		List<Routing.Site> sites = Routing.sitesIn(Buildings.sites(), dim);
 		Map<String, Anchors.Layout> layouts = new LinkedHashMap<>();
 		Map<String, List<Agent>> groups = new LinkedHashMap<>();
 		for (Agent a : agents) {
@@ -201,6 +204,9 @@ public final class AgentManager {
 			}
 			if (l != current && !Routing.canHost(l, StationAssigner.stationKey(a), a.id())) {
 				l = current; // the building has no place for it (no desk, station or lounge): home
+			}
+			if (l.isEmpty() && homeElsewhere) {
+				continue; // its building and home are in another dimension: not shown here
 			}
 			layouts.putIfAbsent(l.name(), l);
 			groups.computeIfAbsent(l.name(), k -> new ArrayList<>()).add(a);

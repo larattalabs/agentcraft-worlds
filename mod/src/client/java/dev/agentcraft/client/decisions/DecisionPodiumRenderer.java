@@ -95,7 +95,7 @@ public class DecisionPodiumRenderer extends StationRenderer<DecisionPodiumBlockE
 		// a building's podium shows its lead's decisions; the home podium marlow's and everyone else's
 		Leads.View leads = Leads.view();
 		BlockPos at = be.getBlockPos();
-		String building = Leads.buildingAt(at.getX(), at.getY(), at.getZ(), 0);
+		String building = Leads.buildingAt(be.getLevel(), at.getX(), at.getY(), at.getZ(), 0);
 		for (Decision x : DecisionQueue.open()) {
 			if (!DecisionsFeature.isAnswering(x.id()) && leads.podiumShows(building, x.agentId())) {
 				if (d == null) {

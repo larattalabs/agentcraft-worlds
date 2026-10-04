@@ -101,7 +101,8 @@ public class StatusLampRenderer extends StationRenderer<StatusLampBlockEntity, S
 			// the open face towards the middle of the HQ / its building (a lamp set into an outer wall also has air outside)
 			double best = Double.MAX_VALUE;
 			net.minecraft.core.BlockPos lp = be.getBlockPos();
-			Routing.Region region = Routing.regionAt(Buildings.regions(), lp.getX(), lp.getY(), lp.getZ(), 3);
+			Routing.Region region = Routing.regionAt(Buildings.regions(), be.getLevel().dimension().identifier().toString(), lp.getX(), lp.getY(),
+				lp.getZ(), 3);
 			Anchors.Bounds b = region != null ? region.area() : Anchors.current().bounds();
 			double cx = b == null ? 0 : (b.minX() + b.maxX()) / 2.0;
 			double cz = b == null ? 0 : (b.minZ() + b.maxZ()) / 2.0;

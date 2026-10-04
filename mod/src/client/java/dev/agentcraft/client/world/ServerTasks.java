@@ -39,6 +39,31 @@ public final class ServerTasks {
 	}
 
 	/**
+	 * Queue {@code task} on the integrated server with the level of {@code dimension} (a building's
+	 * {@code minecraft:the_nether}, ...); skipped when that level is not loaded. False when not in singleplayer.
+	 */
+	public static boolean run(String dimension, Consumer<ServerLevel> task) {
+		IntegratedServer server = Minecraft.getInstance().getSingleplayerServer();
+		net.minecraft.resources.Identifier id = net.minecraft.resources.Identifier.tryParse(dimension);
+		if (server == null || id == null) {
+			return false;
+		}
+		ResourceKey<Level> key = ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, id);
+		server.execute(() -> {
+			ServerLevel level = server.getLevel(key);
+			if (level != null) {
+				task.accept(level);
+			}
+		});
+		return true;
+	}
+
+	/** {@link #run(String, Consumer)} for a level key. */
+	public static boolean run(ResourceKey<Level> dimension, Consumer<ServerLevel> task) {
+		return run(dimension.identifier().toString(), task);
+	}
+
+	/**
 	 * Runs {@code work} on the integrated server thread and completes with its result <b>on the client
 	 * thread</b> (e.g. {@code Blueprints.reload(server)}). Fails with {@link Refused} when not in
 	 * singleplayer. Call from the client thread.

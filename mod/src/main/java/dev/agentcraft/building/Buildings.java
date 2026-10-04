@@ -176,6 +176,20 @@ public final class Buildings {
 		return b != null ? b.layout() : Anchors.current();
 	}
 
+	/**
+	 * The dimension {@link Anchors#current()} is in: the home building's (outside the HQ world), else the overworld
+	 * (the HQ studio; an empty layout). Any thread.
+	 */
+	public static String homeDimension() {
+		Building h = drivesAnchors ? home() : null;
+		return h == null ? Building.OVERWORLD : h.dimensionOrDefault();
+	}
+
+	/** {@link Anchors#current()} when it is in {@code dimension}, else {@link Anchors.Layout#EMPTY} (home is elsewhere). Any thread. */
+	public static Anchors.Layout currentIn(String dimension) {
+		return dimension.equals(homeDimension()) ? Anchors.current() : Anchors.Layout.EMPTY;
+	}
+
 	/** Published per-state views (built once per state, so per-frame readers never allocate layouts). */
 	private record Views(State state, Anchors.Layout current, List<Routing.Site> sites, List<Routing.Region> regions,
 		List<Anchors.Layout> layouts, long signature) {

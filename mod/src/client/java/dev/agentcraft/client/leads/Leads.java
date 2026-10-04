@@ -108,9 +108,15 @@ public final class Leads {
 		return new View(world, st.leadsKnown(), List.copyOf(leads), Map.copyOf(here), Map.copyOf(LeadRouting.podiumOwners(here, podiums)), home);
 	}
 
-	/** The building id of the site containing the block (grown by {@code margin}), or null (studio / open world). Any thread. */
+	/** The building id of the site containing the block (grown by {@code margin}), or null (studio / open world). Any dimension. Any thread. */
 	public static @Nullable String buildingAt(int x, int y, int z, int margin) {
 		Routing.Site s = Routing.siteAt(Buildings.sites(), x, y, z, margin);
+		return s == null ? null : s.buildingId();
+	}
+
+	/** {@link #buildingAt(int, int, int, int)} among the buildings of {@code level}'s dimension. */
+	public static @Nullable String buildingAt(net.minecraft.world.level.@Nullable Level level, int x, int y, int z, int margin) {
+		Routing.Site s = Routing.siteAt(Buildings.sites(), level == null ? null : level.dimension().identifier().toString(), x, y, z, margin);
 		return s == null ? null : s.buildingId();
 	}
 

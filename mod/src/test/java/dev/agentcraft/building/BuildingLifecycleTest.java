@@ -121,4 +121,26 @@ class BuildingLifecycleTest {
 		assertEquals(0, BlueprintTransform.splitAt(3, 0, false));
 		assertEquals(0, BlueprintTransform.splitAt(1, 4, true));
 	}
+
+	@Test
+	void sitesAndRegionsKeepTheirDimension() {
+		Anchors.Layout home = new Anchors.Layout("building:b1", 1L, BOX, Map.of("spawn", new dev.agentcraft.layout.Anchor("spawn", 1, 65, 1, 0f, 0f)));
+		Anchors.Layout nether = new Anchors.Layout("building:b2", 1L, BOX, Map.of());
+		Routing.Site a = new Routing.Site("b1", List.of("a"), true, home, BOX, "minecraft:overworld");
+		Routing.Site b = new Routing.Site("b2", List.of("b"), false, nether, BOX, "minecraft:the_nether");
+		List<Routing.Site> sites = List.of(a, b);
+		// the same coordinates in two dimensions: each lookup finds its own
+		assertEquals("b1", Routing.siteAt(sites, "minecraft:overworld", 1, 65, 1, 0).buildingId());
+		assertEquals("b2", Routing.siteAt(sites, "minecraft:the_nether", 1, 65, 1, 0).buildingId());
+		assertNull(Routing.siteAt(sites, "minecraft:the_end", 1, 65, 1, 0));
+		assertEquals(List.of(b), Routing.sitesIn(sites, "minecraft:the_nether"));
+		List<Routing.Region> regions = Routing.regions(home, sites);
+		assertEquals("minecraft:overworld", regions.get(0).dimension());
+		assertEquals("minecraft:the_nether", regions.get(1).dimension());
+		assertEquals(1, Routing.regionsIn(regions, "minecraft:the_nether").size());
+		assertNull(Routing.regionAt(regions, "minecraft:the_end", 1, 65, 1, 0));
+		// a move to another dimension changes the signature (the driver re-applies)
+		Routing.Site moved = new Routing.Site("b2", List.of("b"), false, nether, BOX, "minecraft:the_end");
+		assertNotEquals(Routing.signature(regions), Routing.signature(Routing.regions(home, List.of(a, moved))));
+	}
 }
