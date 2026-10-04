@@ -38,7 +38,7 @@ public final class TrophyText {
 		String date = t.date() == null ? "" : t.date().toString();
 		String foot = date;
 		String tasks = "";
-		String body = clean(t.title());
+		String body = unmark(clean(t.title()));
 		switch (t.kind()) {
 			case PR -> {
 				String n = clean(Trophy.stripHash(t.prId()));
@@ -50,7 +50,7 @@ public final class TrophyText {
 			}
 			default -> {
 				head = "Goal done";
-				body = clean(firstLine(t.title()));
+				body = unmark(clean(firstLine(t.title())));
 				Integer n = t.taskCount();
 				if (n != null && n >= 0) {
 					tasks = n + (n == 1 ? " task" : " tasks");
@@ -94,6 +94,14 @@ public final class TrophyText {
 			}
 		}
 		return "";
+	}
+
+	/**
+	 * Markdown code and bold marks out of a title (task and goal titles are written in Markdown; the village board shows
+	 * them without the marks too): "`notes list --tag`" reads "notes list --tag" on the sign.
+	 */
+	static String unmark(String s) {
+		return s.replace("`", "").replace("**", "").strip();
 	}
 
 	/** Drops formatting codes and control characters, collapses whitespace (line breaks included), strips. */

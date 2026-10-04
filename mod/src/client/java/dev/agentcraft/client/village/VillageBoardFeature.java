@@ -213,7 +213,9 @@ public final class VillageBoardFeature {
 			List<String> repoNames = new ArrayList<>();
 			for (String r : b.repos()) {
 				Protocol.Repo repo = st == null ? null : st.repo(r);
-				repoNames.add(repo != null ? repo.name() : r);
+				// two repos with the same name (two checkouts of one project, the sim's demo repos): the id tells them apart
+				boolean shared = repo != null && st.repos().values().stream().anyMatch(o -> o != repo && repo.name().equals(o.name()));
+				repoNames.add(repo == null ? r : shared ? r : repo.name());
 			}
 			sites.add(new VillageBoard.Site(b.id(), b.id() + " " + (bp != null ? bp.name() : b.blueprint()), b.repos(), repoNames, lead,
 				LeadsFeature.leadLabel(b), b.home()));
