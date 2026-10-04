@@ -657,8 +657,9 @@ final class InboxTab implements HubPane {
 			drawDetail(g, cur.item(), dx, y, dw, h, mx, my);
 		} else {
 			panel.hide();
-			needed += ROW_H * 2 + 6;
 		}
+		// the list needs room for two rows; the detail added what it needs (header, body minimum, pinned area)
+		needed = Math.max(needed, TOP_H + ROW_H * 2 + 6);
 	}
 
 	private void drawFilters(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
@@ -691,7 +692,6 @@ final class InboxTab implements HubPane {
 		if (cx + chipW(aLabel) <= x + room) {
 			chip(g, "filter:agent", aLabel, cx, y, f.type() == FilterType.AGENT, mx, my, this::cycleAgent);
 		}
-		needed = Math.max(needed, 0);
 	}
 
 	void cycleBuilding() {
@@ -793,7 +793,6 @@ final class InboxTab implements HubPane {
 			g.text(font(), TextUtil.ellipsize(font(), rowSub(it), rw - 11), tx, ry + 10, muted, false);
 			return it.key();
 		});
-		needed += ROW_H * 2 + 6;
 	}
 
 	// ------------------------------------------------------------------ detail
@@ -929,7 +928,7 @@ final class InboxTab implements HubPane {
 		btns.add(btn("inbox_open_decision", compact ? "Full view" : "Decision screen", false, false, () -> openDecisionScreen(d.id())));
 		int actH = actionsHeight(w, btns);
 		int panelH = d.isOpen() ? panel.height(font(), d, w, readOnly, true) : 12;
-		int pinned = panelH + actH + 4;
+		int pinned = panelH + actH + 8;
 		needed += pinned + 30;
 		// body: the question, then the context
 		List<String> lines = new ArrayList<>();

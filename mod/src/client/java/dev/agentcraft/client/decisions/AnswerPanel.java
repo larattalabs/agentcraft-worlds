@@ -152,7 +152,8 @@ public final class AnswerPanel {
 		confirmMergeUntil = 0;
 		text.clear();
 		highlight = defaultHighlight(d);
-		focusText(d != null && d.kind() == DecisionKind.QUESTION && d.options().isEmpty() && d.isOpen());
+		// the decision screen starts typing at once for a question without options; embedded hosts never take the keys
+		focusText(opts.numbers() && d != null && d.kind() == DecisionKind.QUESTION && d.options().isEmpty() && d.isOpen());
 		if (arm) {
 			rearm();
 		}

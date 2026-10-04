@@ -361,7 +361,6 @@ final class InboxDev {
 					return o;
 				});
 			});
-		DevBridge.registerScreen("hub_inbox", mc -> new HubScreen(HubTab.INBOX));
 		for (Kind k : Kind.values()) {
 			// the newest item of that kind selected (the agent view: whoever has the newest item, else the first agent)
 			DevBridge.registerScreen("hub_inbox_" + k.id(), mc -> {
