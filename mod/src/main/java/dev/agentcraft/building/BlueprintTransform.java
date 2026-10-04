@@ -230,6 +230,39 @@ public final class BlueprintTransform {
 		return m.group(1) + ":" + repos.get(n - 1);
 	}
 
+	/**
+	 * A station binding after a building's repos changed from {@code before} to {@code after} (wing n =
+	 * repos[n-1]): {@code repo:<old wing n repo>} / {@code ci:<old wing n repo>} and unfilled {@code repo:#n} /
+	 * {@code ci:#n} become wing n's new repo, or {@code #n} again when wing n has none now. Returns null when the
+	 * binding is unchanged (other prefixes, agents, repos that were not a wing).
+	 */
+	public static @Nullable String rebindBinding(String binding, List<String> before, List<String> after) {
+		int colon = binding.indexOf(':');
+		if (colon <= 0) {
+			return null;
+		}
+		String prefix = binding.substring(0, colon);
+		if (!prefix.equals("repo") && !prefix.equals("ci")) {
+			return null;
+		}
+		String rest = binding.substring(colon + 1);
+		int wing;
+		if (rest.startsWith("#")) {
+			try {
+				wing = Integer.parseInt(rest.substring(1));
+			} catch (NumberFormatException e) {
+				return null;
+			}
+		} else {
+			wing = before.indexOf(rest) + 1;
+		}
+		if (wing < 1) {
+			return null;
+		}
+		String to = prefix + ":" + (wing <= after.size() ? after.get(wing - 1) : "#" + wing);
+		return to.equals(binding) ? null : to;
+	}
+
 	// ------------------------------------------------------------------ placement in front of a player
 
 	/**
