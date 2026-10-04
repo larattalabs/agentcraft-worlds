@@ -724,7 +724,8 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
   fence, lantern, ...}, lanterns, skipped{reason: n}, notes[], halfSteps, bridgeCells, keptCells, refusal, box, planMicros},
   last{action, roadId, ok, message}, ghost{lastFrameQuads, lastFrameMicros, frames}, ui{drawn, needed, available, overflow, strip{needed, available, overflow, compact},
   hudShown}}` (`ui.needed` counts the whole note, also when it is cut at the pane's bottom; `strip` = the Buildings tab's
-  list switch with Place new…/Design new…; `compact` 0 = full labels, 1 = counts dropped, 2 = also "Place…"/"Design…").
+  list switch with Place new…/Design new…; `compact` 0 = full labels, 1 = counts dropped, 2 = also "Place…"/"Design…" ("Place board…" on Fixtures), 3 = "Place…" on Fixtures too:
+  426 GUI px needs it there).
 - `dev.roads.plan {a, b, fresh?}` -> the road route only `{status, length, cells, why?}`.
 - `dev.roads.blocks {x0, y0, z0, x1, y1, z1}` (QA, at most 262 144 cells) -> `{box, palette[], cells[], blockEntities}`: the overworld's
   block states read on the integrated server (palette index per cell, x fastest, then z, then y). Dump a road's box before laying and

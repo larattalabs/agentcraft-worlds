@@ -893,15 +893,17 @@ public final class HubScreen extends Screen {
 		boolean running = ds.stream().anyMatch(d -> d.status().isRunning());
 		String rightFull = sub == Sub.DESIGNS ? "Design new…" : sub == Sub.FIXTURES ? "Place village board…" : sub == Sub.ROADS ? null : "Place new…";
 		String rightShort = sub == Sub.DESIGNS ? "Design…" : sub == Sub.FIXTURES ? "Place board…" : "Place…";
+		// 426 GUI px (4K, auto scale): "Place board…" still ran 1 px past the hub's edge, so Fixtures has a third step
+		String rightTiny = sub == Sub.DESIGNS ? "Design…" : "Place…";
 		int level = 0;
 		int needed = 0;
-		for (; level < 3; level++) {
+		for (; level < 4; level++) {
 			needed = 0;
 			for (Sub s : Sub.values()) {
 				needed += bw(subLabel(s, level > 0, bs.size(), fs.size(), bps.size(), ds.size(), running)) + 4;
 			}
 			if (rightFull != null) {
-				needed += bw(level > 1 ? rightShort : rightFull);
+				needed += bw(level > 2 ? rightTiny : level > 1 ? rightShort : rightFull);
 			} else {
 				needed -= 4;
 			}
@@ -909,7 +911,7 @@ public final class HubScreen extends Screen {
 				break;
 			}
 		}
-		level = Math.min(level, 2);
+		level = Math.min(level, 3);
 		int sx = x;
 		for (Sub s : Sub.values()) {
 			String label = subLabel(s, level > 0, bs.size(), fs.size(), bps.size(), ds.size(), running);
@@ -922,7 +924,7 @@ public final class HubScreen extends Screen {
 		}
 		dev.agentcraft.client.road.RoadsFeature.reportStrip(needed, w, level);
 		if (rightFull != null) {
-			String right = level > 1 ? rightShort : rightFull;
+			String right = level > 2 ? rightTiny : level > 1 ? rightShort : rightFull;
 			if (sub == Sub.DESIGNS) {
 				button(g, "design_new", right, x + w - bw(right), y, bw(right), true, HubFeature.designNew == null, false, mx, my, this::designNew);
 			} else if (sub == Sub.FIXTURES) {
@@ -1313,8 +1315,11 @@ public final class HubScreen extends Screen {
 		for (String[] f : facts) {
 			labelW = Math.max(labelW, font.width(f[0]));
 		}
-		// keep the buttons and the note inside the pane at 426x240: drop the least useful facts first
-		int buttonsH = 48 + 2 + 20;
+		// keep the buttons and three lines of the note inside the pane at 426x240: drop the least useful facts first (the
+		// buttons take two rows, three when Undo move wraps; the right-click note wraps to three lines there and its last
+		// line was cut with a budget of two)
+		boolean undoWraps = cur.movedFrom() != null && bw("Move…") + 4 + bw("Undo move") > dw;
+		int buttonsH = 24 + 24 + (undoWraps ? 24 : 0) + 2 + 30;
 		java.util.Set<String> dropped = new java.util.HashSet<>();
 		String[] dropOrder = {"Placed", "Kind", "Rotation", "Dimension", "Blueprint"};
 		for (int di = 0; di <= dropOrder.length; di++) {
