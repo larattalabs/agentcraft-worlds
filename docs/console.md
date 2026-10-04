@@ -33,7 +33,7 @@ back the next time it opens (this session), and the console terminal shows it on
 
 | input | sends |
 | --- | --- |
-| plain text | asks first: "Create a goal …? Enter again creates it · Esc keeps editing"; the second Enter on the same text sends `goal.submit`. With several repos the repo chooser (1-9 / arrows, Enter) is that confirm. Plain text never silently creates a goal |
+| plain text | asks first: "Create a goal …? Enter again creates it · Esc keeps editing"; the second Enter on the same text sends `goal.submit` (a fresh press: the repeat of a held Enter is ignored). With several repos the repo chooser (1-9 / arrows, Enter) is that confirm. Plain text never silently creates a goal |
 | `/goal text` | `goal.submit` at once (no confirm) |
 | `@juniper text`, `@all text` | `user.message` |
 | `/answer [d4] <n\|option> [text]` | `decision.answer`; `n` is the 1-based button number; the id can be left out when one decision is open; free text for questions; `Request changes` needs the feedback text |

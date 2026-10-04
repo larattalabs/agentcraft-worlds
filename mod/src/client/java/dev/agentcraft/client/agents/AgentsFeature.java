@@ -131,11 +131,21 @@ public final class AgentsFeature {
 				return InteractionResult.PASS;
 			}
 			// only an empty-hand sneak+right-click opens the card; anything else is the item's use (eat, block,
-			// draw, place): the agent is not even targetable then (ClientAgentEntity#isPickable)
-			if (!UiRules.agentUseOpensCard(hand == InteractionHand.MAIN_HAND, player.isShiftKeyDown(), player.getMainHandItem().isEmpty())) {
-				return InteractionResult.PASS;
+			// draw, place): the agent is not even targetable then (ClientAgentEntity#isPickable). While it is,
+			// both hands answer FAIL: vanilla goes on to the off hand after a FAIL on an entity, and its item
+			// (food, a shield) must not be used behind the card the main hand just opened.
+			switch (UiRules.agentUse(hand == InteractionHand.MAIN_HAND, player.isShiftKeyDown(), player.getMainHandItem().isEmpty())) {
+				case PASS -> {
+					return InteractionResult.PASS;
+				}
+				case BLOCK -> {
+					return InteractionResult.FAIL;
+				}
+				case OPEN_CARD -> {
+					CLICK_HANDLERS.forEach(h -> h.clicked(player, agent));
+					return InteractionResult.FAIL;
+				}
 			}
-			CLICK_HANDLERS.forEach(h -> h.clicked(player, agent));
 			return InteractionResult.FAIL;
 		});
 		// sneak + right-click an agent with an empty hand: its card (name, state, task, log tail, message/pause/stop)

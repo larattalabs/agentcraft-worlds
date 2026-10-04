@@ -893,13 +893,19 @@ docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraf
   and show only after the screen closes.
 - **Agent NPCs**: targetable only while the player sneaks with an empty main hand
   (`ClientAgentEntity#isPickable`); that sneak + right-click opens the card, anything else is the item's
-  use, and swings/mining go through to the block behind. Attacks on agents stay cancelled.
+  use, and swings/mining go through to the block behind. Attacks on agents stay cancelled. While the agent
+  is targetable both hands answer FAIL (`UiRules.agentUse`): vanilla goes on to the off hand after a FAIL
+  on an entity, and the off-hand item (food, a shield) must not be used behind the card.
 - **Lecterns**: `StationInteractions.onUse(block, filter, handler)`; the library takes a lectern only
   inside a recorded building box (or the dev HQ), without a book and with no book in hand.
 - **Diff**: `DiffFeature` installs `DiffLink`'s opener (exact decision/worktree, parent); there is no
   fallback to the DevBridge `diff` screen (it reviews the oldest merge). `DiffScreen` answers only its own
   open merge on the shown repo/worktree, through `DecisionsFeature.answer`; Ctrl+Enter arms the same
-  confirm as the Merge button.
+  confirm as the Merge button. A confirm by key (Enter on Confirm merge, X/Enter on Confirm reject) needs
+  a fresh press at least 300 ms after arming (`UiRules.keyConfirmReady`); OS key repeats and keys held
+  since the screen opened are ignored for Enter/X (`UiRules.KeyRepeat`, as the decision screen does), so
+  a held or double-tapped Ctrl+Enter never merges. Through the DevBridge, wait 300 ms between the two
+  `dev.key` presses.
 - **Parents**: `DiffScreen`, `ConsoleScreen`, `AgentCardScreen`, `DecisionScreen` and `TaskScreen` take a
   parent (`withParent`, `HasParent`): Esc and a finished answer return there.
 - **Agent card**: Review/Answer/Decide for any open decision of the agent (factories registered for every
@@ -918,8 +924,8 @@ docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraf
 - **Enter**: single-line inputs send on Enter (Ctrl+Enter too; Shift+Enter = new line); multi-line inputs
   make Enter a new line and send on Ctrl+Enter (`TextKeys.enter`).
 - **Console**: plain text asks "Create a goal …? Enter again" (the second Enter creates it; `/goal`
-  skips; with several repos the repo chooser is the confirm); a console opened at a terminal sends goals to
-  its building's repo.
+  skips; with several repos the repo chooser is the confirm); a held Enter (OS key repeat) never counts
+  as that second Enter. A console opened at a terminal sends goals to its building's repo.
 
 ## Tools (repo `tools/`, Node 22, local `ws` dependency: run `npm install` in tools/ once)
 
