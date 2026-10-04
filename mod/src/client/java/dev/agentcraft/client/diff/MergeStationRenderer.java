@@ -6,6 +6,9 @@ import dev.agentcraft.AgentCraft;
 import dev.agentcraft.block.FacingEntityBlock;
 import dev.agentcraft.block.ModBlocks;
 import dev.agentcraft.block.entity.MergeStationBlockEntity;
+import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Displays;
+import dev.agentcraft.building.Routing;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
@@ -105,6 +108,42 @@ public class MergeStationRenderer extends StationRenderer<MergeStationBlockEntit
 		return queue;
 	}
 
+	private static final Map<String, List<Decision>> BY_BUILDING = new HashMap<>();
+	private static long byBuildingRevision = -1;
+	private static long byBuildingSites = Long.MIN_VALUE;
+
+	/**
+	 * The merges a station shows (docs/BUILDINGS.md "Per-building displays"): in a building, those of its repos (the
+	 * home building also repos without a building); outside every building (the HQ studio), all ({@link #queue()}).
+	 * Cached per Foreman revision and building. Client thread.
+	 */
+	public static List<Decision> queueAt(Level level, BlockPos pos) {
+		Routing.Site site = Routing.siteAt(Buildings.sites(), level.dimension().identifier().toString(), pos.getX(), pos.getY(), pos.getZ(), 0);
+		List<Decision> all = queue();
+		if (site == null) {
+			return all;
+		}
+		ForemanState st = Foreman.state();
+		long rev = st == null ? -1 : st.revision();
+		if (rev != byBuildingRevision || Buildings.regionsSignature() != byBuildingSites) {
+			BY_BUILDING.clear();
+			byBuildingRevision = rev;
+			byBuildingSites = Buildings.regionsSignature();
+		}
+		return BY_BUILDING.computeIfAbsent(site.buildingId(), k -> {
+			List<Routing.Site> sites = Buildings.sites();
+			List<Decision> out = new ArrayList<>();
+			for (Decision d : all) {
+				String repo = dev.agentcraft.client.leads.Leads.decisionRepo(st, d);
+				boolean hasBuilding = repo != null && sites.stream().anyMatch(x -> x.repos().contains(repo));
+				if (Displays.mergeShows(site.repos(), site.home(), repo, hasBuilding)) {
+					out.add(d);
+				}
+			}
+			return List.copyOf(out);
+		});
+	}
+
 	/** Position of this station in its row, counted from the viewer's left (0 = first). */
 	public static int rowIndex(Level level, BlockPos pos, BlockState state) {
 		if (!state.hasProperty(FacingEntityBlock.FACING)) {
@@ -133,7 +172,7 @@ public class MergeStationRenderer extends StationRenderer<MergeStationBlockEntit
 			return;
 		}
 		s.light = LightCoordsUtil.getLightCoords(level, be.getBlockPos().above());
-		List<Decision> q = queue();
+		List<Decision> q = queueAt(level, be.getBlockPos());
 		int k = rowIndex(level, be.getBlockPos(), be.getBlockState());
 		s.index = k;
 		s.count = q.size();

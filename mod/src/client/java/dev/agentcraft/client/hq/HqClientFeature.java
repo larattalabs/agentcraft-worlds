@@ -71,6 +71,7 @@ public final class HqClientFeature {
 			JsonObject rj = new JsonObject();
 			rj.addProperty("layout", r.layout().name());
 			rj.addProperty("building", r.building());
+			rj.addProperty("dimension", r.dimension());
 			Anchors.Bounds a = r.area();
 			rj.addProperty("area", a.minX() + "," + a.minY() + "," + a.minZ() + " .. " + a.maxX() + "," + a.maxY() + "," + a.maxZ());
 			regions.add(rj);
@@ -88,6 +89,16 @@ public final class HqClientFeature {
 			JsonObject lamps = new JsonObject();
 			w.lamps().forEach((k, v) -> lamps.addProperty(k, v.getSerializedName()));
 			o.add("lamps", lamps);
+			JsonObject goals = new JsonObject();
+			w.goalIn().forEach((k, v) -> goals.addProperty(k, v.getSerializedName()));
+			o.add("goalLampByBuilding", goals);
+			JsonArray merges = new JsonArray();
+			w.mergeIn().forEach(merges::add);
+			o.add("mergeActiveIn", merges);
+			o.addProperty("mergeHome", w.mergeHome());
+			JsonObject routed = new JsonObject();
+			w.routed().forEach(routed::addProperty);
+			o.add("routed", routed);
 			o.addProperty("podiumOpen", w.podiumOpen());
 			o.addProperty("homePodiumOpen", w.homePodiumOpen());
 			com.google.gson.JsonArray in = new com.google.gson.JsonArray();

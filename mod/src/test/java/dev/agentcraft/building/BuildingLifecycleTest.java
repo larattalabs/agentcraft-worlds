@@ -166,4 +166,27 @@ class BuildingLifecycleTest {
 		assertTrue(LeadRouting.podiumShowsTarget("b3", "b1", "b3"));
 		assertFalse(LeadRouting.podiumShowsTarget("b3", "b1", null));
 	}
+
+	@Test
+	void displaysShowTheirBuildingsWork() {
+		assertTrue(Displays.monitorLit(true, "building:b2", "building:b2"));
+		assertFalse(Displays.monitorLit(true, "building:b1", "building:b2")); // kit works in b1: b2's monitor stays dim
+		assertFalse(Displays.monitorLit(true, null, "building:b2"));
+		assertFalse(Displays.monitorLit(false, "building:b2", "building:b2"));
+		List<String> b2 = List.of("api", "web");
+		assertTrue(Displays.mergeShows(b2, false, "api", true));
+		assertFalse(Displays.mergeShows(b2, false, "docs", true));
+		assertFalse(Displays.mergeShows(b2, false, null, false)); // no repo: home only
+		assertTrue(Displays.mergeShows(List.of("x"), true, null, false));
+		assertTrue(Displays.mergeShows(List.of("x"), true, "loose", false)); // a repo without a building: home
+		assertFalse(Displays.mergeShows(List.of("x"), true, "api", true));
+		assertTrue(Displays.mergeShows(null, false, "anything", true)); // the studio shows all
+		java.util.function.Predicate<String> built = r -> r.equals("api") || r.equals("x");
+		assertTrue(Displays.goalBelongs("marlow", List.of("api"), "ada", b2, false, built));
+		assertTrue(Displays.goalBelongs("ada", List.of(), "ada", b2, false, built)); // led by the building's lead
+		assertFalse(Displays.goalBelongs("marlow", List.of("x"), "ada", b2, false, built));
+		assertTrue(Displays.goalBelongs("marlow", List.of(), null, List.of("x"), true, built)); // no repo: home
+		assertTrue(Displays.goalBelongs("marlow", List.of("loose"), null, List.of("x"), true, built));
+		assertFalse(Displays.goalBelongs("marlow", List.of("api"), null, List.of("x"), true, built));
+	}
 }

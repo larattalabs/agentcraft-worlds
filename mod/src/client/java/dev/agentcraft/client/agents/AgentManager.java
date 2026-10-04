@@ -395,6 +395,11 @@ public final class AgentManager {
 		return true;
 	}
 
+	/** Agent id -> the name of the layout it is routed to (spawned agents of the player's level). Client thread. */
+	public Map<String, String> routedLayouts() {
+		return Map.copyOf(agentLayouts);
+	}
+
 	/** Agents walking out to despawn (released leads). Client thread. */
 	public Set<String> departingIds() {
 		return Set.copyOf(departing.keySet());
