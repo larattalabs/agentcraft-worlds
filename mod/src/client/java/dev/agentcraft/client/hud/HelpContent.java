@@ -45,7 +45,7 @@ public final class HelpContent {
 	public static final List<Interaction> INTERACTIONS = List.of(
 		new Interaction("Decision podium", "right-click: answer the decisions of this building's team"),
 		new Interaction("Task board", "right-click a card: that task (status, assignee, PR)"),
-		new Interaction("Monitor", "shows its agent's live log (look at it)"),
+		new Interaction("Monitor", "shows its agent's live log; right-click (empty hand): its full log in the Inbox"),
 		new Interaction("Console terminal", "right-click, or look at it and press the terminal key: the console for this building's repo"),
 		new Interaction("Library", "right-click a memory archive, catalog or a lectern inside a building: the team's notes and plan"),
 		new Interaction("Merge station", "right-click: review the merge it shows (diff, then Merge / Request changes)"),

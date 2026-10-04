@@ -73,7 +73,7 @@ public final class WelcomeScreen extends Screen implements dev.agentcraft.client
 	}
 
 	private List<KeyLine> keyLines() {
-		return List.of(new KeyLine(HelpContent.key(Keys.hub, "H"), "the hub: buildings, goals, team, settings, status"),
+		return List.of(new KeyLine(HelpContent.key(Keys.hub, "H"), "the hub: inbox, buildings, goals, team, settings, status"),
 			new KeyLine(HelpContent.key(Keys.decisions, "J"), "answer your team's decisions"),
 			new KeyLine(HelpContent.key(Keys.console, "`"), "the console: talk to the team, give goals"));
 	}
