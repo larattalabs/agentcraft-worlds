@@ -77,18 +77,55 @@ export function connectorAllowed(name: string, allowed: string[]): boolean {
   return allowed.some((a) => n.includes(a.toLowerCase()));
 }
 
+/** Where an MCP tool comes from, as the CLI reports it on hook input (`mcp_server`). */
+export interface McpProvenance {
+  name: string;
+  source: string;
+}
+
+export interface McpGate {
+  /** claude.ai connectors the user enabled (claude.context.connectors, matched by name) */
+  connectors: string[];
+  /** MCP servers the Foreman configured for the session: "agentcraft" and claude.context.mcpServers */
+  servers: string[];
+}
+
 /**
- * PreToolUse hook (both permission modes, when claude.context.connectors is set): tools of claude.ai
- * connectors the user did not list are refused. Keyed on the server's `source`, not its name.
+ * Fail-closed gate for MCP tools (every turn, both permission modes). An `mcp__*` tool runs only when
+ * it belongs to a server the Foreman configured itself (the team tools server or one of
+ * claude.context.mcpServers, never with claude.ai provenance), or to a claude.ai connector the user
+ * listed, with matching provenance. Anything else is refused: a connector that loaded although it
+ * is not listed, a server from a plugin or the user's own settings, and any MCP tool whose
+ * provenance is missing and whose name is not one of the configured servers.
  */
-export function connectorHook(allowed: string[], report: (toolName: string, server: string) => void): HookCallback {
+export function mcpGate(toolName: string, prov: McpProvenance | undefined, gate: McpGate): { allow: true } | { allow: false; server: string; reason: string } {
+  if (!toolName.startsWith('mcp__')) return { allow: true };
+  const named = gate.servers.find((s) => toolName.startsWith(`mcp__${s}__`));
+  if (prov) {
+    if (prov.source === 'claudeai') {
+      if (connectorAllowed(prov.name, gate.connectors)) return { allow: true };
+      return { allow: false, server: prov.name, reason: `The claude.ai connector "${prov.name}" is not enabled for AgentCraft agents (claude.context.connectors).` };
+    }
+    if (gate.servers.includes(prov.name) && (!named || named === prov.name)) return { allow: true };
+    return { allow: false, server: prov.name, reason: `The MCP server "${prov.name}" (${prov.source}) is not configured for AgentCraft agents (claude.context.mcpServers).` };
+  }
+  if (named) return { allow: true };
+  const server = toolName.slice(5).split('__')[0] || toolName;
+  return { allow: false, server, reason: `The MCP tool ${toolName} has no known origin and is not from a server AgentCraft configured, so it is refused.` };
+}
+
+/**
+ * PreToolUse hook (every turn, both permission modes): mcpGate. Keyed on the server's provenance
+ * (`source`), not its name, and fail-closed when provenance is missing.
+ */
+export function connectorHook(gate: McpGate | (() => McpGate), report: (toolName: string, server: string) => void): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== 'PreToolUse') return {};
-    const server = (input as { mcp_server?: { name: string; source: string } }).mcp_server;
-    if (!server || server.source !== 'claudeai' || connectorAllowed(server.name, allowed)) return {};
-    report(input.tool_name, server.name);
-    const reason = `The claude.ai connector "${server.name}" is not enabled for AgentCraft agents (claude.context.connectors).`;
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
+    const prov = (input as { mcp_server?: McpProvenance }).mcp_server;
+    const v = mcpGate(input.tool_name, prov, typeof gate === 'function' ? gate() : gate);
+    if (v.allow) return {};
+    report(input.tool_name, v.server);
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } };
   };
 }
 

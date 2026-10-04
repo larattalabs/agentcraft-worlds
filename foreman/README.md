@@ -252,7 +252,10 @@ repo hooks would run ahead of, or outside, the permission policy. What they do g
   loaded with the Skill tool. Everything a skill then does goes through the normal permission checks.
 - **claude.ai connectors** (`connectors`, e.g. `["monday.com"]`): with a claude.ai login the CLI
   would also load the account's connectors (mail, calendars, accounting...). By default agents get
-  none (`strictMcpConfig`); listed ones load, and tools of any other connector are refused.
+  none (`strictMcpConfig`); listed ones load. On every turn a fail-closed gate refuses any `mcp__*`
+  tool that is not from the team tools server, one of `mcpServers`, or a listed connector with
+  matching claude.ai provenance (a tool whose provenance is missing is refused unless its name is
+  one of the configured servers).
 - **Earlier sessions** (`sessionHistory: true`, or `{ "enabled": true, "days": 60 }`): agents can
   search and read your earlier Claude Code / Claude Desktop sessions (`find_sessions`, `read_session`)
   from `~/.claude/projects`, only those whose folder is a registered repo, its workspace folder, or a

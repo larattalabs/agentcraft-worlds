@@ -1180,7 +1180,7 @@ export class ClaudeBackend implements Backend {
    * Permission mode, tools, guardrail hook and the user's rules for one turn (claude.permissions,
    * claude.subagents). Policy mode keeps upstream's behaviour: every call through canUseTool.
    */
-  private permissionOptions(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle, repoId?: string): Partial<Options> {
+  private permissionOptions(agentId: string, role: 'lead' | 'worker', cwd: string, turn: TurnHandle, repoId?: string, mcpServers?: string[]): Partial<Options> {
     const p = this.cfg.permissions;
     const sub = this.subagentsOn(repoId);
     const settings = repoId ? this.fm.repos.settingsFor(repoId) : {};
@@ -1205,7 +1205,15 @@ export class ClaudeBackend implements Backend {
         ],
       },
     ];
-    if (connectors.length) hooks.push({ hooks: [connectorHook(connectors, (tool, server) => this.fm.agentLog(agentId, 'error', `blocked ${tool}: connector "${server}" is not enabled`))] });
+    // MCP tools: only the Foreman's own servers and the connectors listed, fail-closed (every turn)
+    hooks.push({
+      hooks: [
+        connectorHook(
+          () => ({ connectors: mcpServers ? [] : this.cfg.context.connectors, servers: mcpServers ?? [MCP_SERVER, ...Object.keys(this.cfg.context.mcpServers)] }),
+          (tool, server) => this.fm.agentLog(agentId, 'error', `blocked ${tool}: MCP server "${server}" is not enabled for agents`),
+        ),
+      ],
+    });
     if (p.mode === 'auto') {
       const guard = guardrailHook(
         (tool, input) => classifyToolUse(tool, input, this.policyContext(agentId, role, cwd, repoId)),
@@ -1489,7 +1497,7 @@ export class ClaudeBackend implements Backend {
   private async doAuxTurn(spec: AuxTurnSpec, entry: Running): Promise<{ stats: TurnStats; reason?: AbortReason }> {
     const { logId, cwd } = spec;
     const turn: TurnHandle = { signal: entry.abort.signal, reason: () => entry.reason };
-    const { agents: _subagents, ...perm } = this.permissionOptions(logId, 'worker', cwd, turn);
+    const { agents: _subagents, ...perm } = this.permissionOptions(logId, 'worker', cwd, turn, undefined, Object.keys(spec.mcpServers));
     const off = new Set(['Agent', 'Task', 'WebFetch', 'WebSearch', 'Skill']);
     const options: Options = {
       cwd,
