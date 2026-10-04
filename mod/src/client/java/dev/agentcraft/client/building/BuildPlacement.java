@@ -56,7 +56,10 @@ public final class BuildPlacement {
 	/** The placement (or plot-marking) HUD panel drawn last frame (x, y, w, h) or null: toasts stop above it. */
 	public static int @org.jspecify.annotations.Nullable [] hudRect() {
 		int[] r = PlacementHud.lastRect;
-		return r != null ? r : PlotHud.lastRect;
+		if (r == null) {
+			r = PlotHud.lastRect;
+		}
+		return r != null ? r : dev.agentcraft.client.road.RoadsFeature.hudRect(); // the road preview's panel
 	}
 
 	static final int REACH = 64;

@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -97,9 +98,11 @@ public final class Roads {
 			reconcile(server);
 			changed();
 		});
+		ServerTickEvents.END_SERVER_TICK.register(server -> CellDrops.tick());
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			state = State.EMPTY;
 			loadFailed = false;
+			CellDrops.LATER.clear();
 			changed();
 		});
 	}
@@ -301,15 +304,12 @@ public final class Roads {
 		map.put(id, road);
 		commit(level.getServer(), new State(Collections.unmodifiableMap(map), s.next() + 1, s.pending()));
 		// the blocks last: a crash before this leaves a record whose cells do not hold the road (Remove then leaves them)
-		Anchors.Bounds box = plan.box();
-		Buildings.Drops drops = box == null ? null : Buildings.Drops.before(level, box);
+		CellDrops drops = CellDrops.before(level, ops);
 		for (int i = 0; i < ops.size(); i++) {
 			RoadPlan.Op op = ops.get(i);
 			level.setBlock(m.set(op.x(), op.y(), op.z()), after.get(i), FLAGS);
 		}
-		if (drops != null) {
-			drops.clearNew(level);
-		}
+		drops.clearNew(level);
 		lastNote = plan.notes().isEmpty() ? null : String.join("; ", plan.notes());
 		AgentCraft.LOGGER.info("Laid road {} {} -> {} in {}: {} cells, {} changes, {} lanterns{}", id, a, b, dim, road.cellCount(), ops.size(),
 			road.lanternCount(), lastNote == null ? "" : " (" + lastNote + ")");
@@ -421,6 +421,91 @@ public final class Roads {
 		return null;
 	}
 
+	/**
+	 * The dropped items and XP a road change might make, cleared afterwards (now and 3 ticks later), but only those that
+	 * are new and lie within a block of a changed cell: a road's box can span the whole village, and the player's own drops
+	 * there (a mob they killed, an item they threw, a farm's output) are never touched. The flags already suppress drops;
+	 * this is the backstop.
+	 */
+	static final class CellDrops {
+		static final List<Object[]> LATER = new ArrayList<>();
+		private final AABB area;
+		private final LongSet cells;
+		private final java.util.Set<java.util.UUID> before = new java.util.HashSet<>();
+
+		private CellDrops(AABB area, LongSet cells) {
+			this.area = area;
+			this.cells = cells;
+		}
+
+		static CellDrops before(ServerLevel level, List<RoadPlan.Op> ops) {
+			LongOpenHashSet cells = new LongOpenHashSet();
+			for (RoadPlan.Op op : ops) {
+				cells.add(WalkCell.pack(op.x(), op.y(), op.z()));
+			}
+			Anchors.Bounds b = RoadPlan.box(ops);
+			AABB area = b == null ? new AABB(0, 0, 0, 0, 0, 0) : Occupancy.aabb(b).inflate(1);
+			CellDrops d = new CellDrops(area, cells);
+			if (b != null) {
+				level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, area).forEach(e -> d.before.add(e.getUUID()));
+				level.getEntitiesOfClass(net.minecraft.world.entity.ExperienceOrb.class, area).forEach(e -> d.before.add(e.getUUID()));
+			}
+			return d;
+		}
+
+		void clearNew(ServerLevel level) {
+			if (cells.isEmpty()) {
+				return;
+			}
+			clear(level);
+			LATER.add(new Object[] {this, level, 3});
+		}
+
+		private boolean near(Entity e) {
+			BlockPos p = e.blockPosition();
+			for (int dx = -1; dx <= 1; dx++) {
+				for (int dy = -1; dy <= 1; dy++) {
+					for (int dz = -1; dz <= 1; dz++) {
+						if (cells.contains(WalkCell.pack(p.getX() + dx, p.getY() + dy, p.getZ() + dz))) {
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		}
+
+		private int clear(ServerLevel level) {
+			int n = 0;
+			for (Entity e : level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, area)) {
+				if (!before.contains(e.getUUID()) && near(e)) {
+					e.discard();
+					n++;
+				}
+			}
+			for (Entity e : level.getEntitiesOfClass(net.minecraft.world.entity.ExperienceOrb.class, area)) {
+				if (!before.contains(e.getUUID()) && near(e)) {
+					e.discard();
+					n++;
+				}
+			}
+			return n;
+		}
+
+		static void tick() {
+			for (var it = LATER.iterator(); it.hasNext();) {
+				Object[] x = it.next();
+				int left = (Integer) x[2] - 1;
+				if (left > 0) {
+					x[2] = left;
+					continue;
+				}
+				it.remove();
+				((CellDrops) x[0]).clear((ServerLevel) x[1]);
+			}
+		}
+	}
+
 	// ------------------------------------------------------------------ remove
 
 	/**
@@ -494,14 +579,11 @@ public final class Roads {
 			to.add(e.before());
 		}
 		refuseOccupied(level, ops, to, "removing it");
-		Anchors.Bounds box = RoadPlan.box(ops);
-		Buildings.Drops drops = box == null ? null : Buildings.Drops.before(level, box);
+		CellDrops drops = CellDrops.before(level, ops);
 		for (Entry e : restore) {
 			level.setBlock(m.set(e.x(), e.y(), e.z()), e.before(), FLAGS);
 		}
-		if (drops != null) {
-			drops.clearNew(level);
-		}
+		drops.clearNew(level);
 		Path kept = snap.resolveSibling(id + ".removed-" + System.currentTimeMillis() + ".nbt");
 		try {
 			Files.move(snap, kept, StandardCopyOption.ATOMIC_MOVE);

@@ -440,7 +440,8 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   first: you at 12, 65, -3"). Order: the snapshot (written atomically, read back), the record, then the blocks.
 - **Blocks are set** with `UPDATE_CLIENTS | UPDATE_SKIP_ALL_SIDEEFFECTS`: no neighbour or shape updates (nothing next
   to the road pops or reconnects), no drops, no `onPlace` (gravel never ticks), no block-entity side effects. New item
-  and XP entities around the road are cleared anyway (`Buildings.Drops`, as for buildings). Lanterns light the road
+  and XP entities within a block of a changed cell are cleared anyway, right after and 3 ticks later (`Roads.CellDrops`;
+  only new ones near the cells: a road's box can span the village, and the player's own drops there are never touched). Lanterns light the road
   (light updates still run). Like a building's blocks, the road's blocks come from the mod (no items are taken or given).
 - **Records**: `<world>/agentcraft-roads.json` `{version: 1, next, roads: [{id: "r<n>", a, b, dimension, width,
   lanterns, bridge, created, length (route cells), cells: [x, feetY, z, ...], lanternCells, changes: [x, y, z, ...],

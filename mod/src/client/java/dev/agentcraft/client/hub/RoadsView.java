@@ -275,9 +275,8 @@ final class RoadsView {
 		s.button(g, "road_plan", again, bx, dy, s.bw(again), false, rs0 != null && "planning".equals(rs0.status), false, mx, my,
 			() -> RoadsFeature.plan(p.a(), p.b(), true));
 		dy += 24;
-		dy = drawNote(g, font, dx, dy, dw, y + h, !sp ? "Singleplayer only: roads are laid through the integrated server."
-			: "Lay road… shows it in the world first: tan is paved, orange cleared, red left out. Enter lays it; Remove puts it all back. "
-				+ (RoadsFeature.bridge() ? "Shallow water gets a plank bridge." : "Shallow water is skipped (Bridges: Off)."));
+		dy = drawNote(g, font, dx, dy, dw, y + h, !sp ? "Singleplayer only: laid through the integrated server."
+			: "Shows the road first: tan paved, orange cleared, red left out. Enter lays it.");
 		RoadsFeature.reportUi(dy - y, h);
 	}
 
@@ -310,7 +309,7 @@ final class RoadsView {
 		return y;
 	}
 
-	/** The note under the buttons: the last outcome here, else {@code hint}; never past the pane's bottom. */
+	/** The note under the buttons: the last outcome here, else {@code hint}; never drawn past the pane's bottom. */
 	private int drawNote(GuiGraphicsExtractor g, Font font, int x, int y, int w, int bottom, @Nullable String hint) {
 		String text = note != null ? note : hint;
 		int color = note != null ? (noteError ? UiBits.errorText() : UiBits.okText()) : UiBits.muted();
@@ -321,11 +320,11 @@ final class RoadsView {
 		if (text == null) {
 			return y;
 		}
+		// returns where the full note ends (the layout report counts what did not fit; the drawing stops at the pane's bottom)
 		for (String line : TextUtil.wrapPlain(font, text, w)) {
-			if (y > bottom - 10) {
-				break;
+			if (y <= bottom - 10) {
+				g.text(font, line, x, y, color, false);
 			}
-			g.text(font, line, x, y, color, false);
 			y += 10;
 		}
 		return y;

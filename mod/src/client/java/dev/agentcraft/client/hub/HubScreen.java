@@ -839,6 +839,7 @@ public final class HubScreen extends Screen {
 			}
 			sx += sw + 4;
 		}
+		dev.agentcraft.client.road.RoadsFeature.reportStrip(sx - x + bw(sub == Sub.DESIGNS ? "Design new…" : "Place new…"), w);
 		if (sub == Sub.DESIGNS) {
 			String dn = "Design new…";
 			button(g, "design_new", dn, x + w - bw(dn), y, bw(dn), true, HubFeature.designNew == null, false, mx, my, this::designNew);

@@ -23,17 +23,21 @@ final class RoadHud implements HudElement {
 	private static final long STATUS_MS = 8000;
 	private static final int RED = 0xFFF07060;
 	private static final int ORANGE = 0xFFF0A060;
+	/** The panel drawn last frame (x, y, w, h), null when hidden: toasts stop above it ({@code BuildPlacement.hudRect}). */
+	static volatile int @org.jspecify.annotations.Nullable [] lastRect;
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
 		Minecraft mc = Minecraft.getInstance();
 		if (mc.player == null || mc.gui.screen() != null) {
+			lastRect = null;
 			return;
 		}
 		RoadsFeature.Preview pv = RoadsFeature.preview();
 		RoadsFeature.Result last = RoadsFeature.last();
 		boolean fresh = last != null && System.currentTimeMillis() - RoadsFeature.lastAt() < STATUS_MS && "lay".equals(last.action());
 		if (pv == null && !fresh) {
+			lastRect = null;
 			return;
 		}
 		Font font = mc.font;
@@ -86,6 +90,7 @@ final class RoadHud implements HudElement {
 			boolean bars = mc.gameMode != null && mc.gameMode.getPlayerMode().isSurvival();
 			y = Math.max(g.guiHeight() / 2 + 8, g.guiHeight() - (bars ? 50 : 26) - h);
 		}
+		lastRect = new int[] {x, y, w, h};
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h, 0xF0FFFFFF);
 		int ty = y + p.top();
 		for (Object[] l : lines) {

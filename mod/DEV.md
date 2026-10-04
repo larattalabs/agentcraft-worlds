@@ -647,7 +647,9 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; `OutdoorPlannerTest.road
   orphan}], pending[], pairs[{a, b, key, distance, road, route: not planned|planning|found|failed, length?, routeCells?, why?}],
   options{width, lanterns, bridge}, offers{roadId: why}, orphans[], preview{a, b, cells, ops, blocks{dirt_path, gravel, air,
   fence, lantern, ...}, lanterns, skipped{reason: n}, notes[], halfSteps, bridgeCells, keptCells, refusal, box, planMicros},
-  last{action, roadId, ok, message}, ghost{lastFrameQuads, lastFrameMicros, frames}, ui{drawn, needed, available, overflow}}`.
+  last{action, roadId, ok, message}, ghost{lastFrameQuads, lastFrameMicros, frames}, ui{drawn, needed, available, overflow, strip{needed, available, overflow},
+  hudShown}}` (`ui.needed` counts the whole note, also when it is cut at the pane's bottom; `strip` = the Buildings tab's
+  list switch with Place new…/Design new…).
 - `dev.roads.plan {a, b, fresh?}` -> the road route only `{status, length, cells, why?}`.
 - `dev.roads.preview {a, b, width?, lanterns?, bridge?}` plans the route and shows the ghost (closes screens; Enter lays,
   Esc cancels); `{cancel:true}` hides it. Replies with the client's plan (what the server will do unless the world changes).

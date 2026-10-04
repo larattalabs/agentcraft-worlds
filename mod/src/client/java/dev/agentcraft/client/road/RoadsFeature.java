@@ -528,6 +528,20 @@ public final class RoadsFeature {
 		uiDrawn = true;
 	}
 
+	/** The Buildings tab's list switch (Buildings / Blueprints / Designs / Roads + Place new…) reports its fit (dev.roads.state ui.strip). */
+	public static void reportStrip(int needed, int available) {
+		stripNeeded = needed;
+		stripAvailable = available;
+	}
+
+	private static int stripNeeded;
+	private static int stripAvailable;
+
+	/** The road HUD panel drawn last frame (x, y, w, h), or null: toasts keep clear of it. */
+	public static int @Nullable [] hudRect() {
+		return RoadHud.lastRect;
+	}
+
 	// ------------------------------------------------------------------ DevBridge
 
 	static JsonObject planJson(RoadPlan.Plan p) {
@@ -645,6 +659,13 @@ public final class RoadsFeature {
 		ui.addProperty("needed", uiNeeded);
 		ui.addProperty("available", uiAvailable);
 		ui.addProperty("overflow", uiNeeded > uiAvailable);
+		JsonObject strip = new JsonObject();
+		strip.addProperty("needed", stripNeeded);
+		strip.addProperty("available", stripAvailable);
+		strip.addProperty("overflow", stripNeeded > stripAvailable);
+		ui.add("strip", strip);
+		int[] hr = RoadHud.lastRect;
+		ui.addProperty("hudShown", hr != null);
 		o.add("ui", ui);
 		return o;
 	}
