@@ -727,12 +727,66 @@ public final class RoadsFeature {
 				return DevBridge.onClient(mc, () -> a == null || b == null ? layPreview() : lay(a, b, o)).thenCompose(x -> x)
 					.thenApply(RoadsFeature::resultJson);
 			});
-		DevBridge.register("dev.roads.remove", 30_000, "{id, forget?: false} - remove a road (each cell it changed and nobody touched since gets its old "
-			+ "block back); forget:true drops the record and leaves the blocks -> {action, roadId, ok, message}", (req, mc) -> {
+		DevBridge.register("dev.roads.remove", 30_000, "{road, forget?: false} - remove a road (road = its id, r<n>; the field is not `id`, the request id): each cell it changed "
+			+ "and nobody touched since gets its old block back; forget:true drops the record and leaves the blocks -> {action, roadId, ok, message}", (req, mc) -> {
 				Fields f = Fields.of(req);
-				String id = f.nonBlank("id");
+				// "id" is the DevBridge's request id (reserved, echoed back): a road named there never reached this handler
+				String id = f.nonBlank("road");
 				boolean forget = f.optBool("forget", false);
 				return DevBridge.onClient(mc, () -> forget ? forget(id) : remove(id)).thenCompose(x -> x).thenApply(RoadsFeature::resultJson);
+			});
+		DevBridge.register("dev.roads.blocks", 30_000, "{x0, y0, z0, x1, y1, z1} - QA: the block states of a box in the overworld, read on the "
+			+ "integrated server (at most 262144 cells) -> {box, palette[state], cells: palette index per cell, x fastest then z then y, "
+			+ "blockEntities} (compare a road's area before laying and after removing it)", (req, mc) -> {
+				Fields f = Fields.of(req);
+				int x0 = (int) f.integer("x0", -30_000_000, 30_000_000);
+				int y0 = (int) f.integer("y0", -30_000_000, 30_000_000);
+				int z0 = (int) f.integer("z0", -30_000_000, 30_000_000);
+				int x1 = (int) f.integer("x1", -30_000_000, 30_000_000);
+				int y1 = (int) f.integer("y1", -30_000_000, 30_000_000);
+				int z1 = (int) f.integer("z1", -30_000_000, 30_000_000);
+				int ax = Math.min(x0, x1);
+				int bx = Math.max(x0, x1);
+				int ay = Math.min(y0, y1);
+				int by = Math.max(y0, y1);
+				int az = Math.min(z0, z1);
+				int bz = Math.max(z0, z1);
+				long n = (long) (bx - ax + 1) * (by - ay + 1) * (bz - az + 1);
+				if (n > 262_144) {
+					throw new DevBridge.DevException("box too big: " + n + " cells (at most 262144)");
+				}
+				return ServerTasks.callOnServer(server -> {
+					net.minecraft.server.level.ServerLevel lv = server.overworld();
+					Map<net.minecraft.world.level.block.state.BlockState, Integer> ids = new LinkedHashMap<>();
+					JsonArray palette = new JsonArray();
+					JsonArray cells = new JsonArray();
+					int bes = 0;
+					net.minecraft.core.BlockPos.MutableBlockPos m = new net.minecraft.core.BlockPos.MutableBlockPos();
+					for (int y = ay; y <= by; y++) {
+						for (int z = az; z <= bz; z++) {
+							for (int x = ax; x <= bx; x++) {
+								m.set(x, y, z);
+								var s = lv.getBlockState(m);
+								Integer id = ids.get(s);
+								if (id == null) {
+									id = ids.size();
+									ids.put(s, id);
+									palette.add(s.toString());
+								}
+								cells.add(id);
+								if (s.hasBlockEntity()) {
+									bes++;
+								}
+							}
+						}
+					}
+					JsonObject o = new JsonObject();
+					o.addProperty("box", ax + "," + ay + "," + az + " .. " + bx + "," + by + "," + bz);
+					o.add("palette", palette);
+					o.add("cells", cells);
+					o.addProperty("blockEntities", bes);
+					return o;
+				});
 			});
 		DevBridge.register("dev.roads.plan", 60_000, "{a, b, fresh?: false} - plan just the road route between two buildings (no ghost) -> {status, "
 			+ "length, cells, why?}", (req, mc) -> {

@@ -177,6 +177,12 @@ public final class SpeechBubble {
 		return Cast.get(to) != null ? UiStyle.agentOnLight(to) : UiStyle.color("paper.link", UiStyle.CLAY_DARK);
 	}
 
+	/**
+	 * The text sits this far (pixel units, towards the camera) in front of the bubble's paper: on the paper's own plane
+	 * the polygon offset alone lost glyphs to the paper at stand-up distances (whole letters missing in screenshots).
+	 */
+	static final float TEXT_LIFT = 0.5f;
+
 	/** Total stacked height above the plate (body + tail + gap), px. */
 	static int stackHeight(Layout l) {
 		return l.height() + TAIL_H - 1 + GAP;
@@ -208,10 +214,13 @@ public final class SpeechBubble {
 		float ty = y0 + pad.top();
 		int ink = UiStyle.withAlpha(UiStyle.color("paper.text", UiStyle.INK), alpha);
 		int inner = l.width() - pad.left() - pad.right();
+		ps.pushPose();
+		ps.translate(0, 0, TEXT_LIFT);
 		for (int i = 0; i < l.lines().size(); i++) {
 			float tx = x0 + pad.left() + (inner - l.lineWidths()[i]) / 2f;
 			WorldUi.submitText(ps, c, l.lines().get(i), tx, ty + i * 10, ink, light);
 		}
+		ps.popPose();
 		ps.popPose();
 	}
 }

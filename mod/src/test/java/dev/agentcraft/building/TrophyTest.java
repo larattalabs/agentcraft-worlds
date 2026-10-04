@@ -44,6 +44,9 @@ class TrophyTest {
 	@Test
 	void mergeTrophy() {
 		assertEquals(List.of("Merged t12", "Fix the lamp", "", "2026-10-04"), TrophyText.lines(Trophy.merge("r", "t12", "Fix the lamp", DAY)));
+		// Markdown marks in a task title do not end up on the sign (the village board drops them too)
+		assertEquals(List.of("Merged t3", "notes list --tag +", "notes tags", "2026-10-04"),
+			TrophyText.lines(Trophy.merge("r", "t3", "`notes list --tag` + **`notes tags`**", DAY)));
 	}
 
 	@Test

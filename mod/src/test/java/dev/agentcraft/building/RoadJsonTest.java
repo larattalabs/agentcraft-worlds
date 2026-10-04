@@ -56,4 +56,31 @@ class RoadJsonTest {
 		assertEquals(Road.Settle.KEEP, Road.settle(0, 0, 40));
 		assertEquals(Road.Settle.RELEASE, Road.settle(0, 0, 0));
 	}
+
+	static Road walk(String id, long created, int... cells) {
+		return new Road(id, "b1", "b3", "minecraft:overworld", 2, true, false, created, cells.length / 3, cells, new int[0], new int[0], List.of());
+	}
+
+	@Test
+	void removingARoadHandsTheCellsAnotherRoadWalksOnToIt() {
+		// r6 walks over r3's cells at x 10..11 (feet y 65) and leaves at x 20; r3's changes: the path under x 10 and 11,
+		// the cleared cell above x 11, a lantern post beside x 11, and a stretch r6 never uses (x 30)
+		Road r6 = walk("r6", 2_000, 10, 65, 5, 11, 65, 5, 20, 70, 5);
+		int[] r3changes = {10, 64, 5, 11, 64, 5, 11, 66, 5, 11, 65, 6, 30, 64, 5, 10, 60, 5};
+		java.util.Map<Integer, String> h = Road.handover(r3changes, List.of(r6));
+		assertEquals(java.util.Map.of(0, "r6", 1, "r6", 2, "r6", 3, "r6"), h, "x 30 and the cell five below the feet go back");
+		// two roads over one cell: the nearer walker cell, then the newer road
+		Road r7 = walk("r7", 3_000, 11, 65, 6);
+		assertEquals("r7", Road.handover(new int[] {11, 64, 6}, List.of(r6, r7)).get(0));
+		assertEquals("r6", Road.handover(new int[] {11, 64, 5}, List.of(r6, r7)).get(0));
+		Road r8 = walk("r8", 4_000, 11, 65, 5);
+		assertEquals("r8", Road.handover(new int[] {11, 64, 5}, List.of(r6, r8)).get(0));
+		assertTrue(Road.handover(r3changes, List.of()).isEmpty());
+		// the receiving road owns them: its changes grow, so another road leaves them alone and its own removal restores them
+		Road more = r6.withChanges(new int[] {10, 64, 5});
+		assertEquals(r6.changeCount() + 1, more.changeCount());
+		assertArrayEquals(r6.cells(), more.cells());
+		// a removal whose cells were all handed over keeps an empty snapshot: the next start releases it (never brings it back)
+		assertEquals(Road.Settle.RELEASE, Road.settle(0, 0, 0));
+	}
 }

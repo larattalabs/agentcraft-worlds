@@ -765,6 +765,13 @@ public final class RoadPlan {
 			int dx = b[0] - a[0];
 			int dz = b[2] - a[2];
 			since += Math.abs(dx) > 1 || Math.abs(dz) > 1 ? 0 : dx != 0 && dz != 0 ? Math.sqrt(2) : 1;
+			if (taken.test(WalkCell.pack(b[0], b[1] - 1, b[2])) || taken.test(WalkCell.pack(b[0], b[1], b[2]))) {
+				// a stretch another road paved has that road's lanterns: none here (two posts side by side where a road ran
+				// along an older one), and the spacing starts again where this road leaves it
+				since = 0;
+				i++;
+				continue;
+			}
 			if (since + 1e-9 < LANTERN_SPACING || i >= centre.size() - 2) {
 				i++;
 				continue;

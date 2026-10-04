@@ -657,7 +657,8 @@ relayout snap, a building change, a released lead leaving, the level or the link
   `<bed>@lie` (the head cell centre, bed floor + 0.6875, vanilla's sleeping spot) and drawn in vanilla's sleeping pose
   (render state only: `Pose.SLEEPING`, `bedOrientation` = the bed's facing, posture `LIE`, head with the body, plate
   0.95 above it, "resting"). No bed free: the lounge slots (the plate still says "resting").
-- **Stand-ups**: `StandupTracker` sees a goal `ACTIVE` with open assigned tasks, waits 60 ticks for the rest of the
+- **Stand-ups**: `StandupTracker` sees a goal `ACTIVE` with open assigned tasks (its lead: the goal's, else the building's lead, else Marlow
+  when the goal's building is home: `Routines.standupLead`), waits 60 ticks for the rest of the
   first assignments, then the lead's building (where the lead is routed this tick, else the first routed worker)
   hosts it: `meeting` slots, else `user`. Skipped with a reason (history in `dev.routines.state`): toggle off, no
   participant routed here, no spot, the player > 64 blocks from the building box, the box's chunks not loaded. Gathered
@@ -724,13 +725,18 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
   fence, lantern, ...}, lanterns, skipped{reason: n}, notes[], halfSteps, bridgeCells, keptCells, refusal, box, planMicros},
   last{action, roadId, ok, message}, ghost{lastFrameQuads, lastFrameMicros, frames}, ui{drawn, needed, available, overflow, strip{needed, available, overflow, compact},
   hudShown}}` (`ui.needed` counts the whole note, also when it is cut at the pane's bottom; `strip` = the Buildings tab's
-  list switch with Place new…/Design new…; `compact` 0 = full labels, 1 = counts dropped, 2 = also "Place…"/"Design…").
+  list switch with Place new…/Design new…; `compact` 0 = full labels, 1 = counts dropped, 2 = also "Place…"/"Design…" ("Place board…" on Fixtures), 3 = "Place…" on Fixtures too:
+  426 GUI px needs it there).
 - `dev.roads.plan {a, b, fresh?}` -> the road route only `{status, length, cells, why?}`.
+- `dev.roads.blocks {x0, y0, z0, x1, y1, z1}` (QA, at most 262 144 cells) -> `{box, palette[], cells[], blockEntities}`: the overworld's
+  block states read on the integrated server (palette index per cell, x fastest, then z, then y). Dump a road's box before laying and
+  after removing it and compare: an exact restore is 0 differing cells (vanilla `/execute if blocks` is capped at 32 768 cells and a
+  `/clone` copy settles differently: water, falling blocks, leaves).
 - `dev.roads.preview {a, b, width?, lanterns?, bridge?}` plans the route and shows the ghost (closes screens; Enter lays,
   Esc cancels); `{cancel:true}` hides it. Replies with the client's plan (what the server will do unless the world changes).
 - `dev.roads.lay {a?, b?, width?, lanterns?, bridge?}`: lays through the integrated server (it checks and plans again);
   without `a`/`b` the shown preview (= Enter). `{ok, roadId, message}`; a refusal is `ok:false` with the reason.
-- `dev.roads.remove {id, forget?}`: Remove road (cells still as the road left them get their old blocks back); `forget`
+- `dev.roads.remove {road, forget?}` (`road` = the road id; `id` is the request id the bridge reserves): Remove road (cells still as the road left them get their old blocks back); `forget`
   drops the record and leaves the blocks.
 - Hub: `dev.hub.open {tab:"buildings", sub:"roads", roadRow:"pair:b1|b2"}` (or `road:r2`); buttons `road_width`,
   `road_lanterns`, `road_bridge`, `road_lay`, `road_plan`, `road_remove` (press twice), `road_keep`;
@@ -739,7 +745,7 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
   the next world start).
 - Gotchas: the client's preview can be stale (the server plans again; a route the ground has broken since refuses with
   "preview the road again"); a building placed later over a road keeps those cells on Remove road (they belong to the
-  building's snapshot now); a cell shared with an older road belongs to that road; Enter lays only the confirmed ghost
+  building's snapshot now); a cell shared with an older road belongs to that road until it is removed, then to the road still running there (`Road.handover`); Enter lays only the confirmed ghost
   (the server's plan must hash the same, else "The ground changed since the preview").
 - QA at small sizes: at GUI scale 2, 3 and 4 (and a ~426x240 GUI px window) open `dev.hub.open {tab:"buildings",
   sub:"roads"}`, check `dev.roads.state ui.strip.overflow` and `ui.overflow` are false and screenshot the strip (at scale 4

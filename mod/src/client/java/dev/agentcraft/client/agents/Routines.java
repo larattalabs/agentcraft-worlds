@@ -599,9 +599,27 @@ public final class Routines {
 	static List<StandupTracker.GoalView> goalViews(ForemanState st) {
 		List<StandupTracker.GoalView> out = new ArrayList<>();
 		for (Protocol.Goal g : st.goals().values()) {
-			out.add(new StandupTracker.GoalView(g.id(), g.createdAt(), g.status() == Protocol.GoalStatus.ACTIVE, g.leadId(), leadLine(st, g)));
+			out.add(new StandupTracker.GoalView(g.id(), g.createdAt(), g.status() == Protocol.GoalStatus.ACTIVE, standupLead(st, g), leadLine(st, g)));
 		}
 		return out;
+	}
+
+	/**
+	 * Who opens a goal's stand-up: the goal's lead; a goal without one (the sim's, a goal filed before leads) has the lead
+	 * its building shows in the hub: the building's own lead, else Marlow when the building is home ("Marlow (home)").
+	 * Before, such a stand-up had no lead, so nobody said the goal's line and only the workers spoke.
+	 */
+	static @Nullable String standupLead(ForemanState st, Protocol.Goal g) {
+		if (g.leadId() != null) {
+			return g.leadId();
+		}
+		dev.agentcraft.building.Building b = g.repoId() == null ? null : dev.agentcraft.building.Buildings.forRepo(g.repoId());
+		String lead = b == null ? null : dev.agentcraft.client.leads.Leads.view().leadOf(b.id());
+		if (lead != null) {
+			return lead;
+		}
+		boolean home = b == null || b.home();
+		return home && st.agents().containsKey(dev.agentcraft.building.LeadRouting.MARLOW) ? dev.agentcraft.building.LeadRouting.MARLOW : null;
 	}
 
 	/** What the lead says: its plan note's first line when there is one, else the goal's text. */
@@ -698,7 +716,7 @@ public final class Routines {
 					if (g == null || mc.level == null) {
 						throw new DevBridge.DevException("no goal '" + goalId + "'");
 					}
-					StandupTracker.GoalView gv = new StandupTracker.GoalView(g.id(), g.createdAt(), true, g.leadId(), leadLine(st, g));
+					StandupTracker.GoalView gv = new StandupTracker.GoalView(g.id(), g.createdAt(), true, standupLead(st, g), leadLine(st, g));
 					StandupTracker.Standup s = StandupTracker.build(gv, taskViews(st));
 					if (s == null) {
 						throw new DevBridge.DevException("goal " + goalId + " has no lead and no assigned open tasks");

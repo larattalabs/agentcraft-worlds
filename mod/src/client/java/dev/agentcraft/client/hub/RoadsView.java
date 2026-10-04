@@ -60,7 +60,17 @@ final class RoadsView {
 
 	/** Selects a row by id ({@code pair:b1|b2}, {@code road:r2}) and plans that pair's route when it has none yet. */
 	boolean select(String id) {
-		for (Row r : rows()) {
+		List<Row> rs = rows();
+		if (id.startsWith("road:") && rs.stream().noneMatch(r -> r.id().equals(id))) {
+			// a road between two standing buildings is listed under its pair: road:r2 selects that row
+			String roadId = id.substring("road:".length());
+			for (Row r : rs) {
+				if (r.pair() != null && r.pair().road() != null && r.pair().road().id().equals(roadId)) {
+					return select(r.id());
+				}
+			}
+		}
+		for (Row r : rs) {
 			if (r.id().equals(id)) {
 				if (!id.equals(selected)) {
 					armed = null;
