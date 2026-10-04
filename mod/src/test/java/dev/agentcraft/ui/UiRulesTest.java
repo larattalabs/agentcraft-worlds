@@ -120,4 +120,44 @@ class UiRulesTest {
 		assertEquals(2, UiRules.otherWorlds(List.of(new LeadWorld("ada", "HQ", 1), new LeadWorld("bo", "Hardcore", 2)), null).size(),
 			"no world loaded: all are other");
 	}
+
+	/** Regression (review): the off-hand pass of a sneak + empty-hand click on an agent is blocked too. */
+	@Test
+	void agentUseBlocksBothHandsWhileTargetable() {
+		assertSame(UiRules.AgentUse.OPEN_CARD, UiRules.agentUse(true, true, true));
+		assertSame(UiRules.AgentUse.BLOCK, UiRules.agentUse(false, true, true), "off hand: no shield/food use behind the card");
+		assertSame(UiRules.AgentUse.PASS, UiRules.agentUse(true, false, true));
+		assertSame(UiRules.AgentUse.PASS, UiRules.agentUse(false, false, true));
+		assertSame(UiRules.AgentUse.PASS, UiRules.agentUse(true, true, false));
+		assertSame(UiRules.AgentUse.PASS, UiRules.agentUse(false, true, false), "holding an item: off hand works normally");
+	}
+
+	/** Regression (review): a held Ctrl+Enter (OS repeat) or a quick double press never confirms a merge. */
+	@Test
+	void keyConfirmNeedsFreshPressAfterDelay() {
+		long armed = 10_000;
+		assertFalse(UiRules.keyConfirmReady(armed, armed + 100, false), "double press within 300 ms");
+		assertFalse(UiRules.keyConfirmReady(armed, armed + 600, true), "OS repeat of the held key");
+		assertTrue(UiRules.keyConfirmReady(armed, armed + UiRules.KEY_CONFIRM_MS, false));
+		assertFalse(UiRules.keyConfirmReady(0, armed, false), "never armed");
+	}
+
+	/** Regression (review): repeats are presses without a release; keys held at open are ignored until released. */
+	@Test
+	void keyRepeatTracking() {
+		UiRules.KeyRepeat r = new UiRules.KeyRepeat();
+		assertFalse(r.press(257, true), "first press");
+		assertTrue(r.press(257, true), "OS repeat");
+		r.release(257);
+		assertFalse(r.press(257, true), "fresh press after release");
+		r.heldAtOpen(335);
+		assertTrue(r.press(335, true), "held since the screen opened");
+		r.release(335);
+		assertFalse(r.press(335, true));
+		assertFalse(r.press(257, false), "synthetic presses (DevBridge) are never repeats");
+		assertFalse(r.press(257, false));
+		assertTrue(r.press(335, true));
+		r.reset();
+		assertFalse(r.press(335, true), "a release missed while another screen was open does not stick");
+	}
 }

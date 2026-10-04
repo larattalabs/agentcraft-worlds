@@ -18,6 +18,7 @@ import dev.agentcraft.client.foreman.Protocol.Worktree;
 import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
+import dev.agentcraft.ui.UiRules;
 import dev.agentcraft.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.List;
@@ -109,6 +110,8 @@ public final class DiffScreen extends Screen implements dev.agentcraft.client.ui
 	private long flashUntil;
 	private boolean flashError;
 	private long rejectArmedAt;
+	/** OS key repeats and keys held since the screen opened: never confirm a merge / reject (see UiRules.KeyRepeat). */
+	private final UiRules.KeyRepeat keyRepeat = new UiRules.KeyRepeat();
 	private @Nullable EditBox feedback;
 	private boolean swallowChar;
 	private final List<Btn> buttons = new ArrayList<>();
@@ -352,6 +355,13 @@ public final class DiffScreen extends Screen implements dev.agentcraft.client.ui
 
 	@Override
 	protected void init() {
+		// on open and on coming back from another screen (a release may have gone there): what is down now
+		keyRepeat.reset();
+		for (int k : new int[] {InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER, InputConstants.KEY_X}) {
+			if (InputConstants.isKeyDown(k)) {
+				keyRepeat.heldAtOpen(k);
+			}
+		}
 		int margin = width >= 900 ? 16 : width >= 560 ? 10 : 6;
 		pw = Math.min(width - 2 * margin, 1100);
 		ph = Math.min(height - 2 * Math.max(6, margin - 2), 640);
@@ -1531,6 +1541,9 @@ public final class DiffScreen extends Screen implements dev.agentcraft.client.ui
 	@Override
 	public boolean keyPressed(KeyEvent e) {
 		int k = e.input();
+		// an OS key repeat (a held Ctrl+Enter) or a key held since the screen opened
+		boolean repeat = keyRepeat.press(k, InputConstants.isKeyDown(k));
+		boolean confirmKey = k == InputConstants.KEY_RETURN || k == InputConstants.KEY_NUMPADENTER || k == InputConstants.KEY_X;
 		if (mode == Mode.FEEDBACK) {
 			if (e.isEscape()) {
 				cancelMode();
@@ -1558,12 +1571,22 @@ public final class DiffScreen extends Screen implements dev.agentcraft.client.ui
 		}
 		boolean shift = e.hasShiftDown();
 		boolean ctrl = e.hasControlDown();
+		if (repeat && confirmKey && mode != Mode.FEEDBACK) {
+			return true; // a repeat never arms or confirms anything; scrolling keys keep repeating
+		}
+		// a confirm by key needs a fresh press at least UiRules.KEY_CONFIRM_MS after arming (a double tap of
+		// Ctrl+Enter does not merge); the Confirm button itself is a separate click
+		boolean confirmReady = UiRules.keyConfirmReady(rejectArmedAt, System.currentTimeMillis(), repeat);
 		if (mode == Mode.CONFIRM_MERGE && (k == InputConstants.KEY_RETURN || k == InputConstants.KEY_NUMPADENTER)) {
-			act("merge_confirm");
+			if (confirmReady) {
+				act("merge_confirm");
+			}
 			return true;
 		}
-		if (mode == Mode.CONFIRM_REJECT && (k == InputConstants.KEY_X || k == InputConstants.KEY_RETURN)) {
-			act("reject_confirm");
+		if (mode == Mode.CONFIRM_REJECT && (k == InputConstants.KEY_X || k == InputConstants.KEY_RETURN || k == InputConstants.KEY_NUMPADENTER)) {
+			if (confirmReady) {
+				act("reject_confirm");
+			}
 			return true;
 		}
 		switch (k) {
@@ -1620,6 +1643,12 @@ public final class DiffScreen extends Screen implements dev.agentcraft.client.ui
 			}
 		}
 		return true;
+	}
+
+	@Override
+	public boolean keyReleased(KeyEvent e) {
+		keyRepeat.release(e.input());
+		return super.keyReleased(e);
 	}
 
 	@Override

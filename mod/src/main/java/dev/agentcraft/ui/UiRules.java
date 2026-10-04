@@ -50,6 +50,29 @@ public final class UiRules {
 		return mainHand && agentTargetable(sneaking, mainHandEmpty);
 	}
 
+	/** What a use (right-click) callback on an agent does. */
+	public enum AgentUse {
+		/** open the card and stop the use (FAIL) */
+		OPEN_CARD,
+		/** stop the use without opening anything (FAIL): the off-hand pass of the same sneak+empty-hand click */
+		BLOCK,
+		/** not ours: the item's use goes on (PASS) */
+		PASS
+	}
+
+	/**
+	 * The use callback's answer for one hand. Vanilla's {@code startUseItem} does not stop on FAIL for an
+	 * entity hit; it goes on to the off hand. So while the agent is targetable (sneak, empty main hand) both
+	 * hands answer FAIL, else the off-hand item (food, a shield) would be used behind the freshly opened
+	 * card, and only the main hand opens it.
+	 */
+	public static AgentUse agentUse(boolean mainHand, boolean sneaking, boolean mainHandEmpty) {
+		if (!agentTargetable(sneaking, mainHandEmpty)) {
+			return AgentUse.PASS;
+		}
+		return mainHand ? AgentUse.OPEN_CARD : AgentUse.BLOCK;
+	}
+
 	// ------------------------------------------------------------------ C7 teleport
 
 	/**
@@ -120,6 +143,50 @@ public final class UiRules {
 	/** A second press within {@code windowMs} of arming confirms (agent Stop, card answers, console goals). */
 	public static boolean secondPress(long armedAt, long now, long windowMs) {
 		return armedAt > 0 && now >= armedAt && now - armedAt <= windowMs;
+	}
+
+	/** The least time between arming a confirm and the key press that confirms it (merge / reject in the diff). */
+	public static final long KEY_CONFIRM_MS = 300;
+
+	/**
+	 * A confirm by key (Enter on "Confirm merge", X / Enter on "Confirm reject") counts only for a fresh
+	 * press (not an OS key repeat, see {@link KeyRepeat}) at least {@link #KEY_CONFIRM_MS} after the confirm
+	 * was armed, so a held or double-tapped Ctrl+Enter never merges.
+	 */
+	public static boolean keyConfirmReady(long armedAt, long now, boolean repeat) {
+		return !repeat && armedAt > 0 && now - armedAt >= KEY_CONFIRM_MS;
+	}
+
+	/**
+	 * Key-repeat tracking for screens (as the decision screen does it): a key pressed again without a
+	 * release in between is an OS key repeat, and a key already down when the screen opened is ignored
+	 * until released. Only physical presses count ({@code physical} = the key is down right now); a
+	 * synthetic press (the DevBridge's {@code dev.key}) is never a repeat.
+	 */
+	public static final class KeyRepeat {
+		private final java.util.Set<Integer> down = new java.util.HashSet<>();
+
+		/** A key physically down when the screen opened (the key that opened it, a held Enter). */
+		public void heldAtOpen(int key) {
+			down.add(key);
+		}
+
+		/** Records a press; true when it is a repeat (or a key held since the screen opened). */
+		public boolean press(int key, boolean physical) {
+			if (!physical) {
+				return false;
+			}
+			return !down.add(key);
+		}
+
+		public void release(int key) {
+			down.remove(key);
+		}
+
+		/** Forgets every key (a screen re-initialised: releases may have gone to another screen meanwhile). */
+		public void reset() {
+			down.clear();
+		}
 	}
 
 	// ------------------------------------------------------------------ console
