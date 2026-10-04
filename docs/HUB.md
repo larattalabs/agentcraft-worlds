@@ -35,6 +35,11 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      lead and home), **Undo move** (after a move), **Remove anyway** (after a "move these first" refusal: a
      further confirm that loses what was listed), and a **Check** line when the world-start check found the
      building does not match its blueprint (or recovered a move/removal lost in a crash).
+     **Teleport is gated (contract C7, fix wave 1):** the button shows only when the player may use
+     commands (cheats on in singleplayer: create the world with them or "Open to LAN > Allow commands";
+     an op in multiplayer) or is in creative/spectator; otherwise it is hidden and the note says to walk
+     there (with the box's corner). `HubActions.teleport` refuses the same on the server.
+     Placement messages say "Undo: hub (H) > Buildings > <id> > Remove" (not `/agentcraft remove`).
   2. **Repos** *(done, branch `mod/goals-tabs`)*: registered repos and their `repoSettings`.
   3. **Goals** *(done in the mod, branch `mod/goals-tabs`; Foreman side in `foreman/goals-tabs`)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the
@@ -430,6 +435,15 @@ decisions, and with config.set loosen its own permissions). From now on:
 - Models: lead/worker/design models and effort, task-size models, concurrency limits.
 - Edits are staged in the tab and applied with one "Apply" (config.set); changes needing a restart show
   a banner with "Restart Foreman".
+- **Agent card** (fix wave 1): an agent's detail has a **Card** button (also `C`, or a double click on
+  the roster row) that opens its agent card; Esc in the card returns to the Team tab. The card is also
+  reachable from a task screen (click the assignee or press `A`) and the console roster (right-click a
+  face); in the world it needs an empty-hand sneak + right-click on the agent.
+- **Leads held by other worlds** (contract C2): the Models view lists every other world holding lead
+  assignments (`LeadAssignment.world`, else the world part of the building key; `lastSync` shown as
+  "synced 3 d ago"), since those make this world's buildings overflow to Marlow. **Release** sends
+  `lead.releaseWorld {world}`; the ack's `released` leads are named in the note. A world that is loaded
+  again simply syncs its leads back. QA: `dev.team.release {world}`, Team `state.otherWorlds`.
 
 ### Settings tab (mod)
 - Groups: General, Permissions, Context, Subagents, PRs, Usage (with the Status tab's usage windows

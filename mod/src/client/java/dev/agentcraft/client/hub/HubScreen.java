@@ -194,7 +194,7 @@ public final class HubScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	@Override
@@ -815,8 +815,9 @@ public final class HubScreen extends Screen {
 		if (bs.isEmpty()) {
 			Panels.inset(g, x, y, w, h);
 			int ty = y + 10;
-			for (String line : TextUtil.wrapPlain(font, "No buildings in this world yet. \"Place new…\" opens the building wizard (also "
-				+ Keys.label(Keys.build) + "): pick repos and a blueprint, then place its ghost. The Blueprints list shows what you can build.", w - 16)) {
+			String also = Keys.build == null || Keys.build.isUnbound() ? "" : " (also " + Keys.label(Keys.build) + ")";
+			for (String line : TextUtil.wrapPlain(font, "No buildings in this world yet. \"Place new…\" opens the building wizard" + also
+				+ ": pick repos and a blueprint, then place its ghost. The Blueprints list shows what you can build.", w - 16)) {
 				g.text(font, line, x + 8, ty, muted, false);
 				ty += 10;
 			}
@@ -891,9 +892,13 @@ public final class HubScreen extends Screen {
 		String home = "Make home";
 		button(g, "home", home, bx, dy, bw(home), false, busy || cur.home() || !sp, false, mx, my, () -> makeHome(id));
 		bx += bw(home) + 4;
-		String tp = "Teleport";
-		button(g, "teleport", tp, bx, dy, bw(tp), false, busy || !sp, false, mx, my, () -> teleport(id));
-		bx += bw(tp) + 4;
+		// C7: Teleport only with cheats on or in creative/spectator (a survival run walks)
+		boolean tpAllowed = minecraft.player != null && HubActions.teleportAllowed(minecraft.player);
+		if (tpAllowed) {
+			String tp = "Teleport";
+			button(g, "teleport", tp, bx, dy, bw(tp), false, busy || !sp, false, mx, my, () -> teleport(id));
+			bx += bw(tp) + 4;
+		}
 		boolean armedHere = armed() && id.equals(armedRemove);
 		boolean forceHere = forceArmed(id);
 		String rm = forceHere ? "Remove anyway" : armedHere ? "Confirm remove" : "Remove…";
@@ -941,7 +946,9 @@ public final class HubScreen extends Screen {
 			note = last.message();
 			noteColor = last.ok() ? UiBits.okText() : UiBits.errorText();
 		} else {
-			note = "Teleport lands at the entrance (in the building's dimension). Remove asks twice.";
+			note = tpAllowed ? "Teleport lands at the entrance (in the building's dimension). Remove asks twice."
+				: "No Teleport in survival without cheats: walk there (" + cur.box().minX() + ", " + cur.box().minY() + ", " + cur.box().minZ()
+					+ "). Remove asks twice.";
 		}
 		for (String line : TextUtil.wrapPlain(font, note, dw)) {
 			if (dy > y + h - 10) {

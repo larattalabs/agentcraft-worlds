@@ -3,6 +3,8 @@ package dev.agentcraft.client.diff;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.ModBlocks;
 import dev.agentcraft.block.entity.ModBlockEntities;
+import dev.agentcraft.client.agents.AgentsFeature;
+import dev.agentcraft.client.decisions.DiffLink;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Foreman;
@@ -44,6 +46,11 @@ public final class DiffFeature {
 	public static void init() {
 		BlockEntityRenderers.register(ModBlockEntities.MERGE_STATION, ctx -> new MergeStationRenderer());
 		DevBridge.registerScreen("diff", mc -> new DiffScreen(defaultTarget()));
+		// D on a merge decision, /diff, the agent card's Review: the exact decision/worktree, back to the caller on Esc
+		DiffLink.setOpener((repoId, worktree, decision, parent) -> new DiffScreen(decision != null ? new DiffScreen.Target(decision.id(), repoId,
+			worktree) : forWorktree(repoId, worktree)).withParent(parent));
+		AgentsFeature.registerDecisionScreen(Protocol.DecisionKind.MERGE, (mc, d, parent) -> d.repoId() == null || d.worktree() == null ? null
+			: new DiffScreen(forDecision(d)).withParent(parent));
 		StationInteractions.onUse(ModBlocks.MERGE_STATION, (player, pos, state, be) -> {
 			List<Decision> queue = MergeStationRenderer.queueAt(player.level(), pos); // the merges this station shows
 			int k = MergeStationRenderer.rowIndex(player.level(), pos, state);

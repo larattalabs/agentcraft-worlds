@@ -2,6 +2,8 @@ package dev.agentcraft.client.agents;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.agentcraft.AgentCraft;
+import dev.agentcraft.client.console.ConsoleScreen;
+import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
@@ -16,6 +18,7 @@ import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.ui.UiRules;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -37,7 +40,8 @@ import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The agent card: right-click an agent to see who it is and what it is doing, and to steer it.
+ * The agent card: sneak + right-click an agent with an empty hand (or pick it in the hub's Team tab, a task's
+ * assignee, the console roster) to see who it is and what it is doing, and to steer it.
  * A compact paper card (brass frame while the agent needs you): portrait, name, title and role;
  * the state dot with a plain-words state and the activity; the current task (id, title, column,
  * branch); <b>the decision it waits on</b> with a way to act on it right there (the decision's
@@ -47,16 +51,17 @@ import org.jspecify.annotations.Nullable;
  * prefilled with {@code @id }, or a message line in the card), <b>Pause/Resume</b>, <b>Stop</b>
  * (off shift; <b>Spawn</b> brings an off-shift agent back).
  *
- * <p>Keys: M message, P pause/resume, 1-4 answer (twice), R review, Esc close. The message line is
+ * <p>Keys: M message (the console, Esc comes back here), P pause/resume, 1-4 answer (twice), R review (any open
+ * decision of the agent; "filed for you" lines open theirs), Stop asks for a second press, Esc back. The message line is
  * a vanilla {@link EditBox} drawn in the kit style: it starts SDL text input when it gets focus
  * (real typing works; 26.x delivers typed characters only while text input is on), scrolls to the
  * caret, handles selection, clipboard and surrogate pairs.
  *
- * <p>Live: it follows the Foreman state while open, and the world keeps running behind it.
+ * <p>Live: it follows the Foreman state while open (the game pauses behind it in singleplayer, C6).
  * Shootable as {@code dev.screen {open:"agent"}} (last clicked agent, else whoever needs you first)
  * or {@code dev.agents.card {agent}}.
  */
-public final class AgentCardScreen extends Screen {
+public final class AgentCardScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int W = 252;
 	private static final int ROW = 10;
 	private static final int OPT_H = 15;
@@ -71,6 +76,13 @@ public final class AgentCardScreen extends Screen {
 	}
 
 	private final String agentId;
+	/** Where Esc returns to (the hub's Team tab, a task, the console), null = the world. */
+	private @Nullable Screen parent;
+	/** Stop asks for a second press within {@link #STOP_CONFIRM_MS}. */
+	private long stopArmedAt;
+	private static final long STOP_CONFIRM_MS = 3000;
+	/** Click areas of the "filed for you" lines (each opens that decision's review). */
+	private final List<Btn> filedRows = new ArrayList<>();
 	private int x0;
 	private int y0;
 	private int h;
@@ -125,6 +137,47 @@ public final class AgentCardScreen extends Screen {
 		lastAgent = agentId;
 	}
 
+	/** Return to {@code parent} on Esc (instead of the world). */
+	public AgentCardScreen withParent(@Nullable Screen parent) {
+		this.parent = parent == this ? null : parent;
+		return this;
+	}
+
+	@Override
+	public void onClose() {
+		closeField();
+		this.minecraft.gui.setScreen(parent);
+	}
+
+	@Override
+	public @Nullable Screen parent() {
+		return parent;
+	}
+
+	/** QA: press a card button by id (message, pause, stop, review). */
+	public void pressDev(String id) {
+		press(id);
+	}
+
+	/** QA: the status line, or null. */
+	public @Nullable String statusText() {
+		return status != null && System.currentTimeMillis() < statusUntil ? status : null;
+	}
+
+	/** QA: the decision the Review/Answer button acts on, or null. */
+	public @Nullable String reviewDecision() {
+		ForemanState st = Foreman.state();
+		if (st != null) {
+			refresh(st);
+		}
+		return owned == null ? null : owned.id();
+	}
+
+	/** Whether Stop is armed (QA). */
+	public boolean stopArmed() {
+		return UiRules.secondPress(stopArmedAt, System.currentTimeMillis(), STOP_CONFIRM_MS);
+	}
+
 	public String agentId() {
 		return agentId;
 	}
@@ -165,7 +218,7 @@ public final class AgentCardScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	@Override
@@ -205,6 +258,15 @@ public final class AgentCardScreen extends Screen {
 			owned = want != null ? st.decision(want) : null;
 			if (owned != null && !owned.isOpen()) {
 				owned = null;
+			}
+			if (owned == null) {
+				// any open decision this agent waits on (not only the one its view points at)
+				for (Decision d : st.openDecisions()) {
+					if (AgentManager.owner(st, d).equals(agentId)) {
+						owned = d;
+						break;
+					}
+				}
 			}
 			filed.clear();
 			for (Decision d : st.openDecisions()) {
@@ -368,8 +430,18 @@ public final class AgentCardScreen extends Screen {
 			y += 12;
 		}
 		// decisions it filed that wait on you through another agent (the lead's merge requests)
+		filedRows.clear();
 		for (Decision d : filed) {
-			Panels.text(g, font, TextUtil.ellipsize(font, filedLine(st, d), iw), ix, y, muted);
+			Btn row = new Btn("filed");
+			row.option = d.id();
+			row.x = ix;
+			row.y = y - 1;
+			row.w = iw;
+			row.h = 11;
+			filedRows.add(row);
+			boolean hover = row.hit(mouseX, mouseY);
+			Panels.text(g, font, TextUtil.ellipsize(font, filedLine(st, d) + (hover ? "  · review" : ""), iw), ix, y, hover ? UiStyle.color(
+				"paper.link") : muted);
 			y += 11;
 		}
 		y += 4;
@@ -437,6 +509,9 @@ public final class AgentCardScreen extends Screen {
 		} else if (field != null) {
 			int hx = hint(g, font, ix, y, ix + iw, "Enter", "send");
 			hint(g, font, hx, y, ix + iw, "Esc", "cancel");
+		} else if (stopArmed()) {
+			int hx = hint(g, font, ix, y, ix + iw, "Stop", "again to take " + ag.name() + " off shift");
+			hint(g, font, hx, y, ix + iw, "Esc", "keep");
 		} else if (armed >= 0 && armed < optionRows.size()) {
 			int hx = hint(g, font, ix, y, ix + iw, String.valueOf(armed + 1), "again to answer");
 			hint(g, font, hx, y, ix + iw, "Esc", "close");
@@ -580,7 +655,7 @@ public final class AgentCardScreen extends Screen {
 		pause.label = ag.isPaused() ? "Resume" : "Pause";
 		pause.primary = false;
 		pause.disabled = !on || !ag.isActive();
-		stop.label = ag.isActive() ? "Stop" : "Spawn";
+		stop.label = ag.isActive() ? (stopArmed() ? "Confirm stop" : "Stop") : "Spawn";
 		stop.primary = false;
 		stop.disabled = !on;
 		int gap = 6;
@@ -740,7 +815,7 @@ public final class AgentCardScreen extends Screen {
 		try {
 			AgentsFeature.DecisionScreenFactory f = AgentsFeature.decisionScreen(d.kind());
 			if (f != null) {
-				s = f.create(this.minecraft, d);
+				s = f.create(this.minecraft, d, this);
 			}
 			if (s == null) {
 				Function<Minecraft, Screen> gf = genericScreen(d);
@@ -773,6 +848,13 @@ public final class AgentCardScreen extends Screen {
 				press("review");
 				return true;
 			}
+			for (Btn row : filedRows) {
+				Decision fd = row.option == null || Foreman.state() == null ? null : Foreman.state().decision(row.option);
+				if (fd != null && row.hit(event.x(), event.y())) {
+					openReview(fd);
+					return true;
+				}
+			}
 			for (int i = 0; i < optionRows.size(); i++) {
 				if (optionRows.get(i).hit(event.x(), event.y())) {
 					option(i);
@@ -803,6 +885,11 @@ public final class AgentCardScreen extends Screen {
 			return true;
 		}
 		int key = event.key();
+		if (event.isEscape() && stopArmed()) {
+			stopArmedAt = 0;
+			status = null;
+			return true;
+		}
 		if (key == InputConstants.KEY_M) {
 			press("message");
 			if (field != null) {
@@ -893,7 +980,7 @@ public final class AgentCardScreen extends Screen {
 		if (armed == i && d.id().equals(armedDecision) && now <= armedUntil) {
 			armed = -1;
 			armedDecision = null;
-			send(Foreman.answer(d.id(), opt, null), "Answered " + d.id() + ": " + opt);
+			sendAnswer(d.id(), opt, null, "Answered " + d.id() + ": " + opt);
 		} else {
 			armed = i;
 			armedDecision = d.id();
@@ -921,12 +1008,12 @@ public final class AgentCardScreen extends Screen {
 					if (mode == Mode.FEEDBACK && feedbackFor != null) {
 						String d = feedbackFor;
 						closeField();
-						send(Foreman.answer(d, Protocol.REQUEST_CHANGES, text), "Requested changes on " + d);
+						sendAnswer(d, Protocol.REQUEST_CHANGES, text, "Requested changes on " + d);
 					} else {
 						closeField();
 						send(Foreman.message(agentId, text), "Sent to " + ag.name());
 					}
-				} else if (!openConsole(this.minecraft, "@" + agentId + " ")) {
+				} else if (!openConsole(this.minecraft, "@" + agentId + " ", this)) {
 					openField(Mode.MESSAGE, null);
 				}
 			}
@@ -939,6 +1026,14 @@ public final class AgentCardScreen extends Screen {
 			}
 			case "stop" -> {
 				boolean spawn = !ag.isActive();
+				long now = System.currentTimeMillis();
+				if (!spawn && !UiRules.secondPress(stopArmedAt, now, STOP_CONFIRM_MS)) {
+					// taking an agent off shift ends its turn: a second press confirms
+					stopArmedAt = now;
+					setStatus("Press Stop again to take " + ag.name() + " off shift", true);
+					return;
+				}
+				stopArmedAt = 0;
 				send(Foreman.agentAction(agentId, spawn ? "spawn" : "stop", null), ag.name() + (spawn ? " is back on shift" : " is off shift"));
 			}
 			case "review" -> {
@@ -949,6 +1044,20 @@ public final class AgentCardScreen extends Screen {
 			default -> {
 			}
 		}
+	}
+
+	/** Answers through {@code DecisionsFeature.answer} like every other answer path (podium/badge stop counting it at once). */
+	private void sendAnswer(String decisionId, String option, @Nullable String text, String ok) {
+		status = "...";
+		statusError = false;
+		statusUntil = System.currentTimeMillis() + 20_000;
+		DecisionsFeature.answer(decisionId, option, text).thenAccept(error -> Minecraft.getInstance().execute(() -> {
+			if (error != null) {
+				setStatus("Not sent: " + error, true);
+			} else {
+				setStatus(ok, false);
+			}
+		}));
 	}
 
 	private void setStatus(String text, boolean error) {
@@ -977,6 +1086,11 @@ public final class AgentCardScreen extends Screen {
 	 * console screen.
 	 */
 	public static boolean openConsole(Minecraft mc, String prefill) {
+		return openConsole(mc, prefill, null);
+	}
+
+	/** Like {@link #openConsole(Minecraft, String)}; Esc in the console returns to {@code parent}. */
+	public static boolean openConsole(Minecraft mc, String prefill, @Nullable Screen parent) {
 		Function<Minecraft, Screen> f = DevBridge.screens().get("console");
 		if (f == null) {
 			return false;
@@ -990,6 +1104,9 @@ public final class AgentCardScreen extends Screen {
 		}
 		if (s == null) {
 			return false;
+		}
+		if (parent != null && s instanceof ConsoleScreen cs) {
+			cs.withParent(parent);
 		}
 		mc.gui.setScreen(s);
 		for (int i = 0; i < prefill.length();) {

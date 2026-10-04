@@ -509,6 +509,9 @@ final class GoalsTab implements HubPane {
 			return done(d.id() + " just came up: press again to answer it", false);
 		}
 		String text = null;
+		if (option == null && !d.freeText()) {
+			return done(d.id() + " takes one of its options only (no free text)", true);
+		}
 		if (option == null) {
 			text = message.value().strip();
 			if (text.isEmpty()) {
@@ -527,7 +530,7 @@ final class GoalsTab implements HubPane {
 				confirmRejectUntil = Util.getMillis() + 3000;
 				return done("Reject abandons the branch: press Reject again", true);
 			}
-		} else if (d.kind() == DecisionKind.QUESTION && !message.value().isBlank()) {
+		} else if (d.kind() == DecisionKind.QUESTION && d.freeText() && !message.value().isBlank()) {
 			text = message.value().strip(); // an option with a note, like the decision screen's text box
 		}
 		confirmReject = null;
@@ -595,7 +598,8 @@ final class GoalsTab implements HubPane {
 				return true;
 			}
 			if (TextKeys.isEnter(e)) {
-				if (e.hasControlDown()) {
+				// multi-line fields (thread message, plan): Enter = new line, Ctrl+Enter sends (UiRules.enter)
+				if (TextKeys.enter(e, true) == dev.agentcraft.ui.UiRules.EnterAction.SEND) {
 					ctrlEnter();
 				} else if (focus.multiLine) {
 					focus.model.insert("\n");
@@ -730,7 +734,8 @@ final class GoalsTab implements HubPane {
 	public String[] hints() {
 		if (focus != null) {
 			String verb = formOpen ? "submit" : focus == planEditor ? "save" : focus == instruction ? "save" : "send";
-			return new String[] {"Ctrl+Enter", verb, "Tab", "next field", "Esc", focus == planEditor ? "cancel" : "done typing"};
+			return focus.multiLine ? new String[] {"Ctrl+Enter", verb, "Enter", "new line", "Tab", "next field", "Esc", focus == planEditor ? "cancel"
+				: "done typing"} : new String[] {"Ctrl+Enter", verb, "Tab", "next field", "Esc", focus == planEditor ? "cancel" : "done typing"};
 		}
 		if (formOpen) {
 			return new String[] {"Ctrl+Enter", "submit", "Esc", "back"};
@@ -1117,7 +1122,7 @@ final class GoalsTab implements HubPane {
 						}
 						buttons.add(new String[] {o, label});
 					}
-					if (d.kind() == DecisionKind.QUESTION) {
+					if (d.kind() == DecisionKind.QUESTION && d.freeText()) {
 						buttons.add(new String[] {"\u0000text", "Answer with text"});
 					}
 					buttons.add(new String[] {"\u0000open", "Open…"});

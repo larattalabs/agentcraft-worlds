@@ -315,7 +315,8 @@ public final class BuildPlacement {
 					Building placed = Buildings.place(sl, b, origin, rotation, rs, useForce);
 					String note = Buildings.lastNote();
 					r = new Result(true, placed.id(), "Placed " + placed.id() + " (" + b.name() + ") for " + String.join(", ", placed.repos())
-						+ (placed.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")") + ". Undo: /agentcraft remove " + placed.id());
+						+ (placed.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")") + ". Undo: hub (" + dev.agentcraft.client.hud.Keys.label(dev.agentcraft.client.hud.Keys.hub)
+						+ ") > Buildings > " + placed.id() + " > Remove");
 				}
 			} catch (Buildings.BuildingException e) {
 				r = new Result(false, null, e.getMessage());

@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
  * {@code Foreman.taskAction}, with the Foreman's answer shown in place. Left/right browse the
  * other tasks in wall order. Paper panel, ink text, one clay primary action, no shadows.
  */
-public class TaskScreen extends Screen {
+public class TaskScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int W = 320;
 	private String taskId;
 	private final @Nullable String repoFilter;
@@ -78,8 +78,16 @@ public class TaskScreen extends Screen {
 		return taskId;
 	}
 
+	/** The assignee row drawn last frame (x, y, w, h; w 0 = none): a click opens their agent card. */
+	private final int[] assigneeRect = new int[4];
+
 	/** Where Esc goes back to (the hub's goal Tasks view); null = the world. */
 	private net.minecraft.client.gui.screens.@Nullable Screen parent;
+
+	@Override
+	public net.minecraft.client.gui.screens.@Nullable Screen parent() {
+		return parent;
+	}
 
 	/** Opened from another screen: Esc returns there. */
 	public TaskScreen withParent(net.minecraft.client.gui.screens.@Nullable Screen parent) {
@@ -98,7 +106,7 @@ public class TaskScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	private @Nullable Task task() {
@@ -266,7 +274,14 @@ public class TaskScreen extends Screen {
 		// ---- assignee
 		ForemanState s = Foreman.state();
 		Agent a = t.assignee() == null || s == null ? null : s.agent(t.assignee());
+		assigneeRect[2] = 0;
 		if (assigned) {
+			if (a != null) {
+				assigneeRect[0] = x;
+				assigneeRect[1] = y;
+				assigneeRect[2] = inner;
+				assigneeRect[3] = 20;
+			}
 			Identifier framed = AgentCraft.id("textures/gui/portrait/" + t.assignee() + "_framed.png");
 			g.blit(RenderPipelines.GUI_TEXTURED, framed, x, y, 0, 0, 20, 20, 20, 20);
 			String n = a != null ? a.name() : t.assignee();
@@ -398,7 +413,10 @@ public class TaskScreen extends Screen {
 		// ---- key hints
 		int kx = x;
 		kx = keycap(g, "Esc", "close", kx, y);
-		keycap(g, "<  >", "browse", kx + 10, y);
+		kx = keycap(g, "<  >", "browse", kx + 10, y);
+		if (assigneeRect[2] > 0) {
+			keycap(g, "A", "assignee's card", kx + 10, y);
+		}
 	}
 
 	/** The assignee's newest log entry (the monitors' log counter says when to fetch it again). */
@@ -484,6 +502,10 @@ public class TaskScreen extends Screen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		if (event.button() == 0 && assigneeRect[2] > 0 && event.x() >= assigneeRect[0] && event.x() < assigneeRect[0] + assigneeRect[2]
+			&& event.y() >= assigneeRect[1] && event.y() < assigneeRect[1] + assigneeRect[3] && openAssigneeCard()) {
+			return true;
+		}
 		if (event.button() == 0) {
 			for (Btn b : List.copyOf(buttons)) {
 				if (b.enabled() && b.hit(event.x(), event.y())) {
@@ -505,11 +527,24 @@ public class TaskScreen extends Screen {
 			browse(1);
 			return true;
 		}
+		if (event.key() == InputConstants.KEY_A && openAssigneeCard()) {
+			return true;
+		}
 		return super.keyPressed(event);
+	}
+
+	/** The assignee's agent card, Esc back to this task. False when unassigned or unknown to the Foreman. */
+	private boolean openAssigneeCard() {
+		Task t = task();
+		return t != null && t.assignee() != null && dev.agentcraft.client.agents.AgentsFeature.openCard(t.assignee(), this);
 	}
 
 	/** Press a button by id (also used by the dev command): prev next retry prioritize reassign cancel to:&lt;agent&gt;. */
 	public void press(String id) {
+		if (id.equals("assignee")) {
+			openAssigneeCard();
+			return;
+		}
 		for (Btn b : List.copyOf(buttons)) {
 			if (b.id().equals(id)) {
 				press(b);

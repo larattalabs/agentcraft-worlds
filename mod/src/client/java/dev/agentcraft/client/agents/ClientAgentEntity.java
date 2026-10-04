@@ -108,6 +108,18 @@ public class ClientAgentEntity extends AgentEntity implements ClientAvatarEntity
 		}
 	}
 
+	/**
+	 * Targetable (crosshair, use, attack) only while the local player sneaks with an empty main hand: a
+	 * right-click with food, a shield, a bow or blocks goes to the item, and swings / mining go through to
+	 * the block behind the agent (docs/AUDIT-2026-10-03.md B1). The nameplate still focuses by screen
+	 * position ({@link PlateLayout}).
+	 */
+	@Override
+	public boolean isPickable() {
+		net.minecraft.client.player.LocalPlayer p = net.minecraft.client.Minecraft.getInstance().player;
+		return p != null && dev.agentcraft.ui.UiRules.agentTargetable(p.isShiftKeyDown(), p.getMainHandItem().isEmpty());
+	}
+
 	@Override
 	public ClientAvatarState avatarState() {
 		return avatarState;

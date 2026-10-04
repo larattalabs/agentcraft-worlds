@@ -1,5 +1,6 @@
 package dev.agentcraft.client.hub;
 
+import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -45,13 +46,13 @@ public final class HubFeature {
 
 	public static void init() {
 		Keys.ensureRegistered();
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hub.tick", () -> {
 			while (Keys.hub.consumeClick()) {
 				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active() && !dev.agentcraft.client.building.PlotMarker.active()) {
 					open(null);
 				}
 			}
-		});
+		}));
 		DevBridge.registerScreen("hub", mc -> new HubScreen(HubTab.BUILDINGS));
 		for (HubTab t : HubTab.values()) {
 			DevBridge.registerScreen("hub_" + t.id, mc -> new HubScreen(t));
@@ -183,6 +184,33 @@ public final class HubFeature {
 		DevBridge.register("dev.hub.state", 10_000, "{} - the hub: open, tab, sub, selections, armed remove, last action, buildings, blueprints, "
 			+ "rendered previews of the selected blueprint (paths tried, found, load state), buttons on screen", (req, mc) -> DevBridge.onClient(mc,
 				() -> state(mc)));
+		DevBridge.register("dev.team.release", 15_000, "{world} - the Team tab's Release for a world holding leads (lead.releaseWorld; hub must be open)",
+			(req, mc) -> {
+				String world = Fields.of(req).nonBlank("world");
+				return DevBridge.onClient(mc, () -> {
+					if (!(mc.gui.screen() instanceof HubScreen h)) {
+						throw new DevBridge.DevException("open the hub first (dev.screen {open:\"hub_team\"})");
+					}
+					return h.team;
+				}).thenCompose(team -> team.releaseWorld(world)).thenApply(note -> {
+					JsonObject o = new JsonObject();
+					o.addProperty("note", note);
+					return o;
+				});
+			});
+		DevBridge.register("dev.team.card", 10_000, "{agent} - the Team tab's Card button: the agent card with the hub as its parent (Esc returns)",
+			(req, mc) -> {
+				String id = Fields.of(req).nonBlank("agent");
+				return DevBridge.onClient(mc, () -> {
+					HubScreen h = mc.gui.screen() instanceof HubScreen hs ? hs : new HubScreen(HubTab.TEAM);
+					if (!dev.agentcraft.client.agents.AgentsFeature.openCard(id, h)) {
+						throw new DevBridge.DevException("no agent '" + id + "'");
+					}
+					JsonObject o = new JsonObject();
+					o.addProperty("screen", mc.gui.screen().getClass().getSimpleName());
+					return o;
+				});
+			});
 		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|edit_repos|move|undo_move|place_new|place|place_plot|design_new|"
 			+ "cancel_design|" + HubDev.ACTIONS + "|" + SettingsDev.ACTIONS + ", tab?, buildingId?, blueprint?, designId?, repos?: [..] | \"a,b\", view?, confirm?: bool} - press a hub button (opens the "
 			+ "hub when closed). home/teleport/remove/cancel_design reply after the server/Foreman answered; remove without confirm arms it (a "
@@ -384,6 +412,7 @@ public final class HubFeature {
 		o.addProperty("open", s != null);
 		o.addProperty("key", Keys.label(Keys.hub));
 		o.addProperty("singleplayer", mc.getSingleplayerServer() != null);
+		o.addProperty("teleportAllowed", mc.player != null && HubActions.teleportAllowed(mc.player));
 		o.addProperty("tab", s == null ? null : s.tab().id);
 		o.addProperty("sub", s == null ? null : s.sub().name().toLowerCase(Locale.ROOT));
 		o.addProperty("selectedBuilding", s == null ? null : s.selectedBuilding());

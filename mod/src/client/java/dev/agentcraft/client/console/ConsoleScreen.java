@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import dev.agentcraft.ui.UiRules;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -40,7 +41,7 @@ import org.jspecify.annotations.Nullable;
  * console's own lines, each agent in its colour). Non-pausing, so the HQ keeps moving behind it.
  * See {@link ConsoleCommands} for the input language and {@link ConsoleActions} for what is sent.
  */
-public class ConsoleScreen extends Screen {
+public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int M = 8;
 	private static final int ROW = 10;
 	private static final int MAX_POPUP = 6;
@@ -52,6 +53,15 @@ public class ConsoleScreen extends Screen {
 	private boolean openedByKey;
 	/** Save what is typed as the draft when it closes (not for QA consoles). */
 	private boolean keepDraft = true;
+	/** Where Esc returns to (the agent card's Message), null = the world. */
+	private @Nullable Screen parent;
+	/** Plain text waiting for its second Enter ("Create goal …? Enter again"), null = none. */
+	private @Nullable String armedGoal;
+	/** OS key repeats: a held Enter never turns an armed plain-text goal (or the repo chooser) into a goal. */
+	private final UiRules.KeyRepeat keyRepeat = new UiRules.KeyRepeat();
+	/** The building the console terminal stands in (its repos are where goals go), null = not opened at a terminal in one. */
+	private @Nullable String buildingId;
+	private List<String> buildingRepos = List.of();
 	private int historyIndex = -1;
 	private String draft = "";
 	private int compSel;
@@ -126,6 +136,44 @@ public class ConsoleScreen extends Screen {
 		}
 	}
 
+	/** Opened at a console terminal inside building {@code id}: goals go to its first repo the Foreman knows, without asking. */
+	public ConsoleScreen atBuilding(String id, List<String> repos) {
+		this.buildingId = id;
+		this.buildingRepos = List.copyOf(repos);
+		return this;
+	}
+
+	public @Nullable String buildingId() {
+		return buildingId;
+	}
+
+	/** The repo goals go to from this console (its terminal's building), or null. */
+	public @Nullable String preferRepo() {
+		ForemanState s = Foreman.state();
+		return s == null ? null : UiRules.buildingRepo(buildingRepos, s.repos().keySet());
+	}
+
+	/** Whether plain text is waiting for its confirming Enter (QA). */
+	public boolean goalConfirmArmed() {
+		return armedGoal != null;
+	}
+
+	/** Return to {@code parent} on Esc (instead of the world). */
+	public ConsoleScreen withParent(@Nullable Screen parent) {
+		this.parent = parent == this ? null : parent;
+		return this;
+	}
+
+	@Override
+	public void onClose() {
+		minecraft.gui.setScreen(parent);
+	}
+
+	@Override
+	public @Nullable Screen parent() {
+		return parent;
+	}
+
 	public ConsoleScreen openedByKey() {
 		openedByKey = true;
 		return this;
@@ -143,7 +191,7 @@ public class ConsoleScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	@Override
@@ -155,6 +203,18 @@ public class ConsoleScreen extends Screen {
 	protected void init() {
 		minecraft.onTextInputFocusChange(this, true);
 		input.touch();
+		keyRepeat.reset();
+		for (int k : new int[] {InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER}) {
+			if (InputConstants.isKeyDown(k)) {
+				keyRepeat.heldAtOpen(k);
+			}
+		}
+	}
+
+	@Override
+	public boolean keyReleased(KeyEvent e) {
+		keyRepeat.release(e.key());
+		return super.keyReleased(e);
 	}
 
 	@Override
@@ -206,6 +266,7 @@ public class ConsoleScreen extends Screen {
 			if (pendingGoal != null) {
 				pendingGoal = null;
 			}
+			armedGoal = null; // edited: ask again
 			historyIndex = historyIndex >= 0 && !v.equals(historyAt(historyIndex)) ? -1 : historyIndex;
 		}
 		if (s == null) {
@@ -214,7 +275,7 @@ public class ConsoleScreen extends Screen {
 			return;
 		}
 		if (!v.equals(intentFor) || s.revision() != intentRev || input.cursor() != intentCursor) {
-			intent = ConsoleCommands.parse(v, s);
+			intent = ConsoleCommands.parse(v, s, preferRepo());
 			completions = ConsoleCommands.complete(v, input.cursor(), s);
 			intentFor = v;
 			intentRev = s.revision();
@@ -273,7 +334,7 @@ public class ConsoleScreen extends Screen {
 		lastValue = input.value();
 		ForemanState s = Foreman.state();
 		if (s != null) {
-			intent = ConsoleCommands.parse(input.value(), s);
+			intent = ConsoleCommands.parse(input.value(), s, preferRepo());
 			// keep the cycle position when the same token prefix still matches
 			List<Completion> next = ConsoleCommands.complete(input.value(), input.cursor(), s);
 			completions = next;
@@ -291,7 +352,14 @@ public class ConsoleScreen extends Screen {
 			return;
 		}
 		String raw = input.value();
-		Intent in = ConsoleCommands.parse(raw, s);
+		Intent in = ConsoleCommands.parse(raw, s, preferRepo());
+		if (pendingGoal == null && in instanceof Goal g && g.plain() && g.choices().isEmpty() && !UiRules.plainGoalConfirmed(armedGoal, raw)) {
+			// plain text never silently creates a goal: the first Enter asks, the second (same text) creates it (with
+			// several repos the repo chooser below is that confirm)
+			armedGoal = raw;
+			return;
+		}
+		armedGoal = null;
 		if (pendingGoal != null) {
 			List<Repo> choices = pendingGoal.choices();
 			Repo r = choices.get(Math.max(0, Math.min(repoSel, choices.size() - 1)));
@@ -382,9 +450,17 @@ public class ConsoleScreen extends Screen {
 	public boolean keyPressed(KeyEvent e) {
 		refresh();
 		int k = e.key();
+		boolean repeat = keyRepeat.press(k, InputConstants.isKeyDown(k));
+		if (repeat && TextKeys.isEnter(e) && (armedGoal != null || pendingGoal != null)) {
+			return true; // the goal confirm (and the repo chooser) needs a second deliberate Enter, not a held one
+		}
 		if (e.isEscape()) {
 			if (pendingGoal != null) {
 				pendingGoal = null;
+				return true;
+			}
+			if (armedGoal != null) {
+				armedGoal = null; // keep editing
 				return true;
 			}
 			if (popupVisible()) {
@@ -420,7 +496,8 @@ public class ConsoleScreen extends Screen {
 			}
 		}
 		if (TextKeys.isEnter(e)) {
-			if (e.hasShiftDown()) {
+			// single-line input: Enter (and Ctrl+Enter) sends, Shift+Enter is a new line
+			if (TextKeys.enter(e, false) == UiRules.EnterAction.NEWLINE) {
 				input.insert("\n");
 			} else {
 				submit();
@@ -497,10 +574,13 @@ public class ConsoleScreen extends Screen {
 				return true;
 			}
 		}
-		// roster chips: start a message
+		// roster chips: click starts a message; right-click (or Shift+click) opens the agent's card (Esc comes back here)
 		for (int[] hit : chipHits) {
 			if (mx >= hit[0] && mx < hit[0] + hit[2] && my >= hit[1] && my < hit[1] + hit[3]) {
 				String id = chipAgents.get(hit[4]);
+				if ((e.button() == 1 || e.hasShiftDown()) && dev.agentcraft.client.agents.AgentsFeature.openCard(id, this)) {
+					return true;
+				}
 				Agent a = Foreman.state() == null ? null : Foreman.state().agent(id);
 				String tag = "@" + (a != null ? a.name() : id).toLowerCase(Locale.ROOT) + " ";
 				if (input.isEmpty()) {
@@ -559,6 +639,11 @@ public class ConsoleScreen extends Screen {
 		} else if (pendingGoal != null) {
 			Repo r = pendingGoal.choices().get(Math.max(0, Math.min(repoSel, pendingGoal.choices().size() - 1)));
 			hint = "new goal \u2192 " + r.name();
+		} else if (armedGoal != null && intent instanceof Goal g) {
+			ForemanState s = Foreman.state();
+			hint = "Create a goal" + (g.repoId() != null && s != null ? " for " + ConsoleCommands.repoName(g.repoId(), s) : "")
+				+ "? Enter again creates it \u00b7 Esc keeps editing (/goal skips this)";
+			hintColor = UiStyle.BRASS;
 		} else if (intent != null) {
 			ForemanState s = Foreman.state();
 			if (s != null && s.hasData() && s.isStale() && sendsToForeman(intent)) {
@@ -784,7 +869,7 @@ public class ConsoleScreen extends Screen {
 			if (a != null) {
 				String st = stale ? "last known: " + (a.isPaused() ? "paused" : a.activity()) : !a.isActive() ? "off shift" : a.isPaused() ? "paused"
 					: a.activity();
-				g.setTooltipForNextFrame(font, Component.literal(a.name() + " · " + st + "  (click to message)"), mouseX, mouseY);
+				g.setTooltipForNextFrame(font, Component.literal(a.name() + " · " + st + "  (click: message · right-click: card)"), mouseX, mouseY);
 			}
 		}
 	}

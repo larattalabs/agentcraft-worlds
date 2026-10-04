@@ -59,7 +59,7 @@ import org.jspecify.annotations.Nullable;
  *       merges and permissions on none (pick with 1-9, or the arrows then Enter); Space does nothing.</li>
  * </ul>
  */
-public class DecisionScreen extends Screen {
+public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int MAX_W = 440;
 	/** Option keys are ignored this long after the screen opens or a decision comes up by itself. */
 	static final int ARM_MS = 350;
@@ -180,13 +180,18 @@ public class DecisionScreen extends Screen {
 		return s;
 	}
 
+	@Override
+	public @Nullable Screen parent() {
+		return parent;
+	}
+
 	public boolean isPreview() {
 		return preview != null;
 	}
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	@Override
@@ -407,8 +412,9 @@ public class DecisionScreen extends Screen {
 		switchTo(q.get(next).id(), false);
 	}
 
+	/** Free text: questions that accept it (C1 {@code textAllowed}), a merge's change request. */
 	private boolean allowsText(Decision d) {
-		return d.kind() == DecisionKind.QUESTION || d.kind() == DecisionKind.MERGE && requestChanges;
+		return d.kind() == DecisionKind.QUESTION && d.freeText() || d.kind() == DecisionKind.MERGE && requestChanges;
 	}
 
 	@Override
@@ -486,7 +492,7 @@ public class DecisionScreen extends Screen {
 			return;
 		}
 		String text = answer.value().isBlank() ? null : answer.value().strip();
-		if (d.kind() == DecisionKind.MERGE && !option.equals(Protocol.REQUEST_CHANGES)) {
+		if (d.kind() == DecisionKind.MERGE && !option.equals(Protocol.REQUEST_CHANGES) || !d.freeText()) {
 			text = null;
 		}
 		send(d, option, text);
@@ -617,7 +623,7 @@ public class DecisionScreen extends Screen {
 			return true;
 		}
 		if (k == InputConstants.KEY_TAB) {
-			if (textFocused && !requestChanges && d.kind() != DecisionKind.QUESTION) {
+			if (textFocused && !requestChanges && !allowsText(d)) {
 				focusText(false);
 			}
 			step(e.hasShiftDown() ? -1 : 1);
@@ -628,7 +634,8 @@ public class DecisionScreen extends Screen {
 				if (repeat) {
 					return true;
 				}
-				if (e.hasShiftDown()) {
+				// single-line answer: Enter (and Ctrl+Enter) sends, Shift+Enter is a new line
+				if (TextKeys.enter(e, false) == dev.agentcraft.ui.UiRules.EnterAction.NEWLINE) {
 					answer.insert("\n");
 				} else if (requestChanges) {
 					choose(d, Protocol.REQUEST_CHANGES);
@@ -881,7 +888,8 @@ public class DecisionScreen extends Screen {
 		if (qLines.size() > 5) {
 			qLines = qLines.subList(0, 5);
 		}
-		boolean fieldVisible = d.kind() == DecisionKind.QUESTION && !readOnly || requestChanges;
+		// closed choices (C1 textAllowed false) show no text box: only the options answer them
+		boolean fieldVisible = d.kind() == DecisionKind.QUESTION && d.freeText() && !readOnly || requestChanges;
 		int fieldHeight = fieldVisible ? answerView.height(font, answer, cw, fieldStyle(d)) : 0;
 		List<Btn> rowButtons = layoutButtons(d, cw);
 		int buttonRows = 1;
@@ -1115,6 +1123,7 @@ public class DecisionScreen extends Screen {
 		if (textFocused) {
 			hints.add(new String[] {"Enter", requestChanges ? "send feedback" : "send", "5"});
 			hints.add(new String[] {"Esc", requestChanges ? "back" : "stop typing", "4"});
+			hints.add(new String[] {"Shift+Enter", "new line", "1"});
 		} else {
 			int n = d.options().size();
 			if (n > 0 && !readOnlyNow(d)) {

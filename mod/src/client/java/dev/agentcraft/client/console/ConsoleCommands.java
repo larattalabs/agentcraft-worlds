@@ -23,7 +23,8 @@ import org.jspecify.annotations.Nullable;
  * thread), no Minecraft types, so every rule here can be exercised with {@code dev.console.parse}.
  *
  * <pre>
- * plain text                       goal.submit (asks which repo when there are several)
+ * plain text                       goal.submit after a confirm (Enter again; asks which repo when there are several)
+ * /goal text                       goal.submit at once (no confirm)
  * @name text  /  @all text         user.message
  * /answer [dN] &lt;n|label&gt; [text]    decision.answer (n is 1-based, as on the decision buttons)
  * /repo add &lt;path&gt;   /repos         repo.add / list repos
@@ -46,8 +47,15 @@ public final class ConsoleCommands {
 		Sound, Hub, Invalid, Empty {
 	}
 
-	/** {@code repoId} null = the Foreman's default; {@code choices} non-empty = ask which repo first. */
-	public record Goal(String text, @Nullable String repoId, List<Repo> choices) implements Intent {
+	/**
+	 * {@code repoId} null = the Foreman's default; {@code choices} non-empty = ask which repo first; {@code plain} = typed
+	 * without {@code /goal}: the console asks "Create goal …? Enter again" before sending (plain text never silently
+	 * creates a goal).
+	 */
+	public record Goal(String text, @Nullable String repoId, List<Repo> choices, boolean plain) implements Intent {
+		public Goal(String text, @Nullable String repoId, List<Repo> choices) {
+			this(text, repoId, choices, false);
+		}
 	}
 
 	/** {@code to} = agent id or "all". */
@@ -102,6 +110,7 @@ public final class ConsoleCommands {
 	}
 
 	public static final List<Command> COMMANDS = List.of(
+		new Command("goal", "/goal <text>", "start a goal (plain text asks to confirm first)"),
 		new Command("answer", "/answer [d4] <n|option> [text]", "answer an open decision (n = button number)"),
 		new Command("decide", "/decide", "open the decision queue (J)"),
 		new Command("hub", "/hub [buildings|repos|goals|team|settings|status|design]", "open the hub (H); design: Design new…"),
@@ -124,6 +133,14 @@ public final class ConsoleCommands {
 	// ------------------------------------------------------------------ parse
 
 	public static Intent parse(String raw, ForemanState s) {
+		return parse(raw, s, null);
+	}
+
+	/**
+	 * Like {@link #parse(String, ForemanState)}; {@code preferRepo} (the repo of the building a console terminal stands
+	 * in) is where goals go without asking, when the Foreman knows it.
+	 */
+	public static Intent parse(String raw, ForemanState s, @Nullable String preferRepo) {
 		String input = raw == null ? "" : raw.replace("\r", "");
 		String trimmed = input.strip();
 		if (trimmed.isEmpty()) {
@@ -133,17 +150,20 @@ public final class ConsoleCommands {
 			return parseMessage(trimmed, s);
 		}
 		if (trimmed.startsWith("/")) {
-			return parseCommand(trimmed, s);
+			return parseCommand(trimmed, s, preferRepo);
 		}
-		return goal(trimmed, s);
+		return goal(trimmed, s, preferRepo, true);
 	}
 
-	private static Intent goal(String text, ForemanState s) {
+	private static Intent goal(String text, ForemanState s, @Nullable String preferRepo, boolean plain) {
+		if (preferRepo != null && s.repo(preferRepo) != null) {
+			return new Goal(text, preferRepo, List.of(), plain);
+		}
 		List<Repo> repos = new ArrayList<>(s.repos().values());
 		if (repos.size() <= 1) {
-			return new Goal(text, repos.isEmpty() ? null : repos.get(0).id(), List.of());
+			return new Goal(text, repos.isEmpty() ? null : repos.get(0).id(), List.of(), plain);
 		}
-		return new Goal(text, defaultRepo(s), repos);
+		return new Goal(text, defaultRepo(s), repos, plain);
 	}
 
 	/** The repo a new goal goes to by default: the current goal's repo, else the most recently added. */
@@ -175,7 +195,7 @@ public final class ConsoleCommands {
 		return new Message(id, text);
 	}
 
-	private static Intent parseCommand(String trimmed, ForemanState s) {
+	private static Intent parseCommand(String trimmed, ForemanState s, @Nullable String preferRepo) {
 		// the command word ends at the first whitespace (a newline also ends it)
 		int sp = indexOfSpace(trimmed);
 		String cmd = (sp < 0 ? trimmed.substring(1) : trimmed.substring(1, sp)).toLowerCase(Locale.ROOT);
@@ -194,7 +214,7 @@ public final class ConsoleCommands {
 			case "clear", "cls" -> new Clear();
 			case "sound", "sounds", "mute" -> parseSound(cmd, args);
 			case "hub" -> parseHub(args);
-			case "goal" -> rest.isEmpty() ? new Invalid("type the goal after /goal") : goal(rest, s);
+			case "goal" -> rest.isEmpty() ? new Invalid("type the goal after /goal") : goal(rest, s, preferRepo, false);
 			default -> new Invalid("unknown command /" + cmd + " (/help lists them)");
 		};
 	}
@@ -434,12 +454,15 @@ public final class ConsoleCommands {
 			if (option.equals(Protocol.REQUEST_CHANGES) && text.isEmpty()) {
 				return new Invalid("say what should change: /answer " + d.id() + " " + (d.options().indexOf(option) + 1) + " <feedback>");
 			}
+			if (!text.isEmpty() && !d.freeText() && !option.equals(Protocol.REQUEST_CHANGES)) {
+				return new Invalid(d.id() + " takes an option only, no text (it would be dropped). " + optionsHint(d));
+			}
 			return new Answer(d, option, text.isEmpty() ? null : text);
 		}
 		if (tok.matches("\\d+")) {
 			return new Invalid("option " + tok + " does not exist. " + optionsHint(d));
 		}
-		if (d.kind() == DecisionKind.QUESTION) {
+		if (d.kind() == DecisionKind.QUESTION && d.freeText()) {
 			// free-text answer
 			return new Answer(d, null, r);
 		}
@@ -507,7 +530,8 @@ public final class ConsoleCommands {
 	/** One short line for the right side of the input: what Enter will do. Null = nothing to say. */
 	public static @Nullable String describe(Intent in, ForemanState s) {
 		return switch (in) {
-			case Goal g -> g.repoId() == null ? "new goal" : "new goal → " + repoName(g.repoId(), s);
+			case Goal g -> (g.repoId() == null ? "new goal" : "new goal → " + repoName(g.repoId(), s)) + (g.plain() ? " (Enter asks first; /goal skips)"
+				: "");
 			case Message m -> m.to().equals("all") ? "message everyone" : "message " + displayName(m.to(), s);
 			case Answer a -> "answer " + a.decision().id() + (a.option() != null ? ": " + a.option() : ": free text");
 			case RepoAdd r -> "add repo";
@@ -809,6 +833,7 @@ public final class ConsoleCommands {
 				m.put("text", g.text());
 				m.put("repoId", g.repoId());
 				m.put("askRepo", !g.choices().isEmpty());
+				m.put("plain", g.plain());
 			}
 			case Message msg -> {
 				m.put("to", msg.to());

@@ -97,6 +97,10 @@ public final class HubActions {
 	/** Teleports the player to the building's entrance (same dimension, a safe spot near the anchor). */
 	public static CompletableFuture<Result> teleport(String id) {
 		return run("teleport", id, (level, player) -> {
+			if (!teleportAllowed(player)) {
+				throw new Buildings.BuildingException("Teleport needs cheats on (Open to LAN > Allow commands) or creative/spectator; walk to " + id
+					+ " instead");
+			}
 			Building b = requireHere(level, id, "teleport to");
 			Anchor a = b.anchors().get("entrance");
 			if (a == null) {
@@ -117,6 +121,15 @@ public final class HubActions {
 			player.resetFallDistance();
 			return "Teleported to " + id + " (" + b.blueprint() + ")";
 		});
+	}
+
+	/**
+	 * C7 (docs/FIXWAVE.md): Teleport only when the player may use commands (cheats on / op) or is in creative or
+	 * spectator; a survival or Hardcore run without cheats walks.
+	 */
+	public static boolean teleportAllowed(net.minecraft.world.entity.player.Player player) {
+		return dev.agentcraft.ui.UiRules.teleportAllowed(player.permissions().hasPermission(net.minecraft.server.permissions.Permissions.COMMANDS_GAMEMASTER),
+			player.isCreative(), player.isSpectator());
 	}
 
 	/**

@@ -302,7 +302,8 @@ The hub (`H`, docs/HUB.md) also starts it: "Place new" opens step 1, a blueprint
 
 `/agentcraft build` (a server subcommand: the client installs `BuildingCommands.wizardOpener`, so the
 server tree stays the only `agentcraft` root; a dedicated server answers with the `place` usage) or
-the key `B` (Options > Controls > AgentCraft, rebindable) opens it. Singleplayer only. The key is not
+the "Building wizard" key opens it (Options > Controls > AgentCraft; **unbound by default**, `B`
+clashed with Xaero's new-waypoint key: bind one if you want it). Singleplayer only. The key is not
 gated on the gamemaster level the commands need: the world is the player's own and placing is
 explicit and reversible.
 

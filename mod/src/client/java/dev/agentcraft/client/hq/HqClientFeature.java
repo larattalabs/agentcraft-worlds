@@ -1,5 +1,6 @@
 package dev.agentcraft.client.hq;
 
+import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.DecisionPodiumBlock;
@@ -53,10 +54,10 @@ public final class HqClientFeature {
 
 	public static void init() {
 		BlockEntityRenderers.register(ModBlockEntities.STATUS_LAMP, ctx -> new StatusLampRenderer());
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hq.tick", () -> {
 			HqWorldDriver.tick(mc);
 			ambience(mc);
-		});
+		}));
 		DevBridge.addStateContributor((mc, state) -> state.add("hq", stateJson()));
 		HqCheck.register();
 	}

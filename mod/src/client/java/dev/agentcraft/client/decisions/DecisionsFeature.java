@@ -1,10 +1,12 @@
 package dev.agentcraft.client.decisions;
 
+import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.DecisionPodiumBlock;
 import dev.agentcraft.block.ModBlocks;
 import dev.agentcraft.block.entity.ModBlockEntities;
+import dev.agentcraft.client.agents.AgentsFeature;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Foreman;
@@ -53,7 +55,13 @@ public final class DecisionsFeature {
 		Keys.ensureRegistered();
 		DevBridge.registerScreen("decision", mc -> new DecisionScreen(null, null));
 		StationInteractions.onUse(ModBlocks.DECISION_PODIUM, (player, pos, state, be) -> openPodium(player.level(), pos));
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+		// the agent card's Answer / Decide: exactly that decision, Esc back to the card (merges: the diff feature's screen)
+		for (DecisionKind kind : DecisionKind.values()) {
+			if (kind != DecisionKind.MERGE) {
+				AgentsFeature.registerDecisionScreen(kind, (mc, d, parent) -> new DecisionScreen(d.id(), parent));
+			}
+		}
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("decisions.tick", () -> {
 			if (mc.player == null) {
 				return;
 			}
@@ -62,7 +70,7 @@ public final class DecisionsFeature {
 					openQueue(null, null);
 				}
 			}
-		});
+		}));
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onDecision(@Nullable Decision previous, Decision decision) {
@@ -247,6 +255,7 @@ public final class DecisionsFeature {
 			e.add("options", opts);
 			e.addProperty("answering", isAnswering(d.id()));
 			e.addProperty("podium", dev.agentcraft.client.leads.Leads.view().podiumFor(d));
+			e.addProperty("freeText", d.freeText());
 			q.add(e);
 		}
 		o.add("queue", q);
@@ -267,6 +276,7 @@ public final class DecisionsFeature {
 			sc.addProperty("preview", ds.isPreview());
 			sc.addProperty("scope", ds.scopeLabel());
 			sc.addProperty("scoped", ds.scoped());
+			sc.addProperty("parent", ds.parent() == null ? null : ds.parent().getClass().getSimpleName());
 			o.add("screen", sc);
 		} else {
 			o.add("screen", null);

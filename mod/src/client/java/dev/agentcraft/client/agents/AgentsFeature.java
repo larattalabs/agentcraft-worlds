@@ -11,6 +11,8 @@ import dev.agentcraft.client.foreman.Protocol;
 import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
 import dev.agentcraft.entity.ModEntities;
+import dev.agentcraft.ui.Guard;
+import dev.agentcraft.ui.UiRules;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,16 +36,16 @@ import net.minecraft.world.phys.Vec3;
  * {@link AgentHooks} and this package.
  */
 public final class AgentsFeature {
-	/** Right-click on an agent (client thread). The click is never sent to the server. */
+	/** Sneak + right-click with an empty main hand on an agent (client thread). The click is never sent to the server. */
 	@FunctionalInterface
 	public interface ClickHandler {
 		void clicked(Player player, ClientAgentEntity agent);
 	}
 
-	/** Builds the review/answer screen for one open decision (null = cannot open it). */
+	/** Builds the review/answer screen for one open decision, returning to {@code parent} (null = cannot open it). */
 	@FunctionalInterface
 	public interface DecisionScreenFactory {
-		@Nullable Screen create(Minecraft mc, Protocol.Decision decision);
+		@Nullable Screen create(Minecraft mc, Protocol.Decision decision, @Nullable Screen parent);
 	}
 
 	private static final List<ClickHandler> CLICK_HANDLERS = new CopyOnWriteArrayList<>();
@@ -71,6 +73,18 @@ public final class AgentsFeature {
 		return DECISION_SCREENS.get(kind);
 	}
 
+	/**
+	 * Open an agent's card from a screen (the hub's Team tab, a task's assignee, the console roster); Esc
+	 * returns to {@code parent}. False when the Foreman does not know the agent.
+	 */
+	public static boolean openCard(String agentId, @Nullable Screen parent) {
+		if (Foreman.state() == null || Foreman.state().agent(agentId) == null) {
+			return false;
+		}
+		Minecraft.getInstance().gui.setScreen(new AgentCardScreen(agentId).withParent(parent));
+		return true;
+	}
+
 	public static void init() {
 		// The type's own renderer draws nothing; the dispatcher mixin routes ClientAgentEntity to the
 		// slim/wide AgentRenderer built here on every resource reload.
@@ -78,9 +92,9 @@ public final class AgentsFeature {
 			AgentRenderer.provide(ctx);
 			return new NoopRenderer<>(ctx);
 		});
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> AgentManager.get().tick(mc));
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agents.tick", () -> AgentManager.get().tick(mc)));
 		// nameplate declutter: every agent's render state is extracted, nothing is submitted yet
-		LevelExtractionEvents.END_EXTRACTION.register(ctx -> PlateLayout.layout(ctx.levelState()));
+		LevelExtractionEvents.END_EXTRACTION.register(ctx -> Guard.run("agents.plates", () -> PlateLayout.layout(ctx.levelState())));
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onSnapshot(ForemanState state) {
@@ -113,15 +127,28 @@ public final class AgentsFeature {
 			}
 		});
 		UseEntityCallback.EVENT.register((player, level, hand, entity, hit) -> {
-			if (level.isClientSide() && entity instanceof ClientAgentEntity agent) {
-				if (hand == InteractionHand.MAIN_HAND) {
-					CLICK_HANDLERS.forEach(h -> h.clicked(player, agent));
-				}
-				return InteractionResult.FAIL;
+			if (!level.isClientSide() || !(entity instanceof ClientAgentEntity agent)) {
+				return InteractionResult.PASS;
 			}
-			return InteractionResult.PASS;
+			// only an empty-hand sneak+right-click opens the card; anything else is the item's use (eat, block,
+			// draw, place): the agent is not even targetable then (ClientAgentEntity#isPickable). While it is,
+			// both hands answer FAIL: vanilla goes on to the off hand after a FAIL on an entity, and its item
+			// (food, a shield) must not be used behind the card the main hand just opened.
+			switch (UiRules.agentUse(hand == InteractionHand.MAIN_HAND, player.isShiftKeyDown(), player.getMainHandItem().isEmpty())) {
+				case PASS -> {
+					return InteractionResult.PASS;
+				}
+				case BLOCK -> {
+					return InteractionResult.FAIL;
+				}
+				case OPEN_CARD -> {
+					CLICK_HANDLERS.forEach(h -> h.clicked(player, agent));
+					return InteractionResult.FAIL;
+				}
+			}
+			return InteractionResult.FAIL;
 		});
-		// right-click an agent: its card (name, state, task, log tail, message/pause/stop)
+		// sneak + right-click an agent with an empty hand: its card (name, state, task, log tail, message/pause/stop)
 		onClick((player, agent) -> Minecraft.getInstance().gui.setScreen(new AgentCardScreen(agent.agentId())));
 		DevBridge.registerScreen("agent", mc -> {
 			String id = AgentCardScreen.defaultAgent();
@@ -130,16 +157,29 @@ public final class AgentsFeature {
 			}
 			return new AgentCardScreen(id);
 		});
-		DevBridge.register("dev.agents.card", 10_000, "{agent} -> open the agent card for one agent (like right-clicking it)", (req, mc) -> {
-			String id = Fields.of(req).nonBlank("agent");
+		DevBridge.register("dev.agents.card", 10_000,
+			"{agent, press?: message|pause|stop|review} -> open the agent card for one agent (like sneak + right-clicking it); press = a card button"
+				+ " (on the open card of that agent; stop needs two presses)", (req, mc) -> {
+			Fields f = Fields.of(req);
+			String id = f.nonBlank("agent");
+			String press = f.optStr("press", null);
 			return DevBridge.onClient(mc, () -> {
 				if (Foreman.state() == null || Foreman.state().agent(id) == null) {
 					throw new DevBridge.DevException("no agent '" + id + "'");
 				}
-				mc.gui.setScreen(new AgentCardScreen(id));
+				AgentCardScreen card = mc.gui.screen() instanceof AgentCardScreen c && c.agentId().equals(id) ? c : null;
+				if (card == null) {
+					card = new AgentCardScreen(id);
+					mc.gui.setScreen(card);
+				}
+				if (press != null) {
+					card.pressDev(press);
+				}
 				JsonObject o = new JsonObject();
-				o.addProperty("screen", AgentCardScreen.class.getSimpleName());
+				o.addProperty("screen", mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());
 				o.addProperty("agent", id);
+				o.addProperty("stopArmed", card.stopArmed());
+				o.addProperty("status", card.statusText());
 				return o;
 			});
 		});
@@ -184,6 +224,7 @@ public final class AgentsFeature {
 						j.addProperty("awaitingDecision", e.view().awaitingDecision);
 						j.addProperty("needsYou", e.view().needsYou());
 						j.addProperty("paused", e.view().showsPaused());
+						j.addProperty("pickable", e.isPickable());
 						j.addProperty("posture", l.posture().name());
 						j.addProperty("seated", l.seated());
 						j.addProperty("sit", round(l.sitAmount()));
@@ -206,10 +247,18 @@ public final class AgentsFeature {
 					}
 					o.add("agents", list);
 					o.addProperty("exclaims", exclaims());
+					if (mc.player != null) {
+						// agents are targetable only on an empty-hand sneak (ClientAgentEntity#isPickable)
+						o.addProperty("playerSneaking", mc.player.isShiftKeyDown());
+						o.addProperty("mainHandEmpty", mc.player.getMainHandItem().isEmpty());
+					}
 					if (mc.gui.screen() instanceof AgentCardScreen card) {
 						JsonObject cj = new JsonObject();
 						cj.addProperty("agent", card.agentId());
 						cj.addProperty("input", card.inputText());
+						cj.addProperty("stopArmed", card.stopArmed());
+						cj.addProperty("review", card.reviewDecision());
+						cj.addProperty("status", card.statusText());
 						o.add("card", cj);
 					}
 					// SDL delivers typed characters only while text input is started (26.x)

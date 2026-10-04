@@ -182,7 +182,7 @@ public final class BuildingCommands {
 			String note = Buildings.lastNote();
 			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ") for " + String.join(", ", b.repos()) + ", "
 				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")")
-				+ ". Undo: /agentcraft remove " + b.id()), true);
+				+ ". Undo: the hub (H) > Buildings > " + b.id() + " > Remove"), true);
 			return 1;
 		} catch (Buildings.BuildingException e) {
 			src.sendFailure(Component.literal(e.getMessage()));

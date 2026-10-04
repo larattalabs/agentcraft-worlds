@@ -16,6 +16,7 @@ import dev.agentcraft.client.library.LibraryFeature;
 import dev.agentcraft.client.monitor.MonitorFeature;
 import dev.agentcraft.client.permissions.PermissionsFeature;
 import dev.agentcraft.client.taskwall.TaskWallFeature;
+import dev.agentcraft.client.ui.UiDev;
 import dev.agentcraft.client.world.AnchorsDev;
 import dev.agentcraft.client.world.ItemsDev;
 
@@ -33,6 +34,7 @@ public final class ClientFeatures {
 	public static void init() {
 		ForemanFeature.init();   // link + state model (dev.foreman, dev.state.foreman)
 		AnchorsDev.init();       // dev.anchors, dev.camera {anchor}
+		UiDev.init();            // dev.state ui (pause, parent, crash guards), dev.ui.pause, dev.guard.inject
 		ItemsDev.init();         // dev.screen creative_agentcraft
 		AgentsFeature.init();    // agent NPCs, nameplates, dev.agents
 		HudFeature.init();       // connection banner (+ Phase 3: goal boss bar, toasts)

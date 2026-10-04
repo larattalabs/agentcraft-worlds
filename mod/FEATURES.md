@@ -276,7 +276,7 @@ activity, station, anchor, active, paused, stale, pose). Phase 3 hooks:
 AgentHooks.onTick(agent -> ...);                               // per tick, after movement: particles, look-at, idle anims
 AgentHooks.onExtract((agent, state, pt) -> ...);               // adjust AgentRenderState (pose, head rotation, extra fields)
 AgentHooks.onSubmit((state, poseStack, collector, camera) -> ...); // extra geometry at the entity origin (speech bubbles)
-AgentsFeature.onClick((player, agent) -> ...);                  // right-click an agent (never sent to the server)
+AgentsFeature.onClick((player, agent) -> ...);                  // empty-hand sneak + right-click an agent (never sent to the server)
 ```
 
 Poses: `AgentView.pose` is the coarse pose (WALK, SIT, LEAN, STAND); the detailed posture lives in
@@ -366,7 +366,7 @@ except the submit nodes themselves.
   plate that cannot find a free spot on screen overlaps cleanly by rank instead of flying off screen,
   a slide never runs through a plate placed before it (it jumps), and leader lines pass behind other
   plates and bubbles (gaps cut where they cross: `AgentRenderState.leaderGaps`).
-- **Agent card** (`AgentCardScreen`, right-click an agent): name/title/role, state, activity, task,
+- **Agent card** (`AgentCardScreen`, empty-hand sneak + right-click an agent, or the Team tab / a task / the console roster): name/title/role, state, activity, task,
   **the decision it owns with a way to act on it**, decisions it filed that wait on you through
   another agent ("Filed d3 for you: merge of t4 (Wren's work)"), the last log lines, Message /
   Pause|Resume / Stop|Spawn. The decision block opens the decision's review screen when one is
