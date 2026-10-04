@@ -12,7 +12,7 @@ import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisi
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
 import { Memory, MemoryError } from './memory.js';
-import { Notifier } from './notifier.js';
+import { DiscordNotifier, Notifier, type ExternalKind } from './notifier.js';
 import type {
   Agent,
   AgentState,
@@ -137,7 +137,7 @@ export function prDescription(summary: string | undefined): string {
 }
 
 /** What an outside notification is about (notify.discord ping / silent lists). */
-export type ExternalNotifyKind = 'need_user' | 'blocked' | 'usage' | 'goal_done' | 'auth';
+export type ExternalNotifyKind = ExternalKind;
 
 export type Reply = (msg: Outbound) => void;
 
@@ -147,6 +147,8 @@ export interface ForemanOptions {
   config: Config;
   logger?: Logger;
   notifier?: Notifier;
+  /** notify.discord sender (tests inject one with a fake spawn) */
+  discord?: DiscordNotifier;
   now?: () => number;
 }
 
@@ -182,6 +184,10 @@ export class Foreman {
   private goalTimers = new Set<string>();
   private closed = false;
   private dailyTimer: NodeJS.Timeout | undefined;
+  /** notify.discord (C10); read live from the config */
+  readonly discord: DiscordNotifier;
+  /** task id -> last status seen (a task newly blocked is announced once) */
+  private taskStatusSeen = new Map<string, string>();
 
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
@@ -199,6 +205,7 @@ export class Foreman {
       opts.notifier ??
       new Notifier({ enabled: opts.config.notify, silent: opts.config.toastSilent, log: this.log, now });
     this.leads = new LeadBook(this.ctx, opts.config.claude.leads);
+    this.discord = opts.discord ?? new DiscordNotifier(() => this.config.notifyDiscord, { log: this.log });
     const { cast, source } = loadCast(opts.config.projectRoot, opts.config.claude.leads);
     this.cast = cast;
     this.log.debug(`cast from ${source}`);
@@ -221,6 +228,11 @@ export class Foreman {
 
   private emit(m: Outbound): void {
     if (m.type === 'task.upsert' && m.task.goalId) this.scheduleGoalUpdate(m.task.goalId);
+    if (m.type === 'task.upsert') {
+      const before = this.taskStatusSeen.get(m.task.id);
+      this.taskStatusSeen.set(m.task.id, m.task.status);
+      if (m.task.status === 'blocked' && before !== undefined && before !== 'blocked') this.notifyExternal('blocked', `${m.task.id} "${truncate(m.task.title, 80)}" is blocked${m.task.blockedReason ? `: ${truncate(m.task.blockedReason, 200)}` : ''}`);
+    }
     // a building lead exists for the mod only while it is assigned
     if (m.type === 'agent.upsert' && !this.visible(m.agent)) return;
     for (const l of this.listeners) {
@@ -828,6 +840,7 @@ export class Foreman {
       if (complete && !wasDone) {
         this.bus.feed('goal', `Goal complete: ${g.text}`, { goalId });
         this.notify('info', `Goal complete: ${truncate(g.text, 80)}`);
+        this.notifyExternal('goal_done', `Goal complete: ${truncate(g.text, 200)}`);
       }
     });
   }
@@ -924,6 +937,7 @@ export class Foreman {
     const label = d.kind === 'merge' ? 'merge review' : d.kind === 'permission' ? 'permission' : 'question';
     this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user', goalId: d.goalId });
     this.notify('need_user', `${who}: ${truncate(d.question, 120)}`, d.id);
+    this.notifyExternal('need_user', `${who}: ${truncate(d.question, 200)}`);
     this.notifier.needUser(`${who}: ${d.question}`);
   }
 
@@ -932,8 +946,11 @@ export class Foreman {
    * blocks and never throws; off unless configured.
    */
   notifyExternal(kind: ExternalNotifyKind, text: string): void {
-    void kind;
-    void text;
+    try {
+      this.discord.send(kind, text);
+    } catch (e) {
+      this.log.warn(`notify.discord: ${(e as Error).message}`);
+    }
   }
 
   notify(level: 'info' | 'warn' | 'need_user', text: string, decisionId?: string): void {
@@ -1492,6 +1509,7 @@ export class Foreman {
     }
     this.flushLogs();
     this.notifier.dispose();
+    this.discord.dispose();
     this.store.close();
   }
 }

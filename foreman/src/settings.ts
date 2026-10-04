@@ -60,6 +60,8 @@ interface Spec {
   envs?: string[];
   /** other spellings of the key in config.json (read; written to when present) */
   alt?: string[];
+  /** when the file holds an object at this key, the value goes to <key>.<objectKey> (notify -> notify.desktop) */
+  objectKey?: string;
   def: unknown | ((x: SpecCtx) => unknown);
   /** the configured value (global: from the parsed config; repository: from its parsed settings) */
   get: (cfg: Config, rs: RepoSettings, raw: unknown) => unknown;
@@ -161,7 +163,7 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'claude.maxConcurrentTurns', group: 'models', type: 'int', min: 0, max: 20, label: 'Agent turns at once', help: 'A cap on turns running at once, leads and workers together. 0: no cap besides "Workers at once".', live: true, flags: ['max-concurrent-turns'], def: 0, get: (cfg) => cfg.claude.maxConcurrentTurns ?? 0, normalize: (v) => ({ value: v === 0 ? undefined : v }) },
     // general
     { key: 'userName', group: 'general', type: 'string', label: 'Your name', help: 'How the agents address you, in prompts, the feed and the hub. Empty: your OS user name.', live: true, flags: ['user-name'], envs: ['AGENTCRAFT_USER_NAME'], alt: ['user-name'], def: defaultUserName(), get: (cfg) => cfg.userName, normalize: (v) => (typeof v === 'string' && v.trim().length > 40 ? { error: 'must be at most 40 characters' } : { value: typeof v === 'string' && v.trim() ? v.trim() : undefined }) },
-    { key: 'notify', group: 'general', type: 'bool', label: 'Desktop notifications', help: 'A desktop notification when a decision waits for you.', live: true, flags: ['notify'], envs: ['AGENTCRAFT_NOTIFY'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.notify },
+    { key: 'notify', group: 'general', type: 'bool', objectKey: 'desktop', label: 'Desktop notifications', help: 'A desktop notification when a decision waits for you.', live: true, flags: ['notify'], envs: ['AGENTCRAFT_NOTIFY'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.notify },
     { key: 'toastSilent', group: 'general', type: 'bool', label: 'Silent notifications', help: 'Desktop notifications without sound.', live: true, flags: ['toast-silent'], envs: ['AGENTCRAFT_TOAST_SILENT'], alt: ['toast-silent'], def: false, get: (cfg) => cfg.toastSilent },
     { key: 'mergeStyle', group: 'general', type: 'enum', options: ['merge', 'squash'], label: 'Merge style', help: 'merge: a merge commit that keeps the agents\' commits; squash: one commit with the task\'s changes, authored by you.', live: true, flags: ['merge-style'], envs: ['AGENTCRAFT_MERGE_STYLE'], alt: ['merge-style'], def: 'merge', get: (cfg) => cfg.mergeStyle },
     { key: 'signMerges', group: 'general', type: 'bool', label: 'Sign approved merges', help: 'Sign your approved merge commits when your git config signs commits (commit.gpgsign). Agents never sign.', live: true, flags: ['sign-merges'], envs: ['AGENTCRAFT_SIGN_MERGES'], alt: ['sign-merges'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.signMerges },
@@ -559,7 +561,10 @@ export function configSet(t: ConfigTarget, changes: Array<{ key: string; value: 
       continue;
     }
     // write to the spelling the file already uses
-    const at = fileKeys(s).find((k) => hasPath(section, k)) ?? s.key.split('.');
+    let at = fileKeys(s).find((k) => hasPath(section, k)) ?? s.key.split('.');
+    // never replace an object with a scalar (e.g. notify: { desktop, discord })
+    const there = getPath(section, at);
+    if (s.objectKey && there && typeof there === 'object' && !Array.isArray(there)) at = [...at, s.objectKey];
     writes.push({ spec: s, keys: [...sectionPath, ...at], value: checked.value });
   }
   if (errors.length) throw new ConfigError(errors.join('; '));
@@ -613,6 +618,8 @@ function replaceInPlace<T extends object>(target: T, source: T): void {
 export function applyLive(running: Config, next: Config): void {
   running.userName = next.userName;
   running.notify = next.notify;
+  if (next.notifyDiscord) running.notifyDiscord = next.notifyDiscord;
+  else delete running.notifyDiscord;
   running.toastSilent = next.toastSilent;
   running.mergeStyle = next.mergeStyle;
   running.signMerges = next.signMerges;

@@ -10,6 +10,21 @@ import type { EffortLevel, McpServerConfig } from '@anthropic-ai/claude-agent-sd
 import { DEFAULT_CONTEXT, type AgentContextConfig } from './agents/claude/context.js';
 import { DEFAULT_PERMISSIONS, type PermissionsConfig } from './agents/claude/permissions.js';
 import { DEFAULT_SUBAGENTS, type SubagentsConfig } from './agents/claude/subagents.js';
+import { DEFAULT_DISCORD, type DiscordNotifyConfig } from './notifier.js';
+
+/**
+ * config.json `notify`: a boolean (desktop notifications), or an object
+ * `{ "desktop": true, "discord": { "script": "...", "ping": [...], "silent": [...] } }`
+ * (`discord: true` = the defaults). Discord is off unless configured.
+ */
+function discordConfig(file: unknown): DiscordNotifyConfig | undefined {
+  const d = file && typeof file === 'object' && !Array.isArray(file) ? (file as Record<string, unknown>).discord : undefined;
+  if (d === true) return { ...DEFAULT_DISCORD, ping: [...DEFAULT_DISCORD.ping], silent: [...DEFAULT_DISCORD.silent] };
+  if (!d || typeof d !== 'object' || (d as Record<string, unknown>).enabled === false) return undefined;
+  const o = d as Record<string, unknown>;
+  const list = (v: unknown, def: string[]) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [...def]);
+  return { script: str(o.script) ?? DEFAULT_DISCORD.script, ping: list(o.ping, DEFAULT_DISCORD.ping), silent: list(o.silent, DEFAULT_DISCORD.silent) };
+}
 
 export const FOREMAN_VERSION = '0.1.0';
 
@@ -210,6 +225,8 @@ export interface Config {
   autostart: boolean;
   reset: boolean;
   notify: boolean;
+  /** notify.discord (C10): the user's notification script, by kind; absent = off */
+  notifyDiscord?: DiscordNotifyConfig;
   toastSilent: boolean;
   debug: boolean;
   quiet: boolean;
@@ -542,7 +559,8 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
     goal: str(flags.goal),
     autostart: bool(flags.autostart, false) || !!str(flags.goal),
     reset: bool(flags.reset, false),
-    notify: bool(pick('notify', 'AGENTCRAFT_NOTIFY'), backend === 'claude'),
+    notify: bool(flags.notify ?? env.AGENTCRAFT_NOTIFY ?? (file.notify && typeof file.notify === 'object' ? (file.notify as Record<string, unknown>).desktop : file.notify), backend === 'claude'),
+    ...((d) => (d ? { notifyDiscord: d } : {}))(discordConfig(file.notify)),
     toastSilent: bool(pick('toast-silent', 'AGENTCRAFT_TOAST_SILENT', 'toastSilent'), false),
     debug: bool(pick('debug', 'AGENTCRAFT_DEBUG'), false),
     quiet: bool(flags.quiet, false),

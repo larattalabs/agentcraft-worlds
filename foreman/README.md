@@ -102,6 +102,43 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 
 `<home>/config.json` can hold the same settings (`{"backend":"claude","claude":{"workers":["kit","wren"]}}`).
 
+### Unattended running: holds, retries, usage reserve, notifications
+
+- **Holds** (`foreman.status.hold {reason, until?, message}`): while the claude backend holds new
+  turns the status says why: `usage` (a usage limit until it resets, or the usage reserve below),
+  `auth` (the login / key failed: until a restart) or `offline` (the start-up check could not reach
+  Claude: retried after 30 s, doubling up to 10 min; goals still queue). Running turns finish;
+  queued work starts when the hold ends. Limits and reserve windows are re-checked on the wall clock
+  every 60 s, so a sleep cannot delay the wake-up. Only an exact auth failure (`authentication_failed`,
+  a 401, "Invalid API key", "not logged in") counts as one.
+- **Usage reserve** (`claude.usageReserve {fiveHourPct, sevenDayPct}`, default 85 / 80, 0 = off;
+  hub Settings): with your claude.ai login no new agent turn starts while the 5-hour or 7-day
+  window is at or above that share, until it resets, so some of your plan is left for you.
+- **Automatic retry**: a worker turn that fails for a passing reason (network, the Mac sleeping, an
+  overloaded API (529) or a server error, the turn's step limit or time limit) resumes its session
+  once after 2-5 minutes (the agent shows "retrying hh:mm"), then the task blocks as before (Retry
+  on the task's card). A too-long prompt retries once in a fresh session. A failed plan is tried once
+  more before the goal fails, a failed lead review once more before the merge reaches you without a
+  verdict. Never retried: auth, usage limits, the per-turn budget, billing.
+- **Lead sessions** (`claude.leadSession {maxDays, maxTurns}`, default 7 / 40, 0 = no limit): a lead's
+  session for a goal starts over once it is that old or long, seeded with the goal's plan note, its
+  task board and the thread's last messages.
+- **Discord** (`notify.discord`, off by default): runs your notification script for things that need
+  you, never blocking the Foreman:
+
+  ```json
+  { "notify": { "desktop": true,
+      "discord": { "script": "~/.agentcraft/discord-notify.sh",
+                   "ping": ["need_user", "auth"], "silent": ["blocked", "usage", "goal_done"] } } }
+  ```
+
+  `ping` kinds run `script --critical <message>`, `silent` ones `script <message>` (the script's own
+  interface; it dedups identical messages). `"discord": true` uses these defaults. Decisions arriving
+  within a minute of a ping are combined into the next one. Kinds: `need_user` (a decision waits),
+  `auth` (auth failed), `blocked` (a task blocked), `usage` (a usage limit or the reserve holds
+  turns), `goal_done`. `notify` can stay a plain boolean (desktop notifications) when Discord is off.
+
+
 Per-repo settings go under `repoSettings`, keyed by the repository path. They live in your config, not
 in the repo, so an agent cannot change what the Foreman runs by editing its worktree:
 
