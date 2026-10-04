@@ -55,6 +55,11 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 	private boolean keepDraft = true;
 	/** Where Esc returns to (the agent card's Message), null = the world. */
 	private @Nullable Screen parent;
+	/** Plain text waiting for its second Enter ("Create goal …? Enter again"), null = none. */
+	private @Nullable String armedGoal;
+	/** The building the console terminal stands in (its repos are where goals go), null = not opened at a terminal in one. */
+	private @Nullable String buildingId;
+	private List<String> buildingRepos = List.of();
 	private int historyIndex = -1;
 	private String draft = "";
 	private int compSel;
@@ -127,6 +132,28 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			lastValue = input.value();
 			popupHidden = true;
 		}
+	}
+
+	/** Opened at a console terminal inside building {@code id}: goals go to its first repo the Foreman knows, without asking. */
+	public ConsoleScreen atBuilding(String id, List<String> repos) {
+		this.buildingId = id;
+		this.buildingRepos = List.copyOf(repos);
+		return this;
+	}
+
+	public @Nullable String buildingId() {
+		return buildingId;
+	}
+
+	/** The repo goals go to from this console (its terminal's building), or null. */
+	public @Nullable String preferRepo() {
+		ForemanState s = Foreman.state();
+		return s == null ? null : UiRules.buildingRepo(buildingRepos, s.repos().keySet());
+	}
+
+	/** Whether plain text is waiting for its confirming Enter (QA). */
+	public boolean goalConfirmArmed() {
+		return armedGoal != null;
 	}
 
 	/** Return to {@code parent} on Esc (instead of the world). */
@@ -225,6 +252,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			if (pendingGoal != null) {
 				pendingGoal = null;
 			}
+			armedGoal = null; // edited: ask again
 			historyIndex = historyIndex >= 0 && !v.equals(historyAt(historyIndex)) ? -1 : historyIndex;
 		}
 		if (s == null) {
@@ -233,7 +261,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			return;
 		}
 		if (!v.equals(intentFor) || s.revision() != intentRev || input.cursor() != intentCursor) {
-			intent = ConsoleCommands.parse(v, s);
+			intent = ConsoleCommands.parse(v, s, preferRepo());
 			completions = ConsoleCommands.complete(v, input.cursor(), s);
 			intentFor = v;
 			intentRev = s.revision();
@@ -292,7 +320,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 		lastValue = input.value();
 		ForemanState s = Foreman.state();
 		if (s != null) {
-			intent = ConsoleCommands.parse(input.value(), s);
+			intent = ConsoleCommands.parse(input.value(), s, preferRepo());
 			// keep the cycle position when the same token prefix still matches
 			List<Completion> next = ConsoleCommands.complete(input.value(), input.cursor(), s);
 			completions = next;
@@ -310,7 +338,13 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			return;
 		}
 		String raw = input.value();
-		Intent in = ConsoleCommands.parse(raw, s);
+		Intent in = ConsoleCommands.parse(raw, s, preferRepo());
+		if (pendingGoal == null && in instanceof Goal g && g.plain() && !UiRules.plainGoalConfirmed(armedGoal, raw)) {
+			// plain text never silently creates a goal: the first Enter asks, the second (same text) creates it
+			armedGoal = raw;
+			return;
+		}
+		armedGoal = null;
 		if (pendingGoal != null) {
 			List<Repo> choices = pendingGoal.choices();
 			Repo r = choices.get(Math.max(0, Math.min(repoSel, choices.size() - 1)));
@@ -404,6 +438,10 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 		if (e.isEscape()) {
 			if (pendingGoal != null) {
 				pendingGoal = null;
+				return true;
+			}
+			if (armedGoal != null) {
+				armedGoal = null; // keep editing
 				return true;
 			}
 			if (popupVisible()) {
@@ -582,6 +620,11 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 		} else if (pendingGoal != null) {
 			Repo r = pendingGoal.choices().get(Math.max(0, Math.min(repoSel, pendingGoal.choices().size() - 1)));
 			hint = "new goal \u2192 " + r.name();
+		} else if (armedGoal != null && intent instanceof Goal g) {
+			ForemanState s = Foreman.state();
+			hint = "Create a goal" + (g.repoId() != null && s != null ? " for " + ConsoleCommands.repoName(g.repoId(), s) : "")
+				+ "? Enter again creates it \u00b7 Esc keeps editing (/goal skips this)";
+			hintColor = UiStyle.BRASS;
 		} else if (intent != null) {
 			ForemanState s = Foreman.state();
 			if (s != null && s.hasData() && s.isStale() && sendsToForeman(intent)) {

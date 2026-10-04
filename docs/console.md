@@ -33,7 +33,8 @@ back the next time it opens (this session), and the console terminal shows it on
 
 | input | sends |
 | --- | --- |
-| plain text | `goal.submit` (with several repos you pick one first: 1-9 / arrows, Enter) |
+| plain text | asks first: "Create a goal …? Enter again creates it · Esc keeps editing"; the second Enter on the same text sends `goal.submit` (with several repos you pick one first: 1-9 / arrows, Enter). Plain text never silently creates a goal |
+| `/goal text` | `goal.submit` at once (no confirm) |
 | `@juniper text`, `@all text` | `user.message` |
 | `/answer [d4] <n\|option> [text]` | `decision.answer`; `n` is the 1-based button number; the id can be left out when one decision is open; free text for questions; `Request changes` needs the feedback text |
 | `/repo add <path>`, `/repos` | `repo.add`, list repos |
@@ -48,6 +49,19 @@ Tab completes agent names (also after `/pause` etc.), commands, decision ids and
 and worktrees; repeated Tab cycles, Up/Down move in the popup. Up/Down otherwise walk the history
 (kept in `<game dir>/agentcraft/console-history.txt`). Shift+Enter adds a line; a multi-line
 paste grows the bar (up to 6 lines, then it scrolls).
+
+**Console terminal.** A console opened from a console terminal block (right-click, or Enter while
+looking at it) knows the building the terminal stands in (the recorded building whose box holds
+it): its goals go to that building's first repo the Foreman knows, without the repo chooser, and
+the bar says so ("new goal → api"). A console opened with `` ` `` elsewhere asks as before.
+
+**Roster.** Click a face in the header to start a message (`@name `); right-click (or Shift+click)
+opens that agent's card, and Esc in the card comes back to the console.
+
+**One Enter rule** (all AgentCraft text inputs): single-line inputs (this bar, the decision
+answer, the agent card's message line, the diff's feedback) send on Enter (Ctrl+Enter too),
+Shift+Enter adds a line; multi-line inputs (the hub's goal thread, plan editor, notes, design
+notes) make Enter a new line and send on Ctrl+Enter. The hints under each input show the keys.
 
 Everything except reading needs the Foreman's client token (foreman/README.md "Client token"): a
 refusal saying "read-only connection: no client token" means the mod connected without this
@@ -131,7 +145,7 @@ covers (tied to key 2). Buttons: Allow once (1), Always allow (2, sends the exac
 | command | |
 | --- | --- |
 | `dev.screen {open:"console"}` + `dev.type "@ju"` | console with the autocomplete (QA consoles start empty and never read or keep the player's draft, so a re-run never types "@ju@ju") |
-| `dev.console {prefill?, submit?, open?}` | open the console with text (and press Enter); returns value, ghost, completions, ack stats, the kept `draft` |
+| `dev.console {prefill?, submit?, open?, terminal?: "x y z", rosterCard?: agentId}` | open the console with text (and press Enter: plain text arms the goal confirm, `goalConfirm:true`, a second `submit` creates it); `terminal` opens it as that console terminal does (`building`, `preferRepo`); `rosterCard` = right-click that roster face (the card, `parent` = ConsoleScreen); returns value, ghost, completions, ack stats, the kept `draft` |
 | `dev.key {mapping:"key.agentcraft.console"}` | the real key path (restores the draft); `dev.key` modifiers are SDL bits: Shift 1, Ctrl 64 |
 | `dev.console.parse {text}` | what an input would do (intent, completions), nothing is sent |
 | `dev.screen {open:"decision"}`, `dev.decision {decisionId?\|kind?\|preview?}` | the decision screen (queue head / one decision / a sample permission marked "preview") |
