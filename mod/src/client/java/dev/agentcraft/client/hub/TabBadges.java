@@ -30,7 +30,7 @@ final class TabBadges {
 	/** The badge of a tab, or null (nothing to count). */
 	static @Nullable Badge of(HubTab t) {
 		ForemanState s = Foreman.state();
-		long rev = s == null ? -1 : s.revision();
+		long rev = (s == null ? -1 : s.revision()) * 31 + Inbox.revision();
 		long now = System.currentTimeMillis();
 		if (rev != cachedRev || now - cachedAt > MAX_AGE_MS) {
 			CACHE.clear();
