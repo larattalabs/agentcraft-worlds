@@ -166,7 +166,7 @@ public final class BuildingCommands {
 		try {
 			Building b = Buildings.place(level, bp, new BlockPos(o[0], o[1], o[2]), Rotation.values()[turns], repos, force);
 			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ") for " + String.join(", ", b.repos()) + ", "
-				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + ". Undo: /agentcraft remove " + b.id()), true);
+				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + ". Undo: the hub (H) > Buildings > " + b.id() + " > Remove"), true);
 			return 1;
 		} catch (Buildings.BuildingException e) {
 			src.sendFailure(Component.literal(e.getMessage()));

@@ -356,6 +356,7 @@ public final class HubFeature {
 		o.addProperty("open", s != null);
 		o.addProperty("key", Keys.label(Keys.hub));
 		o.addProperty("singleplayer", mc.getSingleplayerServer() != null);
+		o.addProperty("teleportAllowed", mc.player != null && HubActions.teleportAllowed(mc.player));
 		o.addProperty("tab", s == null ? null : s.tab().id);
 		o.addProperty("sub", s == null ? null : s.sub().name().toLowerCase(Locale.ROOT));
 		o.addProperty("selectedBuilding", s == null ? null : s.selectedBuilding());

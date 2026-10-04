@@ -266,7 +266,8 @@ public final class BuildPlacement {
 				}
 				Building placed = Buildings.place(sl, b, origin, rotation, rs, useForce);
 				r = new Result(true, placed.id(), "Placed " + placed.id() + " (" + b.name() + ") for " + String.join(", ", placed.repos())
-					+ (placed.home() ? ", home" : "") + ". Undo: /agentcraft remove " + placed.id());
+					+ (placed.home() ? ", home" : "") + ". Undo: hub (" + dev.agentcraft.client.hud.Keys.label(dev.agentcraft.client.hud.Keys.hub)
+					+ ") > Buildings > " + placed.id() + " > Remove");
 			} catch (Buildings.BuildingException e) {
 				r = new Result(false, null, e.getMessage());
 			} catch (RuntimeException e) {

@@ -38,7 +38,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Singleplayer only: confirm runs {@code Buildings.place} on the integrated server. The key is
  * not gated on the gamemaster level the {@code /agentcraft} commands need: in singleplayer the world
- * is the player's own, and placing is explicit and reversible ({@code /agentcraft remove}).
+ * is the player's own, and placing is explicit and reversible (the hub's Remove).
  *
  * <p>QA: {@code dev.build.*} (see {@link #registerDev}), screens {@code build_repos} and
  * {@code build_blueprints} via {@code dev.screen}.

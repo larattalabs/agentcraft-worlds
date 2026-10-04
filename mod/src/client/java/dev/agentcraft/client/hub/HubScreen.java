@@ -854,9 +854,13 @@ public final class HubScreen extends Screen {
 		String home = "Make home";
 		button(g, "home", home, bx, dy, bw(home), false, busy || cur.home() || !sp, false, mx, my, () -> makeHome(id));
 		bx += bw(home) + 4;
-		String tp = "Teleport";
-		button(g, "teleport", tp, bx, dy, bw(tp), false, busy || !sp, false, mx, my, () -> teleport(id));
-		bx += bw(tp) + 4;
+		// C7: Teleport only with cheats on or in creative/spectator (a survival run walks)
+		boolean tpAllowed = minecraft.player != null && HubActions.teleportAllowed(minecraft.player);
+		if (tpAllowed) {
+			String tp = "Teleport";
+			button(g, "teleport", tp, bx, dy, bw(tp), false, busy || !sp, false, mx, my, () -> teleport(id));
+			bx += bw(tp) + 4;
+		}
 		boolean armedHere = armed() && id.equals(armedRemove);
 		String rm = armedHere ? "Confirm remove" : "Remove…";
 		int rmw = bw(rm);
@@ -881,7 +885,9 @@ public final class HubScreen extends Screen {
 			note = last.message();
 			noteColor = last.ok() ? UiBits.okText() : UiBits.errorText();
 		} else {
-			note = "Teleport lands at the entrance (in the building's dimension). Remove asks twice.";
+			note = tpAllowed ? "Teleport lands at the entrance (in the building's dimension). Remove asks twice."
+				: "No Teleport in survival without cheats: walk there (" + cur.box().minX() + ", " + cur.box().minY() + ", " + cur.box().minZ()
+					+ "). Remove asks twice.";
 		}
 		for (String line : TextUtil.wrapPlain(font, note, dw)) {
 			if (dy > y + h - 10) {
