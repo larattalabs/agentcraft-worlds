@@ -35,7 +35,8 @@ That Foreman runs from a **stable checkout** (`~/Developer/agentcraft-stable`), 
 repository, and agent merges land in its `main`. The stable Foreman uses its own profile and port
 (`hardcore`, 7880), so it never collides with a dev run.
 
-**Setup (once, and again to update):** quit Prism first, because it rewrites `instance.cfg`.
+**Setup (once, and again to update):** quit Prism and the game first, because setup rewrites
+`instance.cfg` and swaps jars in `mods/`.
 
 ```sh
 node tools/hardcore-setup.mjs                    # dry run: prints every change, changes nothing
@@ -47,15 +48,18 @@ What `--apply` changes (defaults; see `--help`):
 
 | what | change |
 | --- | --- |
-| `~/Developer/agentcraft-stable` | cloned from this repository (or fetched), `--ref` (default `main`) checked out detached; refuses local changes |
+| `~/Developer/agentcraft-stable` | cloned from this repository (or fetched), `--ref` (default `main`) checked out detached; refuses local changes, and refuses a ref without `tools/foreman-daemon.sh`/`.mjs` (the PreLaunchCommand points there) |
+| the `hardcore` Foreman | stopped first when it runs from the stable checkout and the checkout or its `node_modules` are about to change; it starts again with the next game launch |
 | its `foreman/`, `tools/` | `npm ci` |
 | its `mod/` | `gradlew build`, giving `mod/build/libs/agentcraft-<version>.jar` |
 | `~/MinecraftBackups/<instance>/` | world saves via `~/bin/backup-world.sh`; `agentcraft-setup-<stamp>/` with `instance.cfg` and the whole `mods/` folder on every run; on the first run also `agentcraft-setup-original/`, the pre-AgentCraft state, which is never overwritten |
 | `<instance>/.minecraft/mods/` | older `agentcraft*.jar` removed (they are in the backup) and the new jar copied in |
-| `<instance>/instance.cfg` | `PreLaunchCommand="<stable>/tools/foreman-daemon.sh" start --profile hardcore --port 7880 --home "<home>"`; `JvmArgs` gains `-Dagentcraft.port=7880 -Dagentcraft.profile=hardcore` (other args kept); `OverrideCommands`/`OverrideJavaArgs=true`; `PostExitCommand` (the world backup) kept |
+| `<instance>/instance.cfg` | `PreLaunchCommand="<stable>/tools/foreman-daemon.sh" start --profile hardcore --port 7880 --home "<home>"`; `JvmArgs` gains `-Dagentcraft.port=7880 -Dagentcraft.profile=hardcore` (other args kept); `OverrideCommands`/`OverrideJavaArgs=true`; `PostExitCommand` (the world backup) kept. When the instance used Prism's global commands or JVM args (override off), their `PostExitCommand`, `WrapperCommand` and `JvmArgs` are copied in from `prismlauncher.cfg` (`--prism-cfg` if it is elsewhere) |
 
-Running it again changes only what is out of date. It refuses when Prism is running, when the
-instance already has a PreLaunchCommand that is not ours, when the Minecraft versions differ, and
+Running it again changes only what is out of date. It refuses when Prism or the game is running
+(a java process whose command line or working directory is in the instance), when the
+instance (or Prism's global settings, without the override) already has a PreLaunchCommand that
+is not ours, when the ref has no daemon script, when the Minecraft versions differ, and
 when `--stable` sits inside a repository listed in `~/.agentcraft/config.json`.
 
 Options: `--stop-on-exit` stops the Foreman when the game exits. The backup still runs first,
@@ -99,7 +103,10 @@ checkout, the source is the dev checkout. Run from the stable checkout, the sour
 `origin`, which is the dev checkout it was cloned from. `--ref` is resolved with
 `git ls-remote`, so a dry run shows the commit that would be installed. The default `main` is
 the local `main`, which includes agent merges that have not been pushed; pass a tag or a commit
-to pin one. The next game launch sees the new commit and restarts the Foreman.
+to pin one. A running `hardcore` Foreman is stopped before the checkout and `npm ci` (the dry run
+lists it), because it runs from that checkout's code and `node_modules`; it starts again with the
+next game launch, or right away with `foreman-daemon.sh start`. Merge the launch tools
+(`tools/foreman-daemon.sh`) into the ref you install: setup refuses a ref without them.
 
 **Rollback:** setup prints the exact commands. In short, quit Prism and copy
 `~/MinecraftBackups/<instance>/agentcraft-setup-original/instance.cfg` over

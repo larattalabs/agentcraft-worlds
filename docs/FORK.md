@@ -162,6 +162,6 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 - All 29 mods have 26.3 builds (checked 2026-10-03). Exceptions to the stable-only rule:
   **Sodium is alpha-only on 26.3** (`mc26.3-0.9.3-alpha.1`), Visuality is beta.
 - Soak the clone (no AgentCraft) before trusting it; only then add AgentCraft (after items 7–8).
-- Adding AgentCraft to it: `node tools/hardcore-setup.mjs` (dry run, then `--apply` with Prism closed).
+- Adding AgentCraft to it: `node tools/hardcore-setup.mjs` (dry run, then `--apply` with Prism and the game closed; the ref must contain `tools/foreman-daemon.sh`).
   It sets up a stable checkout, a `hardcore` Foreman profile on port 7880 that starts with the game,
   and backups. See tools/README.md "Playing in a Hardcore world".
