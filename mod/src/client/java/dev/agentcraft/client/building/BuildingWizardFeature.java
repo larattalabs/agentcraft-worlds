@@ -430,7 +430,7 @@ public final class BuildingWizardFeature {
 				}
 				o.add("snapshotFiles", files);
 				JsonObject pins = new JsonObject();
-				for (Building b : Buildings.all()) {
+				for (Building b : Buildings.all()) { // fixtures carry snapshot pins too
 					pins.addProperty(b.id(), b.pin() == null ? "none" : b.pin().template() + (Buildings.ownGridMatches(b) ? "" : " (blueprint changed)"));
 				}
 				o.add("pins", pins);

@@ -64,7 +64,7 @@ public final class LibraryFeature {
 	/** Whether a click on this lectern opens the library (UiRules#lecternOpensLibrary). */
 	static boolean libraryLectern(Player player, BlockPos pos, BlockState state) {
 		String dim = player.level().dimension().identifier().toString();
-		boolean inside = UiRules.containing(Buildings.all(), Building::box, Building::dimension, dim, pos.getX(), pos.getY(), pos.getZ()) != null;
+		boolean inside = UiRules.containing(Buildings.buildings(), Building::box, Building::dimension, dim, pos.getX(), pos.getY(), pos.getZ()) != null;
 		MinecraftServer server = Minecraft.getInstance().getSingleplayerServer();
 		boolean hq = server != null && HqWorld.isHq(server);
 		boolean hasBook = state.hasProperty(LecternBlock.HAS_BOOK) && state.getValue(LecternBlock.HAS_BOOK);
@@ -93,7 +93,7 @@ public final class LibraryFeature {
 					o.addProperty("block", st.getBlock().getDescriptionId());
 					o.addProperty("lectern", st.is(Blocks.LECTERN));
 					String dim = mc.level.dimension().identifier().toString();
-					Building b = UiRules.containing(Buildings.all(), Building::box, Building::dimension, dim, pos.getX(), pos.getY(), pos.getZ());
+					Building b = UiRules.containing(Buildings.buildings(), Building::box, Building::dimension, dim, pos.getX(), pos.getY(), pos.getZ());
 					o.addProperty("building", b == null ? null : b.id());
 					o.addProperty("opensLibrary", st.is(Blocks.LECTERN) && libraryLectern(mc.player, pos, st));
 					return o;

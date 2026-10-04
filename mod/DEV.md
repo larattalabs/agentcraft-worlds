@@ -636,9 +636,9 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
   compares the two states' cell codes).
 
 ### Village board and fixtures (docs/VILLAGE.md V2)
-- Fixtures are `Building` records without repos (`Building.isFixture()`): `Buildings.all()` leaves them out (routing, leads,
-  trophies, Inbox, Goals, HUD), `Buildings.fixtures()` lists them, `Buildings.everything()` is both (overlap checks: the ghost
-  uses it; anything else that must not run through a placed site should too). Never home; `setHome`/`setRepos` refuse them;
+- Fixtures are `Building` records without repos (`Building.isFixture()`): `Buildings.buildings()` leaves them out (routing, leads,
+  trophies, Inbox, Goals, HUD), `Buildings.fixtures()` lists them, `Buildings.all()` is both (overlap checks: the ghost and
+  roads use it, so a new spatial caller is safe by default). Never home; `setHome`/`setRepos` refuse them;
   `place` refuses repos for a fixture blueprint; `move` skips the repo checks. `/agentcraft place village_board [-] [rotation]`
   places one in front of the player; `/agentcraft buildings` lists fixtures too; `/agentcraft remove <id>` suggests them.
 - `agentcraft:village_board` (`VillageBoardBlock`/`VillageBoardBlockEntity`, a `PanelBlock` like the task board, models

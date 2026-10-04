@@ -176,9 +176,9 @@ A placed blueprint is a building:
 A fixture (docs/VILLAGE.md V2: the village board) is placed from a `kind: "fixture"` blueprint and recorded like a building but
 with **no repos** (`Building.isFixture()`): same file, same ids, same snapshot, ghost, terrain fit, Remove, Move, Undo move,
 crash safety and world-start check. It is **not a building** for anything else: never home, no lead, no routing site, no
-trophies, no "one building per repo". `Buildings.all()` lists buildings only, `Buildings.fixtures()` the fixtures,
-`Buildings.everything()` both: use it for overlap and collision (placement and the ghost refuse a box overlapping a fixture as
-they do a building). `place` refuses repos for a fixture; Make home and Edit repos refuse a fixture. The record says
+trophies, no "one building per repo". `Buildings.all()` lists every site (buildings and fixtures): it is the one for overlap and
+collision (placement, the ghost and roads refuse a box overlapping a fixture as they do a building). `Buildings.buildings()`
+lists buildings only (routing, leads, trophies, the hub's building list), `Buildings.fixtures()` the fixtures. `place` refuses repos for a fixture; Make home and Edit repos refuse a fixture. The record says
 `"kind": "fixture"` for readers (it reads back from the empty `repos`). The hub lists fixtures under Buildings > Fixtures.
 
 ### Occupancy (who is in the way)
@@ -407,7 +407,7 @@ NO_SLOTS | NO_ROOM | UNAVAILABLE, building, slot, replaced, message}`, `Trophies
 ## Server API (mod, `dev.agentcraft.building`)
 
 - `Blueprints`: registry (bundled + user folder), `get(id)`, `all()`, `reload()`.
-- `Buildings`: `all()` (buildings, no fixtures), `fixtures()`, `everything()` (both: overlap checks), `get(id)` (either), `forRepo(repoId)`, `home()`, `layoutFor(repoId)` (that repo's
+- `Buildings`: `all()` (every site, fixtures included: overlap checks), `buildings()` (no fixtures: routing, leads, trophies), `fixtures()`, `get(id)` (either), `forRepo(repoId)`, `home()`, `layoutFor(repoId)` (that repo's
   building layout, else `Anchors.current()`), `place(level, blueprint, origin, rotation, repos,
   force) -> Building`, `remove(level, id)`, `forget(server, id)`, `setHome(server, id)`, persistence,
   change listeners. Errors are `Buildings.BuildingException` with a player-facing message.

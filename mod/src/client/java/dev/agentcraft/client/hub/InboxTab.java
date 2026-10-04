@@ -765,7 +765,7 @@ final class InboxTab implements HubPane {
 
 	void cycleBuilding() {
 		List<String> ids = new ArrayList<>();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			ids.add(b.id());
 		}
 		Filter f = Inbox.filter();

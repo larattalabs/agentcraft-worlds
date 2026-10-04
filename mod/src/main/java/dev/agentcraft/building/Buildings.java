@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -138,17 +139,21 @@ public final class Buildings {
 	// ------------------------------------------------------------------ reads
 
 	/**
-	 * All buildings in placement order, without the fixtures (docs/VILLAGE.md V2: a village board is no building for
-	 * routing, leads, trophies or the hub's building list; see {@link #fixtures()} and {@link #everything()}).
+	 * Every placed site in placement order: buildings and fixtures (village boards). This is the safe default for
+	 * anything spatial: overlap and collision (the ghost, placement, roads: a road laid through a fixture's restore box
+	 * would be overwritten by the fixture's snapshot on remove and vice versa), commands that act on any site. For
+	 * routing, leads, trophies and the hub's building list use {@link #buildings()} (docs/VILLAGE.md V2).
 	 */
 	public static List<Building> all() {
-		List<Building> out = new ArrayList<>();
-		for (Building b : state.byId().values()) {
-			if (!b.isFixture()) {
-				out.add(b);
-			}
-		}
-		return List.copyOf(out);
+		return List.copyOf(state.byId().values());
+	}
+
+	/**
+	 * The buildings only, without the fixtures (docs/VILLAGE.md V2: a village board is no building for routing, leads,
+	 * trophies, the Inbox, Goals, the HUD or the hub's building list). Any thread.
+	 */
+	public static List<Building> buildings() {
+		return withoutFixtures(state.byId().values());
 	}
 
 	/** The placed fixtures (village boards) in placement order. Any thread. */
@@ -162,12 +167,21 @@ public final class Buildings {
 		return List.copyOf(out);
 	}
 
-	/**
-	 * Buildings and fixtures in placement order: everything that occupies a site. Use this for overlap and collision
-	 * checks (a road or a ghost must not run through a fixture either; removing a fixture restores its snapshot box).
-	 */
-	public static List<Building> everything() {
-		return List.copyOf(state.byId().values());
+	static List<Building> withoutFixtures(Collection<Building> sites) {
+		List<Building> out = new ArrayList<>();
+		for (Building b : sites) {
+			if (!b.isFixture()) {
+				out.add(b);
+			}
+		}
+		return List.copyOf(out);
+	}
+
+	/** Tests only: replace the loaded sites (no world, no file). */
+	static void setForTest(List<Building> sites) {
+		Map<String, Building> map = new LinkedHashMap<>();
+		sites.forEach(b -> map.put(b.id(), b));
+		state = new State(Collections.unmodifiableMap(map), sites.size() + 1, List.of());
 	}
 
 	/** A building or a fixture by id (remove, move and the hub act on both), or null. */
@@ -1522,7 +1536,7 @@ public final class Buildings {
 	}
 
 	private static void notifyListeners() {
-		List<Building> list = all();
+		List<Building> list = buildings();
 		for (Consumer<List<Building>> l : LISTENERS) {
 			try {
 				l.accept(list);

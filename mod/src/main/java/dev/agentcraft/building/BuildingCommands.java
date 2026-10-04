@@ -79,7 +79,7 @@ public final class BuildingCommands {
 			.then(Commands.literal("remove")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
-						Buildings.everything().forEach(x -> b.suggest(x.id())); // fixtures are removed the same way
+						Buildings.all().forEach(x -> b.suggest(x.id())); // fixtures are removed the same way
 						return b.buildFuture();
 					})
 					.executes(ctx -> remove(ctx, false, false))
@@ -88,14 +88,14 @@ public final class BuildingCommands {
 			.then(Commands.literal("repos")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
-						Buildings.all().forEach(x -> b.suggest(x.id()));
+						Buildings.buildings().forEach(x -> b.suggest(x.id()));
 						return b.buildFuture();
 					})
 					.then(Commands.argument("repos", StringArgumentType.greedyString()).executes(BuildingCommands::repos))))
 			.then(Commands.literal("home")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
-						Buildings.all().forEach(x -> b.suggest(x.id()));
+						Buildings.buildings().forEach(x -> b.suggest(x.id()));
 						return b.buildFuture();
 					})
 					.executes(BuildingCommands::home))));
@@ -128,7 +128,7 @@ public final class BuildingCommands {
 	}
 
 	private static int listBuildings(CommandContext<CommandSourceStack> ctx) {
-		var all = Buildings.everything();
+		var all = Buildings.all();
 		int fixtures = Buildings.fixtures().size();
 		ctx.getSource().sendSuccess(() -> Component.literal((all.size() - fixtures) + " building(s)" + (fixtures > 0 ? ", " + fixtures + " fixture(s)" : "")
 			+ (all.isEmpty() ? "" : ":")), false);

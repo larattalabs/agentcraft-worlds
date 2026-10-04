@@ -194,7 +194,7 @@ public final class VillageBoardFeature {
 	static VillageBoard.Input input(@Nullable ForemanState st, long now) {
 		ZoneId zone = ZoneId.systemDefault();
 		List<VillageBoard.Site> sites = new ArrayList<>();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			Blueprint bp = Blueprints.get(b.blueprint());
 			String lead = Foreman.connected() ? Leads.view().leadOf(b.id()) : null;
 			List<String> repoNames = new ArrayList<>();

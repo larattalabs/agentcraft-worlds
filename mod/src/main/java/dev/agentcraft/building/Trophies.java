@@ -286,7 +286,7 @@ public final class Trophies {
 		l.awardedKeys().forEach(keys::add);
 		o.add("awarded", keys);
 		JsonArray bs = new JsonArray();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			JsonObject bo = new JsonObject();
 			bo.addProperty("id", b.id());
 			bo.addProperty("blueprint", b.blueprint());
@@ -328,7 +328,7 @@ public final class Trophies {
 			TrophyLedger l = TrophyLedger.read(f);
 			// slots of buildings that are gone (removed and settled at this start, or forgotten) leave the ledger
 			Set<String> live = new java.util.HashSet<>();
-			Buildings.all().forEach(b -> live.add(b.id()));
+			Buildings.buildings().forEach(b -> live.add(b.id()));
 			boolean pruned = false;
 			for (String id : List.copyOf(l.buildingIds())) {
 				if (!live.contains(id)) {

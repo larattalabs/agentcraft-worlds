@@ -591,7 +591,7 @@ public final class BuildPlacement {
 		}
 		String dim = lv.dimension().identifier().toString();
 		List<String> overlaps = new ArrayList<>();
-		for (Building other : Buildings.everything()) { // fixtures (village boards) occupy a site too
+		for (Building other : Buildings.all()) { // fixtures (village boards) occupy a site too
 			if (other.dimensionOrDefault().equals(dim) && Building.intersects(other.restoreBox(), snapBox)) {
 				overlaps.add(other.id().equals(moveId) ? other.id() + " where it stands now" : other.id());
 			}

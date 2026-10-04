@@ -364,7 +364,7 @@ public final class HubScreen extends Screen {
 	}
 
 	List<Building> buildings() {
-		return Buildings.all();
+		return Buildings.buildings();
 	}
 
 	static List<Building> fixtures() {

@@ -493,7 +493,7 @@ public final class HubFeature {
 		HubActions.Result last = HubActions.last();
 		o.add("lastAction", last == null ? null : resultJson(last));
 		JsonArray bs = new JsonArray();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			JsonObject j = new JsonObject();
 			j.addProperty("id", b.id());
 			j.addProperty("blueprint", b.blueprint());

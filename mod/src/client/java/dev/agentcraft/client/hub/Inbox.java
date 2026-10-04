@@ -287,7 +287,7 @@ public final class Inbox {
 	/** Buildings that hold at least one inbox row (for the building filter chip), in Buildings order. */
 	static List<String> buildingsWithItems() {
 		List<String> out = new ArrayList<>();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			for (Row r : rows()) {
 				if (b.id().equals(r.item().buildingId())) {
 					out.add(b.id());

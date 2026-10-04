@@ -57,10 +57,11 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
 - A fixture is a `Building` record with **no repos** (`Building.isFixture()`), in the same `agentcraft-buildings.json`, the same
   `b<n>` id sequence and the same snapshot folder, so place, ghost, terrain fit, snapshot, Remove (asks twice, restores exactly),
   Move, Undo move, crash safety and the world-start check work unchanged.
-- `Buildings.all()` leaves fixtures out (routing sites, leads and `lead.sync`, trophies, the Inbox, Goals, the HUD welcome rule
-  and every other building consumer stay as they were); `Buildings.fixtures()` lists them; `Buildings.everything()` is both.
-  **Use `everything()` for overlap and collision** (the ghost does; roads should too: a road laid through a fixture's snapshot
-  box would be overwritten when the fixture is removed). `Buildings.get(id)` returns either.
+- `Buildings.all()` is every placed site, buildings **and** fixtures: the safe default for overlap and collision (the ghost,
+  placement and roads use it: a road laid through a fixture's restore box would be overwritten when the fixture is removed, and
+  removing the road would restore the old cells over the board). `Buildings.buildings()` leaves fixtures out: routing sites,
+  leads and `lead.sync`, trophies, the Inbox, Goals, the HUD welcome rule and the hub's building list use it.
+  `Buildings.fixtures()` lists the fixtures; `Buildings.get(id)` returns either.
 - A fixture is never home (place, rehome, load and reconcile skip it), refuses Make home and Edit repos, and takes no repos
   (`place` refuses any; `move` skips the repo checks). One building per repo is untouched.
 - Placing: hub > Buildings > **Fixtures** > **Place village board…** (compact "Place board…"), a fixture blueprint's **Place**

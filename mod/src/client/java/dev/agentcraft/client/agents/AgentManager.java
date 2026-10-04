@@ -223,7 +223,7 @@ public final class AgentManager {
 		// only the buildings of the player's dimension: agents route and spawn there; home in another dimension = hidden
 		String dim = lvl.dimension().identifier().toString();
 		Anchors.Layout current = Buildings.currentIn(dim);
-		boolean homeElsewhere = current.isEmpty() && !Buildings.all().isEmpty();
+		boolean homeElsewhere = current.isEmpty() && !Buildings.buildings().isEmpty();
 		long sig = Buildings.regionsSignature() * 31 + current.revision();
 		if (sig != regionsSignature) {
 			regionsSignature = sig;

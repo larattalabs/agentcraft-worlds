@@ -930,7 +930,7 @@ final class GoalsTab implements HubPane {
 
 	private void drawFilter(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my, int count) {
 		List<Building> withRepos = new ArrayList<>();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			if (!b.repos().isEmpty()) {
 				withRepos.add(b);
 			}
@@ -1517,7 +1517,7 @@ final class GoalsTab implements HubPane {
 				targets.add(new String[] {"repo:" + r.id(), r.id()});
 			}
 		}
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			if (b.repos().size() > 1) {
 				Blueprint bp = Blueprints.get(b.blueprint());
 				targets.add(new String[] {"building:" + b.id(), (bp != null ? bp.name() : b.id()) + " (" + b.repos().size() + " repos)"});

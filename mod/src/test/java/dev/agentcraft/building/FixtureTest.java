@@ -130,4 +130,24 @@ class FixtureTest {
 		// a building still needs its repo
 		assertEquals(List.of("no repo chosen"), GhostModel.refusals(false, List.of(), 1, List.of(), 60, 70, -64, 319, List.of(), 0, false));
 	}
+
+	@Test
+	void allIsEverySiteSoSpatialCallersSeeFixturesAndBuildingsLeavesThemOut() {
+		Anchors.Bounds boardBox = new Anchors.Bounds(0, 64, 0, 6, 69, 3);
+		Anchors.Bounds shopBox = new Anchors.Bounds(20, 64, 0, 30, 72, 10);
+		Building shop = new Building("b1", "workshop", List.of("api"), true, "none", shopBox, shopBox, Map.of(), 1L, Building.OVERWORLD);
+		Building board = new Building("b2", "village_board", List.of(), false, "none", boardBox, boardBox, Map.of(), 2L, Building.OVERWORLD);
+		try {
+			Buildings.setForTest(List.of(shop, board));
+			// all() is the safe default for overlap and collision (roads, the ghost): a road must never be laid into a
+			// fixture's restore box, or removing either one restores its snapshot over the other
+			assertEquals(List.of(shop, board), Buildings.all());
+			assertTrue(Buildings.all().stream().anyMatch(b -> b.restoreBox().equals(boardBox)));
+			assertEquals(List.of(shop), Buildings.buildings());
+			assertEquals(List.of(board), Buildings.fixtures());
+			assertEquals(List.of(shop), Buildings.withoutFixtures(List.of(board, shop)));
+		} finally {
+			Buildings.setForTest(List.of());
+		}
+	}
 }

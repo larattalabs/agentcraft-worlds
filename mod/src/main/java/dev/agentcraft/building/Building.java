@@ -154,7 +154,7 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 	/**
 	 * A fixture (docs/VILLAGE.md V2: the village board): placed from a {@code fixture} blueprint, so it has no repos. It is
 	 * placed, moved and removed like a building (snapshot, ghost, Undo move) but is never home, never has a lead or
-	 * trophies, takes no repo and is no routing site: {@link Buildings#all()} leaves it out, {@link Buildings#fixtures()}
+	 * trophies, takes no repo and is no routing site: {@link Buildings#buildings()} leaves it out, {@link Buildings#fixtures()}
 	 * lists it. Every building has at least one repo, so an empty repo list is exactly "a fixture".
 	 */
 	public boolean isFixture() {
