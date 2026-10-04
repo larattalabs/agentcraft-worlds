@@ -3,6 +3,7 @@
 // (state saved, running turns interrupted; resumeOnStart picks them up), so the new process can take
 // the same port and profile.
 import { spawn } from 'node:child_process';
+import { scrubEnv } from './util/env.js';
 
 export interface RestartCommand {
   command: string;
@@ -45,7 +46,7 @@ export function restartArgs(argv: string[]): string[] {
 }
 
 export function restartCommand(p: { execPath: string; execArgv: string[]; script: string; argv: string[]; cwd: string; env: NodeJS.ProcessEnv }): RestartCommand {
-  return { command: p.execPath, args: [...p.execArgv, p.script, ...restartArgs(p.argv)], cwd: p.cwd, env: { ...p.env } };
+  return { command: p.execPath, args: [...p.execArgv, p.script, ...restartArgs(p.argv)], cwd: p.cwd, env: scrubEnv(p.env) };
 }
 
 /** This process's restart command (main.ts). */
@@ -55,7 +56,7 @@ export function currentRestartCommand(argv: string[]): RestartCommand {
 
 /** Start it detached (its own process group; output goes where ours goes). Returns its pid. */
 export function spawnRestart(cmd: RestartCommand): number {
-  const child = spawn(cmd.command, cmd.args, { cwd: cmd.cwd, env: cmd.env, detached: true, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
+  const child = spawn(cmd.command, cmd.args, { cwd: cmd.cwd, env: scrubEnv(cmd.env), detached: true, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
   child.on('error', () => undefined);
   child.unref();
   if (!child.pid) throw new Error(`could not start ${cmd.command}`);

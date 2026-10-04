@@ -9,6 +9,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeFileAtomic } from './util/fsx.js';
 
 export const CLIENT_TOKEN_FILE = 'client.token';
 
@@ -21,27 +22,12 @@ export function clientTokenPath(dataDir: string): string {
   return path.join(dataDir, CLIENT_TOKEN_FILE);
 }
 
-let tmpCounter = 0;
-
 /** A fresh token, written owner-only (0600) to <dataDir>/client.token (temp file + rename). */
 export function createClientToken(dataDir: string): { token: string; file: string } {
   const token = randomBytes(32).toString('hex');
   const file = clientTokenPath(dataDir);
-  fs.mkdirSync(dataDir, { recursive: true });
-  const tmp = `${file}.${process.pid}.${++tmpCounter}.tmp`;
-  const fd = fs.openSync(tmp, 'w', 0o600);
-  try {
-    fs.writeSync(fd, `${token}\n`);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  try {
-    fs.chmodSync(tmp, 0o600);
-  } catch {
-    /* not supported (Windows): the file is in the user's profile anyway */
-  }
-  fs.renameSync(tmp, file);
+  // a random temp name created exclusively with 0600, then renamed over the target (never follows a link)
+  writeFileAtomic(file, `${token}\n`, { mode: 0o600 });
   return { token, file };
 }
 

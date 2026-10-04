@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { CastMember } from './cast.js';
-import { configEnv, configFrom, DEFAULT_LEADS, leadsList, type Config, type RepoSettings } from './config.js';
+import { configEnv, configFrom, DEFAULT_LEADS, leadsList, RESERVED_KEYS, type Config, type RepoSettings } from './config.js';
 import { DEFAULT_CONTEXT } from './agents/claude/context.js';
 import { DEFAULT_PERMISSIONS } from './agents/claude/permissions.js';
 import { readAgentFile } from './agents/claude/subagents.js';
@@ -23,6 +23,7 @@ import type { SettingDef } from './protocol.js';
 import { samePath } from './repos.js';
 import { defaultUserName } from './user.js';
 import { writeFileAtomic } from './util/fsx.js';
+import { jsonErrorMessage } from './util/jsonpos.js';
 
 /** A config.get / config.set problem the user can fix (refused with this message). */
 export class ConfigError extends Error {}
@@ -340,17 +341,25 @@ export function readRawConfig(file: string): { raw: Raw; text: string | undefine
   let raw: unknown;
   try {
     raw = JSON.parse(text);
-  } catch (e) {
-    throw new ConfigError(`${file} is not valid JSON (${(e as Error).message}); fix it by hand first`);
+  } catch {
+    throw new ConfigError(`${jsonErrorMessage(file, text)}; fix it by hand first`);
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConfigError(`${file} must hold a JSON object`);
   return { raw: raw as Raw, text };
 }
 
+const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+
+/** Path segments that would reach Object.prototype are refused outright. */
+function checkSegments(keys: string[]): void {
+  const bad = keys.find((k) => RESERVED_KEYS.has(k));
+  if (bad !== undefined) throw new ConfigError(`"${bad}" is not allowed in a setting key`);
+}
+
 function getPath(o: unknown, keys: string[]): unknown {
   let cur = o;
   for (const k of keys) {
-    if (!cur || typeof cur !== 'object' || Array.isArray(cur)) return undefined;
+    if (!cur || typeof cur !== 'object' || Array.isArray(cur) || RESERVED_KEYS.has(k) || !own(cur, k)) return undefined;
     cur = (cur as Raw)[k];
   }
   return cur;
@@ -363,10 +372,11 @@ function hasPath(o: unknown, keys: string[]): boolean {
 
 /** Set (value) or remove (undefined) a key, creating objects on the way (a boolean becomes {enabled}). */
 function setPath(o: Raw, keys: string[], value: unknown): void {
+  checkSegments(keys);
   const trail: Raw[] = [o];
   let cur = o;
   for (const k of keys.slice(0, -1)) {
-    let next = cur[k];
+    let next = own(cur, k) ? cur[k] : undefined;
     if (!next || typeof next !== 'object' || Array.isArray(next)) {
       if (value === undefined) return;
       // e.g. claude.context.sessionHistory: true -> { enabled: true }
@@ -511,6 +521,10 @@ export function configSet(t: ConfigTarget, changes: Array<{ key: string; value: 
   const sectionPath = t.repo ? ['repoSettings', repoFileKey(raw, t.repo.path)] : [];
   const section = getPath(raw, sectionPath);
   for (const { key, value } of changes) {
+    if (key.split('.').some((k) => RESERVED_KEYS.has(k))) {
+      errors.push(`${key}: not an editable setting`);
+      continue;
+    }
     const s = specs.get(key);
     if (!s) {
       errors.push(`${key}: not an editable setting`);

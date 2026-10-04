@@ -423,7 +423,9 @@ and the events and may send `hello`, `diff.request` and `goal.digest`; everythin
 never logged, and the file is removed on a clean exit. The mod reads the run file;
 `tools/foremancli.mjs`, the tools' `ForemanClient`, `npm run tui`, `qa.mjs` and `shoot.mjs` find it
 the same way (`--home` when the Foreman runs with another home; `AGENTCRAFT_CLIENT_TOKEN`
-overrides, and is removed from every agent, CI and setup environment). `--no-client-token`
+overrides; it is removed from the final environment of every process the Foreman starts (agents,
+CI, setup, gh/az, git, notifications, a restarted Foreman), and a repository's `env` can neither set
+it nor copy it in with `$AGENTCRAFT_CLIENT_TOKEN`). `--no-client-token`
 restores the old behaviour for development.
 
 **Settings (`config.get` / `config.set`, src/settings.ts).** The hub's Team and Settings tabs (and
@@ -522,7 +524,15 @@ everything else (no "Always allow" covers it) and again by a PreToolUse hook on 
 - Bash / PowerShell commands that mention such a path (absolute, `~`, `$HOME`, `${HOME}` or
   relative to the agent's directory, e.g. `cat ../../../state.json`), `client.token`, `foremancli`,
   `$AGENTCRAFT_HOME` / `_CLIENT_TOKEN` / `_PROFILE`, or the Foreman's port together with a loopback
-  host or a `ws://` URL (`curl localhost:7878`, `websocat ws://127.0.0.1:7878`).
+  host or a `ws://` URL (`curl localhost:7878`, `websocat ws://127.0.0.1:7878`). Shell quoting and
+  escapes are undone first (`cat ~/.agent'craft'/config.json` is caught).
+- Recursive searches, listings, copies and archives (`rg`, `grep -r`, `find`, `ls -R`, `tree`, `du`,
+  `tar`, `cp -r`, `rsync`, `zip -r`, ...) rooted at the Foreman home or a folder above it (`/`, `~`,
+  `/Users`, ...), also after a `cd` in the same command.
+- Instruction files: a CLAUDE.md / AGENTS.md (or a configured instruction file) that is, or links
+  to, one of these files is skipped, and an `@import` of one is replaced by a note
+  (`(import @... skipped: AgentCraft's own files are off limits)`), so an agent cannot get the
+  token into its next prompt by writing an import into its worktree.
 
 This is best effort: a text check cannot see a path a program assembles at run time, or a script
 the agent wrote and runs (`npm test` runs the agent's own code, as do worktree setup and the

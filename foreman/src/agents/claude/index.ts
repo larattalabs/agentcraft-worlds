@@ -31,7 +31,7 @@ import { FOREMAN_VERSION } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
 import { withGitSafety } from '../../gitsafety.js';
 import { agentGitIdentity } from '../../util/git.js';
-import { classifyToolUse, describeRuleKey, describeToolCall, foremanPrivateVerdict, type PolicyContext } from '../../policy.js';
+import { classifyToolUse, describeRuleKey, describeToolCall, foremanPrivatePath, foremanPrivateVerdict, type PolicyContext } from '../../policy.js';
 import type { Decision, Design, Goal, Task } from '../../protocol.js';
 import { MERGE_OPTIONS, PERMISSION_OPTIONS } from '../../protocol.js';
 import type { TestResult } from '../../repos.js';
@@ -51,6 +51,7 @@ import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
+import { scrubEnv } from '../../util/env.js';
 import { HOME_LEAD } from '../../leads.js';
 
 type JobKind = 'plan' | 'work' | 'review' | 'followup' | 'triage';
@@ -1020,7 +1021,7 @@ export class ClaudeBackend implements Backend {
   }
 
   private env(who: { agentId?: string; cwd?: string } = {}): Record<string, string | undefined> {
-    return withAuthMode(agentEnv(process.env, who), this.cfg.useClaudeLogin);
+    return scrubEnv(withAuthMode(agentEnv(process.env, who), this.cfg.useClaudeLogin));
   }
 
   private async cwdFor(job: Job): Promise<{ cwd: string; role: 'lead' | 'worker'; repoId: string }> {
@@ -1276,7 +1277,8 @@ export class ClaudeBackend implements Backend {
             ? `\n\n# Earlier sessions\n${userName()}'s earlier Claude sessions in these repositories are searchable (find_sessions, read_session). When a goal refers to earlier work, find and read the relevant session before planning, then put what a worker needs, and the session id, into the task description.`
             : `\n\n# Earlier sessions\nIf your task names an earlier Claude session (an id), read it with read_session before you start; find_sessions searches others.`;
       }
-      const extra = instructionsBlock(this.cfg.context, cwd, userName(), os.homedir(), this.fm.repos.get(repoId)?.path);
+      const priv = this.foremanPrivate();
+      const extra = instructionsBlock(this.cfg.context, cwd, userName(), os.homedir(), this.fm.repos.get(repoId)?.path, (abs) => foremanPrivatePath(abs, priv));
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
       const { model, effort } = this.modelFor(agentId, role, job.taskId, role === 'worker' ? roleOf(agentId) : undefined);
       const options: Options = {
@@ -1292,7 +1294,7 @@ export class ClaudeBackend implements Backend {
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
         abortController: abort,
         // the repository's env (e.g. a PATH for its Node version) on top; GIT_* never comes from it
-        env: { ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) },
+        env: scrubEnv({ ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) }),
         // we spawn the CLI ourselves (same as the SDK's local spawn) so its pid is known: a stopped
         // turn's whole process tree can then be ended before its worktree is handed on
         spawnClaudeCodeProcess: this.spawner(entry, agentId),
@@ -1434,7 +1436,7 @@ export class ClaudeBackend implements Backend {
   /** The CLI is spawned by us (same as the SDK's local spawn) so its pid is known: an aborted turn's whole process tree can be ended. */
   private spawner(entry: Running, label: string): NonNullable<Options['spawnClaudeCodeProcess']> {
     return (o) => {
-      const child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
+      const child = spawn(o.command, o.args, { cwd: o.cwd, env: scrubEnv(o.env as NodeJS.ProcessEnv), stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
       child.stderr?.setEncoding('utf8');
       child.stderr?.on('data', (s: string) => this.fm.log.debug(`[${label} stderr] ${s.trim().slice(0, 300)}`));
       child.on('error', (e) => this.fm.log.debug(`[${label}] CLI process error: ${e.message}`));

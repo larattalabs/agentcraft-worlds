@@ -940,7 +940,8 @@ export class Foreman {
       ack(true, result ? { result } : {});
     } catch (e) {
       const known = e instanceof ClientError || e instanceof ConfigError || e instanceof TaskError || e instanceof RepoError || e instanceof DecisionError || e instanceof MemoryError;
-      const message = known ? (e as Error).message : `internal error: ${(e as Error).message}`;
+      // a JSON.parse message can quote the text it failed on (a file with secrets): never forwarded
+      const message = known ? (e as Error).message : e instanceof SyntaxError ? 'internal error: invalid JSON' : `internal error: ${(e as Error).message}`;
       if (!known) this.log.error(`${msg.type}: ${(e as Error).stack ?? e}`);
       reply({ type: 'error', message, ...(msg.id ? { re: msg.id } : {}) });
       ack(false, { error: message });

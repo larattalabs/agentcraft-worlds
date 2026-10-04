@@ -1,4 +1,5 @@
 // Child-process helpers. Everything is spawned with explicit argv (no shell) unless stated.
+import { scrubEnv } from './env.js';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 
 export interface RunResult {
@@ -149,7 +150,7 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, opts.shell ? [] : args, {
       cwd: opts.cwd,
-      env: opts.env ?? process.env,
+      env: scrubEnv(opts.env ?? process.env),
       shell: opts.shell ?? false,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],

@@ -2061,20 +2061,76 @@ function commandWords(command: string): string[] {
 const LOOPBACK_TEXT = /\blocalhost\b|\b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|\[::1\]|(^|[^\w:])::1\b|\b0\.0\.0\.0\b|\bwss?:\/\//i;
 const FOREMAN_VARS = /\$\{?AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)\b|%AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)%|\$env:AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)\b/i;
 
+/** Commands that read, list, copy or archive whole trees: never rooted at the Foreman home or above it. */
+const ALWAYS_RECURSIVE = new Set(['rg', 'ag', 'ack', 'find', 'fd', 'fdfind', 'tree', 'du', 'tar', 'bsdtar', 'rsync', '7z', '7za', 'robocopy', 'xcopy', 'get-childitem', 'gci', 'dir']);
+/** ... only with a recursive option (-r / -R / --recursive, -a for cp) */
+const RECURSIVE_WITH_FLAG = new Set(['grep', 'egrep', 'fgrep', 'ls', 'cp', 'scp', 'zip', 'chmod', 'chown', 'select-string', 'sls', 'copy-item', 'cpi']);
+const PATTERN_FIRST = new Set(['rg', 'ag', 'ack', 'grep', 'egrep', 'fgrep', 'select-string', 'sls']);
+const COMMAND_WRAPPERS = new Set(['sudo', 'env', 'nice', 'nohup', 'time', 'command', 'builtin', 'exec', 'xargs', 'timeout', 'stdbuf', 'ionice']);
+
+function recursiveFlag(cmd: string, args: string[]): boolean {
+  return args.some((a) => /^--recursive$|^-recurse$/i.test(a) || (/^-[A-Za-z]+$/.test(a) && (/[rR]/.test(a) || (cmd === 'cp' && a.includes('a')))) || /^--directories=recurse$/.test(a));
+}
+
+/** The shell words of each simple command in `command`, with quotes and backslash escapes removed. */
+function shellCommands(command: string): string[][] {
+  const out: string[][] = [];
+  try {
+    for (const seg of splitSegments(extractHeredocs(command).text)) {
+      const words = lex(seg).words.map(unescapeWord).filter((w) => w.length);
+      if (words.length) out.push(words);
+    }
+  } catch {
+    /* unparsable: the raw text checks still run */
+  }
+  return out;
+}
+
 /** Why a shell command reaches the Foreman's files or port, or undefined (best effort, see above). */
 export function foremanPrivateCommand(command: string, ctx: PolicyContext): string | undefined {
   const f = ctx.foreman;
   if (!f) return undefined;
-  if (/client\.token/i.test(command)) return "the command mentions the Foreman's client token";
-  if (/foremancli/i.test(command)) return 'agents may not drive the Foreman (foremancli)';
-  if (FOREMAN_VARS.test(command)) return "the command uses the Foreman's home or token variables";
-  if (f.port && new RegExp(`(^|[^\\d])${f.port}(?!\\d)`).test(command) && LOOPBACK_TEXT.test(command)) return `the command talks to the Foreman's port ${f.port}`;
-  for (const w of commandWords(command)) {
-    if (!/[\\/]|^~|^\.\.?$|^\$|^%/.test(w)) continue;
+  const cmds = shellCommands(command);
+  // the raw text and the text with shell quoting undone (`client'.'token`, `~/.agent"craft"`)
+  const texts = [command, cmds.map((w) => w.join(' ')).join(' ; ')];
+  for (const t of texts) {
+    if (/client\.token/i.test(t)) return "the command mentions the Foreman's client token";
+    if (/foremancli/i.test(t)) return 'agents may not drive the Foreman (foremancli)';
+    if (FOREMAN_VARS.test(t)) return "the command uses the Foreman's home or token variables";
+    if (f.port && new RegExp(`(^|[^\\d])${f.port}(?!\\d)`).test(t) && LOOPBACK_TEXT.test(t)) return `the command talks to the Foreman's port ${f.port}`;
+  }
+  const isPathish = (w: string) => /[\\/]|^~|^\.\.?$|^\$|^%/.test(w);
+  for (const w of [...commandWords(command), ...cmds.flat()]) {
+    if (!isPathish(w)) continue;
     const r = resolveToken(w, ctx.cwd, ctx);
     if (r.kind !== 'path') continue;
     const why = foremanPrivatePath(r.abs, f);
     if (why) return why;
+  }
+  // recursive reads, listings, copies and archives rooted at the home or above it (`rg x ~`,
+  // `cd / && grep -r x .`); `cd` is followed within the command
+  let vcwd = ctx.cwd;
+  for (const words of cmds) {
+    let i = 0;
+    while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || COMMAND_WRAPPERS.has(path.basename(words[i]!).toLowerCase()))) i++;
+    const cmd = path.basename(words[i] ?? '').toLowerCase().replace(/\.exe$/, '');
+    const args = words.slice(i + 1);
+    if (cmd === 'cd' || cmd === 'pushd' || cmd === 'set-location' || cmd === 'sl') {
+      const target = args.find((a) => !a.startsWith('-')) ?? '~';
+      const r = resolveToken(target, vcwd, ctx);
+      if (r.kind === 'path') vcwd = r.abs;
+      continue;
+    }
+    if (!ALWAYS_RECURSIVE.has(cmd) && !(RECURSIVE_WITH_FLAG.has(cmd) && recursiveFlag(cmd, args))) continue;
+    let operands = args.filter((a) => !a.startsWith('-'));
+    // searchers take the pattern first (unless it comes with -e / -f / --regexp / --file)
+    if (PATTERN_FIRST.has(cmd) && !args.some((a) => /^(-[ef]|--regexp|--file)(=|$)/.test(a))) operands = operands.slice(1);
+    // without a path operand these search where they run
+    const roots = operands.length ? operands : ['.'];
+    for (const w of roots) {
+      const r = resolveToken(w, vcwd, ctx);
+      if (r.kind === 'path' && containsHome(r.abs, f)) return `a recursive ${cmd} of ${r.abs} would reach AgentCraft's own files under ${f.home}`;
+    }
   }
   return undefined;
 }

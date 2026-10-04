@@ -12,6 +12,7 @@
 //    (unless signMerges is off); mergeStyle "squash" makes it a single-parent commit
 //  - removing a finished worktree's directory never fails an operation (busy dirs are retried
 //    later) and never deletes anything outside the worktree root
+import { isSecretEnvVar } from './util/env.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1129,7 +1130,12 @@ export class RepoManager {
     if (!env) return {};
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(env)) {
-      out[k] = v.replace(/^~(?=$|[\\/])/, os.homedir()).replace(/\$\{(\w+)\}|\$(\w+)/g, (_m, a: string | undefined, b: string | undefined) => base[(a ?? b)!] ?? '');
+      // the client token can neither be set nor copied in ($AGENTCRAFT_CLIENT_TOKEN expands to '')
+      if (isSecretEnvVar(k)) continue;
+      out[k] = v.replace(/^~(?=$|[\\/])/, os.homedir()).replace(/\$\{(\w+)\}|\$(\w+)/g, (_m, a: string | undefined, b: string | undefined) => {
+        const name = (a ?? b)!;
+        return isSecretEnvVar(name) ? '' : (base[name] ?? '');
+      });
     }
     return out;
   }

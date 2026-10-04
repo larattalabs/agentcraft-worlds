@@ -30,6 +30,8 @@
 // Not a sandbox: code an agent runs can still unset these variables on purpose. The policy
 // denies commands that mention them; together that covers mistakes and overeager agents.
 
+import { scrubEnv } from './util/env.js';
+
 export const PUSH_BLOCK_URL = 'agentcraft-push-blocked:///';
 /** a program name that does not exist: any signing attempt by an agent fails */
 export const NO_SIGNING_PROGRAM = 'agentcraft-signing-disabled';
@@ -85,7 +87,6 @@ export function gitSafetyEnv(base: NodeJS.ProcessEnv = process.env, opts: GitSaf
 export function withGitSafety(base: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}, opts: GitSafetyOptions = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
   for (const k of Object.keys(env)) if (GIT_REDIRECT_VARS.includes(k.toUpperCase())) delete env[k];
-  // the Foreman's client token (tools may take it from the environment) never reaches agents, CI or setup
-  delete env.AGENTCRAFT_CLIENT_TOKEN;
-  return { ...env, ...gitSafetyEnv(base, opts), ...extra };
+  // the Foreman's client token never reaches agents, CI or setup, whatever `extra` (repo env) says
+  return scrubEnv({ ...env, ...gitSafetyEnv(base, opts), ...extra });
 }

@@ -2,6 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isSecretEnvVar } from './util/env.js';
 import { readJson } from './util/fsx.js';
 import type { BackendName } from './protocol.js';
 import { defaultUserName } from './user.js';
@@ -285,7 +286,7 @@ function agentProfiles(v: unknown): Record<string, AgentProfile> {
   const out: Record<string, AgentProfile> = {};
   if (!v || typeof v !== 'object') return out;
   for (const [id, raw] of Object.entries(v as Record<string, unknown>)) {
-    if (!/^[a-z0-9_-]+$/i.test(id) || !raw || typeof raw !== 'object') continue;
+    if (!isAgentId(id.toLowerCase()) || !raw || typeof raw !== 'object') continue;
     const o = raw as Record<string, unknown>;
     const p: AgentProfile = {};
     if (str(o.title)) p.title = (o.title as string).trim().slice(0, 40);
@@ -328,6 +329,14 @@ function subagentsConfig(v: unknown): SubagentsConfig {
 
 export const DEFAULT_LEADS = ['marlow', 'ines', 'bram', 'cass'];
 
+/** Object keys that would reach Object.prototype: never an id or a config path segment. */
+export const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** An agent / lead id: lowercase letters, digits, - and _ (and not a reserved object key). */
+export function isAgentId(id: string): boolean {
+  return /^[a-z0-9_-]+$/.test(id) && !RESERVED_KEYS.has(id);
+}
+
 /**
  * claude.leads / --leads / AGENTCRAFT_LEADS: an id list (array or comma list). Normalized to start
  * with "marlow"; [] or a single entry means marlow alone (today's single lead).
@@ -336,7 +345,7 @@ export function leadsList(v: unknown): string[] {
   if (v === undefined) return [...DEFAULT_LEADS];
   const raw = Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : [];
   const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string').map((x) => x.trim().toLowerCase()).filter(Boolean))];
-  for (const id of ids) if (!/^[a-z0-9_-]+$/.test(id)) throw new Error(`bad lead id "${id}" (lowercase letters, digits, - and _)`);
+  for (const id of ids) if (!isAgentId(id)) throw new Error(`bad lead id "${id}" (lowercase letters, digits, - and _)`);
   if (ids.length <= 1) return ['marlow'];
   return ['marlow', ...ids.filter((x) => x !== 'marlow')];
 }
@@ -435,8 +444,9 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
     : typeof workersRaw === 'string'
       ? /^\d+$/.test(workersRaw)
         ? ['juniper', 'kit', 'wren', 'rowan', 'tove'].slice(0, Math.max(1, Math.min(5, Number(workersRaw))))
-        : workersRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        : workersRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
       : ['juniper', 'kit', 'wren'];
+  for (const id of workers) if (typeof id !== 'string' || !isAgentId(id)) throw new Error(`bad worker id "${String(id)}" (lowercase letters, digits, - and _)`);
 
   const repoSettings: Record<string, RepoSettings> = {};
   if (file.repoSettings && typeof file.repoSettings === 'object') {
@@ -450,7 +460,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       if (typeof o.setupTimeoutMs === 'number' && o.setupTimeoutMs > 0) s.setupTimeoutMs = o.setupTimeoutMs;
       if (o.roles && typeof o.roles === 'object') {
         const roles: Record<string, string> = {};
-        for (const [id, spec] of Object.entries(o.roles as Record<string, unknown>)) if (/^[a-z0-9_-]+$/i.test(id) && str(spec)) roles[id.toLowerCase()] = spec as string;
+        for (const [id, spec] of Object.entries(o.roles as Record<string, unknown>)) if (isAgentId(id.toLowerCase()) && str(spec)) roles[id.toLowerCase()] = spec as string;
         if (Object.keys(roles).length) s.roles = roles;
       }
       if (o.subagents === 'repo') s.subagents = 'repo';
@@ -476,7 +486,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       }
       if (o.env && typeof o.env === 'object') {
         const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && typeof v === 'string') env[k] = v;
+        for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && !isSecretEnvVar(k) && typeof v === 'string') env[k] = v;
         if (Object.keys(env).length) s.env = env;
       }
       repoSettings[path.resolve(k.replace(/^~(?=$|[\\/])/, os.homedir()))] = s;
