@@ -256,6 +256,9 @@ export function buildCampus(wings) {
     for (const [x, z] of [[w.x0 + 1, Z - 1], [w.x1 - 1, Z - 1], [w.x0 + 1, 12], [w.x1 - 1, 12]]) bp.plant(x, 1, z);
     // a coloured band under the clerestory so each wing is recognisable from inside too
     for (let x = w.x0 + 1; x <= w.x1 - 1; x++) bp.set(x, 5, Z, colour);
+    // trophy wall: inner partitions south of the arch gap (both sides of the wall share its backing), outer walls beside the arch rows
+    if (w.hasNext) bp.trophyWall(far, 18, far, 20, facing, { wing: w.k });
+    else bp.trophyWall(far, 13, far, 15, facing, { wing: w.k });
     // cameras inside the wing, looking at its board
     const camX = w.isWest ? w.x1 - 2 : w.x0 + 2;
     bp.camera(`wing${w.k}`, [camX + 0.5, 4.2, 18.5], [boardX + 0.5, 3.4, 7.5]);

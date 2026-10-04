@@ -525,6 +525,46 @@ export class Blueprint {
   }
 
   /**
+   * A trophy wall (docs/BUILDINGS.md "Trophy slots"): a lit, framed section of an inside wall where the mod hangs
+   * vanilla wall signs. (x0,z0)-(x1,z1) = the WALL cells of the segment (one row of cells, `cols` long, default 3);
+   * `facing` = the side the signs face (into the room). Sign cells are the room cells in front of the wall, `rows`
+   * high from `y` (default feet+1) and written as explicit AIR; each has a full opaque `backing` block behind it
+   * (the wall cell). A walnut frame surrounds it, a row of `glow` panels above lights it. Anchors `trophy@<w>`,
+   * `trophy_2@<w>` .. (`trophy`, `trophy_2`.. without `wing`): centre of the sign cell, yaw = the sign's front.
+   * Fill order = reading order seen from the room: top row first, left to right. The segment's wall cells and the
+   * frame must not hold anything else (windows, doors, stations).
+   */
+  trophyWall(x0, z0, x1, z1, facing, { slots = 6, rows = Math.ceil(slots / 3), y = this.feet + 1, wing = null, backing = B.plaster, frame = B.walnut, glow = B.glowPanel } = {}) {
+    const f = DIR[facing];
+    const lat = { dx: -f.dz, dz: f.dx }; // viewer's left while looking at the wall
+    const wall = cellsOf(x0, z0, x1, z1).sort((a, b) => (b[0] * lat.dx + b[1] * lat.dz) - (a[0] * lat.dx + a[1] * lat.dz)); // leftmost first
+    const cols = wall.length;
+    if (slots < 1 || slots > rows * cols) throw new Error(`${this.id}: trophyWall: ${slots} slots do not fit ${rows} x ${cols}`);
+    const [ex0, ez0] = [wall[0][0] + lat.dx, wall[0][1] + lat.dz]; // frame ends, one cell beyond the segment
+    const [ex1, ez1] = [wall[cols - 1][0] - lat.dx, wall[cols - 1][1] - lat.dz];
+    const top = y + rows; // glow row
+    for (const [x, z] of [[ex0, ez0], [ex1, ez1]]) this.fill([x, y - 1, z, x, top, z], frame);
+    for (const [x, z] of wall) {
+      for (let r = 0; r < rows; r++) this.set(x, y + r, z, backing);
+      this.set(x, top, z, glow);
+      this.set(x, y - 1, z, B.walnutTrim);
+      for (let r = 0; r < rows; r++) {
+        const old = this.nameAt(x + f.dx, y + r, z + f.dz);
+        if (old && old !== B.air) throw new Error(`${this.id}: trophyWall: sign cell ${x + f.dx},${y + r},${z + f.dz} already holds ${old}`);
+        this.air(x + f.dx, y + r, z + f.dz);
+      }
+    }
+    const prefix = 'trophy';
+    for (let i = 0; i < slots; i++) {
+      const r = Math.floor(i / cols);
+      const [wx, wz] = wall[i % cols];
+      const name = `${i === 0 ? prefix : `${prefix}_${i + 1}`}${wing != null ? `@${wing}` : ''}`;
+      this.anchor(name, wx + f.dx + 0.5, y + (rows - 1 - r) + 0.5, wz + f.dz + 0.5, yawOf(facing));
+    }
+    return this;
+  }
+
+  /**
    * Memory archive shelves on the segment (front faces `facing`), `height` high, one memory_catalog at the
    * last cell; spots in front (library, library_2..).
    */

@@ -275,7 +275,7 @@ try {
 
   // 3. anchor checks
   const rows = [];
-  const STAND = /^(desk_|seat_|meeting|lounge|library|terminal|testbench|mergestation|user|entrance|spawn)/; // task_wall, decision_podium, goal_atrium are block anchors
+  const STAND = /^(desk_|seat_|meeting|lounge|library|terminal|testbench|mergestation|user|entrance|spawn)/; // task_wall, decision_podium, goal_atrium, trophy* are block anchors
   if (bp.sidecar?.anchors) {
     const isOpen = async (x, y, z) => {
       // open = block tag #minecraft:replaceable (air, grass, snow layer, ...); everything else counts as solid

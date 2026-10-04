@@ -77,6 +77,8 @@ Where they live:
   - `task_wall@<n>` for every wing n (single: `task_wall@1`), `decision_podium`, `goal_atrium`,
     `entrance`, `spawn`
   - `cam_overview` (+ any `cam_*` for QA shots)
+  - optional: `trophy@<n>`, `trophy_2@<n>` .. `trophy_<k>@<n>` (see "Trophy slots"; a wing without any is a
+    checker warning, so user and generated blueprints without a trophy wall stay valid)
   Per-wing anchors use the suffix `@<n>`; placement rewrites them (see below).
 - Station blocks in the template carry their binding in block-entity NBT (`{"binding": "..."}`).
   Wing placeholders: `repo:#<n>` (a task wall showing wing n's repo) and `ci:#<n>` (a CI lamp)
@@ -106,6 +108,28 @@ Where they live:
   `testbench`, `testbench_2..` slots (the bundled campuses write both). Placement renames them
   `testbench:<repoId>` like any `@<n>` anchor; routing still uses the shared slots (an agent picking
   its wing's bench needs the client change noted under "Client (routing)").
+
+### Trophy slots
+
+Trophies (a plaque per finished goal or merged PR) are vanilla **wall signs** the mod hangs inside the building.
+A blueprint offers a *trophy wall* by writing slot anchors, per wing (`trophy@<w>`, `trophy_2@<w>` ..
+`trophy_<k>@<w>`; `k` = fill order, the mod fills the lowest free `k` first and replaces the oldest trophy when all
+are taken; a single building uses `@1`):
+- the anchor is the **centre of the sign cell** (`x+.5, y+.5, z+.5`), `pitch` 0, `yaw` = the direction the sign's front
+  faces, a multiple of 90, **into the room** (kit convention: 0 south, 90 west, 180 north, -90 east);
+- the sign cell is explicit `minecraft:air` in the template, inside `walk` (readable from where agents walk) and not
+  a cell an agent stands in (no standing anchor's feet or head cell); one slot per cell;
+- the support is the cell **behind** the sign (opposite the yaw): a full, opaque vanilla block. The mod hangs a
+  waxed wall sign with no neighbour updates only on an air cell with such a support.
+- placement renames them like any `@<n>` anchor (`trophy`, `trophy_2`.., `trophy:<repoId>`, `trophy_2:<repoId>`);
+- the slots are inside the building box, so `before.nbt` covers them: Remove and Move restore the site exactly.
+
+The kit writes one with `trophyWall(x0, z0, x1, z1, facing, { slots = 6, rows, y, wing })`: the segment is the *wall*
+cells (3 by default), the sign cells are the 3 x 2 room cells in front of it (rows feet+1 and feet+2), a plaster
+backing behind each, a walnut frame, a `glowPanel` row above for light; order = reading order from the room (top row
+first, left to right). All bundled designs have 6 slots per wing: studio (meeting room, west wall), workshop (east wall,
+north end), campuses (per wing, on the wing's far wall: the outer wall beside the arch rows z13..15, or south of the
+arch gap z18..20 on a partition; both sides of a partition share the wall).
 
 ## Buildings in a world
 
@@ -439,6 +463,9 @@ explicit interior air, bindings, and C5:
 - doors: written closed; a door next to an outside cell is iron; every iron door has a stone button
   on each side on a full, opaque, redstone-conductive block (not glowstone or a sea lantern) touching one of its
   halves;
+- trophy slots (`trophy*`, see "Trophy slots"): wing in range, yaw a multiple of 90, the cell inside `walk` and explicit
+  air, a full opaque block behind it, one slot per cell, not an agent's feet/head cell; a wing without any slot is a
+  warning. They are block anchors for `verify.mjs` (no floor/headroom check);
 - `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block; `approach` an object or
   `false`, `length` 0..16, `width` 1..7, `block` a `minecraft:` full block, `slab` a `minecraft:` slab (when the kit
   knows them).
