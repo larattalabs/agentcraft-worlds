@@ -188,6 +188,7 @@ export const Decision = z.object({
   worktree: Id.optional().describe('merge decisions: worktree to request the diff for'),
   tool: z.string().optional().describe('permission decisions: tool name, e.g. "Bash"'),
   goalId: Id.optional().describe('the goal this decision is about (its task\'s goal, or the goal of the lead turn that asked); absent on older decisions and ones not tied to a goal'),
+  textAllowed: z.boolean().optional().describe('false: only the options make sense (e.g. PR "Post"/"Skip", "Fold in"/"Leave it"): hide or disable free text; a `decision.answer` without a valid option is refused. Absent = true'),
   createdAt: Ts,
 });
 export type Decision = z.infer<typeof Decision>;

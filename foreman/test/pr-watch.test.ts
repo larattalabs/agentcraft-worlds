@@ -228,6 +228,7 @@ describe('PR watching (on)', () => {
     expect(post.context).toContain('reply in thread 13 (Dana Reviewer): "Good question: it is kept for the mobile app."');
     expect(post.context).toContain('after the fix lands: reply "Addressed in <commit>: Rename the filter param to tags" and resolve thread 12 as fixed');
     expect(post.options).toEqual(['Post', 'Skip']);
+    expect(post.textAllowed).toBe(false); // C1: free text on Post/Skip was silently a Skip
     expect(host.calls.filter((c) => c.args.includes('POST') || c.args.includes('PATCH'))).toEqual([]); // nothing before the approval
     await until(() => w.prompts.some((x) => x.agent === 'kit' && x.prompt.startsWith('Review fixes for t1')), 30_000);
     const fold = w.prompts.find((x) => x.agent === 'kit' && x.prompt.startsWith('Review fixes for t1'))!.prompt;
@@ -283,6 +284,8 @@ describe('PR watching (on)', () => {
     await w.backend.prs.poll('t1');
     const guard = fm.decisions.open().find((d) => d.question.startsWith('Review round 3 on PR #612'))!;
     expect(guard.question).toBe('Review round 3 on PR #612 (t1) suggests 1 critical, 2 important, 2 testing, 1 performance; fold in?');
+    expect(guard.textAllowed).toBe(false);
+    await expect(fm.answerDecision(guard.id, undefined, 'fold the critical one in')).rejects.toThrow(/Fold in \| Leave it/);
     await fm.answerDecision(guard.id, 'Leave it');
     expect(w.prompts.filter((x) => x.prompt.startsWith('Triage request')).length).toBe(triages);
     expect(fm.decisions.open().filter((d) => d.agentId === 'marlow' && d.kind === 'question')).toEqual([]);

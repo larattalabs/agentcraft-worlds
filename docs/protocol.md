@@ -123,6 +123,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `worktree` | string | no | merge decisions: worktree to request the diff for |
 | `tool` | string | no | permission decisions: tool name, e.g. "Bash" |
 | `goalId` | string | no | the goal this decision is about (its task's goal, or the goal of the lead turn that asked); absent on older decisions and ones not tied to a goal |
+| `textAllowed` | boolean | no | false: only the options make sense (e.g. PR "Post"/"Skip", "Fold in"/"Leave it"): hide or disable free text; a `decision.answer` without a valid option is refused. Absent = true |
 | `createdAt` | integer | yes | epoch milliseconds |
 
 ### <a id="decisionanswer"></a>DecisionAnswer

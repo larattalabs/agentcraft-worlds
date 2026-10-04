@@ -22,6 +22,8 @@ export interface CreateDecisionInput {
   tool?: string;
   /** the goal it is about (default: the task's goal) */
   goalId?: string;
+  /** false: a closed choice, only the options make sense (no free-text answer) */
+  textAllowed?: boolean;
 }
 
 type Waiter = { resolve: (d: Decision) => void };
@@ -72,6 +74,10 @@ export class DecisionQueue {
     if (input.repoId) d.repoId = input.repoId;
     if (input.worktree) d.worktree = input.worktree;
     if (input.tool) d.tool = input.tool;
+    if (input.textAllowed === false) {
+      if (!options.length) throw new DecisionError('a decision without free text needs options');
+      d.textAllowed = false;
+    }
     const goalId = input.goalId ?? (input.taskId ? this.ctx.store.data.tasks.find((t) => t.id === input.taskId)?.goalId : undefined);
     if (goalId) d.goalId = goalId;
     this.all.push(d);
@@ -105,10 +111,10 @@ export class DecisionQueue {
     if (d.status !== 'open') throw new DecisionError(`decision ${id} is already ${d.status}`);
     const opt = this.resolveOption(d, option);
     const freeText = text?.trim() || undefined;
-    if (d.kind === 'question') {
+    if (d.kind === 'question' && d.textAllowed !== false) {
       if (!opt && !freeText) throw new DecisionError('answer needs an option or text');
     } else if (!opt) {
-      throw new DecisionError(`${d.kind} decisions need one of: ${d.options.join(' | ')}`);
+      throw new DecisionError(`${d.kind === 'question' ? 'this decision takes' : `${d.kind} decisions need`} one of: ${d.options.join(' | ')}${freeText ? ' (free text alone is not an answer here)' : ''}`);
     }
     d.status = 'answered';
     d.answer = { ts: this.ctx.now() };
