@@ -26,6 +26,8 @@ public final class ModBlockEntities {
 		register("console_terminal", ConsoleTerminalBlockEntity::new, ModBlocks.CONSOLE_TERMINAL);
 	public static final BlockEntityType<MemoryArchiveBlockEntity> MEMORY_ARCHIVE =
 		register("memory_archive", MemoryArchiveBlockEntity::new, ModBlocks.MEMORY_ARCHIVE);
+	public static final BlockEntityType<VillageBoardBlockEntity> VILLAGE_BOARD =
+		register("village_board", VillageBoardBlockEntity::new, ModBlocks.VILLAGE_BOARD);
 
 	private ModBlockEntities() {
 	}
