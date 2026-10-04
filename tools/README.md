@@ -20,7 +20,9 @@ studio. `--world NAME` opens that save instead (created if missing), `--preset f
 terrain of a new world (`normal` = natural terrain: creative, peaceful, cheats on, no structures) and
 `--seed N` its seed (default for `normal`: 2026, a birch meadow on a hill with forest, lakes and a cherry
 grove nearby). Preset and seed only matter when the world is created; delete `mod/run/saves/NAME` to
-regenerate. Only the name "AgentCraft HQ" gets the HQ game rules and studio, so any other world behaves
+regenerate (the per-world AgentCraft files under `mod/run/agentcraft/`, such as the welcome card's
+dismissal and the Inbox read marks, are keyed by the save name and survive that: `dev.onboarding {reset:true}`
+brings the card back). Only the name "AgentCraft HQ" gets the HQ game rules and studio, so any other world behaves
 like a player's own world (the welcome card shows while it has no buildings). The flags set
 `AGENTCRAFT_AUTOWORLD_NAME`, `AGENTCRAFT_AUTOWORLD_PRESET` and `AGENTCRAFT_AUTOWORLD_SEED` for the game
 (mod/DEV.md "Environment switches"). A running game keeps its world: stop it first (`stop --game`).

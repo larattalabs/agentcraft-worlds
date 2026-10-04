@@ -234,6 +234,7 @@ async function launch(opt, summary) {
   if (owned(game)) {
     if (!await portOpen(game.devPort)) await waitPort(game.devPort, 600000, game, 'Minecraft');
     console.log(`Minecraft is already running (PID ${game.pid}, DevBridge :${game.devPort})`);
+    if (opt.world || opt.preset || opt.seed) console.warn('--world/--preset/--seed are ignored: the running game keeps its world. Stop it first (stop --game).');
     summary.game.devPort = game.devPort;
     if (game.foremanPort !== fmPort) console.warn(`It was launched for Foreman :${game.foremanPort}; stop the game before switching ports.`);
     return;
