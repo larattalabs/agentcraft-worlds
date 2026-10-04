@@ -13,6 +13,8 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 - Never weaken the safety model: the permission policy (`policy.ts`), git safety (`gitsafety.ts`),
   no-push, and merge-only-on-approval stay intact. Do not enable `settingSources` wholesale: settings
   `permissions.allow` rules are evaluated before `canUseTool` and would bypass the policy.
+- README.md is fork-specific (user decision 2026-10-04): on upstream syncs keep ours and port
+  upstream's factual changes by hand.
 
 ## Decisions
 
