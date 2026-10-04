@@ -18,6 +18,12 @@ export const PROVIDER_SWITCHES: Record<string, string> = {
 /** Variables that carry a claude.ai (subscription) login into the CLI; removed unless opted in. */
 export const CLAUDE_LOGIN_VARS = ['CLAUDE_CODE_OAUTH_TOKEN'];
 
+/**
+ * Variables that make the CLI bill an API key / gateway instead of the claude.ai login; removed
+ * under --use-claude-login (a key left in the shell would silently bypass the login and its plan).
+ */
+export const API_KEY_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
+
 export type ApiAuth = { ok: true; source: string } | { ok: false };
 
 const truthy = (v: string | undefined) => !!v && v !== '0' && v.toLowerCase() !== 'false';
@@ -32,12 +38,14 @@ export function detectApiAuth(env: NodeJS.ProcessEnv = process.env): ApiAuth {
 
 /**
  * The environment for agent CLI processes: in API mode, no claude.ai login token is passed on (the
- * CLI then authenticates with the key/provider); with --use-claude-login it is left untouched.
+ * CLI then authenticates with the key/provider); with --use-claude-login no API key or auth token
+ * is passed on (the CLI then uses the login). Applied to the FINAL environment (after repoSettings
+ * env), so a repository cannot bring a key back in. The values are never logged.
  */
 export function withAuthMode(env: Record<string, string | undefined>, useClaudeLogin: boolean): Record<string, string | undefined> {
-  if (useClaudeLogin) return env;
   const out = { ...env };
-  for (const k of CLAUDE_LOGIN_VARS) delete out[k];
+  const drop = useClaudeLogin ? API_KEY_VARS : CLAUDE_LOGIN_VARS;
+  for (const k of Object.keys(out)) if (drop.includes(k.toUpperCase())) delete out[k];
   return out;
 }
 

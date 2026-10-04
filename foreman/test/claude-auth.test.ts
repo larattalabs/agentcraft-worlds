@@ -17,7 +17,14 @@ describe('detectApiAuth', () => {
   it('drops the claude.ai login token from agent processes unless opted in', () => {
     const env = { CLAUDE_CODE_OAUTH_TOKEN: 'oauth', ANTHROPIC_API_KEY: 'k' };
     expect(withAuthMode(env, false)).toEqual({ ANTHROPIC_API_KEY: 'k' });
-    expect(withAuthMode(env, true)).toEqual(env);
+    expect(withAuthMode(env, true)).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth' });
+  });
+
+  it('under --use-claude-login strips ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN (any case), keeps the rest', () => {
+    const env = { ANTHROPIC_API_KEY: 'k', anthropic_auth_token: 't', ANTHROPIC_BASE_URL: 'https://gw', PATH: '/bin', CLAUDE_CODE_USE_BEDROCK: '1' };
+    const out = withAuthMode(env, true);
+    expect(out).toEqual({ ANTHROPIC_BASE_URL: 'https://gw', PATH: '/bin', CLAUDE_CODE_USE_BEDROCK: '1' });
+    expect(JSON.stringify(out)).not.toContain('"k"');
   });
 });
 
