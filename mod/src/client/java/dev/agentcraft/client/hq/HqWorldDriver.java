@@ -10,6 +10,7 @@ import dev.agentcraft.block.entity.MergeStationBlockEntity;
 import dev.agentcraft.block.entity.MonitorBlockEntity;
 import dev.agentcraft.block.entity.StatusLampBlockEntity;
 import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Displays;
 import dev.agentcraft.building.Routing;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
@@ -77,8 +78,31 @@ public final class HqWorldDriver {
 	 * @param podiumOpenIn   building ids whose lead has a decision open (their podium opens)
 	 * @param leadsKnown     whether podiums are per building (the Foreman publishes leads)
 	 */
+	/**
+	 * @param mergeIn  building ids with a merge of one of their repos open; {@code mergeHome}: a merge of a repo
+	 *                 without a building (or without a repo) is open (the home building's stations show it)
+	 * @param goalIn   building id -> the lamp of its newest goal ({@link Displays#goalBelongs})
+	 * @param routed   agent id -> the layout it is routed to (a building's monitors light only for its own agents)
+	 */
 	record Wanted(Map<String, LampStatus> lamps, boolean podiumOpen, boolean homePodiumOpen, Set<String> podiumOpenIn, boolean leadsKnown,
-		boolean mergeActive, Map<String, Boolean> monitorLit) {
+		boolean mergeActive, Map<String, Boolean> monitorLit, Set<String> mergeIn, boolean mergeHome, Map<String, LampStatus> goalIn,
+		Map<String, String> routed) {
+
+		/** Whether the merge stations (and their bulbs, {@code merge} lamps) of an area are active: the studio for any merge. */
+		boolean mergeActive(Area a) {
+			if (!a.building()) {
+				return mergeActive;
+			}
+			return a.buildingId() != null && mergeIn.contains(a.buildingId()) || a.home() && mergeHome;
+		}
+
+		/** The goal lamp of an area: its building's newest goal, the studio the current goal. */
+		@Nullable LampStatus goal(Area a) {
+			if (!a.building() || a.buildingId() == null) {
+				return lamps.get("goal");
+			}
+			return goalIn.getOrDefault(a.buildingId(), LampStatus.IDLE);
+		}
 
 		/** Whether the podiums (and their signal bulbs, {@code decisions} lamps) of an area open. */
 		boolean podiumOpen(Area a) {
@@ -94,7 +118,10 @@ public final class HqWorldDriver {
 	 * its podium is the home one, and its stations' signal-bulb centres.
 	 */
 	record Area(Anchors.Bounds b, boolean building, @Nullable String buildingId, boolean home, List<BlockPos> podiumSignals,
-		List<BlockPos> mergeSignals) {
+		List<BlockPos> mergeSignals, String dimension, String layoutName) {
+		Area(Anchors.Bounds b, boolean building, @Nullable String buildingId, boolean home, List<BlockPos> podiumSignals, List<BlockPos> mergeSignals) {
+			this(b, building, buildingId, home, podiumSignals, mergeSignals, dev.agentcraft.building.Building.OVERWORLD, "");
+		}
 	}
 
 	private static @Nullable Wanted last;
@@ -130,7 +157,8 @@ public final class HqWorldDriver {
 		if (!changed && ticks % RESYNC_TICKS != 0) {
 			return;
 		}
-		Wanted w = changed || last == null ? compute(st) : last;
+		// agents move between buildings without a Foreman change: recompute every resync too
+		Wanted w = changed || last == null || ticks % RESYNC_TICKS == 0 ? compute(st) : last;
 		lastRevision = st.revision();
 		lastLayout = layoutSig;
 		boolean differs = !Objects.equals(w, last);
@@ -148,9 +176,22 @@ public final class HqWorldDriver {
 					}
 				}
 				areas.add(new Area(r.area(), r.building(), site == null ? null : site.buildingId(), site == null || site.home(),
-					signalCenters(r.layout(), AnchorNames.DECISION_PODIUM), signalCenters(r.layout(), AnchorNames.MERGESTATION)));
+					signalCenters(r.layout(), AnchorNames.DECISION_PODIUM), signalCenters(r.layout(), AnchorNames.MERGESTATION), r.dimension(),
+					r.layout().name()));
 			}
-			ServerTasks.run(level -> lastChanged = apply(level, w, areas));
+			// each building in its own dimension (the studio is in the overworld)
+			Map<String, List<Area>> byDim = new java.util.LinkedHashMap<>();
+			for (Area a : areas) {
+				byDim.computeIfAbsent(a.dimension(), k -> new ArrayList<>()).add(a);
+			}
+			int[] total = {0};
+			for (var e : byDim.entrySet()) {
+				List<Area> in = List.copyOf(e.getValue());
+				ServerTasks.run(e.getKey(), level -> {
+					total[0] += apply(level, w, in);
+					lastChanged = total[0];
+				});
+			}
 		}
 	}
 
@@ -232,14 +273,46 @@ public final class HqWorldDriver {
 		boolean homeOpen = false;
 		Set<String> openIn = new HashSet<>();
 		for (Protocol.Decision d : st.openDecisions()) {
-			String b = leads.podiumOwners().get(d.agentId());
-			if (b != null) {
+			String b = leads.podiumFor(d);
+			if (b != null && !b.equals(leads.homeBuilding())) {
 				openIn.add(b);
 			} else {
 				homeOpen = true;
 			}
 		}
-		return new Wanted(Map.copyOf(lamps), open, homeOpen, Set.copyOf(openIn), leads.known(), merge, Map.copyOf(lit));
+		// per building: merges of its repos, its newest goal
+		List<Routing.Site> sites = Buildings.sites();
+		java.util.function.Predicate<String> hasBuilding = r -> sites.stream().anyMatch(x -> x.repos().contains(r));
+		Set<String> mergeIn = new HashSet<>();
+		boolean mergeHome = false;
+		for (Protocol.Decision d : st.openDecisions()) {
+			if (d.kind() != DecisionKind.MERGE) {
+				continue;
+			}
+			String repo = Leads.decisionRepo(st, d);
+			boolean placed = false;
+			for (Routing.Site x : sites) {
+				if (repo != null && x.repos().contains(repo)) {
+					mergeIn.add(x.buildingId());
+					placed = true;
+				}
+			}
+			mergeHome |= !placed;
+		}
+		Map<String, LampStatus> goalIn = new HashMap<>();
+		for (Routing.Site x : sites) {
+			Goal newest = null;
+			String lead = leads.leadOf(x.buildingId());
+			for (Goal g : st.goals().values()) {
+				if (Displays.goalBelongs(g.lead(), g.allRepos(), lead, x.repos(), x.home(), hasBuilding)
+					&& (newest == null || g.createdAt() > newest.createdAt())) {
+					newest = g;
+				}
+			}
+			goalIn.put(x.buildingId(), goalLamp(newest));
+		}
+		return new Wanted(Map.copyOf(lamps), open, homeOpen, Set.copyOf(openIn), leads.known(), merge, Map.copyOf(lit), Set.copyOf(mergeIn), mergeHome,
+			Map.copyOf(goalIn), dev.agentcraft.client.agents.AgentManager.get().routedLayouts());
 	}
 
 	/** The cupola beacon's binding (the whole studio at a glance, seen from outside). */
@@ -309,7 +382,7 @@ public final class HqWorldDriver {
 		}
 		for (Area area : areas) {
 			signals(level, area.podiumSignals(), w.podiumOpen(area), pos, to);
-			signals(level, area.mergeSignals(), w.mergeActive(), pos, to);
+			signals(level, area.mergeSignals(), w.mergeActive(area), pos, to);
 		}
 		for (int i = 0; i < pos.size(); i++) {
 			level.setBlock(pos.get(i), to.get(i), Block.UPDATE_CLIENTS);
@@ -380,17 +453,23 @@ public final class HqWorldDriver {
 	 * outside every box, by the scanned area.
 	 */
 	private static boolean podiumOpenAt(Wanted w, BlockPos p, Area area) {
-		Routing.Site site = Routing.siteAt(Buildings.sites(), p.getX(), p.getY(), p.getZ(), 0);
+		Routing.Site site = Routing.siteAt(Buildings.sites(), area.dimension(), p.getX(), p.getY(), p.getZ(), 0);
 		if (site == null) {
 			return w.podiumOpen(area);
 		}
-		return w.podiumOpen(new Area(site.box(), true, site.buildingId(), site.home(), List.of(), List.of()));
+		return w.podiumOpen(new Area(site.box(), true, site.buildingId(), site.home(), List.of(), List.of(), site.dimension(), site.layout().name()));
 	}
 
 	private static @Nullable BlockState wantedState(BlockEntity be, BlockState s, Wanted w, Area area) {
 		if (be instanceof StatusLampBlockEntity lamp && s.getBlock() instanceof StatusLampBlock) {
 			// in a building, ci:#n is a wing that got no repo at placement (only the studio numbers its repos)
 			LampStatus want = area.building() && Routing.isCiPlaceholder(lamp.binding()) ? null : w.lamps().get(lamp.binding());
+			if (lamp.binding().equals("goal") || lamp.binding().equals("goal:atrium")) {
+				want = w.goal(area); // a building's own newest goal
+			}
+			if (lamp.binding().equals("merge")) {
+				want = w.mergeActive(area) ? LampStatus.WAITING : LampStatus.OFF;
+			}
 			if (lamp.binding().equals("decisions")) {
 				// like the podium: this building's lead's decisions (home: marlow's and everyone else's)
 				want = podiumOpenAt(w, be.getBlockPos(), area) ? LampStatus.WAITING : LampStatus.OFF;
@@ -406,11 +485,13 @@ public final class HqWorldDriver {
 			return s.setValue(DecisionPodiumBlock.OPEN, podiumOpenAt(w, be.getBlockPos(), area));
 		}
 		if (be instanceof MergeStationBlockEntity && s.getBlock() instanceof MergeStationBlock) {
-			return s.setValue(MergeStationBlock.ACTIVE, w.mergeActive());
+			return s.setValue(MergeStationBlock.ACTIVE, w.mergeActive(area));
 		}
 		if (be instanceof MonitorBlockEntity mon && s.getBlock() instanceof MonitorBlock && !mon.binding().isEmpty()) {
 			Boolean lit = w.monitorLit().get(mon.binding());
-			return s.setValue(MonitorBlock.LIT, lit != null && lit);
+			// a building's monitor shows its agent only while the agent works there (dim otherwise)
+			boolean here = !area.building() && w.routed().isEmpty() || Displays.monitorLit(true, w.routed().get(mon.binding()), area.layoutName());
+			return s.setValue(MonitorBlock.LIT, lit != null && lit && here);
 		}
 		return null;
 	}

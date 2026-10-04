@@ -44,6 +44,13 @@ final class RepoPickScreen extends WizardScreen {
 	/** Lock the ghost here after picking: {x, y, z, turns} (the hub's "Place on the plot"), or null. */
 	private final int @Nullable [] lockAt;
 	private @Nullable String error;
+	/** Edit mode (the hub's "Edit repos…"): the building whose repos are being changed, null = a new building. */
+	private @Nullable String editBuilding;
+	/** Edit mode: how many repos the building takes (its pin's wings, not the blueprint's current version). */
+	private int editMax;
+	/** Edit mode: what confirming does with the chosen repos, and where Esc goes. */
+	private java.util.function.@Nullable Consumer<List<String>> onEdit;
+	private net.minecraft.client.gui.screens.@Nullable Screen back;
 	private final List<Row> rows = new ArrayList<>();
 	/** Picked repo ids in pick order (= wing order). */
 	private final List<String> picked = new ArrayList<>();
@@ -72,6 +79,32 @@ final class RepoPickScreen extends WizardScreen {
 		this.lockAt = lockAt;
 	}
 
+	/**
+	 * The repo step for changing building {@code id}'s repos (wing n = the n-th picked): its own repos are
+	 * preselected and enabled, other buildings' repos disabled; Next hands the choice to {@code onEdit}.
+	 */
+	static RepoPickScreen forEdit(Building b, java.util.function.Consumer<List<String>> onEdit, net.minecraft.client.gui.screens.@Nullable Screen back) {
+		RepoPickScreen s = new RepoPickScreen(b.repos(), b.blueprint(), null);
+		s.editBuilding = b.id();
+		s.editMax = editMax(b);
+		s.onEdit = onEdit;
+		s.back = back;
+		return s;
+	}
+
+	@Nullable String editBuilding() {
+		return editBuilding;
+	}
+
+	@Override
+	public void onClose() {
+		if (editBuilding != null && minecraft != null) {
+			minecraft.gui.setScreen(back);
+			return;
+		}
+		super.onClose();
+	}
+
 	int @Nullable [] lockAt() {
 		return lockAt;
 	}
@@ -94,7 +127,8 @@ final class RepoPickScreen extends WizardScreen {
 		if (s != null) {
 			s.repos().values().stream().sorted(Comparator.comparing(Repo::name, String.CASE_INSENSITIVE_ORDER)).forEach(r -> {
 				Building b = Buildings.forRepo(r.id());
-				rows.add(new Row(r.id(), r.name(), r.branch(), b == null ? null : b.id() + " (" + b.blueprint() + ")"));
+				boolean mine = b != null && b.id().equals(editBuilding);
+				rows.add(new Row(r.id(), r.name(), r.branch(), b == null || mine ? null : b.id() + " (" + b.blueprint() + ")"));
 			});
 		}
 		for (String id : preselect) {
@@ -164,6 +198,15 @@ final class RepoPickScreen extends WizardScreen {
 			minecraft.gui.setScreen(new BlueprintPickScreen(c));
 			return;
 		}
+		if (editBuilding != null && onEdit != null) {
+			error = fitsEdit(c.size()); // the building's own wings: the blueprint may have changed or be gone
+			if (error != null) {
+				return;
+			}
+			onEdit.accept(c);
+			minecraft.gui.setScreen(back);
+			return;
+		}
 		Blueprint bp = Blueprints.get(fixedBlueprint);
 		error = bp == null ? "Blueprint " + fixedBlueprint + " is no longer loaded" : fits(bp, c.size());
 		if (error != null) {
@@ -177,6 +220,20 @@ final class RepoPickScreen extends WizardScreen {
 		} catch (IllegalArgumentException e) {
 			error = e.getMessage();
 		}
+	}
+
+	/**
+	 * How many repos a placed building takes (docs/BUILDINGS.md "Blueprint versions"): its pin's wings (1 for a single
+	 * building), whatever its blueprint has become since; a record without a pin, its current count.
+	 */
+	static int editMax(Building b) {
+		Building.Pin pin = b.pin();
+		return pin == null ? b.repos().size() : pin.group() ? pin.wings() : 1;
+	}
+
+	/** Why building {@code id} cannot take {@code n} repos in edit mode (null = it can). */
+	private @Nullable String fitsEdit(int n) {
+		return n > editMax ? editBuilding + " takes at most " + editMax + " repo" + (editMax == 1 ? "" : "s") + " (the wings it was placed with)" : null;
 	}
 
 	/** Why {@code bp} cannot take {@code n} repos (null = it can): a single blueprint takes one, a group up to its wings. */
@@ -273,7 +330,9 @@ final class RepoPickScreen extends WizardScreen {
 		int fieldH = textMode ? typedView.height(font, typed, Math.min(MAX_W, width - 24) - 24, fieldStyle) : 0;
 		int bodyH = 22 + (textMode ? 14 + fieldH + 4 : visibleRows * ROW) + 14;
 		Blueprint fixed = fixedBlueprint == null ? null : Blueprints.get(fixedBlueprint);
-		int y = frame(g, fixed != null ? "Repos for " + fixed.name() + (lockAt != null ? " (on the plot)" : "") : "1/2  Choose repos", bodyH);
+		int y = frame(g, editBuilding != null ? "Repos of " + editBuilding + " (" + (fixed != null ? fixed.name() + ", " : "") + editMax + " wing"
+			+ (editMax == 1 ? "" : "s") + ")" : fixed != null ? "Repos for " + fixed.name() + (lockAt != null ? " (on the plot)" : "")
+			: "1/2  Choose repos", bodyH);
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
 		g.text(font, "One repo: a single building. Several: a group building,", cx, y, muted, false);
@@ -320,7 +379,8 @@ final class RepoPickScreen extends WizardScreen {
 		if (fixed != null && !c.isEmpty()) {
 			summary = fixed.name() + " for " + String.join(", ", c);
 		}
-		String problem = error != null ? error : fixed != null && !c.isEmpty() ? fits(fixed, c.size()) : null;
+		String problem = error != null ? error : c.isEmpty() ? null : editBuilding != null ? fitsEdit(c.size())
+			: fixed != null ? fits(fixed, c.size()) : null;
 		g.text(font, TextUtil.ellipsize(font, problem != null ? problem : summary, cw), cx, y + 2,
 			problem != null ? UiBits.errorText() : c.isEmpty() ? muted : ink, false);
 		String[] hints = textMode ? new String[] {"Enter", "next", "Esc", "close"} : new String[] {"Space", "pick", "Tab", "type ids", "Enter", "next"};

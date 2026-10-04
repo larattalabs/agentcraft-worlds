@@ -52,7 +52,7 @@ public final class DecisionsFeature {
 		BlockEntityRenderers.register(ModBlockEntities.DECISION_PODIUM, ctx -> new DecisionPodiumRenderer());
 		Keys.ensureRegistered();
 		DevBridge.registerScreen("decision", mc -> new DecisionScreen(null, null));
-		StationInteractions.onUse(ModBlocks.DECISION_PODIUM, (player, pos, state, be) -> openQueue(null, null));
+		StationInteractions.onUse(ModBlocks.DECISION_PODIUM, (player, pos, state, be) -> openPodium(player.level(), pos));
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (mc.player == null) {
 				return;
@@ -85,6 +85,17 @@ public final class DecisionsFeature {
 	public static void openQueue(@Nullable String decisionId, @Nullable Screen parent) {
 		Minecraft mc = Minecraft.getInstance();
 		mc.gui.setScreen(new DecisionScreen(decisionId, parent));
+	}
+
+	/**
+	 * A podium's right-click: the queue as that podium shows it ({@link dev.agentcraft.client.leads.Leads.View#podiumFor}),
+	 * with a "show all" switch. A podium outside every building (the HQ studio) shows what the home podium shows.
+	 */
+	public static void openPodium(net.minecraft.world.level.Level level, BlockPos pos) {
+		String building = dev.agentcraft.client.leads.Leads.buildingAt(level, pos.getX(), pos.getY(), pos.getZ(), 0);
+		dev.agentcraft.client.leads.Leads.View v = dev.agentcraft.client.leads.Leads.view();
+		String label = building == null || building.equals(v.homeBuilding()) ? "home podium" : building + "'s podium";
+		Minecraft.getInstance().gui.setScreen(new DecisionScreen(null, null, d -> dev.agentcraft.client.leads.Leads.view().podiumShows(building, d), label));
 	}
 
 	/** An answer was sent from this client (HUD/podium can stop counting it right away). */
@@ -153,8 +164,13 @@ public final class DecisionsFeature {
 			return;
 		}
 		BlockPos p = pos.immutable();
+		Minecraft mc = Minecraft.getInstance();
+		if (mc.level == null) {
+			return;
+		}
 		PODIUM_PENDING.put(p, wantOpen);
-		ServerTasks.run(level -> {
+		// the podium is in the player's level (a renderer only sees that one): set it in that dimension
+		ServerTasks.run(mc.level.dimension(), level -> {
 			BlockState s = level.getBlockState(p);
 			if (s.getBlock() instanceof DecisionPodiumBlock && s.getValue(DecisionPodiumBlock.OPEN) != wantOpen) {
 				level.setBlock(p, s.setValue(DecisionPodiumBlock.OPEN, wantOpen), Block.UPDATE_CLIENTS);
@@ -166,8 +182,24 @@ public final class DecisionsFeature {
 
 	private static void registerDev() {
 		DevBridge.register("dev.decision", 10_000,
-			"{decisionId?, kind?: question|permission|merge, preview?: bool (sample permission, nothing sent)} - open the decision screen at that decision (default: the queue head)", (req, mc) -> {
+			"{decisionId?, kind?: question|permission|merge, preview?: bool (sample permission, nothing sent), podium?: [x,y,z] (as that podium's right-click: "
+				+ "filtered), showAll?: bool} - open the decision screen at that decision (default: the queue head)", (req, mc) -> {
 				Fields f = Fields.of(req);
+				if (f.has("podium")) {
+					com.google.gson.JsonArray a = f.json().getAsJsonArray("podium");
+					BlockPos at = new BlockPos(a.get(0).getAsInt(), a.get(1).getAsInt(), a.get(2).getAsInt());
+					boolean all = f.optBool("showAll", false);
+					return DevBridge.onClient(mc, () -> {
+						if (mc.level == null) {
+							throw new DevBridge.DevException("not in a world");
+						}
+						openPodium(mc.level, at);
+						if (all && mc.gui.screen() instanceof DecisionScreen ds) {
+							ds.toggleShowAll();
+						}
+						return state(mc);
+					});
+				}
 				String id = f.has("decisionId") ? f.nonBlank("decisionId") : null;
 				String kind = f.has("kind") ? f.nonBlank("kind").toLowerCase(Locale.ROOT) : null;
 				boolean preview = f.optBool("preview", false);
@@ -214,6 +246,7 @@ public final class DecisionsFeature {
 			d.options().forEach(opts::add);
 			e.add("options", opts);
 			e.addProperty("answering", isAnswering(d.id()));
+			e.addProperty("podium", dev.agentcraft.client.leads.Leads.view().podiumFor(d));
 			q.add(e);
 		}
 		o.add("queue", q);
@@ -232,6 +265,8 @@ public final class DecisionsFeature {
 			sc.addProperty("lastAnswer", ds.lastAnswer());
 			sc.addProperty("armed", ds.armed());
 			sc.addProperty("preview", ds.isPreview());
+			sc.addProperty("scope", ds.scopeLabel());
+			sc.addProperty("scoped", ds.scoped());
 			o.add("screen", sc);
 		} else {
 			o.add("screen", null);

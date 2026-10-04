@@ -56,15 +56,41 @@ public final class HubActions {
 
 	/** Puts back what was in the building's box before it was placed, then forgets it. */
 	public static CompletableFuture<Result> remove(String id) {
+		return remove(id, false);
+	}
+
+	/**
+	 * {@link #remove(String)}; {@code force} (a further explicit confirm after a "move these first" refusal) takes
+	 * it down although things the building did not bring are inside (they are lost).
+	 */
+	public static CompletableFuture<Result> remove(String id, boolean force) {
 		return run("remove", id, (level, player) -> {
 			Building b = requireHere(level, id, "remove");
 			BlockPos feet = player.blockPosition();
-			Anchors.Bounds box = b.box();
+			Anchors.Bounds box = b.restoreBox(); // the foundation fill too
 			if (box.contains(feet.getX(), feet.getY(), feet.getZ()) || box.contains(feet.getX(), feet.getY() + 1, feet.getZ())) {
 				throw new Buildings.BuildingException("Step out of " + id + " first: removing it puts the old terrain back where you stand");
 			}
-			Buildings.remove(level, id);
-			return "Removed " + id + " (" + b.blueprint() + "); the area is as it was before";
+			Buildings.remove(level, id, force);
+			return "Removed " + id + " (" + b.blueprint() + "); the area is as it was before" + (force ? " (what was listed is gone)" : "");
+		});
+	}
+
+	/** Gives the building other repos (wing n = repos[n-1]) without re-placing it ({@link Buildings#setRepos}). */
+	public static CompletableFuture<Result> setRepos(String id, java.util.List<String> repos) {
+		return run("edit_repos", id, (level, player) -> {
+			Building b = Buildings.setRepos(level.getServer(), id, repos);
+			return id + " now hosts " + String.join(", ", b.repos()) + " (its lead is told)";
+		});
+	}
+
+	/** Moves the building back to where it stood before its last move ({@link Buildings#undoMove}). */
+	public static CompletableFuture<Result> undoMove(String id, boolean force) {
+		return run("undo_move", id, (level, player) -> {
+			Building b = Buildings.undoMove(level.getServer(), id, force);
+			String note = Buildings.lastNote();
+			return id + " is back at " + b.box().minX() + ", " + b.box().minY() + ", " + b.box().minZ() + (note == null ? "" : " (" + note + ")")
+				+ "; the site it left is as it was";
 		});
 	}
 

@@ -29,6 +29,12 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      dimensions, when the player is elsewhere; records from before the field fall back to requiring
      AgentCraft stations in the box in the player's dimension. Remove also refuses while the player
      stands in the box. *(done)*
+     Fix wave 1 (stream world, docs/BUILDINGS.md): **Edit repos…** (the wizard's repo step in edit mode:
+     this building's repos preselected, at most its wings; confirming calls `Buildings.setRepos` and the lead
+     sync sends `lead.assign`), **Move…** (placement mode for this building; Enter moves it, keeping id, repos,
+     lead and home), **Undo move** (after a move), **Remove anyway** (after a "move these first" refusal: a
+     further confirm that loses what was listed), and a **Check** line when the world-start check found the
+     building does not match its blueprint (or recovered a move/removal lost in a crash).
   2. **Repos** *(done, branch `mod/goals-tabs`)*: registered repos and their `repoSettings`.
   3. **Goals** *(done in the mod, branch `mod/goals-tabs`; Foreman side in `foreman/goals-tabs`)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the

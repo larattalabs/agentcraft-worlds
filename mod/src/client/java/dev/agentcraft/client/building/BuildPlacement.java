@@ -11,6 +11,9 @@ import dev.agentcraft.building.Building;
 import dev.agentcraft.building.BuildingCommands;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.building.GhostModel;
+import dev.agentcraft.building.Occupancy;
+import dev.agentcraft.building.TerrainFit;
+import dev.agentcraft.client.agents.ClientAgentEntity;
 import dev.agentcraft.client.foreman.Protocol.Notify;
 import dev.agentcraft.client.foreman.Protocol.NotifyLevel;
 import dev.agentcraft.client.hud.Toasts;
@@ -31,6 +34,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import org.jspecify.annotations.Nullable;
@@ -56,18 +60,32 @@ public final class BuildPlacement {
 	/** Rescan the world under an unmoved ghost this often (blocks change). */
 	private static final int RESCAN_TICKS = 10;
 
-	/** Refusal added on the client: the player would be built into the walls. */
-	static final String PLAYER_INSIDE = "you are standing in the box (look further away or nudge it)";
+	/** Refusal for a player in (or next to) the box: the server's words ({@link Occupancy}). */
+	static final String PLAYER_INSIDE = Buildings.PLAYER_IN_BOX;
+	/** How far (blocks) a footprint column's surface may differ from the looked-at spot to count for the median height. */
+	private static final int SURFACE_REACH = 12;
 
 	/**
-	 * An immutable view of what the renderer and HUD draw this frame. {@code obstructed} / {@code blocked}
-	 * hold world cells as (x, y, z, exposed-face mask) quadruples, so a buried blob of conflicts draws
-	 * only its outline.
+	 * An immutable view of what the renderer and HUD draw this frame. {@code obstructed} / {@code blocked} /
+	 * {@code water} / {@code lava} / {@code fill} / {@code clear} hold world cells as (x, y, z, exposed-face mask)
+	 * quadruples, so a buried blob draws only its outline.
+	 *
+	 * @param fill the foundation the server will add below the floor ({@link TerrainFit}), {@code clear} the natural
+	 *             terrain it will clear above the ground row
+	 * @param notes what placing does beside the building (hostile mobs removed, water in the footprint)
+	 * @param snapMinY the bottom of the box the placement touches (foundation included)
 	 */
 	record View(Blueprint bp, GhostModel model, int ox, int oy, int oz, int turns, String front, int[] obstructed, int obstructedCount,
-		int[] blocked, int blockedCount, List<String> refusals, boolean playerInside, boolean locked, boolean pending, boolean forceArmed) {
+		int[] blocked, int blockedCount, List<String> refusals, boolean playerInside, boolean locked, boolean pending, boolean forceArmed,
+		int[] water, int waterCount, int[] lava, int lavaCount, int[] fill, int fillCount, int[] clear, int clearCount, List<String> notes,
+		int snapMinY) {
 		Anchors.Bounds box() {
 			return new Anchors.Bounds(ox, oy, oz, ox + model.sizeX - 1, oy + model.sizeY - 1, oz + model.sizeZ - 1);
+		}
+
+		View with(boolean locked, boolean pending, boolean forceArmed) {
+			return new View(bp, model, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, refusals, playerInside, locked,
+				pending, forceArmed, water, waterCount, lava, lavaCount, fill, fillCount, clear, clearCount, notes, snapMinY);
 		}
 	}
 
@@ -79,6 +97,8 @@ public final class BuildPlacement {
 	private static @Nullable Blueprint bp;
 	private static Blueprints.@Nullable Entry entry;
 	private static List<String> repos = List.of();
+	/** Move mode: the building being moved (its blueprint and repos), null = a new building. */
+	private static @Nullable String moving;
 	private static GhostModel.@Nullable Cells cells;
 	private static final GhostModel[] MODELS = new GhostModel[4];
 	private static @Nullable Level level;
@@ -131,6 +151,7 @@ public final class BuildPlacement {
 		cancelQuietly();
 		PlotMarker.cancelQuietly();
 		active = true;
+		moving = null;
 		bp = b;
 		entry = Blueprints.entry(blueprintId);
 		repos = List.copyOf(repoIds);
@@ -140,6 +161,25 @@ public final class BuildPlacement {
 		setStatus(null, false);
 		update(mc, true);
 		AgentCraft.LOGGER.info("Building wizard: placing {} for {} ({} cells, {} visible)", b.id(), repos, c.count(), model(0).visibleCount());
+	}
+
+	/**
+	 * Enters placement mode to move building {@code id} (docs/BUILDINGS.md "Move a building"): its blueprint and
+	 * repos, confirm runs {@link Buildings#move}. Throws IllegalArgumentException with a player-facing message.
+	 */
+	public static void startMove(String id) {
+		Building b = Buildings.get(id);
+		if (b == null) {
+			throw new IllegalArgumentException("No building " + id);
+		}
+		start(b.blueprint(), b.repos());
+		moving = id;
+		update(Minecraft.getInstance(), true);
+	}
+
+	/** The building being moved, or null when placing a new one. */
+	static @Nullable String moving() {
+		return active ? moving : null;
 	}
 
 	/** Locks the ghost at an explicit origin and base rotation (DevBridge, reproducible shots). */
@@ -161,6 +201,7 @@ public final class BuildPlacement {
 
 	private static void cancelQuietly() {
 		active = false;
+		moving = null;
 		bp = null;
 		entry = null;
 		cells = null;
@@ -252,10 +293,11 @@ public final class BuildPlacement {
 		BlockPos origin = new BlockPos(v.ox(), v.oy(), v.oz());
 		Rotation rotation = Rotation.values()[v.turns()];
 		List<String> rs = List.copyOf(repos);
+		String moveId = moving;
 		CompletableFuture<Result> f = new CompletableFuture<>();
 		pending = true;
 		inFlight = f;
-		setStatus("Placing " + v.bp().name() + "…", false);
+		setStatus((moveId != null ? "Moving " + moveId : "Placing " + v.bp().name()) + "…", false);
 		server.execute(() -> {
 			Result r;
 			try {
@@ -264,9 +306,17 @@ public final class BuildPlacement {
 				if (sl == null || b == null) {
 					throw new Buildings.BuildingException(sl == null ? "That dimension is not loaded" : "Blueprint " + bpId + " is gone (reloaded?)");
 				}
-				Building placed = Buildings.place(sl, b, origin, rotation, rs, useForce);
-				r = new Result(true, placed.id(), "Placed " + placed.id() + " (" + b.name() + ") for " + String.join(", ", placed.repos())
-					+ (placed.home() ? ", home" : "") + ". Undo: /agentcraft remove " + placed.id());
+				if (moveId != null) {
+					Building moved = Buildings.move(sl, moveId, origin, rotation, useForce);
+					String note = Buildings.lastNote();
+					r = new Result(true, moved.id(), "Moved " + moved.id() + " (" + b.name() + "); its old site is as it was before"
+						+ (note == null ? "" : " (" + note + ")") + ". Undo: the hub's Undo move");
+				} else {
+					Building placed = Buildings.place(sl, b, origin, rotation, rs, useForce);
+					String note = Buildings.lastNote();
+					r = new Result(true, placed.id(), "Placed " + placed.id() + " (" + b.name() + ") for " + String.join(", ", placed.repos())
+						+ (placed.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")") + ". Undo: /agentcraft remove " + placed.id());
+				}
 			} catch (Buildings.BuildingException e) {
 				r = new Result(false, null, e.getMessage());
 			} catch (RuntimeException e) {
@@ -293,7 +343,7 @@ public final class BuildPlacement {
 			return;
 		}
 		// refused: stay in placement mode; over block entities, a second confirm with Shift may force it
-		boolean beRefusal = refused.blockedCount() > 0 || r.message().contains("block entit");
+		boolean beRefusal = refused.blockedCount() > 0 || r.message().contains("block entit") || r.message().contains("first (moving it");
 		boolean arm = active && beRefusal && !r.message().contains("overlaps") && !r.message().contains("already has");
 		if (arm) {
 			// pin the ghost to the refused box, so the force confirm means exactly the box the refusal described
@@ -305,7 +355,8 @@ public final class BuildPlacement {
 			update(Minecraft.getInstance(), true);
 		}
 		forceArmed = arm;
-		String msg = r.message() + (forceArmed ? " - Shift+Enter places anyway (they come back on remove)" : "");
+		String msg = r.message() + (forceArmed ? r.message().contains("first (moving it") ? " - Shift+Enter moves anyway (they are lost)"
+			: " - Shift+Enter places anyway (they come back on remove)" : "");
 		setStatus(msg, true);
 		Toasts.push(new Notify(NotifyLevel.WARN, "Not placed: " + msg, null, System.currentTimeMillis()));
 	}
@@ -359,7 +410,7 @@ public final class BuildPlacement {
 	static int[] spot(Minecraft mc, Player p) {
 		Direction facing = horizontalFacing(p);
 		int fi = BlueprintTransform.directionIndex(facing.getName());
-		HitResult hr = p.pick(REACH, 1f, false);
+		HitResult hr = p.pick(REACH, 1f, true); // fluids too: aiming at a lake lands on its surface, not its bed
 		if (hr instanceof BlockHitResult bh && hr.getType() == HitResult.Type.BLOCK) {
 			BlockPos open = bh.getBlockPos().relative(bh.getDirection());
 			Level lv = p.level();
@@ -368,8 +419,8 @@ public final class BuildPlacement {
 			BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos(open.getX(), y - 1, open.getZ());
 			while (m.getY() >= floor) {
 				BlockState s = lv.getBlockState(m);
-				if (!s.isAir() && !s.canBeReplaced()) {
-					break;
+				if (!s.isAir() && !s.canBeReplaced() || !s.getFluidState().isEmpty()) {
+					break; // ground, or a fluid's surface
 				}
 				m.move(Direction.DOWN);
 			}
@@ -402,8 +453,9 @@ public final class BuildPlacement {
 			int rsz = BlueprintTransform.rotatedSizeZ(bp.sizeX(), bp.sizeZ(), turns);
 			int[] o = BlueprintTransform.originInFront(s[0], s[1], s[2], facing, rsx, rsz, bp.groundY(), s[3]);
 			ox = o[0];
-			oy = o[1];
 			oz = o[2];
+			// the ground row on the footprint's median surface (C4), not just on the looked-at spot's
+			oy = footprintSurface(mc.level, model(turns), ox, oz, s[1]) - bp.groundY();
 		}
 		ox += nudgeX;
 		oy += nudgeY;
@@ -413,9 +465,7 @@ public final class BuildPlacement {
 		ticksSinceScan++;
 		if (!force && same && ticksSinceScan < RESCAN_TICKS && view != null) {
 			if (view.pending() != pending || view.forceArmed() != forceArmed || view.locked() != locked) {
-				View v = view;
-				view = new View(v.bp(), v.model(), v.ox(), v.oy(), v.oz(), v.turns(), v.front(), v.obstructed(), v.obstructedCount(), v.blocked(),
-					v.blockedCount(), v.refusals(), v.playerInside(), locked, pending, forceArmed);
+				view = view.with(locked, pending, forceArmed);
 			}
 			return;
 		}
@@ -427,29 +477,56 @@ public final class BuildPlacement {
 		view = scan(mc.level, mc.player, bp, model(turns), ox, oy, oz, turns);
 	}
 
-	/** Classifies the world under the ghost and works out place()'s refusals. */
+	/**
+	 * The ground height under the footprint ({@link TerrainFit#medianSurface}): per footprint column the motion-blocking
+	 * surface (fluids count, leaves do not), ignoring columns more than {@link #SURFACE_REACH} from the looked-at
+	 * spot's surface {@code spotY} (a cliff, a cave roof); {@code spotY} when no column qualifies.
+	 */
+	private static int footprintSurface(ClientLevel lv, GhostModel m, int ox, int oz, int spotY) {
+		int[] h = m.columnHeights();
+		int[] surfaces = new int[h.length];
+		java.util.Arrays.fill(surfaces, Integer.MIN_VALUE);
+		for (int z = 0; z < m.sizeZ; z++) {
+			for (int x = 0; x < m.sizeX; x++) {
+				int i = z * m.sizeX + x;
+				if (h[i] == 0) {
+					continue;
+				}
+				int y = lv.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, ox + x, oz + z);
+				if (Math.abs(y - spotY) <= SURFACE_REACH) {
+					surfaces[i] = y;
+				}
+			}
+		}
+		return TerrainFit.medianSurface(surfaces, spotY);
+	}
+
+	/** Classifies the world under the ghost and works out place()'s (or move()'s) refusals, in its order. */
 	private static View scan(ClientLevel lv, Player player, Blueprint b, GhostModel m, int ox, int oy, int oz, int turns) {
 		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
 		int sx = m.sizeX;
 		int sy = m.sizeY;
 		int sz = m.sizeZ;
-		// box-local flags: 1 = obstructed, 2 = foreign block entity
-		byte[] flags = new byte[sx * sy * sz];
+		TerrainFit.Plan plan = TerrainFit.plan(m, ox, oy, oz, (x, y, z) -> TerrainFit.flags(lv, p.set(x, y, z)));
+		int below = oy - plan.minY(); // foundation rows under the box
+		int sh = sy + below;
+		// box-local flags (foundation rows included, y 0 = plan.minY): 1 = obstructed, 2 = foreign block entity
+		byte[] flags = new byte[sx * sh * sz];
 		int obstructedCount = 0;
 		for (int i = 0; i < m.count(); i++) {
 			p.set(ox + m.x(i), oy + m.y(i), oz + m.z(i));
 			BlockState s = lv.getBlockState(p);
 			if (GhostModel.classify(m.y(i), m.groundY, s.isAir(), s.canBeReplaced(), false) == GhostModel.Conflict.OBSTRUCTED) {
 				obstructedCount++;
-				flags[(m.y(i) * sz + m.z(i)) * sx + m.x(i)] |= 1;
+				flags[((m.y(i) + below) * sz + m.z(i)) * sx + m.x(i)] |= 1;
 			}
 		}
-		// block entities anywhere in the box block placement (place() checks the whole box)
+		// block entities anywhere in the box (foundation included) block placement (place() checks all of it)
 		int blockedCount = 0;
-		for (int y = 0; y < sy; y++) {
+		for (int y = 0; y < sh; y++) {
 			for (int z = 0; z < sz; z++) {
 				for (int x = 0; x < sx; x++) {
-					p.set(ox + x, oy + y, oz + z);
+					p.set(ox + x, plan.minY() + y, oz + z);
 					BlockState s = lv.getBlockState(p);
 					if (s.hasBlockEntity() && isForeign(lv, p, s)) {
 						blockedCount++;
@@ -458,32 +535,77 @@ public final class BuildPlacement {
 				}
 			}
 		}
-		int[] obstructed = shell(flags, 1, sx, sy, sz, ox, oy, oz);
-		int[] blocked = shell(flags, 2, sx, sy, sz, ox, oy, oz);
+		int[] obstructed = shell(flags, 1, sx, sh, sz, ox, plan.minY(), oz);
+		int[] blocked = shell(flags, 2, sx, sh, sz, ox, plan.minY(), oz);
 		Anchors.Bounds box = new Anchors.Bounds(ox, oy, oz, ox + sx - 1, oy + sy - 1, oz + sz - 1);
+		Anchors.Bounds snapBox = new Anchors.Bounds(ox, plan.minY(), oz, box.maxX(), box.maxY(), box.maxZ());
+		String moveId = moving;
 		List<String> withBuilding = new ArrayList<>();
 		for (String r : repos) {
 			Building has = Buildings.forRepo(r);
-			if (has != null) {
+			if (has != null && !has.id().equals(moveId)) {
 				withBuilding.add(r + " (" + has.id() + ")");
 			}
 		}
+		String dim = lv.dimension().identifier().toString();
 		List<String> overlaps = new ArrayList<>();
 		for (Building other : Buildings.all()) {
-			if (Building.intersects(other.box(), box)) {
-				overlaps.add(other.id());
+			if (other.dimensionOrDefault().equals(dim) && Building.intersects(other.restoreBox(), snapBox)) {
+				overlaps.add(other.id().equals(moveId) ? other.id() + " where it stands now" : other.id());
 			}
 		}
-		List<String> refusals = new ArrayList<>(GhostModel.refusals(repos, b.wings(), withBuilding, box.minY(), box.maxY(), lv.getMinY(),
+		List<String> refusals = new ArrayList<>(GhostModel.refusals(repos, b.wings(), withBuilding, snapBox.minY(), box.maxY(), lv.getMinY(),
 			lv.getMaxY(), overlaps, blockedCount, false));
-		BlockPos feet = player.blockPosition();
-		boolean inside = box.contains(feet.getX(), feet.getY(), feet.getZ()) || box.contains(feet.getX(), feet.getY() + 1, feet.getZ());
-		if (inside) {
-			refusals.add(0, PLAYER_INSIDE);
+		String lava = TerrainFit.lavaRefusal(plan);
+		if (lava != null) {
+			refusals.add(lava);
+		}
+		List<String> doors = Buildings.straddling(lv, snapBox, true);
+		if (!doors.isEmpty()) {
+			refusals.add("a door is cut in half by the box edge (" + doors.get(0) + ")");
+		}
+		List<Occupancy.Found> found = Occupancy.scan(lv, snapBox, e -> e instanceof ClientAgentEntity);
+		List<String> occupied = Occupancy.refusals(found);
+		refusals.addAll(occupied);
+		boolean inside = found.stream().anyMatch(f -> f.kind() == Occupancy.Kind.PLAYER);
+		List<String> notes = new ArrayList<>();
+		String gone = Occupancy.removalNote(found);
+		if (gone != null) {
+			notes.add("placing " + gone);
+		}
+		String water = TerrainFit.waterWarning(plan);
+		if (water != null) {
+			notes.add(water + " (blue)");
 		}
 		String front = BlueprintTransform.rotateDirection(b.front(), turns);
 		return new View(b, m, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, List.copyOf(refusals), inside, locked,
-			pending, forceArmed);
+			pending, forceArmed, shellOf(plan.water()), plan.waterCount(), shellOf(plan.lava()), plan.lavaCount(), shellOf(plan.fill()),
+			plan.fillCount(), shellOf(plan.clear()), plan.clearCount(), List.copyOf(notes), plan.minY());
+	}
+
+	/** World cell triples as (x, y, z, exposed-face mask) quadruples: faces towards another listed cell are hidden. */
+	static int[] shellOf(int[] cells) {
+		java.util.Set<Long> set = new java.util.HashSet<>();
+		for (int i = 0; i + 2 < cells.length; i += 3) {
+			set.add(BlockPos.asLong(cells[i], cells[i + 1], cells[i + 2]));
+		}
+		IntList out = new IntList();
+		for (int i = 0; i + 2 < cells.length && out.size() < MAX_DRAWN_CONFLICTS * 4; i += 3) {
+			int x = cells[i];
+			int y = cells[i + 1];
+			int z = cells[i + 2];
+			int mask = 0;
+			mask |= set.contains(BlockPos.asLong(x, y - 1, z)) ? 0 : 1;
+			mask |= set.contains(BlockPos.asLong(x, y + 1, z)) ? 0 : 2;
+			mask |= set.contains(BlockPos.asLong(x, y, z - 1)) ? 0 : 4;
+			mask |= set.contains(BlockPos.asLong(x, y, z + 1)) ? 0 : 8;
+			mask |= set.contains(BlockPos.asLong(x - 1, y, z)) ? 0 : 16;
+			mask |= set.contains(BlockPos.asLong(x + 1, y, z)) ? 0 : 32;
+			if (mask != 0) {
+				out.add(x, y, z, mask);
+			}
+		}
+		return out.toArray();
 	}
 
 	/**
@@ -573,6 +695,7 @@ public final class BuildPlacement {
 			return o;
 		}
 		o.addProperty("blueprint", v.bp().id());
+		o.addProperty("moving", moving);
 		JsonArray rs = new JsonArray();
 		repos.forEach(rs::add);
 		o.add("repos", rs);
@@ -593,6 +716,14 @@ public final class BuildPlacement {
 		c.addProperty("obstructed", v.obstructedCount());
 		c.addProperty("blockEntities", v.blockedCount());
 		c.addProperty("playerInside", v.playerInside());
+		c.addProperty("water", v.waterCount());
+		c.addProperty("lava", v.lavaCount());
+		c.addProperty("foundation", v.fillCount());
+		c.addProperty("cleared", v.clearCount());
+		c.addProperty("snapshotMinY", v.snapMinY());
+		JsonArray notes = new JsonArray();
+		v.notes().forEach(notes::add);
+		c.add("notes", notes);
 		JsonArray refs = new JsonArray();
 		v.refusals().forEach(refs::add);
 		c.add("refusals", refs);

@@ -28,23 +28,35 @@ public final class Routing {
 	 * A building as published for readers on any thread: immutable, with its layout built once.
 	 *
 	 * @param box the world box the building occupies (lamps and screens set into its walls are inside)
+	 * @param dimension the dimension it stands in ({@link Building#dimensionOrDefault()})
 	 */
-	public record Site(String buildingId, List<String> repos, boolean home, Anchors.Layout layout, Anchors.Bounds box) {
+	public record Site(String buildingId, List<String> repos, boolean home, Anchors.Layout layout, Anchors.Bounds box, String dimension) {
 		public Site {
 			repos = List.copyOf(repos);
 		}
 
+		/** A site in the overworld. */
+		public Site(String buildingId, List<String> repos, boolean home, Anchors.Layout layout, Anchors.Bounds box) {
+			this(buildingId, repos, home, layout, box, Building.OVERWORLD);
+		}
+
 		static Site of(Building b) {
-			return new Site(b.id(), b.repos(), b.home(), b.layout(), b.box());
+			return new Site(b.id(), b.repos(), b.home(), b.layout(), b.box(), b.dimensionOrDefault());
 		}
 	}
 
 	/**
 	 * A part of the world driven by one layout: the HQ studio (its walkable bounds) or a building (its
 	 * box). {@code building} is false for the studio / a hand-published layout, where the studio-only
-	 * conventions ({@code ci:#n} = the n-th repo) apply.
+	 * conventions ({@code ci:#n} = the n-th repo) apply. {@code dimension}: the studio is in the overworld, a
+	 * building where it was placed.
 	 */
-	public record Region(Anchors.Layout layout, Anchors.Bounds area, boolean building) {
+	public record Region(Anchors.Layout layout, Anchors.Bounds area, boolean building, String dimension) {
+		/** A region in the overworld. */
+		public Region(Anchors.Layout layout, Anchors.Bounds area, boolean building) {
+			this(layout, area, building, Building.OVERWORLD);
+		}
+
 		/** Whether (x, y, z) lies in the area grown by {@code margin} blocks on every side. */
 		public boolean contains(int x, int y, int z, int margin) {
 			return x >= area.minX() - margin && x <= area.maxX() + margin && y >= area.minY() - margin && y <= area.maxY() + margin
@@ -113,9 +125,17 @@ public final class Routing {
 		return current;
 	}
 
-	/** The building whose box (grown by {@code margin}) contains the block, or null (the HQ studio / open world). */
+	/** The building whose box (grown by {@code margin}) contains the block, or null (the HQ studio / open world). Any dimension. */
 	public static @Nullable Site siteAt(List<Site> sites, int x, int y, int z, int margin) {
+		return siteAt(sites, null, x, y, z, margin);
+	}
+
+	/** {@link #siteAt(List, int, int, int, int)} among the sites in {@code dimension} (null = any). */
+	public static @Nullable Site siteAt(List<Site> sites, @Nullable String dimension, int x, int y, int z, int margin) {
 		for (Site s : sites) {
+			if (dimension != null && !dimension.equals(s.dimension())) {
+				continue;
+			}
 			Anchors.Bounds b = s.box();
 			if (x >= b.minX() - margin && x <= b.maxX() + margin && y >= b.minY() - margin && y <= b.maxY() + margin && z >= b.minZ() - margin
 				&& z <= b.maxZ() + margin) {
@@ -169,19 +189,49 @@ public final class Routing {
 					home = s;
 				}
 			}
-			out.add(new Region(current, home != null ? home.box() : current.bounds(), home != null));
+			out.add(new Region(current, home != null ? home.box() : current.bounds(), home != null, home != null ? home.dimension() : Building.OVERWORLD));
 		}
 		for (Site s : sites) {
 			if (!s.layout().name().equals(current.name())) {
-				out.add(new Region(s.layout(), s.box(), true));
+				out.add(new Region(s.layout(), s.box(), true, s.dimension()));
 			}
 		}
 		return List.copyOf(out);
 	}
 
-	/** The first region whose area grown by {@code margin} contains the block, or null. */
-	public static @Nullable Region regionAt(List<Region> regions, int x, int y, int z, int margin) {
+	/** The regions in {@code dimension}, order kept. */
+	public static List<Region> regionsIn(List<Region> regions, String dimension) {
+		List<Region> out = new ArrayList<>();
 		for (Region r : regions) {
+			if (r.dimension().equals(dimension)) {
+				out.add(r);
+			}
+		}
+		return List.copyOf(out);
+	}
+
+	/** The sites in {@code dimension}, order kept. */
+	public static List<Site> sitesIn(List<Site> sites, String dimension) {
+		List<Site> out = new ArrayList<>();
+		for (Site s : sites) {
+			if (s.dimension().equals(dimension)) {
+				out.add(s);
+			}
+		}
+		return List.copyOf(out);
+	}
+
+	/** The first region whose area grown by {@code margin} contains the block, or null. Any dimension. */
+	public static @Nullable Region regionAt(List<Region> regions, int x, int y, int z, int margin) {
+		return regionAt(regions, null, x, y, z, margin);
+	}
+
+	/** {@link #regionAt(List, int, int, int, int)} among the regions in {@code dimension} (null = any). */
+	public static @Nullable Region regionAt(List<Region> regions, @Nullable String dimension, int x, int y, int z, int margin) {
+		for (Region r : regions) {
+			if (dimension != null && !dimension.equals(r.dimension())) {
+				continue;
+			}
 			if (r.contains(x, y, z, margin)) {
 				return r;
 			}
@@ -196,6 +246,7 @@ public final class Routing {
 			h = h * 31 + r.layout().name().hashCode();
 			h = h * 31 + Long.hashCode(r.layout().revision());
 			h = h * 31 + r.area().hashCode();
+			h = h * 31 + r.dimension().hashCode();
 		}
 		return h;
 	}

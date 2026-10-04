@@ -470,6 +470,24 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   `dev.build.rotate {turns?}`, `dev.build.nudge {forward?, right?, up?}`, `dev.build.lock {on?}`,
   `dev.build.confirm {force?}` (replies with the server's result), `dev.build.cancel`; screens
   `build_repos`, `build_blueprints` for `dev.screen`.
+- Fix wave 1, stream world (docs/BUILDINGS.md "Occupancy", "Fluids", "Terrain fit", "Safe remove", "Crash
+  safety", "Change a building's repos", "Move a building"): `building.Occupancy`, `TerrainFit`, `TemplateGrid`
+  (the template's written cells and block entities, shared by server and ghost; `TemplateCells` colours it),
+  `Reconcile`, `Displays`; tests `TerrainFitTest`, `BuildingLifecycleTest`, `PinAndReconcileTest`.
+  `dev.buildings.pending` (pending sites with `snapshotExists`, the snapshot files, each building's pin
+  fingerprint, the world-start reports) and `dev.buildings.failNextRename` (the next move's snapshot rename
+  fails: the move must roll back). `dev.build.state.conflicts` adds
+  `water, lava, foundation, cleared, snapshotMinY, notes[]` and `moving`; refusals include occupants, lava
+  and doors cut by the box edge. `dev.build.pick {action: split|design_new}` on the blueprint step when no
+  blueprint has enough wings (`screen.tooFewWings`, `maxWings`). `dev.hub.action`: `edit_repos {buildingId,
+  repos}` (without repos: opens the repo screen), `move {buildingId}` (then `dev.build.lock/nudge/confirm`),
+  `undo_move {buildingId}`, `remove` a third time after a "Move these" refusal forces it
+  (`dev.hub.state.forceRemoveArmed`); `dev.hub.state.buildings[]` adds `snapshotBox, revision, movedFrom,
+  check, checkProblem`. `dev.decision {podium: [x,y,z], showAll?}` opens the queue as that podium's
+  right-click; `dev.decisions` reports each decision's `podium` and the screen's `scope`/`scoped`. `dev.state.hq`
+  adds `goalLampByBuilding`, `mergeActiveIn`, `mergeHome`, `routed` and each region's `dimension`. Commands:
+  `/agentcraft remove <id> force`, `/agentcraft repos <id> <repo>[,...]`; `/agentcraft buildings` prints
+  the check lines.
 - Wizard screens draw buttons with `UiBits.button` (the clay primary is tinted for contrast).
   `Panels.button`'s primary label used `palette.ui.highlight`, which is the clay itself: the label was
   invisible ("Place…" in the blueprint step, TaskScreen's primary buttons); it is `panel_hi` now. The

@@ -134,6 +134,45 @@ public class DecisionScreen extends Screen {
 		this.parent = parent;
 	}
 
+	/**
+	 * The queue as one podium shows it (a podium's right-click, docs/BUILDINGS.md "Podiums"): only the decisions
+	 * {@code scope} accepts, until the player switches to all of them (the header chip, or {@code A} while not
+	 * typing). {@code scopeLabel} names the podium ("b3's podium").
+	 */
+	public DecisionScreen(@Nullable String decisionId, @Nullable Screen parent, java.util.function.Predicate<Decision> scope, String scopeLabel) {
+		this(decisionId, parent);
+		this.scope = scope;
+		this.scopeLabel = scopeLabel;
+	}
+
+	/** The podium's filter (null = the whole queue) and whether the player switched to all decisions anyway. */
+	private java.util.function.@Nullable Predicate<Decision> scope;
+	private String scopeLabel = "";
+	private boolean showAll;
+	private int scopeX0 = -100;
+	private int scopeX1 = -100;
+	private int scopeY = -100;
+
+	/** Whether this screen shows one podium's decisions (and not all of them right now). */
+	public boolean scoped() {
+		return scope != null && !showAll;
+	}
+
+	public @Nullable String scopeLabel() {
+		return scope == null ? null : scopeLabel;
+	}
+
+	/** Switches between this podium's decisions and all of them (DevBridge, the chip, {@code A}). */
+	public void toggleShowAll() {
+		if (scope != null) {
+			showAll = !showAll;
+		}
+	}
+
+	private boolean inScope(Decision d) {
+		return scope == null || showAll || scope.test(d);
+	}
+
 	/** Show {@code sample} as a preview: it looks like the real thing, but nothing is sent to the Foreman. */
 	public static DecisionScreen preview(Decision sample) {
 		DecisionScreen s = new DecisionScreen(sample.id(), null);
@@ -202,19 +241,19 @@ public class DecisionScreen extends Screen {
 	// ------------------------------------------------------------------ state
 
 	/** Open decisions in queue order that are not being answered right now (from here, the console, ...). */
-	private static List<Decision> waiting() {
+	private List<Decision> waiting() {
 		List<Decision> out = new ArrayList<>();
 		for (Decision d : DecisionQueue.open()) {
-			if (!DecisionsFeature.isAnswering(d.id())) {
+			if (!DecisionsFeature.isAnswering(d.id()) && inScope(d)) {
 				out.add(d);
 			}
 		}
 		return out;
 	}
 
-	private static @Nullable Decision firstWaiting() {
+	private @Nullable Decision firstWaiting() {
 		for (Decision d : DecisionQueue.open()) {
-			if (!DecisionsFeature.isAnswering(d.id())) {
+			if (!DecisionsFeature.isAnswering(d.id()) && inScope(d)) {
 				return d;
 			}
 		}
@@ -567,6 +606,10 @@ public class DecisionScreen extends Screen {
 			onClose();
 			return true;
 		}
+		if (k == InputConstants.KEY_A && scope != null && !textFocused && !repeat) {
+			toggleShowAll(); // this podium's decisions / all of them
+			return true;
+		}
 		if (d == null) {
 			if (!repeat && (TextKeys.isEnter(e) || Keys.matches(Keys.decisions, e))) {
 				onClose();
@@ -706,6 +749,10 @@ public class DecisionScreen extends Screen {
 		Decision d = current();
 		double mx = e.x();
 		double my = e.y();
+		if (scopeHit(mx, my)) {
+			toggleShowAll();
+			return true;
+		}
 		if (d == null) {
 			return super.mouseClicked(e, doubleClick);
 		}
@@ -868,6 +915,7 @@ public class DecisionScreen extends Screen {
 		if (!readOnlyNow(d)) {
 			UiBits.pulsingDot(g, "waiting", x + 18 + font.width(title) + 6, y + 1);
 		}
+		drawScopeChip(g, x + 18 + font.width(title) + 18, y - 1);
 		navY = y - 1;
 		if (preview != null) {
 			// a sample, not a real request: say so where the queue position would be
@@ -981,6 +1029,25 @@ public class DecisionScreen extends Screen {
 		drawFooter(g, d, x, fy, cw, queue, qi, now);
 	}
 
+	/** The podium chip: "b3's podium · A: all" / "all decisions · A: b3's podium" (clickable). */
+	private void drawScopeChip(GuiGraphicsExtractor g, int x, int y) {
+		scopeX0 = scopeX1 = scopeY = -100;
+		if (scope == null) {
+			return;
+		}
+		String label = showAll ? "all decisions · A: " + scopeLabel : scopeLabel + " · A: all";
+		int w = font.width(label) + 10;
+		Panels.sprite(g, Kit.PILL, x, y, w, 11);
+		g.text(font, label, x + 5, y + 2, UiBits.muted(), false);
+		scopeX0 = x;
+		scopeX1 = x + w;
+		scopeY = y;
+	}
+
+	private boolean scopeHit(double mx, double my) {
+		return mx >= scopeX0 && mx < scopeX1 && my >= scopeY && my < scopeY + 11;
+	}
+
 	private void drawEmpty(GuiGraphicsExtractor g) {
 		Kit.Padding p = Kit.padding("panel_paper");
 		boolean stale = Foreman.state() == null || Foreman.state().isStale();
@@ -992,6 +1059,18 @@ public class DecisionScreen extends Screen {
 			sub = "last: " + l.id() + " → " + l.label();
 		} else {
 			sub = stale ? "decisions show up again once it reconnects" : "your team will ask when they need you";
+		}
+		if (scoped()) {
+			int elsewhere = 0;
+			for (Decision x : DecisionQueue.open()) {
+				if (!DecisionsFeature.isAnswering(x.id())) {
+					elsewhere++;
+				}
+			}
+			if (elsewhere > 0) {
+				head = "Nothing for " + scopeLabel;
+				sub = elsewhere + " waiting elsewhere · A shows all";
+			}
 		}
 		// sized to what it says
 		int w = Math.min(width - 24, Math.max(180, Math.max(12 + font.width(head), font.width(sub)) + p.left() + p.right() + 4));

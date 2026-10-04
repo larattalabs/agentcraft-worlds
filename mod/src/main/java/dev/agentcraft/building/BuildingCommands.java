@@ -27,7 +27,9 @@ import org.jspecify.annotations.Nullable;
  * place &lt;blueprint&gt; &lt;repo&gt;[,&lt;repo&gt;...] [rotation] [force]
  *                                  place in front of the player (ground row at the feet, entrance
  *                                  facing the player; rotation overrides the automatic one)
- * remove &lt;id&gt; [forget]             restore the area (forget: only drop the record)
+ * remove &lt;id&gt; [forget|force]       restore the area (forget: only drop the record; force: although the
+ *                                  player's things are inside, which are lost)
+ * repos &lt;id&gt; &lt;repo&gt;[,&lt;repo&gt;...]    give a building other repos (wing n = the n-th)
  * home &lt;id&gt;                        make a building home
  * build                            open the placement wizard (singleplayer client; see {@link #wizardOpener})
  * </pre>
@@ -78,8 +80,16 @@ public final class BuildingCommands {
 						Buildings.all().forEach(x -> b.suggest(x.id()));
 						return b.buildFuture();
 					})
-					.executes(ctx -> remove(ctx, false))
-					.then(Commands.literal("forget").executes(ctx -> remove(ctx, true)))))
+					.executes(ctx -> remove(ctx, false, false))
+					.then(Commands.literal("forget").executes(ctx -> remove(ctx, true, false)))
+					.then(Commands.literal("force").executes(ctx -> remove(ctx, false, true)))))
+			.then(Commands.literal("repos")
+				.then(Commands.argument("id", StringArgumentType.word())
+					.suggests((ctx, b) -> {
+						Buildings.all().forEach(x -> b.suggest(x.id()));
+						return b.buildFuture();
+					})
+					.then(Commands.argument("repos", StringArgumentType.greedyString()).executes(BuildingCommands::repos))))
 			.then(Commands.literal("home")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
@@ -122,6 +132,10 @@ public final class BuildingCommands {
 			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s%s  %s  repos %s  %s  box %s  %d anchors",
 				b.id(), b.home() ? " (home)" : "", b.blueprint(), String.join(",", b.repos()), b.rotation(), Buildings.str(b.box()),
 				b.anchors().size())), false);
+			Buildings.Report r = Buildings.reports().get(b.id());
+			if (r != null) {
+				ctx.getSource().sendSuccess(() -> Component.literal("    " + (r.problem() ? "check: " : "note: ") + r.message()), false);
+			}
 		}
 		return all.size();
 	}
@@ -165,8 +179,10 @@ public final class BuildingCommands {
 		ServerLevel level = src.getLevel();
 		try {
 			Building b = Buildings.place(level, bp, new BlockPos(o[0], o[1], o[2]), Rotation.values()[turns], repos, force);
+			String note = Buildings.lastNote();
 			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ") for " + String.join(", ", b.repos()) + ", "
-				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + ". Undo: /agentcraft remove " + b.id()), true);
+				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")")
+				+ ". Undo: /agentcraft remove " + b.id()), true);
 			return 1;
 		} catch (Buildings.BuildingException e) {
 			src.sendFailure(Component.literal(e.getMessage()));
@@ -178,7 +194,20 @@ public final class BuildingCommands {
 		}
 	}
 
-	private static int remove(CommandContext<CommandSourceStack> ctx, boolean forgetOnly) {
+	private static int repos(CommandContext<CommandSourceStack> ctx) {
+		String id = StringArgumentType.getString(ctx, "id");
+		List<String> repos = BlueprintTransform.parseRepos(StringArgumentType.getString(ctx, "repos"));
+		try {
+			Building b = Buildings.setRepos(ctx.getSource().getServer(), id, repos);
+			ctx.getSource().sendSuccess(() -> Component.literal(id + " now hosts " + String.join(", ", b.repos())), true);
+			return 1;
+		} catch (Buildings.BuildingException e) {
+			ctx.getSource().sendFailure(Component.literal(e.getMessage()));
+			return 0;
+		}
+	}
+
+	private static int remove(CommandContext<CommandSourceStack> ctx, boolean forgetOnly, boolean force) {
 		CommandSourceStack src = ctx.getSource();
 		String id = StringArgumentType.getString(ctx, "id");
 		try {
@@ -186,7 +215,7 @@ public final class BuildingCommands {
 				Buildings.forget(src.getServer(), id);
 				src.sendSuccess(() -> Component.literal("Forgot " + id + "; its blocks stay in the world"), true);
 			} else {
-				Building b = Buildings.remove(src.getLevel(), id);
+				Building b = Buildings.remove(src.getLevel(), id, force);
 				src.sendSuccess(() -> Component.literal("Removed " + id + " (" + b.blueprint() + "); restored " + Buildings.str(b.box())), true);
 			}
 			return 1;

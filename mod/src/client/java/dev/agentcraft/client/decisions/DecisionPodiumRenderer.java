@@ -36,9 +36,10 @@ import org.jspecify.annotations.Nullable;
  * decision's agent (face + name) and its question, two lines at most. It also keeps the podium's
  * {@code open} block state in sync (lit paper, lens and bell).
  *
- * <p>A lead per building ({@link Leads}): a podium in a building shows the decisions of that building's
- * lead; the home podium (and the HQ studio's) shows Marlow's and every decision whose agent is not an
- * assigned lead with a podium of its own. {@code HqWorldDriver} opens the block with the same filter.
+ * <p>A lead per building ({@link Leads#podiumFor}): a podium in a building shows its lead's decisions and its
+ * workers' (the decision's repo is one of the building's), Marlow's for an overflow building he leads; the home
+ * podium (and the HQ studio's) shows the rest. {@code HqWorldDriver} opens the block with the same filter, and a
+ * right-click opens the queue filtered the same way.
  */
 public class DecisionPodiumRenderer extends StationRenderer<DecisionPodiumBlockEntity, DecisionPodiumRenderer.State> {
 	/** Bubble pixel scale relative to vanilla name tags (1/40 block per px): 1/72 block per px. */
@@ -95,9 +96,9 @@ public class DecisionPodiumRenderer extends StationRenderer<DecisionPodiumBlockE
 		// a building's podium shows its lead's decisions; the home podium marlow's and everyone else's
 		Leads.View leads = Leads.view();
 		BlockPos at = be.getBlockPos();
-		String building = Leads.buildingAt(at.getX(), at.getY(), at.getZ(), 0);
+		String building = Leads.buildingAt(be.getLevel(), at.getX(), at.getY(), at.getZ(), 0);
 		for (Decision x : DecisionQueue.open()) {
-			if (!DecisionsFeature.isAnswering(x.id()) && leads.podiumShows(building, x.agentId())) {
+			if (!DecisionsFeature.isAnswering(x.id()) && leads.podiumShows(building, x)) {
 				if (d == null) {
 					d = x;
 				}

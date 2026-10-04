@@ -29,6 +29,7 @@ Where they live:
   "groundY": 1,
   "front": "south",
   "materials": "agentcraft",
+  "foundationBlock": "minecraft:stone_bricks",
   "walk": { "minX": 1, "minY": 1, "minZ": 1, "maxX": 19, "maxY": 7, "maxZ": 15 },
   "anchors": {
     "desk_kit": { "x": 4.5, "y": 1.0, "z": 3.5, "yaw": 180.0, "pitch": 0.0 },
@@ -51,6 +52,9 @@ Where they live:
 - The whole `walk` region is written (interior air included) so placing a building clears it.
 - Front doors are written closed (in Hardcore an open door lets mobs in at night); agents inside a
   building do not need to path through it, and moving between buildings teleports for now.
+- `foundationBlock` (contract C4): the vanilla block placement fills below the floor with ("Terrain fit"
+  below). Optional, default `minecraft:stone_bricks`; a bare `cobblestone` means `minecraft:cobblestone`; an
+  unknown id falls back to the default (logged, and a sidecar warning).
 - `kind`: `single` (one repo) or `group` (up to `wings` repos; wing `n` is the n-th repo chosen).
 - `walk`: the walkable region (becomes the building's layout bounds after placement).
 - `anchors`: the names and meanings of `dev.agentcraft.layout.AnchorNames` (spots = feet position,
@@ -102,8 +106,139 @@ A placed blueprint is a building:
   `<world>/agentcraft-buildings/<id>.before.nbt`; removing the building puts them back exactly.
 - Placement refuses to overwrite block entities the mod did not place (chests, spawners, ...)
   unless forced, and is only ever done on an explicit command / wizard confirm.
-  It always refuses a box that overlaps another building (removing the older one would break the
-  newer one), a repo that already has a building and more repos than wings.
+  It always refuses a box that overlaps another building in the same dimension (removing the older one
+  would break the newer one; the foundation counts), a repo that already has a building and more repos
+  than wings.
+- More fields (fix wave 1): `snapshotBox` (the box the snapshot covers when the foundation reaches below
+  `box`; absent = `box`), `revision` (the layout revision; absent = `placedAt`; bumped by a repo change or a
+  move so agents pick up the new anchors), `movedFrom {x, y, z, rotation, dimension}` (the site before the
+  last move: the hub's Undo move), `pin` (see "Blueprint versions"), and in the file `pending: [{building,
+  snapshot, at, why}]` (see "Crash safety").
+
+### Occupancy (who is in the way)
+
+`Buildings.place` (and `move`) refuse, naming them, when the box (foundation included) holds: a player whose
+box grown by one block touches it; tamed, owned or leashed animals; villagers, armor stands, item frames,
+minecarts and any other entity that may matter (named mobs, mobs that picked up loot); dropped items, a thrown
+trident and an arrow that can be picked up ("pick them up first": an enchanted trident is never discarded).
+Hostile mobs that would despawn anyway (no name, not persistent), arrows nobody can pick up (a skeleton's, a
+creative or Infinity shot) and XP are removed with a note ("removes 2 × zombie in the box"): the player cannot shoo a creeper out of a box at
+night, and that is the safer UX; anything the player might care about refuses instead. The ghost uses the
+same rules (`building.Occupancy`), so the HUD says what the server will say; the one gap is an arrow's
+`pickup`, which the client is not told: the ghost counts an arrow as the player's when it knows a player shot
+it, so the server may still refuse one the ghost did not flag. A door cut in half by the box's
+top or bottom face refuses too (raise or lower the building); a tall plant cut that way loses its outside
+half.
+
+### Fluids
+
+The placement ray stops at fluids (aiming at a lake lands on its surface, not its bed) and the ground search
+stops at the first fluid. Water and lava in the box grown by one block sideways and one below (and in the
+foundation fill) are counted: **lava refuses** the placement (server and ghost), water is a warning (the
+foundation fills the water below the floor; water next to the walls stays). The ghost draws water blue and
+lava amber.
+
+### Terrain fit (contract C4)
+
+- **Foundation**: below every floor-row cell of the footprint (template row `groundY - 1`), the cells that are
+  air, fluid or replaceable after the template is placed are filled downwards with `foundationBlock` until
+  solid ground, at most 12 blocks; block entities stop it. A template's own foundation rows stop it at once.
+- **Cleared**: natural terrain (dirt, stone, sand, gravel, snow, ores, plants...) at or above the ground row
+  inside the box that the template does not write is cleared to air, so a slope no longer buries walls (the
+  box corners beside a porch included).
+- The snapshot box extends down to the lowest foundation cell (`snapshotBox`), so Remove restores all of it.
+- The wizard puts the ground row on the **median surface** of the footprint's columns (motion-blocking,
+  fluids count, leaves do not; columns more than 12 blocks from the looked-at spot are ignored), not on the
+  looked-at spot; PgUp/PgDn still raise and lower it.
+- The ghost draws the foundation grey and the cleared cells pale; the HUD counts both. Pure logic:
+  `building.TerrainFit` (`TerrainFitTest`).
+
+### Safe remove
+
+Remove refuses, listing them ("Move these out of b3 first: chest at 1,64,2 (12 items), white bed at ...,
+3 dropped item stacks. Or confirm again with force: they are lost"), when the box (foundation included)
+holds what the building did not bring: block entities at positions where the template has none (a chest,
+furnace, bed or barrel the player placed; the template's own positions come from the building's pin, see
+"Blueprint versions"), template containers or lecterns the player filled, dropped items (a trident or a
+pickable arrow named with its position), pets, villagers, item frames, paintings and armor stands. Remove, Move and Undo move also refuse while a player stands in or
+next to the site getting its old terrain back (every path, `/agentcraft remove` included: it would bury
+them). Forcing is a further explicit confirm: the hub's
+button turns into "Remove anyway", `/agentcraft remove <id> force`. Nothing is deleted silently. Drops are
+only cleared when the placement/removal itself made them: the items and XP around the box are recorded
+before, and only new ones are removed (right after and again three ticks later), never the player's own drops
+lying there.
+
+### Crash safety
+
+Removing a building (or moving it away) restores its site at once, but the restored chunks only reach the disk
+with some later save, and a save does not promise it: an autosave or a pause save (singleplayer saves every time
+the game pauses: the Esc menu, any AgentCraft screen) skips chunks saved in the last few seconds and does not
+wait for the writes. So the snapshot is kept, and the site recorded under `pending` in
+`agentcraft-buildings.json`, until the **next world start**, which settles each pending site on evidence
+(`Reconcile.decide`, unit-tested), never on a count of saves:
+- **released** (snapshot deleted): the site shows its snapshot again (at least 90 % of the cells where the
+  snapshot and the building differ hold the snapshot's block; the building's own template when its pin
+  matches, else its pinned block-entity positions), or a standing building covers the whole site (that
+  building's own snapshot holds the same terrain; the same building included, after Undo move or a move back);
+- **record back**: a removal that did not reach the disk (the building stands again) gets its record back; a
+  move that did not reach the disk (the old site stands, the new one does not) gets the old record and its
+  snapshot back (the unused one is kept as `<id>.unused-<ms>.nbt`);
+- **reported, snapshot kept**: a move saved at both sites (two copies of the building), or a taken-down
+  building standing partly under another building: it is never re-added over another one;
+- **kept silently** for the next start: anything that cannot be told (blueprint changed or missing, dimension
+  not loaded, a site neither standing nor restored).
+Placing on a just-removed site in the same session is allowed (the rules above sort it out at the next start).
+
+At world start every building is also checked against the world (by block, not state: lamps, podiums,
+monitors and doors change states; at least 80 % of the template's blocks must be in place). A building whose
+own template does not stand is reported in the hub (Buildings tab "Check", `/agentcraft buildings`): Remove
+restores the terrain saved before it was placed, Forget only drops the record; nothing is deleted
+automatically. A building whose blueprint changed since it was placed, or whose blueprint or dimension is not
+loaded, cannot be checked: it gets a note, never a "does not match" (see "Blueprint versions").
+`dev.buildings.pending` shows the pending sites, the snapshot files, the pins and the reports.
+
+### Blueprint versions
+
+A blueprint can be regenerated under the same id (a new bundled version, a redesign). A building record
+therefore pins what it was placed from (`pin` in the record): the template's fingerprint
+(`TemplateGrid.fingerprint`: SHA-256 of its cells, order-free), the wing count and kind, every sidecar anchor in
+world space with its raw `name@n`, and the template's own block-entity positions. Everything about an
+existing building uses its pin, never the current blueprint:
+- **Edit repos** derives the anchors from the pinned ones (`BlueprintTransform.renameWings`) and checks the
+  pinned wing count, so agents keep routing to the desks that stand there;
+- **Remove / Move** tell the building's own chests, barrels and lecterns from the player's by the pinned
+  positions;
+- **the world-start check** compares the world with the template only while the fingerprint matches; else
+  it notes "the blueprint changed since it was placed" and does not check.
+Records placed before pins existed get one at world start when the current blueprint stands there and gives
+the same anchors; otherwise they get a note, keep their anchor positions on Edit repos (names are only
+renamed, `BlueprintTransform.rebindAnchors`, and they take at most as many repos as they have), and Remove
+lists every block entity but the stations (with a note saying why). Move re-places a building from the
+current blueprint (and pins that), so it is the way to bring an old building up to date; it refuses when the
+current blueprint has fewer wings than the building has repos.
+
+### Change a building's repos
+
+`Buildings.setRepos(server, id, repos)` (hub "Edit repos…", `/agentcraft repos <id> <repo>[,<repo>...]`):
+wing n becomes `repos[n-1]`. Station bindings `repo:<old wing n repo>` / `ci:<old wing n repo>` and unfilled
+`repo:#n` / `ci:#n` are rebound to the new wing n repo, a wing that loses its repo goes back to `#n`
+(`BlueprintTransform.rebindBinding`); the per-wing anchors are derived again from the building's pin (the
+blueprint as it was at placement, "Blueprint versions"), so the blueprint need not be loaded; the repo screen
+caps the pick at the same count. Refuses more
+repos than wings and a repo that has another building. The lead sync
+(`LeadsFeature`'s listener) then sends `lead.assign` with the new repos.
+
+### Move a building
+
+The hub's "Move…" puts up the ghost of the building's blueprint (its repos, "Moving b3" in the HUD); Enter
+runs `Buildings.move(level, id, origin, rotation, force)`: every check of `place` at the new site (it may not
+overlap the building's current site), the old site's safe-remove check (Shift+Enter forces after a refusal),
+then the template at the new site, then the snapshots renamed (the old one to `<id>.moved-<ms>.nbt`, the new
+one to `<id>.before.nbt`), then the old site restored from the renamed snapshot (kept until the next world start,
+as for a removal). A failure at any step undoes the steps before it (files renamed back, the new site restored
+from its snapshot) and records nothing, so the record never points at a site whose snapshot is another site's
+terrain (`dev.buildings.failNextRename` injects a rename failure). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
+old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step).
 
 ## Server API (mod, `dev.agentcraft.building`)
 
@@ -133,13 +268,27 @@ A placed blueprint is a building:
   its goal's repo. A newly assigned lead walks in from its building's `entrance` (else `spawn`); a
   released one walks to the home `entrance` and leaves. With a Foreman that does not publish leads the
   lead follows its goal's repo, as before.
-- Podiums: a building's `decision_podium` shows the decisions whose `agentId` is its lead; the home
-  podium (and the HQ studio's) shows Marlow's and every decision whose agent is not an assigned lead with
-  a podium of its own (workers' questions included). The podium's `open` state, its signal bulbs and
-  `decisions` lamps follow the same filter. The hub's Buildings tab shows each building's lead; a
-  `repo:` task wall's title shows its repo's lead.
+- Podiums (`LeadRouting.podiumFor`): a decision shows on the podium of its lead's building (an assigned
+  lead with a podium); a worker's decision on the podium of the building of its repo (the decision's
+  `repoId`, else its task's, else its agent's task's); Marlow's decision for a repo of an overflow building he
+  leads (no lead of its own) on that building's podium; everything else on the home podium (and the HQ
+  studio's). The podium's bubble, its `open` state, its signal bulbs and `decisions` lamps follow the same
+  rule, and a right-click opens the decision queue filtered the same way ("b3's podium · A: all": the chip or
+  `A` while not typing shows all). The hub's Buildings tab shows each building's lead; a `repo:` task wall's
+  title shows its repo's lead.
+- Per-building displays (`building.Displays`): a building's monitors light for an agent only while that
+  agent is routed to the building (dim otherwise); its merge stations (their cards, click, `merge` lamps and
+  bulbs) show the merges of its repos (the home building also repos without a building, and merges without a
+  repo); its `goal` / `goal:atrium` lamps show the newest goal of its repos or its lead (home: also goals
+  without a repo or whose repos have no building). The HQ studio keeps showing everything.
 - Station targets, desks, seats, monitors and the pathfinder use that building's layout; moving
   between buildings teleports (for now).
+- Dimensions: every building is driven in its own dimension (`ServerTasks.run(dimension, ...)`; the HQ studio
+  is in the overworld): lamps, podiums, merge stations, monitors and signal bulbs. Agents only route and
+  spawn to buildings in the player's dimension; an agent whose building and home are both elsewhere is not
+  shown (rather than appearing at home's coordinates in the wrong level). Lookups by position
+  (`Routing.siteAt/regionAt` with a dimension) never confuse two buildings at the same coordinates in two
+  dimensions.
 - Task walls bound `repo:<repoId>` show only that repo's tasks, titled with the repo's name; unbound show
   all (as today).
 - Off-shift agents idle in the home building. A building without the agent's desk, its station or a
@@ -162,7 +311,11 @@ explicit and reversible.
    Foreman offline (or Tab) the ids are typed, comma separated.
 2. Blueprint: single blueprints for one repo, group blueprints with `wings >= n` for n repos; name,
    kind, size, description and a top-down preview (each column's highest block in its map colour,
-   entrance at the bottom). Confirm closes the screen and starts placement.
+   entrance at the bottom). Confirm closes the screen and starts placement. **Too few wings**: when no
+   blueprint takes n repos (5 repos with a 4-wing campus), the step says so ("No blueprint has 5 wings (the
+   most is 4)") and offers **Design new…** (the generator form preset to a group of n wings, at most 8) or
+   **Split** (a building for the first half now, rounded up and capped at the most wings any blueprint
+   has; a toast names the repos for the second one).
 3. Placement (no screen): a translucent ghost follows the look. The entrance faces the player, the
    near edge sits on the targeted block (ray up to 64 blocks; a wall hit drops to the ground below)
    and the ground row on its surface; looking at nothing places it like `/agentcraft place` (feet,

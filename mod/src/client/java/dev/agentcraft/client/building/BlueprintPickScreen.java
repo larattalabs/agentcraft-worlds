@@ -2,6 +2,7 @@ package dev.agentcraft.client.building;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.agentcraft.building.Blueprint;
+import dev.agentcraft.building.BlueprintTransform;
 import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.client.console.TextKeys;
 import dev.agentcraft.client.foreman.Protocol.Notify;
@@ -85,6 +86,48 @@ final class BlueprintPickScreen extends WizardScreen {
 			}
 		}
 		return false;
+	}
+
+	/** The most wings any loaded group blueprint has (0 = none loaded). */
+	static int maxWings() {
+		int m = 0;
+		for (Blueprint bp : Blueprints.all()) {
+			if (bp.isGroup()) {
+				m = Math.max(m, bp.wings());
+			}
+		}
+		return m;
+	}
+
+	static int splitAt(int n, int maxWings, boolean anySingle) {
+		return BlueprintTransform.splitAt(n, maxWings, anySingle);
+	}
+
+	/** Too few wings: no blueprint takes all the repos (null when one does). */
+	@Nullable String tooFewWings() {
+		if (!list.isEmpty() || repos.size() <= 1) {
+			return null;
+		}
+		int m = maxWings();
+		return "No blueprint has " + repos.size() + " wings" + (m > 0 ? " (the most is " + m + ")" : "") + ".";
+	}
+
+	/** Design new: the generator form for a group of this many wings (back here on Esc). */
+	void designNew() {
+		dev.agentcraft.client.design.DesignFeature.openFor(repos.size(), this);
+	}
+
+	/** Split: a building for the first part of the repos now, the rest in a second one afterwards. */
+	void split() {
+		int k = splitAt(repos.size(), maxWings(), Blueprints.all().stream().anyMatch(b -> !b.isGroup()));
+		if (k <= 0) {
+			return;
+		}
+		List<String> rest = repos.subList(k, repos.size());
+		Toasts.push(new Notify(NotifyLevel.INFO, "Split: placing a building for " + String.join(", ", repos.subList(0, k))
+			+ " now; then " + (rest.size() == 1 ? "one for " : "another for ") + String.join(", ", rest) + " (B or the hub's Place new)", null,
+			System.currentTimeMillis()));
+		minecraft.gui.setScreen(new BlueprintPickScreen(repos.subList(0, k)));
 	}
 
 	private void back() {
@@ -187,10 +230,14 @@ final class BlueprintPickScreen extends WizardScreen {
 		listW = Math.max(100, cw - rw - 12);
 		listY = y;
 		if (list.isEmpty()) {
-			String need = repos.size() == 1 ? "No single blueprint is loaded." : "No group blueprint with " + repos.size() + "+ wings is loaded.";
+			String few = tooFewWings();
+			int k = splitAt(repos.size(), maxWings(), Blueprints.all().stream().anyMatch(b -> !b.isGroup()));
+			String need = repos.size() == 1 ? "No single blueprint is loaded. /agentcraft blueprints lists them; yours go in <game dir>/agentcraft/blueprints."
+				: few + " Design new… makes one with " + repos.size() + " wings" + (repos.size() > dev.agentcraft.building.DesignSpec.MAX_WINGS
+					? " (at most " + dev.agentcraft.building.DesignSpec.MAX_WINGS + ")" : "")
+				+ (k > 0 ? "; Split places a building for the first " + k + " now and one for the rest after." : ".");
 			int ly = y + 2;
-			for (String line : TextUtil.wrapPlain(font, need + " /agentcraft blueprints lists them; yours go in <game dir>/agentcraft/blueprints.",
-				listW)) {
+			for (String line : TextUtil.wrapPlain(font, need, listW)) {
 				g.text(font, line, cx, ly, ly == y + 2 ? UiBits.errorText() : muted, false);
 				ly += 10;
 			}
@@ -248,6 +295,13 @@ final class BlueprintPickScreen extends WizardScreen {
 		}
 		if (error != null) {
 			g.text(font, TextUtil.ellipsize(font, error, cw), cx, y + Math.max(detailH, visibleRows * ROW) + 2, UiBits.errorText(), false);
+		}
+		if (tooFewWings() != null) {
+			boolean canDesign = repos.size() <= dev.agentcraft.building.DesignSpec.MAX_WINGS;
+			boolean canSplit = splitAt(repos.size(), maxWings(), Blueprints.all().stream().anyMatch(b -> !b.isGroup())) > 0;
+			footer(g, mouseX, mouseY, new String[] {"Bksp", "back"}, btn("Design new\u2026", 84, true, !canDesign, this::designNew),
+				btn("Split", 48, false, !canSplit, this::split), btn("\u2039 Back", 64, false, false, this::back));
+			return;
 		}
 		footer(g, mouseX, mouseY, new String[] {"Enter", "place", "Bksp", "back"}, btn("Place \u203a", 72, true, cur == null, this::place),
 			btn("\u2039 Back", 64, false, false, this::back));

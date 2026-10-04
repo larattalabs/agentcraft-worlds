@@ -8,6 +8,7 @@ import dev.agentcraft.AgentCraft;
 import dev.agentcraft.building.Blueprint;
 import dev.agentcraft.building.BlueprintTransform;
 import dev.agentcraft.building.Blueprints;
+import dev.agentcraft.building.Building;
 import dev.agentcraft.building.BuildingCommands;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.dev.DevBridge;
@@ -289,6 +290,25 @@ public final class BuildingWizardFeature {
 		}
 	}
 
+	/** The hub's "Edit repos…": the repo step for building {@code id}; {@code onEdit} gets the new repos (wing order). */
+	public static void openEditRepos(String id, net.minecraft.client.gui.screens.@Nullable Screen back, java.util.function.Consumer<List<String>> onEdit) {
+		dev.agentcraft.building.Building b = Buildings.get(id);
+		if (b == null) {
+			return;
+		}
+		Minecraft.getInstance().gui.setScreen(RepoPickScreen.forEdit(b, onEdit, back));
+	}
+
+	/** The hub's "Move…": placement mode for building {@code id}. Returns why not, or null when the ghost is up. */
+	public static @Nullable String startMove(String id) {
+		try {
+			BuildPlacement.startMove(id);
+			return null;
+		} catch (IllegalArgumentException e) {
+			return e.getMessage();
+		}
+	}
+
 	private static void registerDev() {
 		DevBridge.register("dev.build.open", 10_000, "{step?: repos|blueprints, repos?: [..] | \"a,b\", blueprint?} - open a wizard screen "
 			+ "(blueprints: for repos, default the first Foreman repo without a building)", (req, mc) -> {
@@ -354,6 +374,50 @@ public final class BuildingWizardFeature {
 					o.add("screen", screenState(mc).get("screen"));
 					return o;
 				}));
+		DevBridge.register("dev.buildings.pending", 10_000, "{} - crash safety: the sites taken down this session or before "
+			+ "(pending until the next world start settles them: id, why, snapshot, snapshotExists, box), the snapshot files on disk, "
+			+ "each building's pin (template fingerprint) and the world-start reports", (req, mc) -> DevBridge.onClient(mc, () -> {
+				JsonObject o = new JsonObject();
+				var server = mc.getSingleplayerServer();
+				java.nio.file.Path dir = server == null ? null
+					: server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).resolve(Buildings.SNAPSHOT_DIR);
+				JsonArray pend = new JsonArray();
+				for (Building.Pending p : Buildings.pending()) {
+					JsonObject j = new JsonObject();
+					j.addProperty("id", p.building().id());
+					j.addProperty("why", p.why());
+					j.addProperty("snapshot", p.snapshot());
+					j.addProperty("snapshotExists", dir != null && java.nio.file.Files.exists(dir.resolve(p.snapshot())));
+					j.addProperty("box", Buildings.str(p.building().restoreBox()));
+					pend.add(j);
+				}
+				o.add("pending", pend);
+				JsonArray files = new JsonArray();
+				if (dir != null && java.nio.file.Files.isDirectory(dir)) {
+					try (var list = java.nio.file.Files.list(dir)) {
+						list.map(f -> f.getFileName().toString()).sorted().forEach(files::add);
+					} catch (java.io.IOException e) {
+						o.addProperty("filesError", e.getMessage());
+					}
+				}
+				o.add("snapshotFiles", files);
+				JsonObject pins = new JsonObject();
+				for (Building b : Buildings.all()) {
+					pins.addProperty(b.id(), b.pin() == null ? "none" : b.pin().template() + (Buildings.ownGridMatches(b) ? "" : " (blueprint changed)"));
+				}
+				o.add("pins", pins);
+				JsonObject rep = new JsonObject();
+				Buildings.reports().forEach((id, r) -> rep.addProperty(id, (r.problem() ? "check: " : "note: ") + r.message()));
+				o.add("reports", rep);
+				return o;
+			}));
+		DevBridge.register("dev.buildings.failNextRename", 10_000, "{} - test hook: the next snapshot rename of a building move fails "
+			+ "(the move must roll back: new site restored, record unchanged)", (req, mc) -> DevBridge.onClient(mc, () -> {
+				Buildings.failNextSnapshotRename();
+				JsonObject o = new JsonObject();
+				o.addProperty("armed", true);
+				return o;
+			}));
 		DevBridge.register("dev.build.rotate", 10_000, "{turns?: 1} - rotate the ghost by quarter turns (clockwise; negative = back)", (req, mc) -> {
 			int t = Fields.of(req).optInt("turns", 1, -3, 3);
 			return DevBridge.onClient(mc, () -> {
@@ -397,6 +461,26 @@ public final class BuildingWizardFeature {
 					return o;
 				}));
 			});
+		DevBridge.register("dev.build.pick", 10_000, "{action: split|design_new} - on the blueprint step when no blueprint has enough wings: "
+			+ "Split (a building for the first part now) or Design new (the generator form with that many wings)", (req, mc) -> {
+				String action = Fields.of(req).nonBlank("action");
+				return DevBridge.onClient(mc, () -> {
+					if (!(mc.gui.screen() instanceof BlueprintPickScreen bs)) {
+						throw new DevBridge.DevException("the blueprint step is not open (dev.build.open {step: blueprints, repos})");
+					}
+					if (bs.tooFewWings() == null) {
+						throw new DevBridge.DevException("a blueprint fits these repos: nothing to split");
+					}
+					switch (action) {
+						case "split" -> bs.split();
+						case "design_new" -> bs.designNew();
+						default -> throw new DevBridge.DevException("action must be split or design_new");
+					}
+					JsonObject o = screenState(mc);
+					o.addProperty("screenClass", mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());
+					return o;
+				});
+			});
 		DevBridge.register("dev.build.cancel", 10_000, "{} - leave placement mode (Esc)", (req, mc) -> DevBridge.onClient(mc, () -> {
 			BuildPlacement.cancel();
 			return BuildPlacement.state();
@@ -418,6 +502,7 @@ public final class BuildingWizardFeature {
 			sc.addProperty("blueprint", rs.fixedBlueprint());
 			sc.addProperty("onPlot", rs.lockAt() != null);
 			sc.addProperty("error", rs.error());
+			sc.addProperty("editBuilding", rs.editBuilding());
 			JsonArray a = new JsonArray();
 			rs.chosen().forEach(a::add);
 			sc.add("chosen", a);
@@ -428,6 +513,8 @@ public final class BuildingWizardFeature {
 			sc.add("repos", a);
 			sc.addProperty("selected", bs.current() == null ? null : bs.current().id());
 			sc.addProperty("descriptionRows", bs.descriptionRowsShown());
+			sc.addProperty("tooFewWings", bs.tooFewWings());
+			sc.addProperty("maxWings", BlueprintPickScreen.maxWings());
 		} else {
 			sc = null;
 		}

@@ -235,4 +235,46 @@ public final class LeadRouting {
 		}
 		return owner.equals(podiumBuilding);
 	}
+
+	/**
+	 * The building whose podium shows a decision (docs/BUILDINGS.md "Podiums"); null = the home podium.
+	 * <ul>
+	 * <li>an assigned lead with a podium of its own: its building ({@code podiumOwners});</li>
+	 * <li>a worker: the building of the decision's repo (its task's repo), when that building has a podium;</li>
+	 * <li>Marlow: the building of the decision's repo when Marlow leads it (an overflow building without a lead
+	 * of its own, {@code repoBuildingLed} false), else home;</li>
+	 * <li>anyone else (an unassigned lead, no repo, a repo without a building): home.</li>
+	 * </ul>
+	 *
+	 * @param lead whether {@code agentId} is a lead (Marlow included)
+	 * @param repoBuilding the building (with a podium) hosting the decision's repo in this world, or null
+	 * @param repoBuildingLed whether that building has a lead of its own (not Marlow)
+	 */
+	public static @Nullable String podiumFor(@Nullable String agentId, boolean lead, @Nullable String repoBuilding, boolean repoBuildingLed,
+		Map<String, String> podiumOwners) {
+		String own = agentId == null ? null : podiumOwners.get(agentId);
+		if (own != null) {
+			return own;
+		}
+		if (repoBuilding == null) {
+			return null;
+		}
+		if (!lead) {
+			return repoBuilding;
+		}
+		return MARLOW.equals(agentId) && !repoBuildingLed ? repoBuilding : null;
+	}
+
+	/**
+	 * Whether the podium of {@code podiumBuilding} (null = not in any building: the HQ studio) shows a decision whose
+	 * {@link #podiumFor} is {@code target}: the home podium (and the studio's) shows everything aimed at home or at
+	 * the home building, a building's podium what is aimed at it.
+	 */
+	public static boolean podiumShowsTarget(@Nullable String podiumBuilding, @Nullable String homeBuilding, @Nullable String target) {
+		boolean homePodium = podiumBuilding == null || podiumBuilding.equals(homeBuilding);
+		if (target == null || target.equals(homeBuilding)) {
+			return homePodium;
+		}
+		return target.equals(podiumBuilding);
+	}
 }

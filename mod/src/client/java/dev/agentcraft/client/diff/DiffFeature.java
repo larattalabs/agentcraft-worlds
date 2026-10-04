@@ -45,7 +45,7 @@ public final class DiffFeature {
 		BlockEntityRenderers.register(ModBlockEntities.MERGE_STATION, ctx -> new MergeStationRenderer());
 		DevBridge.registerScreen("diff", mc -> new DiffScreen(defaultTarget()));
 		StationInteractions.onUse(ModBlocks.MERGE_STATION, (player, pos, state, be) -> {
-			List<Decision> queue = MergeStationRenderer.queue();
+			List<Decision> queue = MergeStationRenderer.queueAt(player.level(), pos); // the merges this station shows
 			int k = MergeStationRenderer.rowIndex(player.level(), pos, state);
 			DiffScreen.Target t = k < queue.size() ? forDecision(queue.get(k)) : defaultTarget();
 			open(t);

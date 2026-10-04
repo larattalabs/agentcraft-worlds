@@ -23,15 +23,25 @@ import org.jspecify.annotations.Nullable;
  * @param wings how many repos the blueprint takes (single: 1)
  * @param front the direction the entrance faces in the unrotated template ({@code north/east/south/west})
  * @param walk the walkable region (template-local block coordinates, inclusive); null when missing
+ * @param foundationBlock the vanilla block id the placement fills below the floor with (docs/BUILDINGS.md "Terrain fit",
+ *                        contract C4); {@link #DEFAULT_FOUNDATION} when the sidecar names none
  */
 public record Blueprint(String id, String name, String description, String kind, int wings, int sizeX, int sizeY, int sizeZ,
-	int groundY, String front, String materials, Anchors.@Nullable Bounds walk, Map<String, Anchor> anchors) {
+	int groundY, String front, String materials, Anchors.@Nullable Bounds walk, Map<String, Anchor> anchors, String foundationBlock) {
 
 	public static final Pattern ID = Pattern.compile("[a-z0-9_]+");
 	public static final String SINGLE = "single";
 	public static final String GROUP = "group";
 	/** Cast workers every blueprint needs a desk and a monitor for (docs/BUILDINGS.md). */
 	public static final List<String> CAST_WORKERS = List.of("juniper", "kit", "wren", "rowan", "tove");
+	/** What fills below a building's floor when the sidecar names no {@code foundationBlock}. */
+	public static final String DEFAULT_FOUNDATION = "minecraft:stone_bricks";
+	private static final Pattern BLOCK_ID = Pattern.compile("[a-z0-9_.\\-]+:[a-z0-9_./\\-]+");
+
+	/** Whether {@code id} looks like a namespaced block id ({@code minecraft:stone_bricks}). */
+	public static boolean isBlockId(@Nullable String id) {
+		return id != null && BLOCK_ID.matcher(id).matches();
+	}
 
 	public boolean isGroup() {
 		return GROUP.equals(kind);
@@ -80,8 +90,12 @@ public record Blueprint(String id, String name, String description, String kind,
 					a.has("yaw") ? a.get("yaw").getAsFloat() : 0f, a.has("pitch") ? a.get("pitch").getAsFloat() : 0f));
 			}
 		}
+		String foundation = str(o, "foundationBlock", DEFAULT_FOUNDATION).strip().toLowerCase(Locale.ROOT);
+		if (!foundation.isEmpty() && foundation.indexOf(':') < 0) {
+			foundation = "minecraft:" + foundation;
+		}
 		return new Blueprint(id, str(o, "name", id), str(o, "description", ""), kind, wings, sx, sy, sz, groundY, front,
-			str(o, "materials", ""), walk, Collections.unmodifiableMap(anchors));
+			str(o, "materials", ""), walk, Collections.unmodifiableMap(anchors), foundation.isEmpty() ? DEFAULT_FOUNDATION : foundation);
 	}
 
 	public JsonObject toJson() {
@@ -104,6 +118,7 @@ public record Blueprint(String id, String name, String description, String kind,
 		if (walk != null) {
 			o.add("walk", Building.boundsJson(walk));
 		}
+		o.addProperty("foundationBlock", foundationBlock);
 		JsonObject a = new JsonObject();
 		anchors.forEach((n, v) -> a.add(n, Anchors.anchorJson(v)));
 		o.add("anchors", a);
@@ -149,6 +164,9 @@ public record Blueprint(String id, String name, String description, String kind,
 		}
 		if (walk == null) {
 			w.add("no walk box (the whole template is used)");
+		}
+		if (!isBlockId(foundationBlock)) {
+			w.add("foundationBlock '" + foundationBlock + "' is not a block id (" + DEFAULT_FOUNDATION + " is used)");
 		}
 		return w;
 	}

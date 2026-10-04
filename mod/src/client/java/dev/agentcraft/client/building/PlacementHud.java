@@ -24,6 +24,7 @@ final class PlacementHud implements HudElement {
 	private static final long STATUS_MS = 8000;
 	private static final int ORANGE = 0xFFF0A060;
 	private static final int RED = 0xFFF07060;
+	private static final int WATER_INK = 0xFF8CB4F0;
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
@@ -46,7 +47,9 @@ final class PlacementHud implements HudElement {
 
 		List<Line> lines = new ArrayList<>();
 		if (v != null) {
-			String title = "Placing " + v.bp().name() + "  for " + String.join(", ", BuildPlacement.repos());
+			String mv = BuildPlacement.moving();
+			String title = (mv != null ? "Moving " + mv + " (" + v.bp().name() + ")" : "Placing " + v.bp().name()) + "  for "
+				+ String.join(", ", BuildPlacement.repos());
 			String rot = BlueprintTransform.rotationName(v.turns()).replace('_', ' ') + " · entrance " + v.front() + (v.locked() ? " · locked" : "");
 			lines.add(new Line(TextUtil.ellipsize(font, title, inner - font.width(rot) - 8), cream, rot, soft));
 			String verdict;
@@ -55,7 +58,7 @@ final class PlacementHud implements HudElement {
 				verdict = "Placing…";
 				vc = soft;
 			} else if (v.refusals().isEmpty()) {
-				verdict = "Ready: Enter places it";
+				verdict = BuildPlacement.moving() != null ? "Ready: Enter moves it here (the old site comes back as it was)" : "Ready: Enter places it";
 				vc = UiStyle.SAGE;
 			} else {
 				verdict = "Would be refused: " + String.join("; ", v.refusals());
@@ -66,6 +69,12 @@ final class PlacementHud implements HudElement {
 				+ " replaced (orange)") + (v.blockedCount() == 0 ? "" : " · " + v.blockedCount() + " block entit" + (v.blockedCount() == 1 ? "y" : "ies")
 				+ " (red)");
 			lines.add(new Line(TextUtil.ellipsize(font, counts, inner), v.blockedCount() > 0 ? RED : v.obstructedCount() > 0 ? ORANGE : soft, null, 0));
+			String terrain = (v.fillCount() == 0 ? "no foundation needed" : v.fillCount() + " foundation block" + (v.fillCount() == 1 ? "" : "s") + " (grey)")
+				+ (v.clearCount() == 0 ? "" : " · " + v.clearCount() + " terrain cleared (pale)") + (v.lavaCount() == 0 ? "" : " · " + v.lavaCount() + " lava (amber)");
+			lines.add(new Line(TextUtil.ellipsize(font, terrain, inner), v.lavaCount() > 0 ? RED : soft, null, 0));
+			for (String n : v.notes()) {
+				lines.add(new Line(TextUtil.ellipsize(font, "Note: " + n, inner), WATER_INK, null, 0));
+			}
 		}
 		if (fresh || v != null && v.forceArmed()) {
 			String s = status == null ? "" : status;

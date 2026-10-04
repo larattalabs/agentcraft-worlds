@@ -200,6 +200,36 @@ public final class BlueprintTransform {
 		return out;
 	}
 
+	/** Every sidecar anchor in world space with its raw name ({@code task_wall@2}): what a building pins ({@link Building.Pin}). */
+	public static Map<String, Anchor> rawWorldAnchors(Blueprint bp, int turns, int ox, int oy, int oz) {
+		Map<String, Anchor> out = new LinkedHashMap<>();
+		for (Anchor a : bp.anchors().values()) {
+			out.put(a.name(), toWorld(a, bp.sizeX(), bp.sizeZ(), turns, ox, oy, oz));
+		}
+		return out;
+	}
+
+	/**
+	 * A building's stored anchors after its repos changed from {@code before} to {@code after} when its own wing
+	 * anchors are unknown (a record placed before pins, docs/BUILDINGS.md "Blueprint versions"): positions are kept,
+	 * only names change. {@code name:<before[n]>} becomes {@code name:<after[n]>}, or is dropped when wing n has no
+	 * repo now; other names stay. Pure.
+	 */
+	public static Map<String, Anchor> rebindAnchors(Map<String, Anchor> anchors, List<String> before, List<String> after) {
+		Map<String, Anchor> out = new LinkedHashMap<>();
+		for (Anchor a : anchors.values()) {
+			int colon = a.name().indexOf(':');
+			int wing = colon < 0 ? -1 : before.indexOf(a.name().substring(colon + 1));
+			if (wing < 0) {
+				out.put(a.name(), a);
+			} else if (wing < after.size()) {
+				String named = a.name().substring(0, colon + 1) + after.get(wing);
+				out.put(named, a.withName(named));
+			}
+		}
+		return out;
+	}
+
 	/** World layout bounds: the sidecar's walk box (or the whole template) in world space. */
 	public static Anchors.Bounds worldBounds(Blueprint bp, int turns, int ox, int oy, int oz) {
 		Anchors.Bounds walk = bp.walk() != null ? bp.walk() : new Anchors.Bounds(0, 0, 0, bp.sizeX() - 1, bp.sizeY() - 1, bp.sizeZ() - 1);
@@ -230,6 +260,39 @@ public final class BlueprintTransform {
 		return m.group(1) + ":" + repos.get(n - 1);
 	}
 
+	/**
+	 * A station binding after a building's repos changed from {@code before} to {@code after} (wing n =
+	 * repos[n-1]): {@code repo:<old wing n repo>} / {@code ci:<old wing n repo>} and unfilled {@code repo:#n} /
+	 * {@code ci:#n} become wing n's new repo, or {@code #n} again when wing n has none now. Returns null when the
+	 * binding is unchanged (other prefixes, agents, repos that were not a wing).
+	 */
+	public static @Nullable String rebindBinding(String binding, List<String> before, List<String> after) {
+		int colon = binding.indexOf(':');
+		if (colon <= 0) {
+			return null;
+		}
+		String prefix = binding.substring(0, colon);
+		if (!prefix.equals("repo") && !prefix.equals("ci")) {
+			return null;
+		}
+		String rest = binding.substring(colon + 1);
+		int wing;
+		if (rest.startsWith("#")) {
+			try {
+				wing = Integer.parseInt(rest.substring(1));
+			} catch (NumberFormatException e) {
+				return null;
+			}
+		} else {
+			wing = before.indexOf(rest) + 1;
+		}
+		if (wing < 1) {
+			return null;
+		}
+		String to = prefix + ":" + (wing <= after.size() ? after.get(wing - 1) : "#" + wing);
+		return to.equals(binding) ? null : to;
+	}
+
 	// ------------------------------------------------------------------ placement in front of a player
 
 	/**
@@ -248,6 +311,19 @@ public final class BlueprintTransform {
 			case "west" -> new int[] {px - gap - (rsx - 1), oy, pz - rsz / 2};
 			default -> throw new IllegalArgumentException("bad facing " + facing);
 		};
+	}
+
+	/**
+	 * When no blueprint takes {@code n} repos (docs/BUILDINGS.md "Too few wings"): how many to place in the first of
+	 * two buildings: half, rounded up, but no more than any blueprint takes ({@code maxWings}, 1 with only single
+	 * blueprints); 0 when nothing fits even one repo or there is nothing to split.
+	 */
+	public static int splitAt(int n, int maxWings, boolean anySingle) {
+		int fits = Math.max(maxWings, anySingle ? 1 : 0);
+		if (fits == 0 || n <= 1) {
+			return 0;
+		}
+		return Math.min(fits, (n + 1) / 2);
 	}
 
 	/** Splits a comma list of repo ids, trimming blanks; keeps order, drops duplicates. */

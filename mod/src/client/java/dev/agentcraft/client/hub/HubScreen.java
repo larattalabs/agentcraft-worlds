@@ -86,6 +86,8 @@ public final class HubScreen extends Screen {
 	/** Remove armed for this building id until {@link #armedAt} + {@link #CONFIRM_MS}. */
 	private @Nullable String armedRemove;
 	private long armedAt;
+	/** A removal of this building was refused over the player's things: the armed confirm now forces it ("Remove anyway"). */
+	private @Nullable String forceRemove;
 	private boolean busy;
 	/** Blueprint browser view: "plan" (built-in) or a {@link PreviewImages#KINDS} kind; null = best available. */
 	private @Nullable String view;
@@ -397,12 +399,43 @@ public final class HubScreen extends Screen {
 	 */
 	public java.util.concurrent.@Nullable CompletableFuture<HubActions.Result> removeClick(String id) {
 		if (armed() && id.equals(armedRemove)) {
+			boolean force = id.equals(forceRemove);
 			disarm();
-			return track(HubActions.remove(id));
+			forceRemove = null;
+			return track(HubActions.remove(id, force)).thenApply(r -> {
+				if (!r.ok() && !force && r.message().startsWith("Move these")) {
+					// a third, explicit confirm takes it down anyway (what was listed is lost)
+					forceRemove = id;
+					armedRemove = id;
+					armedAt = System.currentTimeMillis();
+				}
+				return r;
+			});
 		}
+		forceRemove = null;
 		armedRemove = id;
 		armedAt = System.currentTimeMillis();
 		return null;
+	}
+
+	/** Whether the armed remove of {@code id} would force it (after a "move these first" refusal). */
+	public boolean forceArmed(String id) {
+		return armed() && id.equals(armedRemove) && id.equals(forceRemove);
+	}
+
+	/** Edit repos: the wizard's repo step for this building (wing n = the n-th picked); confirming sends them. */
+	public void editRepos(String id) {
+		BuildingWizardFeature.openEditRepos(id, this, repos -> track(HubActions.setRepos(id, repos)));
+	}
+
+	/** Move: placement mode for this building (the ghost of its blueprint); confirming moves it there. */
+	public @Nullable String move(String id) {
+		return BuildingWizardFeature.startMove(id);
+	}
+
+	/** Undo move: back to where it stood before its last move. */
+	public java.util.concurrent.CompletableFuture<HubActions.Result> undoMove(String id) {
+		return track(HubActions.undoMove(id, false));
 	}
 
 	private java.util.concurrent.CompletableFuture<HubActions.Result> track(java.util.concurrent.CompletableFuture<HubActions.Result> f) {
@@ -829,13 +862,17 @@ public final class HubScreen extends Screen {
 			{"Size", (box.maxX() - box.minX() + 1) + " × " + (box.maxY() - box.minY() + 1) + " × " + (box.maxZ() - box.minZ() + 1)},
 			{"Rotation", cur.rotation().replace('_', ' ')},
 			{"Dimension", HubActions.pretty(cur.dimensionOrDefault()) + (cur.dimension() == null ? " (assumed: old record)" : "")},
-			{"Placed", cur.placedAt() > 0 ? UiBits.ago(cur.placedAt()) : "?"}};
+			{"Placed", cur.placedAt() > 0 ? UiBits.ago(cur.placedAt()) : "?"},
+			{"Check", checkLine(cur)}};
 		int labelW = 0;
 		for (String[] f : facts) {
 			labelW = Math.max(labelW, font.width(f[0]));
 		}
 		for (String[] f : facts) {
-			g.text(font, f[0], dx, dy, muted, false);
+			if (f[1] == null) {
+				continue;
+			}
+			g.text(font, f[0], dx, dy, f[0].equals("Check") ? UiBits.errorText() : muted, false);
 			int vx = dx + labelW + 8;
 			if (f[0].equals("Lead") && leadId != null) {
 				ReviewKit.face(g, font, leadId, vx, dy - 1, 8);
@@ -858,18 +895,41 @@ public final class HubScreen extends Screen {
 		button(g, "teleport", tp, bx, dy, bw(tp), false, busy || !sp, false, mx, my, () -> teleport(id));
 		bx += bw(tp) + 4;
 		boolean armedHere = armed() && id.equals(armedRemove);
-		String rm = armedHere ? "Confirm remove" : "Remove…";
+		boolean forceHere = forceArmed(id);
+		String rm = forceHere ? "Remove anyway" : armedHere ? "Confirm remove" : "Remove…";
 		int rmw = bw(rm);
 		if (bx + rmw > dx + dw) {
 			bx = dx;
 			dy += 24;
 		}
-		button(g, "remove", rm, bx, dy, rmw, armedHere, busy || !sp, !armedHere, mx, my, () -> removeClick(id));
+		button(g, "remove", rm, bx, dy, rmw, armedHere, busy || !sp, !armedHere || forceHere, mx, my, () -> removeClick(id));
+		dy += 24;
+		// change the building without re-placing it
+		bx = dx;
+		String er = "Edit repos…";
+		button(g, "edit_repos", er, bx, dy, bw(er), false, busy || !sp || Blueprints.get(cur.blueprint()) == null, false, mx, my, () -> editRepos(id));
+		bx += bw(er) + 4;
+		String mvl = "Move…";
+		button(g, "move", mvl, bx, dy, bw(mvl), false, busy || !sp || Blueprints.get(cur.blueprint()) == null, false, mx, my, () -> move(id));
+		bx += bw(mvl) + 4;
+		if (cur.movedFrom() != null) {
+			String um = "Undo move";
+			if (bx + bw(um) > dx + dw) {
+				bx = dx;
+				dy += 24;
+			}
+			button(g, "undo_move", um, bx, dy, bw(um), false, busy || !sp, false, mx, my, () -> undoMove(id));
+		}
 		dy += 26;
 		String note;
 		int noteColor = muted;
 		HubActions.Result last = HubActions.last();
-		if (armedHere) {
+		if (forceHere) {
+			long left = Math.max(0, (CONFIRM_MS - (System.currentTimeMillis() - armedAt) + 999) / 1000);
+			HubActions.Result why = HubActions.last();
+			note = (why != null ? why.message() + " " : "") + "Click Remove anyway to take " + id + " down regardless: those things are lost. (" + left + " s)";
+			noteColor = UiBits.errorText();
+		} else if (armedHere) {
 			long left = Math.max(0, (CONFIRM_MS - (System.currentTimeMillis() - armedAt) + 999) / 1000);
 			note = "Click Confirm remove to take " + id + " down: the terrain that was there comes back exactly. (" + left + " s)";
 			noteColor = UiBits.errorText();
@@ -890,6 +950,12 @@ public final class HubScreen extends Screen {
 			g.text(font, line, dx, dy, noteColor, false);
 			dy += 10;
 		}
+	}
+
+	/** The world-start check of a building ({@link Buildings#reports()}), or null when there is nothing to say. */
+	private static @Nullable String checkLine(Building b) {
+		Buildings.Report r = Buildings.reports().get(b.id());
+		return r == null ? null : r.message();
 	}
 
 	private void drawBlueprints(GuiGraphicsExtractor g, List<Blueprint> bps, int x, int y, int w, int h, int mx, int my) {
