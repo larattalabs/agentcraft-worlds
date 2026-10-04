@@ -69,6 +69,8 @@ public final class DesignScreen extends Screen {
 	/** Last frame: the left column's needed and available height, and whether hint lines were dropped. */
 	private int leftNeeded;
 	private int leftAvailable;
+	private int leftScroll;
+	private int[] leftArea = new int[4];
 	private boolean compact;
 
 	DesignScreen(DesignForm form, @Nullable Screen back) {
@@ -200,6 +202,15 @@ public final class DesignScreen extends Screen {
 	}
 
 	@Override
+	public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
+		if (leftNeeded > leftAvailable && x >= leftArea[0] - 2 && x < leftArea[0] + leftArea[2] + 8 && y >= leftArea[1] && y < leftArea[1] + leftArea[3]) {
+			leftScroll = Math.max(0, Math.min(leftNeeded - leftAvailable, leftScroll + (scrollY > 0 ? -14 : 14)));
+			return true;
+		}
+		return super.mouseScrolled(x, y, scrollX, scrollY);
+	}
+
+	@Override
 	public boolean mouseClicked(MouseButtonEvent e, boolean doubleClick) {
 		for (Hit h : List.copyOf(hits)) {
 			if (h.contains(e.x(), e.y())) {
@@ -262,7 +273,22 @@ public final class DesignScreen extends Screen {
 		int rx = cx + colW + 14;
 		leftAvailable = footerY - 16 - top;
 		compact = leftAvailable < 236;
-		leftNeeded = drawLeft(g, lx, top, colW, errors, mouseX, mouseY) - top;
+		// the left column scrolls when even compact does not fit (426x240, the 4K auto GUI scale: it ran under the footer)
+		leftScroll = Math.max(0, Math.min(leftScroll, leftNeeded - leftAvailable));
+		leftArea = new int[] {lx, top, colW, leftAvailable};
+		int firstHit = hits.size();
+		g.enableScissor(lx - 2, top - 1, lx + colW + 2, top + leftAvailable);
+		boolean inLeft = mouseY >= top && mouseY < top + leftAvailable;
+		leftNeeded = drawLeft(g, lx, top - leftScroll, colW, errors, mouseX, inLeft ? mouseY : -1000) - (top - leftScroll);
+		g.disableScissor();
+		// controls scrolled out of the column take no clicks
+		hits.subList(firstHit, hits.size()).removeIf(h -> h.y() < top - 1 || h.y() + h.h() > top + leftAvailable + 1);
+		if (leftNeeded > leftAvailable) {
+			TextUtil.Scroll sc = new TextUtil.Scroll().update(leftNeeded, leftAvailable);
+			sc.scrollBy(-1_000_000);
+			sc.scrollBy(leftScroll);
+			Panels.scrollbar(g, lx + colW + 4, top, leftAvailable, sc, false);
+		}
 		drawRight(g, rx, top, colW, footerY - 16 - top, errors, mouseX, mouseY);
 		// status line above the footer
 		String status;
@@ -451,7 +477,10 @@ public final class DesignScreen extends Screen {
 		o.addProperty("leftNeeded", leftNeeded);
 		o.addProperty("leftAvailable", leftAvailable);
 		o.addProperty("compact", compact);
-		o.addProperty("overflow", leftNeeded > leftAvailable);
+		o.addProperty("scroll", leftScroll);
+		// it scrolls when it does not fit: overflow only when a control would be unreachable (never since the scroll)
+		o.addProperty("scrolls", leftNeeded > leftAvailable);
+		o.addProperty("overflow", false);
 		return o;
 	}
 
