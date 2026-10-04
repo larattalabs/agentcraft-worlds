@@ -977,8 +977,27 @@ public final class HubScreen extends Screen {
 		for (String[] f : facts) {
 			labelW = Math.max(labelW, font.width(f[0]));
 		}
+		// the buttons (two or three rows) and a note line must stay inside the pane: on a short screen (426x240, the 4K
+		// auto GUI scale) they ran over the footer and off the panel. Drop the least useful facts first.
+		boolean tpShown = minecraft.player != null && HubActions.teleportAllowed(minecraft.player);
+		int row1 = bw("Make home") + 4 + (tpShown ? bw("Teleport") + 4 : 0) + bw("Confirm remove");
+		int buttonsH = (row1 > dw ? 72 : 48) + 2 + 10;
+		java.util.Set<String> dropped = new java.util.HashSet<>();
+		String[] dropOrder = {"Placed", "Dimension", "Rotation", "Size", "Box", "Blueprint", "Home"};
+		for (int di = 0; di <= dropOrder.length; di++) {
+			int fh = 0;
+			for (String[] f : facts) {
+				if (f[1] != null && !dropped.contains(f[0])) {
+					fh += TextUtil.wrapPlain(font, f[1], dw - labelW - 8 - (f[0].equals("Lead") ? 11 : 0)).size() * 10 + 1;
+				}
+			}
+			if (dy + fh + 6 + buttonsH <= y + h || di == dropOrder.length) {
+				break;
+			}
+			dropped.add(dropOrder[di]);
+		}
 		for (String[] f : facts) {
-			if (f[1] == null) {
+			if (f[1] == null || dropped.contains(f[0])) {
 				continue;
 			}
 			g.text(font, f[0], dx, dy, f[0].equals("Check") ? UiBits.errorText() : muted, false);
