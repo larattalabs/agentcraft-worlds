@@ -1412,6 +1412,12 @@ public final class HubScreen extends Screen {
 			if (st.message() != null && !st.message().isBlank()) {
 				ly = fact(g, "Note", st.message(), lx, ly, colW);
 			}
+			Protocol.ForemanHold hold = st.hold();
+			if (hold != null) {
+				// the Inbox's hold item sends the player here ("Status"): say what holds the agents
+				ly = fact(g, "Paused", dev.agentcraft.hud.AlertLine.holdText(hold.reason(), hold.until(), java.time.ZoneId.systemDefault(),
+					System.currentTimeMillis(), false) + (hold.message() != null && !hold.message().isBlank() ? " (" + hold.message() + ")" : ""), lx, ly, colW);
+			}
 		}
 		// right column
 		int rx = x + colW + 12;
