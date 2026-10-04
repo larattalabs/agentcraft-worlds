@@ -123,6 +123,12 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 - **Lead sessions** (`claude.leadSession {maxDays, maxTurns}`, default 7 / 40, 0 = no limit): a lead's
   session for a goal starts over once it is that old or long, seeded with the goal's plan note, its
   task board and the thread's last messages.
+- **Cleanup** (`cleanupAfterDays`, default 14, 0 = off; hub Settings): once a day (and at start) the
+  worktrees and local `agentcraft/*` branches of tasks done or cancelled longer ago than that are
+  removed. The first run only lists what it would remove (log + a feed line); runs from 12 hours
+  later act. Never touched: anything an open decision or an agent still uses, a branch another kept
+  worktree shares, a branch checked out anywhere, and a cancelled task's branch with commits its base
+  does not have (logged as kept).
 - **Discord** (`notify.discord`, off by default): runs your notification script for things that need
   you, never blocking the Foreman:
 

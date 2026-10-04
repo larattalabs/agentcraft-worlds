@@ -231,6 +231,11 @@ export interface Config {
   debug: boolean;
   quiet: boolean;
   projectRoot: string;
+  /**
+   * daily housekeeping: worktrees and local agentcraft/* branches of tasks done or cancelled more than
+   * this many days ago are removed (0 = never; default 14). The first sweep only logs what it would do.
+   */
+  cleanupAfterDays: number;
   /** reject WebSocket upgrades that carry a browser Origin (CSRF-style protection) */
   allowBrowserOrigins: boolean;
   /** require the client token (clienttoken.ts) for anything but read-only use; --no-client-token (dev) turns it off */
@@ -566,6 +571,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
     quiet: bool(flags.quiet, false),
     projectRoot: PROJECT_ROOT,
     allowBrowserOrigins: bool(pick('allow-browser-origins'), false),
+    cleanupAfterDays: Math.max(0, num(file.cleanupAfterDays, 14)),
     clientToken: bool(flags['client-token'], true),
     repoPollMs: Math.max(500, num(pick('repo-poll-ms'), 10_000)),
     mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE', 'mergeStyle')),

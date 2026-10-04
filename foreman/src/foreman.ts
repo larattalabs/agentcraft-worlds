@@ -1473,8 +1473,9 @@ export class Foreman {
     }
     this.repos.startPolling(this.config.repoPollMs);
     await backend.start();
-    // leads held by worlds nobody opened for a long time (a dev world, a test or dead save)
-    this.expireLeadWorlds();
+    // leads held by worlds nobody opened for a long time (a dev world, a test or dead save), and
+    // worktrees / branches of tasks finished long ago
+    this.daily();
     this.dailyTimer = setInterval(() => this.daily(), 86_400_000);
     this.dailyTimer.unref?.();
     // designs that were queued or running when the Foreman stopped
@@ -1495,6 +1496,37 @@ export class Foreman {
     } catch (e) {
       this.log.error(`daily: ${(e as Error).message}`);
     }
+    void this.cleanup().catch((e) => this.log.warn(`cleanup: ${(e as Error).message}`));
+  }
+
+  /**
+   * cleanupAfterDays: remove the worktrees and local agentcraft/* branches of tasks finished long
+   * ago (RepoManager.sweepFinished). The very first sweep is a dry run: it logs and announces what it
+   * would remove; sweeps from 12 h later on act.
+   */
+  async cleanup(now = this.ctx.now()): Promise<{ dryRun: boolean; worktrees: string[]; branches: string[]; kept: string[] } | undefined> {
+    const days = this.config.cleanupAfterDays;
+    if (!days || this.closed) return undefined;
+    const armed = this.store.data.cleanupArmedAt;
+    const dryRun = armed === undefined || now - armed < 12 * 3_600_000;
+    const res = await this.repos.sweepFinished({
+      olderThanMs: days * 86_400_000,
+      dryRun,
+      task: (id) => this.tasks.get(id),
+      busy: (repoId, wt) => this.decisions.open().some((d) => d.repoId === repoId && d.worktree === wt) || this.agents().some((a) => a.worktree === wt && a.repoId === repoId),
+    });
+    if (armed === undefined) {
+      this.store.data.cleanupArmedAt = now;
+      this.store.markDirty();
+    }
+    const what = `${res.worktrees.length} worktree${res.worktrees.length === 1 ? '' : 's'} and ${res.branches.length} branch${res.branches.length === 1 ? '' : 'es'} of tasks finished more than ${days} days ago`;
+    if (res.worktrees.length || res.branches.length) {
+      for (const x of res.worktrees) this.log.info(`cleanup${dryRun ? ' (dry run)' : ''}: worktree ${x}`);
+      for (const x of res.branches) this.log.info(`cleanup${dryRun ? ' (dry run)' : ''}: branch ${x}`);
+      this.bus.feed('system', dryRun ? `Cleanup (first run, nothing removed): would remove ${what}; from tomorrow this runs daily (cleanupAfterDays, 0 = off)` : `Cleanup: removed ${what}`);
+    }
+    for (const x of res.kept) this.log.info(`cleanup: kept ${x}`);
+    return { dryRun, ...res };
   }
 
   async close(): Promise<void> {

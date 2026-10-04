@@ -93,6 +93,8 @@ export interface StateData {
   leads: Record<string, LeadRecord>;
   /** world id -> when it last talked to the Foreman about leads (lead.sync / assign / release) */
   leadWorlds?: Record<string, number>;
+  /** when the first (dry-run) cleanup sweep ran: later sweeps remove things (Foreman.cleanup) */
+  cleanupArmedAt?: number;
   /** the Foreman's own "drop the protected edits?" decisions (never an agent's question): decision id -> target */
   protectedDrops?: Record<string, { repoId: string; worktree: string; mergeDecisionId: string; taskId?: string }>;
   /** opaque backend-owned state (e.g. sim progress) */

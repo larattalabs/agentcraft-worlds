@@ -163,6 +163,7 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'claude.maxConcurrentTurns', group: 'models', type: 'int', min: 0, max: 20, label: 'Agent turns at once', help: 'A cap on turns running at once, leads and workers together. 0: no cap besides "Workers at once".', live: true, flags: ['max-concurrent-turns'], def: 0, get: (cfg) => cfg.claude.maxConcurrentTurns ?? 0, normalize: (v) => ({ value: v === 0 ? undefined : v }) },
     // general
     { key: 'userName', group: 'general', type: 'string', label: 'Your name', help: 'How the agents address you, in prompts, the feed and the hub. Empty: your OS user name.', live: true, flags: ['user-name'], envs: ['AGENTCRAFT_USER_NAME'], alt: ['user-name'], def: defaultUserName(), get: (cfg) => cfg.userName, normalize: (v) => (typeof v === 'string' && v.trim().length > 40 ? { error: 'must be at most 40 characters' } : { value: typeof v === 'string' && v.trim() ? v.trim() : undefined }) },
+    { key: 'cleanupAfterDays', group: 'general', type: 'int', min: 0, max: 3650, label: 'Clean up finished work after (days)', help: 'Once a day, worktrees and local agentcraft/* branches of tasks done or cancelled longer ago than this are removed (a cancelled task\'s unmerged branch is kept). The first run only lists what it would remove. 0: never.', live: true, def: 14, get: (cfg) => cfg.cleanupAfterDays },
     { key: 'notify', group: 'general', type: 'bool', objectKey: 'desktop', label: 'Desktop notifications', help: 'A desktop notification when a decision waits for you.', live: true, flags: ['notify'], envs: ['AGENTCRAFT_NOTIFY'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.notify },
     { key: 'toastSilent', group: 'general', type: 'bool', label: 'Silent notifications', help: 'Desktop notifications without sound.', live: true, flags: ['toast-silent'], envs: ['AGENTCRAFT_TOAST_SILENT'], alt: ['toast-silent'], def: false, get: (cfg) => cfg.toastSilent },
     { key: 'mergeStyle', group: 'general', type: 'enum', options: ['merge', 'squash'], label: 'Merge style', help: 'merge: a merge commit that keeps the agents\' commits; squash: one commit with the task\'s changes, authored by you.', live: true, flags: ['merge-style'], envs: ['AGENTCRAFT_MERGE_STYLE'], alt: ['merge-style'], def: 'merge', get: (cfg) => cfg.mergeStyle },
@@ -618,6 +619,7 @@ function replaceInPlace<T extends object>(target: T, source: T): void {
 export function applyLive(running: Config, next: Config): void {
   running.userName = next.userName;
   running.notify = next.notify;
+  running.cleanupAfterDays = next.cleanupAfterDays;
   if (next.notifyDiscord) running.notifyDiscord = next.notifyDiscord;
   else delete running.notifyDiscord;
   running.toastSilent = next.toastSilent;

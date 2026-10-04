@@ -978,6 +978,72 @@ export class RepoManager {
     return false;
   }
 
+  /**
+   * Housekeeping (cleanup.afterDays): worktrees of tasks that are done or cancelled for longer than
+   * `olderThanMs`, and their local agentcraft/* branches. Returns what it removes (or, `dryRun`,
+   * would remove). Rules: only worktrees under the worktree root and only refs/heads/agentcraft/*;
+   * nothing an open decision, a running turn (`busy`) or a still-kept worktree uses; a cancelled
+   * task's branch with commits its base does not have is kept (logged), its work is not thrown away.
+   * An active worktree is wound down the normal way first (its uncommitted work committed).
+   */
+  async sweepFinished(opts: {
+    olderThanMs: number;
+    dryRun: boolean;
+    task: (id: string) => { status: string; updatedAt: number } | undefined;
+    busy: (repoId: string, worktreeId: string) => boolean;
+  }): Promise<{ worktrees: string[]; branches: string[]; kept: string[] }> {
+    const out = { worktrees: [] as string[], branches: [] as string[], kept: [] as string[] };
+    const now = this.ctx.now();
+    for (const r of this.repos) {
+      if (!fs.existsSync(r.path)) continue;
+      const due = r.worktrees.filter((w) => {
+        const t = w.taskId ? opts.task(w.taskId) : undefined;
+        return !!t && (t.status === 'done' || t.status === 'cancelled') && now - t.updatedAt > opts.olderThanMs && !opts.busy(r.id, w.id) && isInsideOrEqual(w.path, this.worktreeRoot) && path.resolve(w.path) !== path.resolve(this.worktreeRoot);
+      });
+      if (!due.length) continue;
+      const leaving = new Set(due.map((w) => w.id));
+      // a branch still used by a worktree that stays (handed-over tasks share one) is not deleted
+      const keepBranches = new Set(r.worktrees.filter((w) => !leaving.has(w.id)).map((w) => w.branch));
+      const branches = new Map<string, { cancelled: boolean; base: string }>();
+      for (const w of due) {
+        out.worktrees.push(`${r.id}/${w.id}`);
+        const t = opts.task(w.taskId!)!;
+        if (!w.branch.startsWith(BRANCH_PREFIX) || keepBranches.has(w.branch)) continue;
+        const prev = branches.get(w.branch);
+        branches.set(w.branch, { cancelled: (prev?.cancelled ?? false) || t.status === 'cancelled', base: w.base });
+      }
+      for (const [b, info] of branches) {
+        const exists = (await git(r.path, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true })).code === 0;
+        if (!exists) continue;
+        if (info.cancelled && (await this.commitsAhead(r.id, b, info.base)) > 0) {
+          out.kept.push(`${r.id}:${b} (a cancelled task's unmerged work)`);
+          continue;
+        }
+        out.branches.push(`${r.id}:${b}`);
+      }
+      if (opts.dryRun) continue;
+      await this.serial(r.id, async () => {
+        for (const w of due) {
+          if (w.status === 'active') await this.doAbandon(r.id, w.id, `agentcraft: ${w.taskId ?? w.id} (cleanup)`).catch((e: Error) => this.ctx.log.warn(`cleanup ${w.id}: ${e.message}`));
+          if (fs.existsSync(w.path) && !(await this.removeWorktreeDir(r, w, 2))) continue;
+          r.worktrees = r.worktrees.filter((x) => x.id !== w.id);
+          delete this.ctx.store.data.worktreeMeta[`${r.id}/${w.id}`];
+        }
+        // (after the directories are gone: a branch still checked out anywhere is left alone)
+        const checkedOut = new Set((await listWorktrees(r.path)).map((e) => e.branch).filter((b): b is string => !!b));
+        for (const id of out.branches.filter((x) => x.startsWith(`${r.id}:`))) {
+          const b = id.slice(r.id.length + 1);
+          if (!b.startsWith(BRANCH_PREFIX) || checkedOut.has(b)) continue;
+          await git(r.path, ['branch', '-D', '-q', b], { allowFail: true });
+        }
+        this.ctx.store.markDirty();
+      });
+      await this.refresh(r.id).catch(() => undefined);
+      this.announce(r.id);
+    }
+    return out;
+  }
+
   /** Retry removing directories of finished worktrees that were busy before (poll timer / start). */
   async sweepPendingRemovals(): Promise<number> {
     let n = 0;
