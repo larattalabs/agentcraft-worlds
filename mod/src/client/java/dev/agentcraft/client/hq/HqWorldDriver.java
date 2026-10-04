@@ -247,8 +247,8 @@ public final class HqWorldDriver {
 		boolean homeOpen = false;
 		Set<String> openIn = new HashSet<>();
 		for (Protocol.Decision d : st.openDecisions()) {
-			String b = leads.podiumOwners().get(d.agentId());
-			if (b != null) {
+			String b = leads.podiumFor(d);
+			if (b != null && !b.equals(leads.homeBuilding())) {
 				openIn.add(b);
 			} else {
 				homeOpen = true;

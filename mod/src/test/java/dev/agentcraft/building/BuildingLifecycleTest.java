@@ -143,4 +143,27 @@ class BuildingLifecycleTest {
 		Routing.Site moved = new Routing.Site("b2", List.of("b"), false, nether, BOX, "minecraft:the_end");
 		assertNotEquals(Routing.signature(regions), Routing.signature(Routing.regions(home, List.of(a, moved))));
 	}
+
+	@Test
+	void podiumsFollowTheDecisionsRepo() {
+		Map<String, String> owners = Map.of("ada", "b2"); // ada leads b2, which has a podium
+		// a lead's own decisions: its building
+		assertEquals("b2", LeadRouting.podiumFor("ada", true, "b3", false, owners));
+		// a worker: its task's repo's building, led or not
+		assertEquals("b3", LeadRouting.podiumFor("kit", false, "b3", true, owners));
+		assertEquals("b3", LeadRouting.podiumFor("kit", false, "b3", false, owners));
+		assertNull(LeadRouting.podiumFor("kit", false, null, false, owners)); // no repo building: home
+		// marlow: an overflow building he leads shows his decisions for its repos; a led building does not
+		assertEquals("b3", LeadRouting.podiumFor(LeadRouting.MARLOW, true, "b3", false, owners));
+		assertNull(LeadRouting.podiumFor(LeadRouting.MARLOW, true, "b3", true, owners));
+		// an unassigned lead: home
+		assertNull(LeadRouting.podiumFor("tove", true, "b3", false, owners));
+		// which podium shows a target
+		assertTrue(LeadRouting.podiumShowsTarget("b1", "b1", null)); // home podium shows home
+		assertTrue(LeadRouting.podiumShowsTarget(null, "b1", "b1")); // the studio counts as home
+		assertTrue(LeadRouting.podiumShowsTarget("b1", "b1", "b1"));
+		assertFalse(LeadRouting.podiumShowsTarget("b1", "b1", "b3"));
+		assertTrue(LeadRouting.podiumShowsTarget("b3", "b1", "b3"));
+		assertFalse(LeadRouting.podiumShowsTarget("b3", "b1", null));
+	}
 }
