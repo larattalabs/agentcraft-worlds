@@ -13,6 +13,7 @@ import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
 import dev.agentcraft.routine.BedPicker;
+import dev.agentcraft.routine.BedRest;
 import dev.agentcraft.routine.LibraryVisits;
 import dev.agentcraft.routine.RoutineRules;
 import dev.agentcraft.routine.RoutineRules.Facts;
@@ -73,7 +74,7 @@ public final class Routines {
 		Anchor approachAnchor() {
 			Vec3 a = approach != null ? approach : Vec3.atBottomCenterOf(head);
 			float yaw = (float) Math.toDegrees(Math.atan2(-(head.getX() + 0.5 - a.x), head.getZ() + 0.5 - a.z));
-			return new Anchor(name + "@rest", a.x, a.y, a.z, yaw, 0);
+			return new Anchor(BedRest.restAnchor(name), a.x, a.y, a.z, yaw, 0);
 		}
 
 		/** The lying position (vanilla's: the head cell's centre, above the mattress), facing the bed's way. */
@@ -374,15 +375,8 @@ public final class Routines {
 			} else if (k != Kind.REST) {
 				beds.remove(a.id());
 			}
-			String key = switch (k) {
-				case REST -> AnchorNames.LOUNGE;
-				case LIBRARY -> AnchorNames.LIBRARY;
-				case STANDUP -> {
-					Running r = standupOf(a.id());
-					yield r == null ? null : r.station;
-				}
-				case NONE -> null;
-			};
+			Running su = k == Kind.STANDUP ? standupOf(a.id()) : null;
+			String key = RoutineRules.stationKey(k, su == null ? null : su.station);
 			plans.put(a.id(), new Plan(k, key, bed, layout.name()));
 			if (key != null) {
 				keys.put(a.id(), key);
@@ -428,11 +422,9 @@ public final class Routines {
 		if (lying == null) {
 			return false;
 		}
-		if (stale) {
-			return true;
-		}
-		if (!moved && !snap && plan != null && plan.kind() == Kind.REST && plan.bed() != null && plan.bed().name().equals(lying.name())
-			&& plan.bed().head().equals(lying.head()) && !bedGone(lying)) {
+		BedSpot want = plan == null ? null : plan.bed();
+		if (BedRest.keepLying(stale, moved, snap, plan != null && plan.kind() == Kind.REST, want == null ? null : want.name(),
+			want == null ? Long.MIN_VALUE : want.head().asLong(), lying.name(), lying.head().asLong(), !stale && bedGone(lying))) {
 			return true;
 		}
 		getUp(e);
@@ -531,17 +523,13 @@ public final class Routines {
 
 	private static boolean arrivedAt(ClientAgentEntity e, String anchorName, Vec3 at) {
 		Anchor t = e.motion().target();
-		return t != null && !e.motion().walking() && t.name().equals(anchorName) && e.position().distanceToSqr(at) < 0.35 * 0.35;
+		return BedRest.arrived(t == null ? null : t.name(), e.motion().walking(), anchorName, e.position().distanceToSqr(at));
 	}
 
 	/** Standing (or seated) at a slot of {@code station} (its own spot: the motion target, reached). */
 	private static boolean arrivedAtStation(ClientAgentEntity e, String station) {
 		Anchor t = e.motion().target();
-		if (t == null || e.motion().walking()) {
-			return false;
-		}
-		String n = t.name();
-		return (n.equals(station) || n.startsWith(station + "_") || n.startsWith(station + "~")) && e.position().distanceToSqr(t.pos()) < 0.6 * 0.6;
+		return t != null && BedRest.atStation(t.name(), e.motion().walking(), station, e.position().distanceToSqr(t.pos()));
 	}
 
 	private static void holdBook(ClientAgentEntity e, boolean on) {
@@ -602,19 +590,8 @@ public final class Routines {
 
 	/** A free standable cell beside the bed: beside the head, then beside the foot, then beyond the foot. */
 	private static @Nullable Vec3 approach(GridPathfinder pf, BlockPos head, Direction facing) {
-		BlockPos foot = head.relative(facing.getOpposite());
-		Direction left = facing.getCounterClockWise();
-		BlockPos[] order = {head.relative(left), head.relative(left.getOpposite()), foot.relative(left), foot.relative(left.getOpposite()),
-			foot.relative(facing.getOpposite())};
-		for (BlockPos c : order) {
-			for (int dy : new int[] {0, 1, -1}) {
-				double f = pf.floor(c.getX(), c.getY() + dy, c.getZ());
-				if (!Double.isNaN(f)) {
-					return new Vec3(c.getX() + 0.5, f, c.getZ() + 0.5);
-				}
-			}
-		}
-		return null;
+		double[] a = BedRest.approach(head.getX(), head.getY(), head.getZ(), facing.getStepX(), facing.getStepZ(), pf::floor);
+		return a == null ? null : new Vec3(a[0], a[1], a[2]);
 	}
 
 	// ------------------------------------------------------------------ Foreman views for the stand-up tracker

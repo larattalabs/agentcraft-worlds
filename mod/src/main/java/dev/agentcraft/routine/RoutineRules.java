@@ -1,5 +1,8 @@
 package dev.agentcraft.routine;
 
+import dev.agentcraft.layout.AnchorNames;
+import org.jspecify.annotations.Nullable;
+
 /**
  * Who does which village routine (docs/VILLAGE.md V3), pure. Priorities, highest first:
  * <ol>
@@ -96,6 +99,20 @@ public final class RoutineRules {
 			return NIGHT_END - t;
 		}
 		return DAY - t + NIGHT_START;
+	}
+
+	/**
+	 * The station an agent with routine {@code k} uses instead of its own: the lounge to rest (a bed, when it gets one, is
+	 * walked to directly), the library, the stand-up's gathering station ({@code standupStation}: meeting or user); null =
+	 * its own station (no routine, or a stand-up that is not running for it).
+	 */
+	public static @Nullable String stationKey(Kind k, @Nullable String standupStation) {
+		return switch (k) {
+			case REST -> AnchorNames.LOUNGE;
+			case LIBRARY -> AnchorNames.LIBRARY;
+			case STANDUP -> standupStation;
+			case NONE -> null;
+		};
 	}
 
 	private RoutineRules() {

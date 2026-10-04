@@ -633,8 +633,9 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
 
 ### Village routines (docs/VILLAGE.md V3, stream routines)
 
-Code: pure scheduling in `dev.agentcraft.routine` (`RoutineRules`, `BedPicker`, `StandupTracker`, `LibraryVisits`,
-`RoutineSettings`; `RoutineLogicTest`), client side `agents/Routines` (feeds them, beds in the world, lying, book,
+Code: pure scheduling in `dev.agentcraft.routine` (`RoutineRules`, `BedPicker`, `BedRest`, `StandupTracker`,
+`LibraryVisits`, `RoutineSettings`; `RoutineLogicTest`, `BedRestTest`: the bed approach cell, staying in bed, arrival,
+the station per routine), client side `agents/Routines` (feeds them, beds in the world, lying, book,
 bubbles, DevBridge) hooked into `AgentManager.tick` in three places: `begin` (clock, library queue, due stand-ups),
 `plan` per building (the station key per agent for `StationAssigner`, beds) and `after` (lie down on arrival, start
 reading, gather and talk). `keepLying` skips retargeting while an agent sleeps; any other path that moves it (a
@@ -672,7 +673,11 @@ relayout snap, a building change, a released lead leaving, the level or the link
   ignores the distance and loading, not the toggle), `dev.routines.library {agent}` (as if it wrote a note, no
   cooldown). `dev.state` has a `routines` summary.
 - **QA** (dev world: `node tools/mac.mjs launch --backend sim --dev --world "Village QA" --preset normal`):
-  place a building (`dev.command {cmd:"agentcraft place workshop <repo>"}` or the wizard), `dev.routines.time
+  scripted night/morning check: place a building with beds in the Overworld, then `node tools/routines-qa.mjs
+  [--timeout 90] [--shot]` (night on, `at:"night"`, polls `dev.routines.state` until an agent has `routine:
+  resting`, `lying: bed..`, `plate: resting` on its bed's head; `at:"morning"`, polls until nobody rests or lies and
+  the sleepers stand outside the bed; sets the old time back; exit 0 = both passed; checks in `tools/lib/routinesqa.mjs`,
+  tested). By hand: place a building (`dev.command {cmd:"agentcraft place workshop <repo>"}` or the wizard), `dev.routines.time
   {at:"night"}`, wait ~10 s, `dev.routines.state` (idle agents `routine: resting`, `lying: bed..`), `dev.camera` at a bed
   + `dev.screenshot`; `dev.routines.time {at:"morning"}` -> they get up. Stand-up: stand in the building, `dev.goals.submit
   {text, repoId}`, then poll `dev.routines.state` (`standups.pending` -> `running`, bubbles in a screenshot), or
