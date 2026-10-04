@@ -78,8 +78,10 @@ public final class ConsoleFeature {
 
 	private static void registerDev() {
 		DevBridge.register("dev.console", 15_000,
-			"{prefill?: text, submit?: bool} - open the console (with text in the input; submit presses Enter) and report its state", (req, mc) -> {
+			"{prefill?: text, submit?: bool, rosterCard?: agentId} - open the console (with text in the input; submit presses Enter; rosterCard = right-click"
+				+ " that roster chip: the agent card, Esc back to the console) and report its state", (req, mc) -> {
 				Fields f = Fields.of(req);
+				String rosterCard = f.optStr("rosterCard", null);
 				String prefill = f.has("prefill") ? f.str("prefill") : null;
 				boolean submit = f.optBool("submit", false);
 				boolean open = f.optBool("open", true);
@@ -91,6 +93,10 @@ public final class ConsoleFeature {
 					}
 					if (submit && mc.gui.screen() instanceof ConsoleScreen cs) {
 						cs.keyPressed(new net.minecraft.client.input.KeyEvent(com.mojang.blaze3d.platform.InputConstants.KEY_RETURN, 0, 0));
+					}
+					if (rosterCard != null && mc.gui.screen() instanceof ConsoleScreen cs
+						&& !dev.agentcraft.client.agents.AgentsFeature.openCard(rosterCard, cs)) {
+						throw new DevBridge.DevException("no agent '" + rosterCard + "'");
 					}
 					return state(mc);
 				});

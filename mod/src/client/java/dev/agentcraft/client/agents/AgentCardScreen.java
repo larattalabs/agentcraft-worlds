@@ -154,6 +154,25 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 		return parent;
 	}
 
+	/** QA: press a card button by id (message, pause, stop, review). */
+	public void pressDev(String id) {
+		press(id);
+	}
+
+	/** QA: the status line, or null. */
+	public @Nullable String statusText() {
+		return status != null && System.currentTimeMillis() < statusUntil ? status : null;
+	}
+
+	/** QA: the decision the Review/Answer button acts on, or null. */
+	public @Nullable String reviewDecision() {
+		ForemanState st = Foreman.state();
+		if (st != null) {
+			refresh(st);
+		}
+		return owned == null ? null : owned.id();
+	}
+
 	/** Whether Stop is armed (QA). */
 	public boolean stopArmed() {
 		return UiRules.secondPress(stopArmedAt, System.currentTimeMillis(), STOP_CONFIRM_MS);

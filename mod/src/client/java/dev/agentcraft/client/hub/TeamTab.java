@@ -10,6 +10,7 @@ import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.building.Building;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.building.LeadRouting;
+import dev.agentcraft.client.agents.AgentsFeature;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
@@ -23,6 +24,7 @@ import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
+import dev.agentcraft.ui.UiRules;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -60,6 +62,9 @@ final class TeamTab implements HubPane {
 	private boolean compact;
 	private int needed;
 	private int available;
+	/** The last lead.releaseWorld outcome (shown under the other worlds), null = none yet. */
+	private @Nullable String releaseNote;
+	private boolean releaseError;
 
 	TeamTab(HubScreen hub) {
 		this.hub = hub;
@@ -272,6 +277,82 @@ final class TeamTab implements HubPane {
 			out.add(String.join(" · ", facts));
 		}
 		return out;
+	}
+
+	// ------------------------------------------------------------------ C2: leads held by other worlds
+
+	/** Worlds other than this one holding lead assignments (a dev HQ, a test or deleted save): they make buildings here overflow to Marlow. */
+	static List<UiRules.OtherWorld> otherWorlds() {
+		ForemanState s = Foreman.state();
+		if (s == null) {
+			return List.of();
+		}
+		List<UiRules.LeadWorld> as = new ArrayList<>();
+		for (Protocol.LeadAssignment a : s.leads()) {
+			String world = a.world();
+			if (world == null) {
+				LeadRouting.Key k = LeadRouting.parse(a.building());
+				world = k == null ? null : k.worldId();
+			}
+			as.add(new UiRules.LeadWorld(a.leadId(), world, a.lastSync() == null ? 0 : a.lastSync()));
+		}
+		return UiRules.otherWorlds(as, Buildings.worldId());
+	}
+
+	/** {@code lead.releaseWorld {world}}: the Foreman drops that world's assignments (they come back if it is loaded again). */
+	java.util.concurrent.CompletableFuture<String> releaseWorld(String world) {
+		if (!Foreman.connected()) {
+			releaseNote = "The Foreman is not connected";
+			releaseError = true;
+			return java.util.concurrent.CompletableFuture.completedFuture(releaseNote);
+		}
+		JsonObject p = new JsonObject();
+		p.addProperty("world", world);
+		releaseNote = "Releasing " + world + "'s leads…";
+		releaseError = false;
+		return Foreman.send("lead.releaseWorld", p).handle((ack, err) -> {
+			if (err != null || ack == null || !ack.ok()) {
+				releaseError = true;
+				releaseNote = Foreman.unsupported(ack) ? "This Foreman cannot release worlds yet (update it)" : Foreman.refusal("Release " + world, ack);
+				return releaseNote;
+			}
+			List<String> released = new ArrayList<>();
+			if (ack.result() != null && ack.result().isJsonObject() && ack.result().getAsJsonObject().has("released")) {
+				ack.result().getAsJsonObject().getAsJsonArray("released").forEach(e -> released.add(UiBits.agentName(e.getAsString())));
+			}
+			releaseError = false;
+			releaseNote = released.isEmpty() ? world + " held no leads any more" : "Released " + String.join(", ", released) + " from " + world;
+			return releaseNote;
+		});
+	}
+
+	/** Draws the "other worlds" block (Models view); returns the y after it. */
+	private int drawOtherWorlds(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
+		List<UiRules.OtherWorld> others = otherWorlds();
+		if (others.isEmpty() && releaseNote == null) {
+			return y;
+		}
+		int muted = UiBits.muted();
+		if (!others.isEmpty()) {
+			g.text(hub.font(), TextUtil.ellipsize(hub.font(), "Leads held by other worlds (buildings here overflow to Marlow)", w), x, y + 2, UiStyle.CLAY_DARK,
+				false);
+			y += 13;
+		}
+		for (UiRules.OtherWorld o : others) {
+			String rel = "Release";
+			int rw = hub.bw(rel);
+			List<String> names = new ArrayList<>();
+			o.leads().forEach(l -> names.add(UiBits.agentName(l)));
+			String line = o.world() + ": " + String.join(", ", names) + (o.lastSync() > 0 ? " · synced " + UiBits.ago(o.lastSync()) : "");
+			g.text(hub.font(), TextUtil.ellipsize(hub.font(), line, w - rw - 6), x, y + 6, UiBits.ink(), false);
+			hub.button(g, "team_release:" + o.world(), rel, x + w - rw, y, rw, false, !Foreman.connected(), false, mx, my, () -> releaseWorld(o.world()));
+			y += 22;
+		}
+		if (releaseNote != null) {
+			g.text(hub.font(), TextUtil.ellipsize(hub.font(), releaseNote, w), x, y + 2, releaseError ? UiBits.errorText() : muted, false);
+			y += 13;
+		}
+		return y + 4;
 	}
 
 	// ------------------------------------------------------------------ actions
@@ -492,18 +573,26 @@ final class TeamTab implements HubPane {
 			g.text(hub.font(), "Models and limits", x, y + 2, ink, false);
 			g.text(hub.font(), TextUtil.ellipsize(hub.font(), "Defaults for every agent; an agent's own model/effort wins", w), x, y + 12, muted, false);
 			y += 24;
+			y = drawOtherWorlds(g, x, y, w, mx, my);
 		} else {
 			String id = selected;
 			boolean lead = isLead(id);
 			UiBits.framedPortrait(g, id, x, y, 1);
 			int tx = x + 24;
 			String title = title(id);
+			// the agent's card (state, task, decisions, log, message / pause / stop); Esc comes back here
+			boolean known = Foreman.state() != null && Foreman.state().agent(id) != null;
+			String card = "Card";
+			int cw = known ? hub.bw(card) : 0;
+			if (known) {
+				hub.button(g, "team_card:" + id, card, x + w - cw, y, cw, false, false, false, mx, my, () -> AgentsFeature.openCard(id, hub));
+			}
 			g.text(hub.font(), TextUtil.ellipsize(hub.font(), UiBits.agentName(id) + "  ·  " + (lead ? "lead" : "worker") + (title.isEmpty() ? "" : " · "
-				+ title), w - 24), tx, y + 1, ink, false);
+				+ title), w - 24 - cw - 4), tx, y + 1, ink, false);
 			List<String> live = liveLines(id);
 			int ly = y + 11;
 			for (int i = 0; i < live.size() && i < (compact ? 1 : 2); i++) {
-				g.text(hub.font(), TextUtil.ellipsize(hub.font(), live.get(i), w - 24), tx, ly, muted, false);
+				g.text(hub.font(), TextUtil.ellipsize(hub.font(), live.get(i), w - 24 - (i == 0 ? cw + 4 : 0)), tx, ly, muted, false);
 				ly += 10;
 			}
 			y = Math.max(y + 22, ly) + 2;
@@ -554,6 +643,9 @@ final class TeamTab implements HubPane {
 			back();
 			return true;
 		}
+		if (k == InputConstants.KEY_C && !selected.equals(MODELS) && AgentsFeature.openCard(selected, hub)) {
+			return true;
+		}
 		if (k == InputConstants.KEY_UP || k == InputConstants.KEY_DOWN) {
 			List<String> ids = new ArrayList<>();
 			ids.add(MODELS);
@@ -580,6 +672,10 @@ final class TeamTab implements HubPane {
 		}
 		String id = list.hit(x, y);
 		if (id != null && !id.startsWith("§")) {
+			// a double click on an agent opens its card (Esc returns to the Team tab)
+			if (doubleClick && id.equals(selected) && !id.equals(MODELS) && AgentsFeature.openCard(id, hub)) {
+				return true;
+			}
 			select(id);
 			return true;
 		}
@@ -610,8 +706,8 @@ final class TeamTab implements HubPane {
 		if (form.focus() != null) {
 			return new String[] {"Ctrl+Enter", "apply", "Tab", "next field", "Esc", "done typing"};
 		}
-		return compact && detailOpen ? new String[] {"↑↓", "agent", "Esc", "back"} : new String[] {"Tab", "next tab", "↑↓", "agent", "Ctrl+Enter",
-			"apply", "Esc", "close"};
+		return compact && detailOpen ? new String[] {"↑↓", "agent", "C", "card", "Esc", "back"} : new String[] {"Tab", "next tab", "↑↓", "agent", "C",
+			"card", "Ctrl+Enter", "apply", "Esc", "close"};
 	}
 
 	@Override
@@ -640,6 +736,18 @@ final class TeamTab implements HubPane {
 			roster.add(j);
 		}
 		o.add("roster", roster);
+		JsonArray others = new JsonArray();
+		for (UiRules.OtherWorld w : otherWorlds()) {
+			JsonObject j = new JsonObject();
+			j.addProperty("world", w.world());
+			JsonArray l = new JsonArray();
+			w.leads().forEach(l::add);
+			j.add("leads", l);
+			j.addProperty("lastSync", w.lastSync());
+			others.add(j);
+		}
+		o.add("otherWorlds", others);
+		o.addProperty("releaseNote", releaseNote);
 		JsonArray sc = new JsonArray();
 		for (ConfigScope s : scopes()) {
 			sc.add(s.state());

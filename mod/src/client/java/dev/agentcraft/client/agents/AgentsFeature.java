@@ -147,16 +147,29 @@ public final class AgentsFeature {
 			}
 			return new AgentCardScreen(id);
 		});
-		DevBridge.register("dev.agents.card", 10_000, "{agent} -> open the agent card for one agent (like right-clicking it)", (req, mc) -> {
-			String id = Fields.of(req).nonBlank("agent");
+		DevBridge.register("dev.agents.card", 10_000,
+			"{agent, press?: message|pause|stop|review} -> open the agent card for one agent (like sneak + right-clicking it); press = a card button"
+				+ " (on the open card of that agent; stop needs two presses)", (req, mc) -> {
+			Fields f = Fields.of(req);
+			String id = f.nonBlank("agent");
+			String press = f.optStr("press", null);
 			return DevBridge.onClient(mc, () -> {
 				if (Foreman.state() == null || Foreman.state().agent(id) == null) {
 					throw new DevBridge.DevException("no agent '" + id + "'");
 				}
-				mc.gui.setScreen(new AgentCardScreen(id));
+				AgentCardScreen card = mc.gui.screen() instanceof AgentCardScreen c && c.agentId().equals(id) ? c : null;
+				if (card == null) {
+					card = new AgentCardScreen(id);
+					mc.gui.setScreen(card);
+				}
+				if (press != null) {
+					card.pressDev(press);
+				}
 				JsonObject o = new JsonObject();
-				o.addProperty("screen", AgentCardScreen.class.getSimpleName());
+				o.addProperty("screen", mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());
 				o.addProperty("agent", id);
+				o.addProperty("stopArmed", card.stopArmed());
+				o.addProperty("status", card.statusText());
 				return o;
 			});
 		});
@@ -233,6 +246,9 @@ public final class AgentsFeature {
 						JsonObject cj = new JsonObject();
 						cj.addProperty("agent", card.agentId());
 						cj.addProperty("input", card.inputText());
+						cj.addProperty("stopArmed", card.stopArmed());
+						cj.addProperty("review", card.reviewDecision());
+						cj.addProperty("status", card.statusText());
 						o.add("card", cj);
 					}
 					// SDL delivers typed characters only while text input is started (26.x)

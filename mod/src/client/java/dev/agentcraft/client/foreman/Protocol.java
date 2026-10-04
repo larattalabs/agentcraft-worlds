@@ -317,9 +317,10 @@ public final class Protocol {
 
 	/**
 	 * Which lead leads which building (docs/PRWATCH.md "A lead per building"). {@code building} is the mod's
-	 * key {@code "<worldId>/<buildingId>"}; marlow is listed without one.
+	 * key {@code "<worldId>/<buildingId>"}; marlow is listed without one. {@code world} / {@code lastSync} (contract C2): the
+	 * world holding the assignment and when it last synced (absent on an older Foreman: the world is then the key's prefix).
 	 */
-	public record LeadAssignment(String leadId, @Nullable String building, List<String> repos) {
+	public record LeadAssignment(String leadId, @Nullable String building, List<String> repos, @Nullable String world, @Nullable Long lastSync) {
 		public LeadAssignment {
 			repos = repos == null ? List.of() : List.copyOf(repos);
 		}

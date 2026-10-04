@@ -515,10 +515,13 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 				return true;
 			}
 		}
-		// roster chips: start a message
+		// roster chips: click starts a message; right-click (or Shift+click) opens the agent's card (Esc comes back here)
 		for (int[] hit : chipHits) {
 			if (mx >= hit[0] && mx < hit[0] + hit[2] && my >= hit[1] && my < hit[1] + hit[3]) {
 				String id = chipAgents.get(hit[4]);
+				if ((e.button() == 1 || e.hasShiftDown()) && dev.agentcraft.client.agents.AgentsFeature.openCard(id, this)) {
+					return true;
+				}
 				Agent a = Foreman.state() == null ? null : Foreman.state().agent(id);
 				String tag = "@" + (a != null ? a.name() : id).toLowerCase(Locale.ROOT) + " ";
 				if (input.isEmpty()) {
@@ -802,7 +805,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			if (a != null) {
 				String st = stale ? "last known: " + (a.isPaused() ? "paused" : a.activity()) : !a.isActive() ? "off shift" : a.isPaused() ? "paused"
 					: a.activity();
-				g.setTooltipForNextFrame(font, Component.literal(a.name() + " · " + st + "  (click to message)"), mouseX, mouseY);
+				g.setTooltipForNextFrame(font, Component.literal(a.name() + " · " + st + "  (click: message · right-click: card)"), mouseX, mouseY);
 			}
 		}
 	}
