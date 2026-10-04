@@ -49,6 +49,13 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      agents teleport between buildings with a puff as before. Button id `walk_toggle`
      (`dev.hub.action {action:"press", button:"walk_toggle"}`, or `dev.walk.toggle`); its fit is in
      `dev.walk.state` `ui{needed, available, overflow, compact}`.
+     Village V1 (stream roads, docs/VILLAGE.md, docs/BUILDINGS.md "Roads"): a fourth list, **Roads**
+     (`sub:"roads"`): building pairs of the player's dimension (entrances <= 256 blocks apart) with their road route
+     (length / planning / no route and why) and road (id pill), roads whose building was removed or moved first ("!
+     b3 was removed: remove it?"). A pair without a road: **Width 1-3**, **Lanterns: On/Off**, **Bridges: On/Off**, **Lay
+     road…** (closes the hub and shows the ghost; Enter lays, Esc cancels) and **Plan again**; a road: its facts and notes
+     and **Remove road…** (two-step, like Remove); an orphan: **Remove road…** and **Keep it**. "Place new…" is hidden on
+     this list. Button ids `road_*`, rows `pair:<a>|<b>` / `road:<id>` (mod/DEV.md "Roads").
   2. **Repos** *(done, branch `mod/goals-tabs`)*: registered repos and their `repoSettings`.
   3. **Goals** *(done in the mod, branch `mod/goals-tabs`; Foreman side in `foreman/goals-tabs`)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the

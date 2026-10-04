@@ -393,6 +393,85 @@ API (server thread): `Trophies.award(level | server, Trophy, key) -> Result{outc
 NO_SLOTS | NO_ROOM | UNAVAILABLE, building, slot, replaced, message}`, `Trophies.known(key)`, `Trophies.slotsFor(repo)`,
 `Trophies.list(server)` (JSON for the DevBridge).
 
+## Roads (docs/VILLAGE.md V1)
+
+Roads join two buildings along the route agents walk. Pure logic: `building.RoadPlan` (`RoadPlanTest`), records
+`building.Road` (`RoadJsonTest`); server `building.Roads`, `building.RoadTerrain` (block -> kind, shared by the ghost and
+the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the hub view `client.hub.RoadsView`.
+
+- **Route**: the outdoor planner (`OutdoorPlanner`, docs/WAVE2.md W8) from entrance to entrance with
+  `Limits.ROAD`: like the agents' routes, but **no step drops more than one block** (agents may drop 3), so the road
+  is walkable both ways and climbs or falls at most one block per cell. The route's cells inside any building's
+  restore box (template, foundation, entrance approach) are trimmed: the road runs between the approach ends.
+- **Walkway**: `width` cells across (1-3, default 2; 2 = the route and the cell to its right). Each route cell stamps
+  the cells across its step; a diagonal step goes through its corner cell (standable: the planner never cuts corners),
+  so the walkway stays side-by-side connected around corners and on diagonals. A centre cell keeps the route's height;
+  a side cell takes its own ground within one block of it and is left out when it is more than a block off a
+  neighbouring road cell.
+- **Half steps**: a road cell with a neighbour one block higher and none lower gets a bottom slab in its feet cell (its
+  ground is left as it is: a dirt path under a block turns to dirt), so a climb from a level stretch starts with a half
+  step; no step on the road is ever more than one block.
+- **Blocks** (`RoadPlan.surfaceFor`; decision): `minecraft:dirt_path` on grass, dirt, coarse/rooted dirt, podzol,
+  mycelium and moss; `minecraft:gravel` on sand, red sand, gravel and natural stone (base stone, sandstone, terracotta,
+  clay, snow block, ores) where the block below holds it up, else `minecraft:packed_mud` (it never falls); `packed_mud`
+  on mud. Half steps: `mud_brick_slab` on dirt and mud roads, `cobblestone_slab` on gravel. Only those natural kinds are
+  ever paved (`RoadTerrain`): a player's floor on the route is crossed as it is, a field (farmland) is the player's.
+- **Clearing**: plants, flowers, saplings, grass, snow layers, lily pads and leaves in the walkway's two cells of
+  headroom (three over a half step). A tall plant (double plants, sugar cane, bamboo) goes with its whole stack, so
+  nothing floats and pops. Never: block entities, logs, cacti, a player's blocks (anything not natural, torches and
+  rails included), fluids, anything waterlogged. A side cell where one is in the way is left out; a centre cell keeps
+  everything as it is (`Role.KEPT`).
+- **Water**: a cell wading 1 deep gets a bridge deck (`minecraft:oak_slab`, bottom) in the **air cell above the
+  water** only with **Bridges: On** (per road, default off); the water itself is never touched (a slab in the water
+  cell would waterlog, and a waterlogged cell over flowing water is a new source). Off, those cells are skipped with a
+  note ("6 cells of shallow water skipped (bridge off)"). Deeper water is never on a route.
+- **Lanterns** (default on): an `oak_fence` post with a `lantern` on top just beside the walkway, the first 6 blocks
+  along the road and then every 12, on natural ground within a block of the road's height; when there is no room the
+  other side, then the next route cells (up to 3 further) are tried, else it is noted.
+- **Shared cells**: a cell another road already changed is left to that road (the column is skipped, noted "already
+  part of another road"); removing the first road removes it.
+- **Laying** (`Roads.lay(level, a, b, route, options)`, server thread): the client sends only the route. The server
+  checks again: both buildings in the player's dimension, no road between them yet, the route a chain of neighbouring
+  cells (each step at most one block up or down, at most 1024 cells), starting and ending within 4.5 blocks of the two
+  entrances, every cell outside the buildings still standable on the server's level (`walk.LevelWalk`, the agents'
+  rules), every chunk loaded (nothing is loaded or generated). Then it plans the road itself on its own level
+  (`RoadPlan.plan` with `RoadTerrain`), drops changes that change nothing, and refuses when a player (box grown by
+  0.3), a pet, a villager, an armor stand or a named mob is in a cell about to gain a collision shape ("Step off the road
+  first: you at 12, 65, -3"). Order: the snapshot (written atomically, read back), the record, then the blocks.
+- **Blocks are set** with `UPDATE_CLIENTS | UPDATE_SKIP_ALL_SIDEEFFECTS`: no neighbour or shape updates (nothing next
+  to the road pops or reconnects), no drops, no `onPlace` (gravel never ticks), no block-entity side effects. New item
+  and XP entities around the road are cleared anyway (`Buildings.Drops`, as for buildings). Lanterns light the road
+  (light updates still run). Like a building's blocks, the road's blocks come from the mod (no items are taken or given).
+- **Records**: `<world>/agentcraft-roads.json` `{version: 1, next, roads: [{id: "r<n>", a, b, dimension, width,
+  lanterns, bridge, created, length (route cells), cells: [x, feetY, z, ...], lanternCells, changes: [x, y, z, ...],
+  notes}], pending: [{road, snapshot, at}]}`; ids are never reused. A malformed entry is skipped; a file that is not JSON
+  at all is left alone and nothing is laid that session.
+- **Snapshot**: `<world>/agentcraft-roads/<id>.before.nbt`, one entry per changed cell `{x, y, z, before, after}` (block
+  states), never a box: a box restore would revert everything else in a long diagonal road's bounding box.
+- **Remove road** (`Roads.remove(level, id)`): every cell that **still holds what the road put there** gets its old block
+  back, ground first, then what stood on it; cells the player changed since and cells a building now covers are left as
+  they are ("Removed road r2 (b1 to b3): 140 cells back as they were; 3 cells you changed since left alone"). Refuses while
+  a player or a pet stands where an old block comes back (a bush at head height suffocates). Crash safety as for
+  buildings: the snapshot is renamed `<id>.removed-<ms>.nbt` and recorded under `pending`; the next world start settles
+  it on the cells (`Road.settle`): most telling cells hold the old blocks -> the snapshot goes; most hold the road (the
+  removal never reached the disk) -> the record comes back; nothing readable -> kept. `forget` drops a record and leaves
+  the blocks (for a road whose snapshot is gone).
+- **Buildings removed or moved** (any path: hub, command, Undo move): their roads now lead nowhere or to the old site.
+  The client notices (a `Buildings` listener comparing restore boxes), shows a toast ("b3 was removed: its road r2 leads
+  nowhere now. Remove it in the hub: Buildings > Roads") and lists those roads first in Roads with **Remove road…** and
+  **Keep it**. Nothing is removed silently. The building's armed Remove note says its roads stay.
+- **Agents prefer roads**: the planner's steps onto a road's feet cells (`Roads.feetCells(dimension)`) cost
+  `OutdoorPlanner.ROAD_FACTOR` (0.6) of a step elsewhere, and with roads present its heuristic is scaled by the same
+  factor (otherwise the search would rush past them). Measured (`routesPreferLaidRoads`): a 100-block trip with a road 4
+  blocks off the straight line keeps to the road for 90+ cells (241 expansions); a road 40 blocks off is not worth the
+  detour; the mountain test route takes ~15 000 expansions with the scaled heuristic instead of ~3 400 (budget 120 000).
+  Route caches are dropped whenever a road is laid or removed (`Roads.signature`).
+- **Ghost** (`RoadGhost`, the placement ghost's colours): new surface, half steps and decks tan; cleared cells orange;
+  road cells left out red at their feet (the whole route red when the plan is refused); fence posts and lanterns brass.
+  The HUD panel (`RoadHud`) says the pair, the options, the verdict, the counts and the first note; Enter lays, Esc or
+  Backspace cancel (through the wizard's keyboard hook, only with no screen open; the player can walk around).
+- QA: mod/DEV.md "Roads".
+
 ## Server API (mod, `dev.agentcraft.building`)
 
 - `Blueprints`: registry (bundled + user folder), `get(id)`, `all()`, `reload()`.

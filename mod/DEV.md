@@ -631,6 +631,39 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
 - Block changes that mean the same to a walker (a door opened, a lamp lit) do not drop routes (the mixin
   compares the two states' cell codes).
 
+### Roads (village V1)
+
+Roads between buildings (docs/VILLAGE.md V1, docs/BUILDINGS.md "Roads"). Code: pure `building.RoadPlan` (road cells from
+route cells: width, corners, half steps, blocks, clearing, bridges, lanterns, snapshot box; `RoadPlanTest`), `building.Road`
+(records, file, `settle`; `RoadJsonTest`), server `building.Roads` (lay / remove / forget, per-cell snapshots, world-start
+settling), `building.RoadTerrain` (block -> road kind, client and server), `walk.LevelWalk` (the agents' cell codes for any
+level: the server checks a route with it; `agents/LevelTerrain` delegates to it); client `road/RoadsFeature` (routes via
+`OutdoorRoutes.requestRoad`, preview, lay/remove through `ServerTasks.callAsPlayer`, offers, DevBridge), `road/RoadGhost`,
+`road/RoadHud`, hub `hub/RoadsView` (Buildings > Roads). The planner gained `Limits.maxDrop` (`Limits.ROAD` = 1) and a
+road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; `OutdoorPlannerTest.roadRoutesDropAtMostOneBlock`,
+`routesPreferLaidRoads`).
+
+- `dev.roads.state` -> `{roads[{id, a, b, width, lanterns, bridge, length, cells, changes, lanternCount, lanternCells, notes,
+  orphan}], pending[], pairs[{a, b, key, distance, road, route: not planned|planning|found|failed, length?, routeCells?, why?}],
+  options{width, lanterns, bridge}, offers{roadId: why}, orphans[], preview{a, b, cells, ops, blocks{dirt_path, gravel, air,
+  fence, lantern, ...}, lanterns, skipped{reason: n}, notes[], halfSteps, bridgeCells, keptCells, refusal, box, planMicros},
+  last{action, roadId, ok, message}, ghost{lastFrameQuads, lastFrameMicros, frames}, ui{drawn, needed, available, overflow}}`.
+- `dev.roads.plan {a, b, fresh?}` -> the road route only `{status, length, cells, why?}`.
+- `dev.roads.preview {a, b, width?, lanterns?, bridge?}` plans the route and shows the ghost (closes screens; Enter lays,
+  Esc cancels); `{cancel:true}` hides it. Replies with the client's plan (what the server will do unless the world changes).
+- `dev.roads.lay {a?, b?, width?, lanterns?, bridge?}`: lays through the integrated server (it checks and plans again);
+  without `a`/`b` the shown preview (= Enter). `{ok, roadId, message}`; a refusal is `ok:false` with the reason.
+- `dev.roads.remove {id, forget?}`: Remove road (cells still as the road left them get their old blocks back); `forget`
+  drops the record and leaves the blocks.
+- Hub: `dev.hub.open {tab:"buildings", sub:"roads", roadRow:"pair:b1|b2"}` (or `road:r2`); buttons `road_width`,
+  `road_lanterns`, `road_bridge`, `road_lay`, `road_plan`, `road_remove` (press twice), `road_keep`;
+  `dev.hub.state.roads{selected, armedRemove, note, rows}`; the view's fit in `dev.roads.state.ui`.
+- Files to look at: `<world>/agentcraft-roads.json`, `<world>/agentcraft-roads/<id>.before.nbt` (`.removed-<ms>.nbt` until
+  the next world start).
+- Gotchas: the client's preview can be stale (the server plans again; a route the ground has broken since refuses with
+  "preview the road again"); a building placed later over a road keeps those cells on Remove road (they belong to the
+  building's snapshot now); a cell shared with an older road belongs to that road.
+
 ### A lead per building (`dev.agentcraft.client.leads`)
 The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUILDINGS.md "Client (routing)".
 - Building key `"<worldId>/<buildingId>"`, worldId = the save folder name (`Buildings.worldId()`, from

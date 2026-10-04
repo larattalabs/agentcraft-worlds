@@ -268,7 +268,7 @@ final class RoadsView {
 		dy += 24;
 		bx = dx;
 		String lay = "Lay road…";
-		boolean canLay = sp && !busy && (rs0 == null || !"failed".equals(rs0.status)) && RoadsFeature.preview() == null;
+		boolean canLay = sp && !busy && (rs0 == null || !"failed".equals(rs0.status));
 		s.button(g, "road_lay", lay, bx, dy, s.bw(lay), true, !canLay, false, mx, my, () -> layClick(p.a(), p.b()));
 		bx += s.bw(lay) + 4;
 		String again = "Plan again";

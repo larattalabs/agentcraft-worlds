@@ -1093,7 +1093,9 @@ public final class HubScreen extends Screen {
 			noteColor = UiBits.errorText();
 		} else if (armedHere) {
 			long left = Math.max(0, (CONFIRM_MS - (System.currentTimeMillis() - armedAt) + 999) / 1000);
-			note = "Click Confirm remove to take " + id + " down: the terrain that was there comes back exactly. (" + left + " s)";
+			int roads = dev.agentcraft.building.Roads.forBuilding(id).size();
+			note = "Click Confirm remove to take " + id + " down: the terrain that was there comes back exactly" + (roads == 0 ? "" : "; its "
+				+ (roads == 1 ? "road stays" : roads + " roads stay") + " (Roads offers to remove " + (roads == 1 ? "it" : "them") + ")") + ". (" + left + " s)";
 			noteColor = UiBits.errorText();
 		} else if (busy) {
 			note = "Working…";

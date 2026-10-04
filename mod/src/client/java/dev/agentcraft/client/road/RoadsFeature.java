@@ -249,9 +249,8 @@ public final class RoadsFeature {
 		if (rs != null && rs.future != null && !rs.future.isDone()) {
 			return rs.future;
 		}
-		if (rs != null && !fresh && rs.found()) {
-			return CompletableFuture.completedFuture(rs);
-		}
+		// otherwise ask again: the walking cache answers at once while the route is still walkable (it is dropped when blocks
+		// near it change or a road is laid), so a preview never uses a route the terrain has since broken
 		RouteState st = new RouteState(ids[0], ids[1]);
 		routes.put(key, st);
 		Minecraft mc = Minecraft.getInstance();

@@ -39,6 +39,7 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 | `client.building` | buildings | placement wizard: repo/blueprint screens, ghost (terrain fit, entrance approach), placement keys (docs/BUILDINGS.md) |
 | `building`, `walk` (main) | buildings / walking | buildings in a world (place, move, remove, snapshots, terrain fit, approach); the pure outdoor planner |
 | `client.trophy` + `trophy` (main) | buildings | trophies: `TrophyFeature` (Foreman updates -> `Trophies.award`, hub toggle, `dev.trophies.*`); pure `TrophyEvents`, `TrophySettings` |
+| `client.road` + `building.Road*` (main) | village (roads) | roads between buildings: `RoadsFeature` (routes, ghost preview, lay/remove through the server, removal offers, `dev.roads.*`), `RoadGhost`, `RoadHud`; pure `RoadPlan`, server `Roads`; the hub's `RoadsView` |
 | `client.hq` + `hq` (main) | HQ specialist | the real HQ builder (main), world blocks driven by state (client), `StatusLampRenderer` |
 | `client.ui` | core (additive) | kit drawing, style tokens, text utils (screens + world) |
 | `client.world` | core (additive) | `StationRenderer` base, `ServerTasks`, `StationInteractions`, dev helpers |
@@ -509,6 +510,18 @@ toggle goes on. The integrated server hangs them (`Trophies.award` through `Serv
 singleplayer only. Per-world toggle in hub > Buildings, under the walking one: "Trophies for merges and finished goals: On/Off"
 (compact: "Trophies: Off" + a note), `<gameDir>/agentcraft/trophies.json`, default on. Off = nothing is hung, nothing queued
 (turning it on catches up). DevBridge: `dev.trophies.award` (QA trigger), `dev.trophies.list` (ledger), `dev.trophies.toggle`.
+
+## Roads (`client.road`: `RoadsFeature`, `RoadGhost`, `RoadHud`; `building`: `RoadPlan`, `Road`, `Roads`, `RoadTerrain`; hub `RoadsView`)
+
+Contract: docs/VILLAGE.md V1; details in docs/BUILDINGS.md "Roads", QA in mod/DEV.md "Roads". Hub > Buildings > **Roads**
+lists the building pairs of the player's dimension (route length and status, road) and roads whose building went. **Lay
+road…** plans the route agents walk (no drop over one block, so it works both ways), shows a ghost (tan paved, orange
+cleared, red left out, brass lanterns) and a HUD panel; Enter lays it through the integrated server, which checks and plans
+it all again. Width 1-3 (default 2), lanterns on fence posts every ~12 blocks (default on), plank bridges over 1-deep water
+(opt in). Only natural blocks are paved or cleared (dirt path, gravel, packed mud; plants, snow, leaves, whole tall-plant
+stacks); never block entities, logs, a player's blocks, fluids or buildings. **Remove road…** (twice) puts back every cell
+nobody changed since, from a per-cell snapshot. A building removed or moved offers its roads for removal (toast + list),
+never silently. Agents prefer laid roads (cheaper planner steps).
 
 ## Displays (`client.monitor`, `client.taskwall`)
 
