@@ -172,5 +172,8 @@ export default function build() {
   bp.camera('overview', [-10, 13, 32], [13.5, 3, 10]);
   bp.camera('interior', [24.5, 4.8, 19.0], [2, 2.5, 10]);
   bp.camera('task_wall', [13.5, 3.4, 17.5], [13.5, 3.5, 1.3]);
+  // ---------------------------------------------------------------- trophy wall (east wall, north end, facing west)
+  bp.trophyWall(W - 1, 2, W - 1, 4, 'west', { wing: 1 });
+
   return bp;
 }
