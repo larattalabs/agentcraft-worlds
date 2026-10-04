@@ -9,7 +9,8 @@
 // Steps: night routine on for this world; dev.routines.time night; poll dev.routines.state until an agent lies in
 // a bed (routine "resting", lying "bed..", plate "resting", on its bed's head); dev.routines.time morning; poll until
 // nobody rests or lies and the sleepers stood up beside their beds. Then the old time of day is set back (unless
-// --no-restore). --shot takes a screenshot of the first bed at night (artifacts/shots/routines_qa_night.png).
+// --no-restore). --shot takes a screenshot of the first taken bed at night (artifacts/shots/routines_qa_night.png;
+// moves the camera/player next to it, game mode kept).
 // Prints a JSON summary; exit 0 when both checks pass, 1 when one fails or times out, 2 on a bridge error.
 
 import { DevClient } from './lib/devclient.mjs';
@@ -59,10 +60,10 @@ try {
     const bed = [...bedsOf(night.state).values()].find((b) => b.agent);
     if (bed) {
       const [x, y, z] = bed.head;
-      await dev.call('dev.camera', { x: x + 2.5, y: y + 2.2, z: z + 2.5, lookAt: { x: x + 0.5, y: y + 0.5, z: z + 0.5 } });
+      await dev.call('dev.camera', { x: x + 2.5, y: y + 2.2, z: z + 2.5, lookAt: { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, mode: 'keep' });
       const s = await dev.call('dev.screenshot', { name: 'routines_qa_night' });
       summary.night.shot = s.path;
-      await dev.call('dev.release').catch(() => {});
+      await dev.call('dev.release', { mode: 'keep' }).catch(() => {}); // keep: the game mode stays as it was
     }
   }
 

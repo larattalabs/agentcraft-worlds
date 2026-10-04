@@ -38,7 +38,7 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 | `client.permissions` | permissions specialist | permission decision UX |
 | `client.building` | buildings | placement wizard: repo/blueprint screens, ghost (terrain fit, entrance approach), placement keys (docs/BUILDINGS.md) |
 | `building`, `walk` (main) | buildings / walking | buildings in a world (place, move, remove, snapshots, terrain fit, approach); the pure outdoor planner |
-| `client.agents` `Routines` + `routine` (main) | routines | village routines (docs/VILLAGE.md V3): night rest in beds, stand-ups, library visits; pure `RoutineRules`, `BedPicker`, `StandupTracker`, `LibraryVisits`, `RoutineSettings` |
+| `client.agents` `Routines` + `routine` (main) | routines | village routines (docs/VILLAGE.md V3): night rest in beds, stand-ups, library visits; pure `RoutineRules`, `BedPicker`, `BedRest`, `StandupTracker`, `LibraryVisits`, `RoutineSettings` |
 | `client.trophy` + `trophy` (main) | buildings | trophies: `TrophyFeature` (Foreman updates -> `Trophies.award`, hub toggle, `dev.trophies.*`); pure `TrophyEvents`, `TrophySettings` |
 | `client.hq` + `hq` (main) | HQ specialist | the real HQ builder (main), world blocks driven by state (client), `StatusLampRenderer` |
 | `client.ui` | core (additive) | kit drawing, style tokens, text utils (screens + world) |
@@ -512,7 +512,7 @@ singleplayer only. Per-world toggle in hub > Buildings, under the walking one: "
 (compact: "Trophies: Off" + a note), `<gameDir>/agentcraft/trophies.json`, default on. Off = nothing is hung, nothing queued
 (turning it on catches up). DevBridge: `dev.trophies.award` (QA trigger), `dev.trophies.list` (ledger), `dev.trophies.toggle`.
 
-## Village routines (`client.agents`: `Routines`; `routine` main: `RoutineRules`, `BedPicker`, `StandupTracker`, `LibraryVisits`, `RoutineSettings`)
+## Village routines (`client.agents`: `Routines`; `routine` main: `RoutineRules`, `BedPicker`, `BedRest`, `StandupTracker`, `LibraryVisits`, `RoutineSettings`)
 
 Contract: docs/VILLAGE.md V3 ("As implemented: routines"); notes in mod/DEV.md "Village routines". `AgentManager` asks
 `Routines` once per building and tick which station each agent uses (`StationAssigner.assign(agents, layout, keyOf)`):
@@ -521,6 +521,8 @@ Contract: docs/VILLAGE.md V3 ("As implemented: routines"); notes in mod/DEV.md "
   their wing's task wall / desk; sticky; a bed the player sleeps in is skipped) and lie in it: vanilla's sleeping pose,
   set on the render state only (`AgentRenderer`: `Pose.SLEEPING` + `bedOrientation`), the bed block is never touched;
   no free bed: the lounge. Nameplate "resting". Morning: they get up beside the bed and go back to work.
+  Beds are only placed where they are safe: in the Nether or the End (beds explode there) Place / Move leave the
+  template's beds out and drop their anchors (`building.BedSafety`; docs/BUILDINGS.md "Beds"), so agents rest in the lounge.
 - **Stand-ups**: once per goal (`goalId:createdAt`), 3 s after its first tasks are assigned while it is active, the lead
   and those workers gather at the lead's building's `meeting` slots (else the podium's `user` spots), the lead says the
   plan's first line (else the goal's text), each worker its task title (speech bubbles, 3 s apart), 20-30 s, then work.
