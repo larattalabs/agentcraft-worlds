@@ -34,7 +34,7 @@ export default function build() {
   const bp = new Blueprint({
     id,
     name: 'Studio',
-    description: 'A premium one-repo office: double-height hall with skylights, a window wall behind five desks, task wall, decision podium, glass meeting room, library, lounge, terminal, test bench and merge station.',
+    description: 'A premium one-repo office: double-height hall with skylights, a window wall behind five desks, task wall, decision podium, glass meeting room, library, lounge, rest corner, terminal, test bench and merge station.',
     kind: 'single',
     wings: 1,
     size: [W + 2 * OX, H, OZ + D + 8],
@@ -223,6 +223,10 @@ export default function build() {
   // corner lantern on a barrel: the south-east corner is the farthest cell from the ceiling lights (C5 light check)
   bp.set(X - 1, 1, Z - 1, 'minecraft:barrel', { facing: 'up', open: 'false' });
   bp.lantern(X - 1, 2, Z - 1);
+
+  // ---------------------------------------------------------------- rest corner (south, between the meeting room and the
+  // runner): three beds against the front wall, heads south (docs/VILLAGE.md V3 night routine)
+  for (const x of [11, 13, 15]) bp.bed(x, Z - 1, 'south', { color: 'light_gray' });
 
   // ---------------------------------------------------------------- entrance + cameras
   bp.spot('entrance', 17, Z - 1, 180);

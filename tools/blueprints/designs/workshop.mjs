@@ -30,7 +30,7 @@ export default function build() {
   const bp = new Blueprint({
     id,
     name: 'Workshop',
-    description: 'A one-repo office: five desks, a task wall, a decision podium, a meeting table, a small lounge, library, terminal, test bench and merge station.',
+    description: 'A one-repo office: five desks, a task wall, a decision podium, a meeting table, a small lounge, a rest corner, library, terminal, test bench and merge station.',
     kind: 'single',
     wings: 1,
     size: [W + 2 * OX, H, OZ + D + 10],
@@ -165,6 +165,14 @@ export default function build() {
   bp.loungeSeat(19, 18, 180);
   bp.loungeSeat(20, 18, 180);
   bp.plant(22, 1, 19);
+
+  // ---------------------------------------------------------------- rest corner (south-west): three beds against the
+  // front wall, heads south, a barrel nightstand with a candle between each pair (docs/VILLAGE.md V3 night routine)
+  for (const x of [4, 6, 8]) bp.bed(x, Z - 1, 'south', { color: 'red' });
+  for (const x of [5, 7]) {
+    bp.set(x, 1, Z - 1, 'minecraft:barrel', { facing: 'up', open: 'false' });
+    bp.candle(x, 2, Z - 1, 1);
+  }
 
   // ---------------------------------------------------------------- entrance + cameras
   bp.spot('entrance', 13, 19, 180);

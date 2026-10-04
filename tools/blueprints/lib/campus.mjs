@@ -16,7 +16,7 @@
 //   z=20  || MEETING  door gap east z19..21     (sofas, table)       |
 //   z=24  +=== south wall, door at hx 16 (porch + stone path) ========+
 //
-//  Wing (14 wide incl. a shared partition wall, 25 deep): task wall (`task_wall@k`, `repo:#k`) on its far wall z4..10 with k glow
+//  Wing (14 wide incl. a shared partition wall, 25 deep): two beds (rest corner) against the front wall, task wall (`task_wall@k`, `repo:#k`) on its far wall z4..10 with k glow
 //  pips above it, a test bench (`testbench`) + CI lamp (`ci:#k`) on the north wall, an arch gap to the next room at z13..16, a
 //  floor inlay in the wing's colour (blue, green, orange, purple, yellow) and a matching frieze on the facade, so wings read apart.
 //
@@ -254,6 +254,11 @@ export function buildCampus(wings) {
     cabinet(w.x0 + 1, 1, 'south');
     cabinet(w.x1 - 1, 1, 'south');
     for (const [x, z] of [[w.x0 + 1, Z - 1], [w.x1 - 1, Z - 1], [w.x0 + 1, 12], [w.x1 - 1, 12]]) bp.plant(x, 1, z);
+    // rest corner (docs/VILLAGE.md V3 night routine): two beds in the wing's colour against the front wall, heads south,
+    // a barrel nightstand with a lantern between them
+    for (const x of [cx - 3, cx + 3]) bp.bed(x, Z - 1, 'south', { color: w.color });
+    bp.set(cx, 1, Z - 1, 'minecraft:barrel', { facing: 'up', open: 'false' });
+    bp.lantern(cx, 2, Z - 1);
     // a coloured band under the clerestory so each wing is recognisable from inside too
     for (let x = w.x0 + 1; x <= w.x1 - 1; x++) bp.set(x, 5, Z, colour);
     // trophy wall: inner partitions south of the arch gap (both sides of the wall share its backing), outer walls beside the arch rows

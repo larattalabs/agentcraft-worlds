@@ -2,13 +2,14 @@
 //   checkFiles(nbtPath, jsonPath) / checkBlueprint(bp) -> { ok, errors: string[], warnings: string[] }
 import fs from 'node:fs';
 import { parse, plain } from './nbt.mjs';
-import { BLOCKS, collisionOf, normalize, emissionOf, opticsOf, voxelsOf, faceMask } from './blocks.mjs';
+import { BLOCKS, collisionOf, normalize, emissionOf, opticsOf, voxelsOf, faceMask, isBed } from './blocks.mjs';
 import { dirOfYaw } from './kit.mjs';
 
 export const CAST = ['juniper', 'kit', 'wren', 'rowan', 'tove'];
 const STATIONS = ['meeting', 'lounge', 'library', 'terminal', 'testbench', 'mergestation', 'user'];
 const STANDING_RE = /^(library|terminal|testbench|mergestation|meeting|lounge|user)(_\d+)?$/;
 const TROPHY_RE = /^trophy(_\d+)?$/;
+const BED_RE = /^bed(_\d+)?$/;
 const SEAT_RE = /^(desk_.+|seat_.+|meeting(_\d+)?|lounge(_\d+)?)$/;
 const HORIZ = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const YAW_OF_FACING = { south: 0, west: 90, north: 180, east: -90 };
@@ -346,6 +347,7 @@ export function checkStructure(sidecar, structure) {
   };
 
   const trophyCells = new Map();
+  const bedCells = new Map();
   const trophyWings = new Set();
   for (const [full, a] of Object.entries(anchors)) {
     const name = full.replace(/@\d+$/, ''); // per-wing anchors (testbench@2) follow their base name's rules
@@ -406,6 +408,32 @@ export function checkStructure(sidecar, structure) {
       else trophyCells.set(ck, full);
       const wingOf = full.includes('@') ? Number(full.slice(full.lastIndexOf('@') + 1)) : 0;
       trophyWings.add(wingOf);
+    } else if (BED_RE.test(name)) {
+      // night-routine bed (docs/BUILDINGS.md "Beds"): the head half's cell (feet row), yaw = its facing; optional anchors
+      if (!inWalk(a)) err(`anchor ${full} (${a.x},${a.y},${a.z}) is outside walk`);
+      if (!Number.isInteger(a.y)) warnings.push(`anchor ${full}: y ${a.y} is not on a block boundary`);
+      const head = cellAt(cx, cy, cz);
+      if (!head || !isBed(head.name) || head.props.part !== 'head') err(`anchor ${full}: not on the head half of a bed (found ${head ? `${head.name}${head.props.part ? ` part=${head.props.part}` : ''}` : 'nothing'} at ${cx},${cy},${cz})`);
+      else {
+        const facingName = head.props.facing;
+        if (yawDiff(a.yaw, YAW_OF_FACING[facingName]) > 1) err(`anchor ${full}: yaw ${a.yaw} does not match the bed's facing ${facingName}`);
+        if (head.props.occupied !== 'false') err(`anchor ${full}: bed written occupied (write beds with occupied=false)`);
+        const [fx, fz] = H_VEC[facingName];
+        const footAt = [cx - fx, cy, cz - fz];
+        const foot = cellAt(...footAt);
+        if (!foot || foot.name !== head.name || foot.props.part !== 'foot' || foot.props.facing !== facingName) err(`anchor ${full}: no matching foot half behind the head (${foot ? `${foot.name} part=${foot.props.part}` : 'nothing'} at ${fmt(...footAt)})`);
+        for (const [bx, by, bz] of [[cx, cy, cz], footAt]) {
+          const below = cellAt(bx, by - 1, bz);
+          if (!(cls(below) === 'full' || (cls(below) === 'slab' && below.props.type !== 'bottom'))) err(`anchor ${full}: no solid floor under the bed at ${fmt(bx, by - 1, bz)}`);
+          const above = cellAt(bx, by + 1, bz);
+          if (cls(above) !== 'none') err(`anchor ${full}: no free air above the bed at ${fmt(bx, by + 1, bz)} (${above?.name ?? 'unwritten'})`);
+        }
+        const sides = [[cx, cz], [footAt[0], footAt[2]]].flatMap(([bx, bz]) => HORIZ.map(([dx, dz]) => [bx + dx, bz + dz]));
+        if (!sides.some(([sx, sz]) => standable(sx, cy, sz))) err(`anchor ${full}: no free standable cell beside the bed (agents cannot get in)`);
+        if (bedCells.has(fmt(cx, cy, cz))) err(`anchor ${full}: same bed as ${bedCells.get(fmt(cx, cy, cz))}`);
+        bedCells.set(fmt(cx, cy, cz), full);
+        bedCells.set(fmt(...footAt), full);
+      }
     } else if (name === 'decision_podium') {
       const c = cellAt(cx, cy, cz);
       if (!c || c.name !== 'agentcraft:decision_podium') err(`anchor ${full}: not on an agentcraft:decision_podium block (found ${c?.name ?? 'nothing'})`);

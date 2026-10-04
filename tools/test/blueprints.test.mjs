@@ -442,3 +442,70 @@ test('trophies checker: a wing without trophy slots is a warning, not an error',
   assert.deepEqual(r.errors, []);
   assert.ok(r.warnings.some((w) => w.includes('no trophy slots')), r.warnings.join('\n'));
 });
+
+// ---- beds (docs/BUILDINGS.md "Beds", docs/VILLAGE.md V3 night routine)
+const bedNames = (anchors) => Object.keys(anchors).filter((k) => /^bed(_\d+)?$/.test(k));
+
+test('beds: every bundled design has 2-4 beds per building / per campus wing, head halves against a wall', async () => {
+  const { listDesigns } = await import('../blueprints/build.mjs');
+  for (const name of listDesigns()) {
+    const mod = await import(`../blueprints/designs/${name}.mjs`);
+    const bp = mod.default();
+    const n = bedNames(bp.anchors).length;
+    const want = bp.kind === 'group' ? [2 * bp.wings, 4 * bp.wings] : [2, 4];
+    assert.ok(n >= want[0] && n <= want[1], `${name}: ${n} beds`);
+    for (const k of bedNames(bp.anchors)) {
+      const a = bp.anchors[k];
+      const head = bp.cells.get(`${Math.floor(a.x)},${Math.floor(a.y)},${Math.floor(a.z)}`);
+      assert.match(head.state.name, /^minecraft:[a-z_]+_bed$/, `${name} ${k}`);
+      assert.equal(head.state.props.part, 'head');
+      assert.equal(head.state.props.occupied, 'false');
+    }
+  }
+});
+
+test('beds: kit bed() writes head + foot halves and the next bed anchor', () => {
+  const bp = new Blueprint({ id: 'b1', size: [9, 6, 9], groundY: 1, walk: [1, 1, 1, 7, 4, 7] });
+  assert.equal(bp.bed(3, 6, 'south'), 'bed');
+  assert.equal(bp.bed(5, 6, 'south', { color: 'blue' }), 'bed_2');
+  assert.deepEqual(bp.get(3, 1, 6).state, { name: 'minecraft:light_gray_bed', props: { facing: 'south', occupied: 'false', part: 'head' } });
+  assert.deepEqual(bp.get(3, 1, 5).state, { name: 'minecraft:light_gray_bed', props: { facing: 'south', occupied: 'false', part: 'foot' } });
+  assert.equal(bp.get(5, 1, 5).state.name, 'minecraft:blue_bed');
+  assert.deepEqual(bp.anchors.bed, { x: 3.5, y: 1, z: 6.5, yaw: 0, pitch: 0 });
+  assert.equal(bp.anchors.bed_2.x, 5.5);
+});
+
+test('beds checker: rejects a bed anchor off a head half, a missing foot, no air above, no way in, a wrong yaw; beds are optional', () => {
+  const run = (mutate) => {
+    const bp = workshop();
+    mutate(bp);
+    return checkBlueprint(bp);
+  };
+  const base = workshop().anchors.bed;
+  assert.ok(base, 'workshop has a bed');
+  const at = (bp, dz = 0, dy = 0, dx = 0) => [Math.floor(base.x) - bp.ox + dx, Math.floor(base.y) - bp.oy + dy, Math.floor(base.z) - bp.oz + dz];
+  assert.deepEqual(checkBlueprint(workshop()).errors, []);
+  // the anchor on the foot half (workshop beds face south: the foot is one cell north)
+  let r = run((bp) => { bp.anchors.bed = { ...bp.anchors.bed, z: bp.anchors.bed.z - 1 }; });
+  assert.ok(r.errors.some((e) => e.startsWith('anchor bed:') && e.includes('head half')), r.errors.join('\n'));
+  // the foot half missing
+  r = run((bp) => bp.air(...at(bp, -1)));
+  assert.ok(r.errors.some((e) => e.startsWith('anchor bed:') && e.includes('no matching foot half')), r.errors.join('\n'));
+  // a block above the head
+  r = run((bp) => bp.set(...at(bp, 0, 1), B.plaster));
+  assert.ok(r.errors.some((e) => e.startsWith('anchor bed:') && e.includes('no free air above')), r.errors.join('\n'));
+  // boxed in: every neighbour of both halves blocked
+  r = run((bp) => {
+    for (const [dx, dz] of [[-1, 0], [1, 0], [-1, -1], [1, -1], [0, -2]]) bp.set(...at(bp, dz, 0, dx), B.plaster);
+  });
+  assert.ok(r.errors.some((e) => e.startsWith('anchor bed:') && e.includes('no free standable cell')), r.errors.join('\n'));
+  // yaw not the bed's facing
+  r = run((bp) => { bp.anchors.bed = { ...bp.anchors.bed, yaw: 90 }; });
+  assert.ok(r.errors.some((e) => e.startsWith('anchor bed:') && e.includes("bed's facing")), r.errors.join('\n'));
+  // two anchors on one bed
+  r = run((bp) => { bp.anchors.bed_9 = { ...bp.anchors.bed }; });
+  assert.ok(r.errors.some((e) => e.includes('same bed as')), r.errors.join('\n'));
+  // no beds at all is fine (user and generated designs)
+  r = run((bp) => { for (const k of bedNames(bp.anchors)) delete bp.anchors[k]; });
+  assert.deepEqual(r.errors, []);
+});
