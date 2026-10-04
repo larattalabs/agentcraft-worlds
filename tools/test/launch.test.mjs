@@ -514,3 +514,61 @@ test('setup carries Prism\'s global commands and JVM args over when the instance
   fs.writeFileSync(path.join(w.dir, 'elsewhere.cfg'), '[General]\nPreLaunchCommand=/usr/local/bin/other\n');
   await assert.rejects(setup(setupArgs(w, ['--apply', '--prism-cfg', path.join(w.dir, 'elsewhere.cfg')]), deps()), /global settings .* not ours/);
 });
+
+// ---- foreman-daemon.sh: the Prism contract -------------------------------------------------
+// Prism waits for PreLaunchCommand (and reads its output) and aborts the launch on a non-zero exit,
+// so `start` must return 0 at once without holding the caller's pipes; `after-exit` must pass the
+// backup's exit code through. Runs the real script next to a stub foreman-daemon.mjs, with an empty
+// ZDOTDIR so the user's ~/.zshrc is not involved.
+
+function daemonSandbox(t) {
+  const dir = tmp('daemon-sh');
+  const tools = path.join(dir, 'tools');
+  fs.mkdirSync(tools);
+  fs.copyFileSync(path.join(import.meta.dirname, '..', 'foreman-daemon.sh'), path.join(tools, 'foreman-daemon.sh'));
+  fs.chmodSync(path.join(tools, 'foreman-daemon.sh'), 0o755);
+  fs.writeFileSync(path.join(tools, 'foreman-daemon.mjs'), [
+    "import fs from 'node:fs';",
+    'const action = process.argv[2];',
+    "fs.appendFileSync(process.env.STUB_MARKS, `${action}\\n`);",
+    "if (action === 'start') { fs.writeFileSync(process.env.STUB_PID, String(process.pid)); setTimeout(() => process.exit(1), 20000); }",
+    '',
+  ].join('\n'));
+  const zdot = path.join(dir, 'zdot');
+  fs.mkdirSync(zdot);
+  const env = {
+    ...process.env, ZDOTDIR: zdot, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`,
+    STUB_MARKS: path.join(dir, 'marks'), STUB_PID: path.join(dir, 'pid'),
+  };
+  t.after(() => {
+    try { process.kill(Number(fs.readFileSync(env.STUB_PID, 'utf8')), 'SIGKILL'); } catch { /* not started or gone */ }
+  });
+  const marks = () => { try { return fs.readFileSync(env.STUB_MARKS, 'utf8').trim().split('\n'); } catch { return []; } };
+  return { dir, script: path.join(tools, 'foreman-daemon.sh'), env, marks };
+}
+
+test('foreman-daemon.sh start returns 0 at once and does not hold the caller\'s pipes', async (t) => {
+  const s = daemonSandbox(t);
+  const t0 = Date.now();
+  // `| cat` only ends when every holder of the pipe's write end has closed it
+  const r = spawnSync('/bin/bash', ['-c', '"$0" start --profile t | cat; exit "${PIPESTATUS[0]}"', s.script], { env: s.env, encoding: 'utf8', timeout: 15_000 });
+  const took = Date.now() - t0;
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(took < 2000, `start took ${took} ms`);
+  // and it really started the (stub) daemon in the background, which outlives the command
+  const deadline = Date.now() + 15_000;
+  while (!fs.existsSync(s.env.STUB_PID) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 100));
+  assert.ok(fs.existsSync(s.env.STUB_PID), 'the background start never ran');
+  assert.deepEqual(s.marks(), ['start']);
+  assert.match(fs.readFileSync(path.join(s.dir, 'artifacts', 'logs', 'foreman-daemon-t.log'), 'utf8'), /start --profile t \(background\)/);
+});
+
+test('foreman-daemon.sh after-exit runs the backup first and passes its exit code through', (t) => {
+  const s = daemonSandbox(t);
+  const fail = spawnSync(s.script, ['after-exit', '--profile', 't', '--', '/usr/bin/false'], { env: s.env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(fail.status, 1, fail.stderr);
+  assert.deepEqual(s.marks(), ['stop']);
+  const ok = spawnSync(s.script, ['after-exit', '--profile', 't', '--', '/bin/sh', '-c', 'echo backup >> "$STUB_MARKS"'], { env: s.env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.deepEqual(s.marks(), ['stop', 'backup', 'stop']);
+});
