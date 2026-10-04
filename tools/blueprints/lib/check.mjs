@@ -379,7 +379,21 @@ export function checkStructure(sidecar, structure) {
     const shell = shellCheck(grid, size, w, sidecar.groundY);
     errors.push(...shell.errors);
     warnings.push(...shell.warnings);
-    errors.push(...lightCheck(grid, size, w, sidecar.groundY).errors);
+    const light = lightCheck(grid, size, w, sidecar.groundY);
+    errors.push(...light.errors);
+    // enclosed spaces outside walk (attics, wall cavities) where a mob could spawn in the dark: a warning
+    const lv = light.levels('nomod');
+    const coll = (x, y, z) => { const c = cellAt(x, y, z); return c ? (isAC(c.name) ? 'none' : collisionOf(c)) : y < sidecar.groundY ? 'full' : 'none'; };
+    let darkSpawn = 0;
+    let firstDark = null;
+    for (let z = 0; z < size[2]; z++) for (let y = 1; y < size[1] - 1; y++) for (let x = 0; x < size[0]; x++) {
+      const inside = x >= w.minX && x <= w.maxX && y >= w.minY && y <= w.maxY && z >= w.minZ && z <= w.maxZ;
+      if (inside || shell.outside.has(`${x},${y},${z}`) || lv[x + size[0] * (y + size[1] * z)] >= 1) continue;
+      if (coll(x, y, z) !== 'none' || coll(x, y + 1, z) !== 'none' || !['full', 'slab', 'stairs'].includes(coll(x, y - 1, z))) continue;
+      darkSpawn++;
+      firstDark ??= `${x},${y},${z}`;
+    }
+    if (darkSpawn) warnings.push(`light: ${darkSpawn} dark cell(s) in enclosed space outside walk (an attic?) where mobs could spawn, first at ${firstDark}`);
     errors.push(...doorCheck(grid, shell.outside).errors);
   }
 

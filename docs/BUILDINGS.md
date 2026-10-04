@@ -231,6 +231,7 @@ explicit interior air, bindings, and C5:
   panes pass it, slabs and stairs block it through their full faces (2x2x2 voxel faces, vanilla's
   shape occlusion); run with AgentCraft blocks as opaque non-emitters and again as air; every walk
   cell with no collision (air, carpet, buttons) needs level >= 1;
+  dark spots in enclosed space outside walk (an attic) where a mob could spawn are a warning;
 - doors: written closed; a door next to an outside cell is iron; every iron door has a stone button
   on each side on a full, opaque (conductive) block touching one of its halves;
 - `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block.

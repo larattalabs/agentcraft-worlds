@@ -289,6 +289,15 @@ test('C5 light: vanilla propagation (decrement, opaque, glass, slab faces, no Ag
   assert.equal(r.dark.length, 3); // the lamp cell (air without the mod), the light block cell and the air cell
 });
 
+test('C5 light: a dark attic (enclosed, outside walk) is a warning', () => {
+  const bp = workshop();
+  for (const [k, c] of bp.cells) if (c.state.name === B.glowPanel && k.split(',')[1] === '7') bp.cells.set(k, { state: normalize(B.plaster), nbt: null });
+  const r = checkBlueprint(bp);
+  assert.match(r.errors.join('\n'), /light: \d+ walk cell/);
+  assert.match(r.warnings.join('\n'), /dark cell\(s\) in enclosed space outside walk/);
+  assert.ok(!checkBlueprint(workshop()).warnings.some((x) => x.includes('enclosed space')));
+});
+
 test('C5 doors: outside doors are iron, written closed, with stone buttons on both sides', () => {
   const ok = workshop();
   assert.equal(ok.nameAt(13, 1, 20), 'minecraft:iron_door');
