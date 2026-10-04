@@ -302,9 +302,12 @@ export class Store {
     let cut: number | undefined; // ts of the last entry taken once the limit was reached
     outer: for (const file of [this.logFile(agentId), this.rotatedLogFile(agentId)]) {
       for (const line of readLinesBackward(file)) {
+        // cheap skip: the ts from the line's prefix (no decode, no JSON.parse) for the lines newer than `before`
+        const quick = tsPrefix(line);
+        if (quick !== undefined && before !== undefined && quick >= before) continue;
         let e: LogEntry;
         try {
-          e = JSON.parse(line) as LogEntry;
+          e = JSON.parse(line.toString('utf8')) as LogEntry;
         } catch {
           continue; // torn line
         }
@@ -330,8 +333,30 @@ export class Store {
   }
 }
 
-/** The complete lines of a file, last first, read in chunks from the end (a missing file yields nothing). */
-function* readLinesBackward(file: string, chunk = 64 * 1024): Generator<string> {
+const TS_PREFIX = Buffer.from('{"ts":');
+
+/**
+ * The `ts` of a stored log line from its first bytes (`{"ts":<digits>`, the order JSON.stringify writes a LogEntry
+ * in), without decoding or parsing the line; undefined when the line does not start that way (the caller parses it).
+ */
+export function tsPrefix(line: Buffer): number | undefined {
+  if (line.length <= TS_PREFIX.length || line.compare(TS_PREFIX, 0, TS_PREFIX.length, 0, TS_PREFIX.length) !== 0) return undefined;
+  let i = TS_PREFIX.length;
+  let n = 0;
+  const start = i;
+  while (i < line.length && i - start < 16) {
+    const c = line[i]!;
+    if (c < 0x30 || c > 0x39) break;
+    n = n * 10 + (c - 0x30);
+    i++;
+  }
+  // digits, then the next key or the end of the object (a float or exponent is left to JSON.parse)
+  if (i === start || i >= line.length || (line[i] !== 0x2c && line[i] !== 0x7d)) return undefined;
+  return n;
+}
+
+/** The complete lines of a file (raw bytes), last first, read in chunks from the end (a missing file yields nothing). */
+function* readLinesBackward(file: string, chunk = 64 * 1024): Generator<Buffer> {
   let fd: number | undefined;
   try {
     fd = fs.openSync(file, 'r');
@@ -346,21 +371,24 @@ function* readLinesBackward(file: string, chunk = 64 * 1024): Generator<string> 
       pos -= len;
       const buf = Buffer.alloc(len);
       fs.readSync(fd, buf, 0, len, pos);
-      let data = Buffer.concat([buf, rest]);
+      const data = rest.length ? Buffer.concat([buf, rest]) : buf;
       let end = data.length;
       for (let i = data.length - 1; i >= 0; i--) {
         if (data[i] === 0x0a) {
-          const line = data.subarray(i + 1, end).toString('utf8');
-          if (line.trim()) yield line;
+          const line = data.subarray(i + 1, end);
+          if (!isBlank(line)) yield line;
           end = i;
         }
       }
-      rest = Buffer.from(data.subarray(0, end));
-      data = Buffer.alloc(0);
+      rest = Buffer.from(data.subarray(0, end)); // a copy: `data` is not kept
     }
-    const first = rest.toString('utf8');
-    if (first.trim()) yield first;
+    if (!isBlank(rest)) yield rest;
   } finally {
     fs.closeSync(fd);
   }
+}
+
+function isBlank(b: Buffer): boolean {
+  for (const c of b) if (c !== 0x20 && c !== 0x0d && c !== 0x09) return false;
+  return true;
 }

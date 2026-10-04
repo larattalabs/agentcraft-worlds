@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { claimRunFiles, homeRunFile, liveOwner, profileRunFile, releaseRunFiles } from '../src/runfile.js';
-import { Store } from '../src/store.js';
+import { Store, tsPrefix } from '../src/store.js';
 import { makeForeman, rmrf, tempDir } from './helpers.js';
 
 const dirs: string[] = [];
@@ -133,6 +133,24 @@ describe('persistence', () => {
     expect(seen).toHaveLength(stored);
     expect(seen.length).toBeGreaterThan(200);
     expect(s.readLog('nobody', undefined, 10)).toEqual({ entries: [], more: false });
+  });
+
+  it('reads a stored line\'s ts from its prefix, and pages lines written in another key order too', () => {
+    expect(tsPrefix(Buffer.from('{"ts":1234,"kind":"text","text":"x"}'))).toBe(1234);
+    expect(tsPrefix(Buffer.from('{"ts":7}'))).toBe(7);
+    expect(tsPrefix(Buffer.from('{"kind":"text","ts":5,"text":"x"}'))).toBeUndefined(); // other order: parsed instead
+    expect(tsPrefix(Buffer.from('{"ts":1.5,"kind":"text"}'))).toBeUndefined();
+    expect(tsPrefix(Buffer.from('{"ts":'))).toBeUndefined();
+    const dir = tempDir();
+    dirs.push(dir);
+    const s = new Store(dir, { debounceMs: 1 });
+    s.appendLog('kit', [{ ts: 1, kind: 'text', text: 'one' }]);
+    // a line whose keys are not ts-first (hand-edited or an older writer) still pages by its ts
+    fs.appendFileSync(path.join(dir, 'logs', 'kit.jsonl'), '{"kind":"text","text":"two","ts":2}\n{"torn":\n');
+    s.appendLog('kit', [{ ts: 3, kind: 'text', text: 'three' }]);
+    expect(s.readLog('kit', undefined, 10).entries.map((e) => e.text)).toEqual(['one', 'two', 'three']);
+    expect(s.readLog('kit', 3, 10).entries.map((e) => e.text)).toEqual(['one', 'two']);
+    expect(s.readLog('kit', 2, 10)).toEqual({ entries: [{ ts: 1, kind: 'text', text: 'one' }], more: false });
   });
 
   it('run files: one per profile; a live owner keeps <home>/foreman.json; release hands it over', async () => {

@@ -687,7 +687,8 @@ spawns git with an empty environment); the policy refuses every command it can s
   client.token           the client token (0600, new on every start, removed on exit)
   logs/<agent>.jsonl     agent logs (snapshots carry the last 60 lines per agent); rotated at 8 MB
                          into <agent>.1.jsonl (one old file kept); start-up reads only their ends;
-                         `agent.logs.request {agentId, before?, limit?}` pages back through both (read-only)
+                         `agent.logs.request {agentId, before?, limit?}` pages back through both (read-only;
+                         lines newer than `before` are skipped by their `{"ts":N` prefix, unparsed)
   memory/shared/*.md     shared notes (hand-editable)
   memory/agents/<id>/*.md
   worktrees/<repo>/<agent>-<task>/
