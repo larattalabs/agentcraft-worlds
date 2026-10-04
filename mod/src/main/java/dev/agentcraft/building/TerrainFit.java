@@ -16,8 +16,9 @@ import net.minecraft.world.level.material.FluidState;
  * <li><b>foundation</b>: below every floor-row cell of the footprint (template row {@code groundY - 1}), the cells
  * that are air, fluid or replaceable after the template is placed are filled downwards with the blueprint's
  * {@code foundationBlock} until solid ground, at most {@link #MAX_FILL} blocks; block entities stop it;</li>
- * <li><b>cleared</b>: natural terrain (dirt, stone, sand, gravel, plants...) at or above the ground row inside the
- * box that the template does not write is cleared to air, so a slope does not bury the walls;</li>
+ * <li><b>cleared</b>: natural terrain (dirt, grass, stone, sand, gravel, plants...) and trees (logs, leaves) at or above
+ * the ground row inside the box that the template does not write are cleared to air, so a slope does not bury the walls
+ * and a canopy does not fill the porch;</li>
  * <li><b>fluids</b>: water and lava in the box grown by one block sideways and one below (and in the fill) are
  * counted: lava refuses the placement, water is a warning.</li>
  * </ul>
@@ -134,7 +135,7 @@ public final class TerrainFit {
 						continue;
 					}
 					int f = w.flags(ox + x, oy + y, oz + z);
-					if ((f & NATURAL) != 0 && (f & BLOCK_ENTITY) == 0 && (f & (WATER | LAVA)) == 0) {
+					if ((f & (NATURAL | TREE)) != 0 && (f & BLOCK_ENTITY) == 0 && (f & (WATER | LAVA)) == 0) {
 						clear.add(ox + x, oy + y, oz + z);
 					}
 				}

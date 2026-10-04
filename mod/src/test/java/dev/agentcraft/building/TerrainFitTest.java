@@ -80,6 +80,16 @@ class TerrainFitTest {
 	}
 
 	@Test
+	void treesInsideTheBoxAreClearedToo() {
+		GhostModel.Cells floorOnly = new GhostModel.Cells(3, 3, 3, 1, floorXyz(), solid(9));
+		// leaves hanging into the porch at y 11 (template row 1), a log at the corner up to y 12
+		TerrainFit.World w = (x, y, z) -> y <= 9 ? TerrainFit.NATURAL : y == 11 || x == 0 && z == 0 && y <= 12 ? TerrainFit.TREE
+			: TerrainFit.FILLABLE;
+		TerrainFit.Plan p = TerrainFit.plan(GhostModel.of(floorOnly, 0), 0, 10, 0, w);
+		assertEquals(9 + 1, p.clearCount()); // row 11 everywhere and the log's y 12
+	}
+
+	@Test
 	void waterIsCountedAndLavaRefuses() {
 		TerrainFit.World lake = (x, y, z) -> y <= 7 ? TerrainFit.NATURAL : y <= 10 ? TerrainFit.WATER | TerrainFit.FILLABLE : TerrainFit.FILLABLE;
 		TerrainFit.Plan p = TerrainFit.plan(model(), 0, 11, 0, lake);
