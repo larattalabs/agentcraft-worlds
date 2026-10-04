@@ -12,6 +12,7 @@
   "groundY": 1,
   "front": "south",
   "materials": "agentcraft",
+  "foundationBlock": "minecraft:stone_bricks",
   "walk": {
     "minX": 2,
     "minY": 1,
@@ -329,7 +330,21 @@
       "yaw": 180,
       "pitch": 0
     },
+    "testbench@1": {
+      "x": 8.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
     "testbench_2": {
+      "x": 7.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "testbench_2@1": {
       "x": 7.5,
       "y": 1,
       "z": 3.5,
@@ -357,7 +372,21 @@
       "yaw": 180,
       "pitch": 0
     },
+    "testbench@2": {
+      "x": 54.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
     "testbench_4": {
+      "x": 53.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "testbench_2@2": {
       "x": 53.5,
       "y": 1,
       "z": 3.5,
