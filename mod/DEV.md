@@ -184,6 +184,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.agents.keys` | `keys` (comma-separated: key names `space return escape back tab left right`, or text typed letter by letter, a-z 0-9 space) | **Test only** (`AGENTCRAFT_DEV_TEST=1`): presses keys as SDL reports a keyboard (SDL events queued for the game window, one key every 3 frames, through Minecraft's SDL event loop; printable keys produce text events only while SDL text input is on). Returns `{pressed, textEvents, screen, input?, textInputActive}`. `tools/agents-typing.mjs` uses it to check the agent card's message line |
 | `dev.walk.state` | | Walking between buildings (W8): `enabled, world, walking, planning, trips[{agent, from, to, phase planning\|walking, length, ticks, limit, target, pos, remainingPoints}], jobs, cache{size, hits, misses, invalidations, blockChanges, routes[{key, length, points, cells, nodes, micros}]}, planner{plans, found, tickNodes, tickBudgetUs, lastTickUs, maxTickUs, last{key, status, nodes, micros, ticks, length, points, unloadedHits}}, reasons{walk\|disabled\|other_dimension\|no_entrance\|too_far\|unloaded\|player_far\|no_path\|no_door_path\|budget\|blocked\|stuck\|rerouted\|settled: count}, recent[{agent, from, to, outcome walk\|teleport, reason, why, length?}], ui{drawn, needed, available, overflow, compact}` (also `dev.state.walk`) |
 | `dev.walk.plan` | `from`, `to` (building id or `home`), `fresh?` (false), `show?` (true) | Plans entrance to entrance with the agents' planner and cache (replies when the incremental job finishes): `{decision, key, status found\|no_path\|unloaded\|budget\|too_far\|no_start\|no_goal, cached, nodes, micros, ticks, length, cells, from, to, points[[x,y,z]]}` or `reason`; `show` draws the route with end-rod particles for 20 s (screenshots) |
+| `dev.walk.send` | `agent`, `to` (building id, `home`, or null) | QA: routes that agent to that building regardless of its work (sticky until `to:null` or a level change), so it changes building by the normal rules (walks or teleports); returns `{agent, to, canHost, note?, sends}` (`canHost` false: the building has no desk, station or lounge for it, it stays home) |
 | `dev.walk.toggle` | `on?` (bool; omit = flip) | "Agents walk between buildings" for this world (`walking.json`); returns `{enabled, world}` |
 | `dev.test.foremanMessage` | `message:{type, ...}` | **Test only** (`AGENTCRAFT_DEV_TEST=1`): applies a Foreman message to the state model as if received (e.g. `foreman.status` with `auth:"failed"` to see the auth banner) |
 | `dev.displays` | `look?` = `paper` / `dark` / `split`, `reset?` | Monitor look (default dark; split alternates per monitor for comparisons), every laid-out monitor screen `{pos, agent, mode, style, size, ppb, rows, ageMs}`, and `stats` = display CPU cost per frame since the last reset (`monitor`/`board`: `usPerFrame`, `callsPerFrame`, `rebuilds`) |
@@ -572,9 +573,11 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
 - **Not done**: a released lead going home still teleports to the home lounge (`startDeparture`); no
   re-plan from mid-route when blocked (teleport instead).
 - QA: `dev.walk.toggle {on:true}`, `dev.walk.plan {from:"b1", to:"b2"}` (particles for 20 s, then
-  `dev.screenshot`), `dev.walk.state` while an agent changes building (e.g. assign a task of b2's repo to an
-  agent working in b1), `dev.hub.open {tab:"buildings"}` + `dev.hub.action {action:"press",
-  button:"walk_toggle"}` for the toggle.
+  `dev.screenshot`), `dev.walk.send {agent, to:"b2"}` then `dev.walk.state` (trip planning -> walking) and
+  `dev.agents` (its `path`), `dev.walk.send {agent, to:null}` to send it back; `dev.hub.open {tab:"buildings"}`
+  + `dev.hub.action {action:"press", button:"walk_toggle"}` for the toggle (its fit: `dev.walk.state.ui`).
+- Block changes that mean the same to a walker (a door opened, a lamp lit) do not drop routes (the mixin
+  compares the two states' cell codes).
 
 ### A lead per building (`dev.agentcraft.client.leads`)
 The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUILDINGS.md "Client (routing)".

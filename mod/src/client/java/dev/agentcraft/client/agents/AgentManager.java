@@ -104,6 +104,8 @@ public final class AgentManager {
 	private long ticks;
 	/** Unpaused ticks (trip deadlines: every AgentCraft screen pauses singleplayer, a check-in must not time walks out). */
 	private long liveTicks;
+	/** dev.walk.send: agent id -> the building (id or "home") it is routed to regardless of its work. */
+	private final Map<String, String> sendOverrides = new HashMap<>();
 	/** Agents changing building outdoors: agent id -> its trip (planning, then walking). */
 	private final Map<String, Trip> trips = new LinkedHashMap<>();
 
@@ -203,6 +205,7 @@ public final class AgentManager {
 			level = lvl;
 			regionsSignature = Long.MIN_VALUE;
 			trips.clear();
+			sendOverrides.clear();
 		}
 		OutdoorRoutes.get().tick(mc);
 		if (lvl == null) {
@@ -249,6 +252,13 @@ public final class AgentManager {
 				l = Routing.layoutForBuilding(leads.buildingOf(a.id()), sites, current);
 			} else {
 				l = sites.isEmpty() ? current : Routing.layoutFor(repoOf(st, a), sites, current);
+			}
+			String sent = sendOverrides.get(a.id());
+			if (sent != null) {
+				Anchors.Layout s = OutdoorRoutes.layoutByName(sent, dim);
+				if (s != null) {
+					l = s; // dev.walk.send: QA sends this agent to that building
+				}
 			}
 			if (l != current && !Routing.canHost(l, StationAssigner.stationKey(a), a.id())) {
 				l = current; // the building has no place for it (no desk, station or lounge): home
@@ -352,7 +362,11 @@ public final class AgentManager {
 				Anchor effective = seat != null ? seat.target() : target;
 				Trip trip = trips.get(a.id());
 				if (moved) {
-					if (trip != null) {
+					if (trip != null && !trip.walking && layoutName.equals(trip.from)) {
+						// sent back before it left: it never went anywhere
+						trips.remove(a.id());
+						retarget(lvl, pf, e, effective, seat);
+					} else if (trip != null) {
 						// sent elsewhere mid-walk: no second outdoor leg from the middle of nowhere
 						trips.remove(a.id());
 						OutdoorRoutes.get().note(a.id(), before, layoutName, WalkRules.Reason.REROUTED, 0);
@@ -865,6 +879,19 @@ public final class AgentManager {
 			}
 		}
 		return false;
+	}
+
+	/** dev.walk.send: route {@code agentId} to building {@code building} (id or "home"); null = back to its work's building. */
+	void sendTo(String agentId, @Nullable String building) {
+		if (building == null) {
+			sendOverrides.remove(agentId);
+		} else {
+			sendOverrides.put(agentId, building);
+		}
+	}
+
+	Map<String, String> sendOverrides() {
+		return Map.copyOf(sendOverrides);
 	}
 
 	/** Trips walking ({@code walking} true) or still planning. Client thread. */

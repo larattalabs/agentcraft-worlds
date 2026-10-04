@@ -40,9 +40,10 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      an op in multiplayer) or is in creative/spectator; otherwise it is hidden and the note says to walk
      there (with the box's corner). `HubActions.teleport` refuses the same on the server.
      Placement messages say "Undo: hub (H) > Buildings > <id> > Remove" (not `/agentcraft remove`).
-     Fix wave 2 (stream walking, docs/WAVE2.md W8): a toggle at the bottom of the Buildings list,
-     **"Agents walk between buildings: On/Off"** ("Walking: On/Off" when the row is narrow, with a muted
-     note beside it), per world and client side (`<gameDir>/agentcraft/walking.json`, default on). Off,
+     Fix wave 2 (stream walking, docs/WAVE2.md W8): a toggle under the buildings list column,
+     **"Agents walk between buildings: On/Off"** ("Walking: On/Off" with a short muted note when the column
+     is narrow; the list gives up one row for it; not shown while the world has no buildings), per world and
+     client side (`<gameDir>/agentcraft/walking.json`, default on). Off,
      agents teleport between buildings with a puff as before. Button id `walk_toggle`
      (`dev.hub.action {action:"press", button:"walk_toggle"}`, or `dev.walk.toggle`); its fit is in
      `dev.walk.state` `ui{needed, available, overflow, compact}`.

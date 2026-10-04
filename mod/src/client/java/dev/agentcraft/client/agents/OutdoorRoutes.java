@@ -296,12 +296,17 @@ public final class OutdoorRoutes {
 		}
 	}
 
-	/** A block changed on the client (ClientLevel.sendBlockUpdated): routes passing near it are dropped. */
-	public void onBlockChanged(BlockPos pos) {
-		blockChanges++;
-		if (cache.size() > 0) {
-			cache.invalidateNear(pos.getX(), pos.getY(), pos.getZ());
+	/**
+	 * A block changed on the client (ClientLevel.sendBlockUpdated): routes passing near it are dropped, unless
+	 * it means the same to a walker (a door opened, a lamp lit, a station's state changed).
+	 */
+	public void onBlockChanged(ClientLevel lvl, BlockPos pos, net.minecraft.world.level.block.state.BlockState before,
+		net.minecraft.world.level.block.state.BlockState after) {
+		if (cache.size() == 0 || LevelTerrain.classify(lvl, pos, before) == LevelTerrain.classify(lvl, pos, after)) {
+			return;
 		}
+		blockChanges++;
+		cache.invalidateNear(pos.getX(), pos.getY(), pos.getZ());
 	}
 
 	// ------------------------------------------------------------------ stats
@@ -337,6 +342,9 @@ public final class OutdoorRoutes {
 		o.addProperty("planning", m.tripCount(false));
 		o.add("trips", m.tripsJson());
 		o.addProperty("jobs", jobs.size());
+		JsonObject sends = new JsonObject();
+		m.sendOverrides().forEach(sends::addProperty);
+		o.add("sends", sends);
 		JsonObject c = new JsonObject();
 		c.addProperty("size", cache.size());
 		c.addProperty("hits", cache.hits());
@@ -433,6 +441,43 @@ public final class OutdoorRoutes {
 					JsonObject o = new JsonObject();
 					o.addProperty("enabled", r.enabled());
 					o.addProperty("world", world());
+					return o;
+				});
+			});
+		DevBridge.register("dev.walk.send", 10_000, "{agent, to: building id | 'home' | null} - QA: route that agent to that building "
+			+ "regardless of its work (it walks or teleports by the normal rules); to null = back to its work's building -> {agent, to, canHost, sends}",
+			(req, mc) -> {
+				Fields f = Fields.of(req);
+				String agent = f.nonBlank("agent");
+				String to = f.isExplicitNull("to") || !f.has("to") ? null : f.nonBlank("to");
+				return DevBridge.onClient(mc, () -> {
+					ClientLevel lvl = mc.level;
+					if (lvl == null) {
+						throw new DevBridge.DevException("not in a world");
+					}
+					AgentManager m = AgentManager.get();
+					if (m.entity(agent) == null) {
+						throw new DevBridge.DevException("no agent '" + agent + "' in this level (dev.agents lists them)");
+					}
+					JsonObject o = new JsonObject();
+					o.addProperty("agent", agent);
+					o.addProperty("to", to);
+					if (to != null) {
+						Anchors.Layout l = layoutByName(to, lvl.dimension().identifier().toString());
+						if (l == null) {
+							throw new DevBridge.DevException("no building '" + to + "' in this dimension (building ids: dev.hub.state, or 'home')");
+						}
+						ClientAgentEntity e = java.util.Objects.requireNonNull(m.entity(agent));
+						boolean host = Routing.canHost(l, e.view().station, agent);
+						o.addProperty("canHost", host);
+						if (!host) {
+							o.addProperty("note", "that building has no desk, station or lounge for it: it stays home");
+						}
+					}
+					m.sendTo(agent, to);
+					JsonObject sends = new JsonObject();
+					m.sendOverrides().forEach(sends::addProperty);
+					o.add("sends", sends);
 					return o;
 				});
 			});

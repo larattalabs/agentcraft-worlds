@@ -760,9 +760,6 @@ public final class HubScreen extends Screen {
 		}
 		y += 26;
 		h -= 26;
-		if (sub == Sub.BUILDINGS) {
-			h -= drawWalkToggle(g, x, y + h - 20, w, mx, my);
-		}
 		switch (sub) {
 			case BUILDINGS -> drawBuildings(g, bs, x, y, w, h, mx, my);
 			case BLUEPRINTS -> drawBlueprints(g, bps, x, y, w, h, mx, my);
@@ -771,23 +768,26 @@ public final class HubScreen extends Screen {
 	}
 
 	/**
-	 * "Agents walk between buildings" for this world (docs/WAVE2.md W8, client side, walking.json): a toggle at
-	 * the bottom of the Buildings list; a short label when the row is narrow. Returns the height it takes.
+	 * "Agents walk between buildings" for this world (docs/WAVE2.md W8, client side, walking.json): a toggle
+	 * under the Buildings list column ({@code w} = the column's width); "Walking: On" when the full label does
+	 * not fit. Returns the height it takes from the list.
 	 */
 	private int drawWalkToggle(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
 		dev.agentcraft.client.agents.OutdoorRoutes walk = dev.agentcraft.client.agents.OutdoorRoutes.get();
 		boolean on = walk.enabled();
-		String full = "Agents walk between buildings: " + (on ? "On" : "Off");
-		boolean compact = bw(full) > w * 3 / 5;
-		String label = compact ? "Walking: " + (on ? "On" : "Off") : full;
-		int lw = Math.min(w, bw(label));
-		button(g, "walk_toggle", label, x, y, lw, on, false, false, mx, my, () -> walk.setEnabled(!walk.enabled()));
-		String note = on ? "Off: they teleport between buildings instead." : "Agents teleport between buildings (puff of smoke).";
-		int nx = x + lw + 6;
-		if (x + w - nx > 30) {
-			g.text(font, TextUtil.ellipsize(font, note, x + w - nx), nx, y + 6, UiBits.muted(), false);
+		String state = on ? "On" : "Off";
+		String full = "Agents walk between buildings: " + state;
+		boolean compact = bw(full) > w;
+		String label = compact ? "Walking: " + state : full;
+		int needed = bw(label);
+		button(g, "walk_toggle", label, x, y, Math.min(w, needed), on, false, false, mx, my, () -> walk.setEnabled(!walk.enabled()));
+		// compact: the rest of the column says what it means, when there is room for it
+		String note = on ? "agents walk outdoors" : "agents teleport";
+		int nx = x + needed + 5;
+		if (compact && x + w - nx >= font.width(note)) {
+			g.text(font, note, nx, y + 6, UiBits.muted(), false);
 		}
-		walk.reportUi(lw, w, compact);
+		walk.reportUi(needed, w, compact);
 		return 24;
 	}
 
@@ -848,7 +848,9 @@ public final class HubScreen extends Screen {
 			return;
 		}
 		int lw = Math.max(150, Math.min(220, w * 2 / 5));
-		drawList(g, x, y, lw, h, bs.size(), bs.indexOf(cur), mx, my, (i, rx, ry, rw) -> {
+		// under the list column: "Agents walk between buildings" (per world, W8)
+		int toggleH = drawWalkToggle(g, x, y + h - 20, lw, mx, my);
+		drawList(g, x, y, lw, h - toggleH, bs.size(), bs.indexOf(cur), mx, my, (i, rx, ry, rw) -> {
 			Building b = bs.get(i);
 			Blueprint bp = Blueprints.get(b.blueprint());
 			String name = bp != null ? bp.name() : b.blueprint();

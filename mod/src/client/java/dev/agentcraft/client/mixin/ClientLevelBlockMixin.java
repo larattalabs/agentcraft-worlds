@@ -21,7 +21,7 @@ public abstract class ClientLevelBlockMixin {
 	private void agentcraft$blockChanged(BlockPos pos, BlockState oldState, BlockState newState, int flags, CallbackInfo ci) {
 		if (oldState != newState) {
 			try {
-				OutdoorRoutes.get().onBlockChanged(pos);
+				OutdoorRoutes.get().onBlockChanged((ClientLevel) (Object) this, pos, oldState, newState);
 			} catch (Throwable t) {
 				dev.agentcraft.AgentCraft.LOGGER.warn("walk: block change hook failed", t);
 			}
