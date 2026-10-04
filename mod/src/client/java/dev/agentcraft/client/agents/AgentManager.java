@@ -308,7 +308,15 @@ public final class AgentManager {
 				} catch (RuntimeException ex) {
 					routineFailed("plan", ex); // the routines never stop the agents: everyone works as usual
 				}
-				targets.putAll(assigners.computeIfAbsent(l.name(), k -> new StationAssigner()).assign(g.getValue(), l, keyOf));
+				// agents going to a bed leave the lounge slots to the resting agents without one
+				List<Agent> toAssign = new ArrayList<>();
+				for (Agent a : g.getValue()) {
+					Routines.Plan p = routines.planOf(a.id());
+					if (p == null || p.bed() == null) {
+						toAssign.add(a);
+					}
+				}
+				targets.putAll(assigners.computeIfAbsent(l.name(), k -> new StationAssigner()).assign(toAssign, l, keyOf));
 			}
 		}
 		assigners.keySet().retainAll(groups.keySet());
