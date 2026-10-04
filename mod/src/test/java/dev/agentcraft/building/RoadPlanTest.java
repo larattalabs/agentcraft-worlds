@@ -299,6 +299,7 @@ class RoadPlanTest {
 		assertTrue(at(p, 4, 0).stream().noneMatch(o -> o.y() == 64), "the ore under the centre is kept");
 		assertTrue(columns(p).contains(RoadPlan.col(4, 0)), "the centre stays a road cell");
 		assertFalse(columns(p).contains(RoadPlan.col(6, 1)), "the side cell on an ore is left out");
+		assertTrue(columns(p).contains(RoadPlan.col(5, 1)), "the side cells beside it are paved");
 		assertTrue(at(p, 5, 0).stream().anyMatch(o -> o.y() == 64 && o.block() == Block.GRAVEL), "natural stone gets gravel");
 	}
 

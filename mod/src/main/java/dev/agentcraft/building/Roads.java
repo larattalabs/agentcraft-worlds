@@ -748,6 +748,10 @@ public final class Roads {
 		List<Road.Pending> keep = new ArrayList<>();
 		for (Road.Pending p : s.pending()) {
 			Path snap = server.getWorldPath(LevelResource.ROOT).resolve(SNAPSHOT_DIR).resolve(p.snapshot());
+			if (!Files.exists(snap) && Files.exists(snapshotFile(server, p.road().id()))) {
+				// the removal's record was written but the snapshot never renamed (a crash in between): settle on the old name
+				snap = snapshotFile(server, p.road().id());
+			}
 			ServerLevel level = levelOf(server, p.road().dimension());
 			if (level == null || !Files.exists(snap)) {
 				if (!Files.exists(snap)) {

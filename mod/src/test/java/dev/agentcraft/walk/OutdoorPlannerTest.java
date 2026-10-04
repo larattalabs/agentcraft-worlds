@@ -178,7 +178,16 @@ class OutdoorPlannerTest {
 		assertEquals(Status.FOUND, with.status(), with.explain());
 		assertEquals(1.08, with.heuristicWeight(), 1e-9);
 		System.out.printf("V1 corridor 256 with an unrelated road: %d nodes, %d without%n", with.expanded(), without.expanded());
-		assertTrue(with.expanded() <= without.expanded() * 3 / 2, "expansions " + with.expanded() + " vs " + without.expanded());
+		assertTrue(with.expanded() <= without.expanded() * 3 / 2, "expansions " + with.expanded() + " vs " + without.expanded());		// a short road inside the box (a village): the heuristic is scaled, the search must still finish within budget
+		it.unimi.dsi.fastutil.longs.LongOpenHashSet near = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+		for (int x = 100; x <= 130; x++) {
+			near.add(WalkCell.pack(x, height(x, 20) + 1, 20));
+		}
+		OutdoorPlanner in = new OutdoorPlanner(t, a, b, Limits.DEFAULT, near);
+		in.runAll();
+		assertEquals(Status.FOUND, in.status(), in.explain());
+		System.out.printf("V1 corridor 256 with a 30-block road in the box: %d nodes%n", in.expanded());
+		assertTrue(in.expanded() < Limits.DEFAULT.maxNodes() / 2, "expansions " + in.expanded());
 	}
 
 	@Test

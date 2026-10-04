@@ -467,7 +467,8 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   are restored; the next world start settles
   it on the cells (`Road.settle`): most telling cells hold the old blocks -> the snapshot goes; most hold the road (the
   removal never reached the disk) -> the record comes back; nothing readable -> kept. `forget` drops a record and leaves
-  the blocks (for a road whose snapshot is gone).
+  the blocks (for a road whose snapshot is gone). A pending removal whose snapshot was never renamed (a crash between
+  the record and the rename) is settled on `<id>.before.nbt`.
 - **Buildings removed or moved** (any path: hub, command, Undo move): their roads now lead nowhere or to the old site.
   The client notices (a `Buildings` listener comparing restore boxes), shows a toast ("b3 was removed: its road r2 leads
   nowhere now. Remove it in the hub: Buildings > Roads") and lists those roads first in Roads with **Remove road…** and
@@ -478,7 +479,8 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   heuristic as it is, so it costs other searches nothing. Measured (`routesPreferLaidRoads`,
   `unrelatedRoadsDoNotSlowTheCorridor`): a 100-block trip with a road 4 blocks off the straight line keeps to the road
   for 90+ cells (241 expansions); a road 40 blocks off is not worth the detour; the 256-block corridor and the mountain
-  route take the same expansions with an unrelated road as without (21 919 and 3 390; budget 120 000).
+  route take the same expansions with an unrelated road as without (21 919 and 3 390; budget 120 000); with a
+  30-block road inside the corridor's box (the village case) it takes 25 643.
   Route caches are dropped whenever a road is laid or removed (`Roads.signature`).
 - **Ghost** (`RoadGhost`, the placement ghost's colours): new surface, half steps and decks tan; cleared cells orange;
   road cells left out red at their feet (the whole route red when the plan is refused); fence posts and lanterns brass.
