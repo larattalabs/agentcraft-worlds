@@ -49,8 +49,9 @@ function usage(code = 0) {
 
   --instance PATH       Prism instance dir (default ${DEFAULTS.instance})
   --stable PATH         stable checkout (default ${DEFAULTS.stable})
-  --source REPO         where the stable checkout clones/fetches from (default: this repository,
-                        ${defaultSource()})
+  --source REPO         where the stable checkout clones/fetches from (default: the repository this
+                        script runs from, ${defaultSource()}; run from the stable checkout itself:
+                        its origin)
   --ref REF             branch, tag or commit to run (default ${DEFAULTS.ref})
   --profile NAME        Foreman profile (default ${DEFAULTS.profile})
   --port N              Foreman port (default ${DEFAULTS.port}; 7878/7879 belong to dev runs)
@@ -66,6 +67,37 @@ function usage(code = 0) {
   --skip-deps           do not run npm ci
   --apply               make the changes (Prism must be closed: it rewrites instance.cfg)`);
   process.exit(code);
+}
+
+/**
+ * Where the stable checkout comes from: --source; else, when this script runs from the stable
+ * checkout itself, that checkout's origin (so an update fetches new commits instead of resolving
+ * the ref against itself); else the repository this script runs from.
+ */
+export function chooseSource({ explicit, thisRoot, stable, stableOrigin, fallback }) {
+  if (explicit) return explicit;
+  if (realpath(thisRoot) === realpath(stable)) {
+    if (!stableOrigin) throw new Error(`running from the stable checkout ${stable}, which has no origin remote; pass --source`);
+    return stableOrigin;
+  }
+  return fallback;
+}
+
+/**
+ * The commit `ref` names in `source`, from `git ls-remote` output (read-only, works for a path or
+ * a URL): a branch, then a tag (peeled), then an exact ref name. A full SHA is taken as is.
+ */
+export function resolveRemoteRef(lsRemote, ref) {
+  if (/^[0-9a-f]{40}$/i.test(ref)) return ref.toLowerCase();
+  const refs = new Map();
+  for (const line of String(lsRemote ?? '').split('\n')) {
+    const m = /^([0-9a-f]{40})\s+(\S+)$/.exec(line.trim());
+    if (m) refs.set(m[2], m[1]);
+  }
+  for (const name of [`refs/heads/${ref}`, `refs/tags/${ref}^{}`, `refs/tags/${ref}`, ref]) {
+    if (refs.has(name)) return refs.get(name);
+  }
+  return null;
 }
 
 function defaultSource() {
@@ -101,7 +133,10 @@ export function parseArgs(argv) {
   if (!/^[\w-]+$/.test(out.profile)) throw new Error('profile must contain only letters, digits, _ or -');
   if (/\s/.test(out.home)) throw new Error(`--home cannot contain spaces (it goes into JvmArgs): ${out.home}`);
   out.backupDir ??= path.join(HOME, 'MinecraftBackups', path.basename(out.instance));
-  out.source ??= defaultSource();
+  if (!out.source) {
+    const origin = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: out.stable, encoding: 'utf8' });
+    out.source = chooseSource({ explicit: null, thisRoot, stable: out.stable, stableOrigin: origin.status === 0 ? origin.stdout.trim() : null, fallback: defaultSource() });
+  }
   return out;
 }
 function camel(k) { return k.replace(/-(\w)/g, (_, c) => c.toUpperCase()); }
@@ -207,7 +242,10 @@ export async function setup(opt, deps = realDeps) {
     commit = deps.query('git', ['rev-parse', 'HEAD'], { cwd: opt.stable });
     say(`  using it as it is (${commit ? commit.slice(0, 9) : 'not a git checkout'})`);
   } else {
-    const target = deps.query('git', ['rev-parse', '--verify', `${opt.ref}^{commit}`], { cwd: opt.source });
+    // ls-remote: read-only, current (no stale remote-tracking refs), works for a path or a URL;
+    // an abbreviated SHA is resolved in a local source
+    let target = resolveRemoteRef(deps.query('git', ['ls-remote', opt.source]), opt.ref);
+    if (!target && /^[0-9a-f]{4,39}$/i.test(opt.ref)) target = deps.query('git', ['rev-parse', '--verify', `${opt.ref}^{commit}`], { cwd: opt.source });
     if (!target) throw new Error(`cannot resolve ${opt.ref} in ${opt.source}`);
     const exists = fs.existsSync(path.join(opt.stable, '.git'));
     if (exists) {
@@ -264,12 +302,20 @@ export async function setup(opt, deps = realDeps) {
     plan(`back up the world saves: ${opt.backupScript} ${gameDir} ${opt.backupDir}`);
     if (apply) deps.exec('/bin/bash', [opt.backupScript, gameDir, opt.backupDir]);
   } else warn(`no world backup script at ${opt.backupScript}; saves are NOT backed up`);
-  plan(`copy instance.cfg and mods/ to ${backup}`);
-  if (apply) {
-    fs.mkdirSync(backup, { recursive: true });
-    fs.copyFileSync(cfgFile, path.join(backup, 'instance.cfg'));
-    fs.cpSync(modsDir, path.join(backup, 'mods'), { recursive: true });
+  // the instance as it was before AgentCraft, kept once: the rollback target (later runs' backups
+  // already contain our settings)
+  const original = path.join(opt.backupDir, 'agentcraft-setup-original');
+  const snapshot = (dir) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.copyFileSync(cfgFile, path.join(dir, 'instance.cfg'));
+    fs.cpSync(modsDir, path.join(dir, 'mods'), { recursive: true });
+  };
+  if (!isOurPreLaunch(pre) && !fs.existsSync(original)) {
+    plan(`copy instance.cfg and mods/ to ${original} (the pre-AgentCraft state, kept for rollback)`);
+    if (apply) snapshot(original);
   }
+  plan(`copy instance.cfg and mods/ to ${backup}`);
+  if (apply) snapshot(backup);
 
   // 6. mods
   say('\n6. mods/');
@@ -316,9 +362,10 @@ export async function setup(opt, deps = realDeps) {
 
   say(`\nForeman: profile ${opt.profile}, port ${opt.port}, home ${opt.home}${commit ? `, commit ${commit.slice(0, 9)}` : ''}`);
   say(`Log: ${path.join(opt.stable, 'artifacts', 'logs', `foreman-daemon-${opt.profile}.log`)}`);
-  say(`Rollback: cp "${path.join(backup, 'instance.cfg')}" "${cfgFile}"; rm "${path.join(modsDir, jarName)}"; cp "${path.join(backup, 'mods')}"/agentcraft*.jar "${modsDir}"/ (if any); then "${daemon}" stop`);
+  const rollbackFrom = fs.existsSync(original) || !isOurPreLaunch(pre) ? original : backup;
+  say(`Rollback (Prism closed): cp "${path.join(rollbackFrom, 'instance.cfg')}" "${cfgFile}"; rm "${modsDir}"/agentcraft*.jar; cp "${path.join(rollbackFrom, 'mods')}"/agentcraft*.jar "${modsDir}"/ (only if there were any); then "${daemon}" stop`);
   if (!apply) say('\nDry run: nothing was changed. Re-run with --apply (Prism closed).');
-  return { changes, warnings, backup: apply ? backup : null, cfg: newText };
+  return { changes, warnings, backup: apply ? backup : null, original, cfg: newText };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

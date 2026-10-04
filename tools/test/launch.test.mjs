@@ -13,7 +13,8 @@ import {
 } from '../lib/prismcfg.mjs';
 import { decideStart, devCheckoutConflict, expandHome, lockIsStale, LOCK_STALE_MS } from '../lib/daemonplan.mjs';
 import { parseArgs as parseDaemonArgs } from '../foreman-daemon.mjs';
-import { setup, parseArgs as parseSetupArgs } from '../hardcore-setup.mjs';
+import { setup, parseArgs as parseSetupArgs, chooseSource, resolveRemoteRef, realDeps } from '../hardcore-setup.mjs';
+import { spawnSync } from 'node:child_process';
 
 const tmp = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `ac-${name}-`));
 
@@ -310,4 +311,62 @@ test('setup refuses: Prism running on --apply, a foreign PreLaunchCommand, dev p
   const inside = path.join(w.dir, 'dev-agentcraft', 'stable');
   fs.mkdirSync(path.join(inside, 'mod'), { recursive: true });
   await assert.rejects(setup(parseSetupArgs(['--instance', w.instance, '--stable', inside, '--home', w.home, '--jar', w.jar, '--skip-checkout', '--skip-deps']), deps()), /repository the Foreman works on/);
+});
+
+test('setup keeps the pre-AgentCraft state once, as the rollback target', async () => {
+  const w = fakeWorld();
+  const first = await setup(setupArgs(w, ['--apply']), deps());
+  const d2 = deps();
+  await setup(setupArgs(w, ['--apply']), d2);
+  assert.equal(fs.readFileSync(path.join(first.original, 'instance.cfg'), 'utf8'), CFG);
+  assert.deepEqual(fs.readdirSync(path.join(first.original, 'mods')).sort(), ['agentcraft-0.0.9.jar', 'fabric-api-0.161.0+26.3.jar', 'sodium.jar']);
+  assert.ok(d2.lines.some((l) => l.startsWith('Rollback') && l.includes('agentcraft-setup-original')));
+  assert.ok(!d2.lines.some((l) => l.includes('the pre-AgentCraft state')));
+});
+
+test('chooseSource: explicit, else the stable checkout\'s origin when run from it, else this repo', () => {
+  assert.equal(chooseSource({ explicit: '/src', thisRoot: '/a', stable: '/b', fallback: '/dev' }), '/src');
+  assert.equal(chooseSource({ explicit: null, thisRoot: '/a', stable: '/b', stableOrigin: '/x', fallback: '/dev' }), '/dev');
+  assert.equal(chooseSource({ explicit: null, thisRoot: '/s', stable: '/s', stableOrigin: '/dev', fallback: '/s' }), '/dev');
+  assert.throws(() => chooseSource({ explicit: null, thisRoot: '/s', stable: '/s', stableOrigin: null, fallback: '/s' }), /origin/);
+});
+
+test('resolveRemoteRef: branch, peeled tag, full ref, SHA', () => {
+  const a = 'a'.repeat(40); const b = 'b'.repeat(40); const c = 'c'.repeat(40);
+  const ls = `${a}\tHEAD\n${a}\trefs/heads/main\n${b}\trefs/tags/v1\n${c}\trefs/tags/v1^{}\n`;
+  assert.equal(resolveRemoteRef(ls, 'main'), a);
+  assert.equal(resolveRemoteRef(ls, 'v1'), c);
+  assert.equal(resolveRemoteRef(ls, 'refs/heads/main'), a);
+  assert.equal(resolveRemoteRef(ls, 'D'.repeat(40)), 'd'.repeat(40));
+  assert.equal(resolveRemoteRef(ls, 'nope'), null);
+});
+
+test('setup clones, then updates the stable checkout to the source\'s new commit (real git, temp dirs)', async () => {
+  const w = fakeWorld();
+  const src = path.join(w.dir, 'src');
+  const git = (cwd, ...args) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  fs.mkdirSync(path.join(src, 'mod'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'mod', 'gradle.properties'), 'minecraft_version=26.3\n');
+  git(src, 'init', '-q', '-b', 'main');
+  git(src, 'add', '.');
+  git(src, 'commit', '-q', '-m', 'one');
+  const stable = path.join(w.dir, 'stable');
+  const d = { ...realDeps, exec: (cmd, args, opts = {}) => realDeps.exec(cmd, args, { ...opts, stdio: 'ignore' }), prismRunning: () => false, log: () => {}, now: () => new Date(2026, 9, 3) };
+  const args = (extra = []) => parseSetupArgs(['--instance', w.instance, '--stable', stable, '--source', src, '--home', w.home, '--jar', w.jar,
+    '--backup-script', path.join(w.dir, 'no-such-backup.sh'), '--backup-dir', w.backupDir, '--skip-deps', ...extra]);
+  await setup(args(['--apply']), d);
+  assert.equal(git(stable, 'rev-parse', 'HEAD'), git(src, 'rev-parse', 'HEAD'));
+  fs.writeFileSync(path.join(src, 'two.txt'), '2');
+  git(src, 'add', '.');
+  git(src, 'commit', '-q', '-m', 'two');
+  const lines = [];
+  await setup(args(), { ...d, log: (l) => lines.push(l) });
+  assert.ok(lines.some((l) => /would fetch .* check out main/.test(l)));
+  assert.notEqual(git(stable, 'rev-parse', 'HEAD'), git(src, 'rev-parse', 'HEAD'));
+  await setup(args(['--apply']), d);
+  assert.equal(git(stable, 'rev-parse', 'HEAD'), git(src, 'rev-parse', 'HEAD'));
 });

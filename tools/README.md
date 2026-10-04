@@ -22,9 +22,9 @@ one component; `--no-wait` to return immediately while Minecraft builds. Repeat
 `artifacts/logs/mac-*.log` and `artifacts/run/mac-*.json`. `stop` only signals processes
 recorded by this launcher. macOS uses Notification Center for agent decisions.
 The screenshot QA command, `node tools/qa.mjs`, also uses this launcher on macOS.
-Each log is rotated when a process is started and the log is over 5 MB. The file is
-copy-truncated, three copies are kept (`.1` .. `.3`), and a Foreman still writing to it is
-unaffected.
+Logs are checked when a process is started. A log over 5 MB is copy-truncated and three
+copies are kept (`.1` .. `.3`). A Foreman still writing to the file is unaffected. A process that
+runs for weeks can grow its log past 5 MB until the next start.
 
 ## Playing in a Hardcore world (Prism Launcher, macOS)
 
@@ -50,7 +50,7 @@ What `--apply` changes (defaults; see `--help`):
 | `~/Developer/agentcraft-stable` | cloned from this repository (or fetched), `--ref` (default `main`) checked out detached; refuses local changes |
 | its `foreman/`, `tools/` | `npm ci` |
 | its `mod/` | `gradlew build`, giving `mod/build/libs/agentcraft-<version>.jar` |
-| `~/MinecraftBackups/<instance>/` | world saves via `~/bin/backup-world.sh`, plus `agentcraft-setup-<stamp>/` with `instance.cfg` and the whole `mods/` folder |
+| `~/MinecraftBackups/<instance>/` | world saves via `~/bin/backup-world.sh`; `agentcraft-setup-<stamp>/` with `instance.cfg` and the whole `mods/` folder on every run; on the first run also `agentcraft-setup-original/`, the pre-AgentCraft state, which is never overwritten |
 | `<instance>/.minecraft/mods/` | older `agentcraft*.jar` removed (they are in the backup) and the new jar copied in |
 | `<instance>/instance.cfg` | `PreLaunchCommand="<stable>/tools/foreman-daemon.sh" start --profile hardcore --port 7880 --home "<home>"`; `JvmArgs` gains `-Dagentcraft.port=7880 -Dagentcraft.profile=hardcore` (other args kept); `OverrideCommands`/`OverrideJavaArgs=true`; `PostExitCommand` (the world backup) kept |
 
@@ -88,18 +88,24 @@ node ~/Developer/agentcraft-stable/tools/mac.mjs stop --foreman --profile hardco
 ```
 
 Logs: `~/Developer/agentcraft-stable/artifacts/logs/foreman-daemon-hardcore.log` holds the daemon
-and the Foreman's output, rotated at 5 MB with 3 kept. Prism's own console shows only that the
+and the Foreman's output. It is checked at every game launch and rotated past 5 MB, with 3 kept. Prism's own console shows only that the
 PreLaunchCommand ran. In game, the top-right pill says "Foreman not running: it starts with the
 game; or run tools/foreman-daemon.sh" until the link is up. After a reboot, nothing starts the
 Foreman until the next game launch or `foreman-daemon.sh start`.
 
-**Updating:** run `node tools/hardcore-setup.mjs --apply` again, optionally with `--ref`. The
-next game launch sees the new commit and restarts the Foreman.
+**Updating:** run `node tools/hardcore-setup.mjs --apply` again, optionally with `--ref`. It
+fetches `--ref` from the source and checks it out in the stable checkout. Run from the dev
+checkout, the source is the dev checkout. Run from the stable checkout, the source is its
+`origin`, which is the dev checkout it was cloned from. `--ref` is resolved with
+`git ls-remote`, so a dry run shows the commit that would be installed. The default `main` is
+the local `main`, which includes agent merges that have not been pushed; pass a tag or a commit
+to pin one. The next game launch sees the new commit and restarts the Foreman.
 
-**Rollback:** setup prints the exact commands. In short, quit Prism and restore
-`<backup>/agentcraft-setup-<stamp>/instance.cfg` over `<instance>/instance.cfg`. Then remove
-`mods/agentcraft-*.jar`, or copy back the `agentcraft*.jar` from `<backup>/.../mods/` if there was
-one, and run `foreman-daemon.sh stop`. World saves are restored from the `backup-world.sh` archives
+**Rollback:** setup prints the exact commands. In short, quit Prism and copy
+`~/MinecraftBackups/<instance>/agentcraft-setup-original/instance.cfg` over
+`<instance>/instance.cfg`. Then remove `mods/agentcraft*.jar` and run `foreman-daemon.sh stop`.
+The original has no AgentCraft jar, so there is nothing to copy back. Use an
+`agentcraft-setup-<stamp>/` folder instead to return to an earlier AgentCraft version. World saves are restored from the `backup-world.sh` archives
 as usual.
 
 ## Windows
