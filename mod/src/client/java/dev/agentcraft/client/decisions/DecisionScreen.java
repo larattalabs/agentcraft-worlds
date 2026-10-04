@@ -681,17 +681,18 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		int cw = pw - pad.left() - pad.right();
 
 		// ---- measure
-		List<FormattedCharSequence> qLines = font.split(Component.literal(d.question()).withStyle(net.minecraft.ChatFormatting.BOLD), cw);
-		if (qLines.size() > 5) {
-			qLines = qLines.subList(0, 5);
-		}
 		// closed choices (C1 textAllowed false) show no text box: only the options answer them
 		int fieldHeight = panel.fieldHeight(font, d, cw, readOnly);
 		boolean fieldVisible = fieldHeight > 0;
 		int buttonsH = panel.buttonsHeight(font, d, cw) + 8;
-		int fixed = 18 /*header*/ + 26 /*agent*/ + qLines.size() * 10 + 6 + (fieldVisible ? fieldHeight + 6 : 0) + buttonsH + 2 + 16 /*footer*/;
 		int maxH = height - 20;
 		int bodyNatural = bodyNaturalHeight(d, cw);
+		// the question gets what the rest leaves (at most 5 lines, at least 2; at 426x240 a long question with six options
+		// pushed the frame off the screen): cut lines end in "…" and the whole question is a tooltip on it
+		int rest = 18 /*header*/ + 26 /*agent*/ + 6 + (fieldVisible ? fieldHeight + 6 : 0) + buttonsH + 2 + 16 /*footer*/;
+		int qRoom = (maxH - pad.top() - pad.bottom() - rest - (bodyNatural > 0 ? Math.min(bodyNatural, 30) + 6 : 0)) / 10;
+		List<FormattedCharSequence> qLines = questionLines(d.question(), cw, Math.max(2, Math.min(5, qRoom)));
+		int fixed = rest + qLines.size() * 10;
 		int bodyMax = Math.max(30, maxH - fixed - pad.top() - pad.bottom());
 		int bodyHeight = Math.min(bodyNatural, bodyMax);
 		ph = pad.top() + fixed + (bodyHeight > 0 ? bodyHeight + 6 : 0) + pad.bottom();
@@ -786,9 +787,13 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		y += 26;
 
 		// question
+		int qy = y;
 		for (FormattedCharSequence line : qLines) {
 			g.text(font, line, x, y, UiBits.ink(), false);
 			y += 10;
+		}
+		if (questionCut && mouseX >= x && mouseX < x + cw && mouseY >= qy && mouseY < y) {
+			g.setTooltipForNextFrame(font, font.split(Component.literal(d.question()), Math.min(cw, 300)), mouseX, mouseY);
 		}
 		y += 6;
 
@@ -811,6 +816,31 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		// footer: status right (it wins the room), key hints left
 		int fy = py + ph - pad.bottom() - 12;
 		drawFooter(g, d, x, fy, cw, queue, qi, now);
+	}
+
+	private boolean questionCut;
+
+	/** The question in bold, wrapped to {@code w}, at most {@code max} lines; a cut last line ends in "…" ({@link #questionCut}). */
+	private List<FormattedCharSequence> questionLines(String q, int w, int max) {
+		net.minecraft.network.chat.Style bold = net.minecraft.network.chat.Style.EMPTY.withBold(true);
+		List<String> lines = new java.util.ArrayList<>();
+		for (net.minecraft.network.chat.FormattedText t : font.getSplitter().splitLines(q, w, bold)) {
+			lines.add(t.getString());
+		}
+		questionCut = lines.size() > max;
+		if (questionCut) {
+			lines = new java.util.ArrayList<>(lines.subList(0, max));
+			String last = lines.get(max - 1).stripTrailing();
+			while (!last.isEmpty() && font.width(Component.literal(last + "…").withStyle(bold)) > w) {
+				last = last.substring(0, last.length() - 1).stripTrailing();
+			}
+			lines.set(max - 1, last + "…");
+		}
+		List<FormattedCharSequence> out = new java.util.ArrayList<>();
+		for (String l : lines) {
+			out.add(Component.literal(l).withStyle(bold).getVisualOrderText());
+		}
+		return out;
 	}
 
 	/** The podium chip: "b3's podium · A: all" / "all decisions · A: b3's podium" (clickable). */
