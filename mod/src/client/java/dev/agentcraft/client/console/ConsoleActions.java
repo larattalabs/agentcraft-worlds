@@ -156,7 +156,8 @@ public final class ConsoleActions {
 				ConsoleLog.remember(raw);
 				clearFeedback();
 				if (oi.agentId() == null) {
-					dev.agentcraft.client.hub.Inbox.open(null);
+					// the whole Inbox: the last filter could be an agent's log or a podium, not what "/inbox" asks for
+					dev.agentcraft.client.hub.Inbox.open("all");
 				} else {
 					dev.agentcraft.client.hub.Inbox.openAgent(oi.agentId());
 				}
