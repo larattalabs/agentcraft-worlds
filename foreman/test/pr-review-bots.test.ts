@@ -11,7 +11,7 @@ import { classify } from '../src/prwatch.js';
 
 const REVIEW = '**Claude Code Review**\nReview completed\n\n### 🎯 Verdict\n**PASS**\n';
 const thread = (id: number, author: string, text: string): HostThread => ({ id: String(id), active: true, status: 'active', comments: [{ id: 1, author, text, system: false, at: id }] });
-const pr = (threads: HostThread[]): HostPr => ({ status: 'open', draft: false, checks: 'none', failing: [], threads }) as HostPr;
+const pr = (threads: HostThread[]): HostPr => ({ status: 'open', draft: false, checks: 'none', failing: [], reviewers: [], threads });
 
 const threads = [
   thread(1, 'Project Collection Build Service (contoso)', REVIEW),
