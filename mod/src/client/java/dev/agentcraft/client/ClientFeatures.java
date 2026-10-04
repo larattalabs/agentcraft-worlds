@@ -15,6 +15,7 @@ import dev.agentcraft.client.leads.LeadsFeature;
 import dev.agentcraft.client.library.LibraryFeature;
 import dev.agentcraft.client.monitor.MonitorFeature;
 import dev.agentcraft.client.permissions.PermissionsFeature;
+import dev.agentcraft.client.road.RoadsFeature;
 import dev.agentcraft.client.taskwall.TaskWallFeature;
 import dev.agentcraft.client.trophy.TrophyFeature;
 import dev.agentcraft.client.ui.UiDev;
@@ -51,6 +52,7 @@ public final class ClientFeatures {
 		HubFeature.init();       // H, /hub: buildings, blueprints, status (docs/HUB.md)
 		LeadsFeature.init();     // a lead per building: lead.assign/release/sync, dev.leads.state
 		TrophyFeature.init();    // trophies for merges and finished goals, dev.trophies.*
+		RoadsFeature.init();     // roads between buildings: preview, lay, remove, dev.roads.* (docs/VILLAGE.md V1)
 		DesignFeature.init();    // the hub's Design new…, /hub design, plot marking, design progress
 		AgentCraft.LOGGER.info("AgentCraft client features initialised");
 	}

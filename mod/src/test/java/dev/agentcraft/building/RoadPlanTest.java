@@ -336,6 +336,7 @@ class RoadPlanTest {
 			assertTrue(at(p, x, 1).isEmpty(), "x " + x);
 		}
 		assertEquals(4, p.skipped().get("blocked"));
+		assertEquals(4 * 3, p.refused().length, "the ghost draws them red");
 		assertConnected(p);
 	}
 

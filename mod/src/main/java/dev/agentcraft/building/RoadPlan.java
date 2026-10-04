@@ -169,12 +169,13 @@ public final class RoadPlan {
 	 * @param cells the road's cells (walkable after the changes)
 	 * @param lanterns the lantern cells (x, y, z triples)
 	 * @param skipped cells left out per reason (see {@link #REASONS})
+	 * @param refused where they are (x, feet y, z triples; the ghost draws them red)
 	 * @param refusal why nothing may be laid (unloaded chunks, a broken route), or null
 	 * @param box the box covering every change (the snapshot box), or null when nothing changes
 	 * @param centre route cells outside the excluded boxes (the road's length in cells)
 	 * @param trimmed route cells inside an excluded box (a building, its approach)
 	 */
-	public record Plan(List<Op> ops, List<Cell> cells, int[] lanterns, Map<String, Integer> skipped, @Nullable String refusal,
+	public record Plan(List<Op> ops, List<Cell> cells, int[] lanterns, Map<String, Integer> skipped, int[] refused, @Nullable String refusal,
 		Anchors.@Nullable Bounds box, int centre, int trimmed) {
 
 		public int lanternCount() {
@@ -420,6 +421,7 @@ public final class RoadPlan {
 			}
 		}
 		// 3. settle each column: its height and what it is
+		List<Integer> refused = new ArrayList<>();
 		String unloaded = null;
 		for (Stamp s : stamps.values()) {
 			String why = settle(s, w, o, exclude);
@@ -438,6 +440,7 @@ public final class RoadPlan {
 			}
 			if (!why.isEmpty()) {
 				bump(skipped, why);
+				mark(refused, s.x, s.refY, s.z);
 			}
 		}
 		if (unloaded != null) {
@@ -455,6 +458,7 @@ public final class RoadPlan {
 					if (n.accepted && Math.abs(walkFeet(n) - walkFeet(s)) > 1) {
 						s.accepted = false;
 						bump(skipped, "steep");
+						mark(refused, s.x, s.feet, s.z);
 						changed = true;
 						break;
 					}
@@ -489,11 +493,10 @@ public final class RoadPlan {
 			List<Op> col = columnOps(s, w);
 			String why = blockedOps(col, exclude, taken);
 			if (why != null) {
+				bump(skipped, why);
+				mark(refused, s.x, s.feet, s.z);
 				if (s.centre) {
-					bump(skipped, why);
 					cells.add(new Cell(s.x, s.feet, s.z, true, Role.KEPT));
-				} else {
-					bump(skipped, why);
 				}
 				continue;
 			}
@@ -516,11 +519,21 @@ public final class RoadPlan {
 				ordered.put(r, n);
 			}
 		}
-		return new Plan(List.copyOf(ops), List.copyOf(cells), lan, ordered, null, box(ops), centre.size(), trimmed);
+		int[] ref = new int[refused.size()];
+		for (int i = 0; i < ref.length; i++) {
+			ref[i] = refused.get(i);
+		}
+		return new Plan(List.copyOf(ops), List.copyOf(cells), lan, ordered, ref, null, box(ops), centre.size(), trimmed);
 	}
 
 	private static Plan refused(String why, Map<String, Integer> skipped) {
-		return new Plan(List.of(), List.of(), new int[0], skipped, why, null, 0, 0);
+		return new Plan(List.of(), List.of(), new int[0], skipped, new int[0], why, null, 0, 0);
+	}
+
+	private static void mark(List<Integer> l, int x, int y, int z) {
+		l.add(x);
+		l.add(y);
+		l.add(z);
 	}
 
 	private static void bump(Map<String, Integer> m, String k) {
