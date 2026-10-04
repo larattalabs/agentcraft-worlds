@@ -165,7 +165,8 @@ public final class OutdoorRoutes {
 		Anchor a = entrance(from);
 		Anchor b = entrance(to);
 		LocalPlayer p = mc.player;
-		boolean same = from != null && to != null && !from.isEmpty() && !to.isEmpty();
+		// null = not found in the player's dimension; an empty layout (no home in a world without the HQ) has no entrance
+		boolean same = from != null && to != null;
 		double render = mc.options.getEffectiveRenderDistance() * 16.0;
 		WalkRules.Inputs in = new WalkRules.Inputs(enabled(), same, a != null && b != null, a == null ? 0 : a.x(), a == null ? 0 : a.z(),
 			b == null ? 0 : b.x(), b == null ? 0 : b.z(), p == null ? Double.MAX_VALUE / 4 : p.getX(), p == null ? 0 : p.getZ(), render);
