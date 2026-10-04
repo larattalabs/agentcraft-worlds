@@ -21,6 +21,7 @@ function usage(code = 0) {
   node tools/mac.mjs launch [--backend sim|claude] [--repo PATH] [--use-claude-login]
                             [--home PATH] [--profile NAME] [--port N] [--dev-port N]
                             [--dev] [--showcase busy|late] [--reset]
+                            [--world NAME] [--preset flat|normal] [--seed N]
                             [--no-game] [--no-foreman] [--no-wait] [--restart-foreman]
                             [--summary-json PATH]
                             [--foreman-arg VALUE] (repeatable)
@@ -31,13 +32,17 @@ stop: --game and --foreman can be combined; with neither, both are stopped. With
 would be signalled and changes nothing. launch --restart-foreman replaces a running Foreman
 (launch warns when the running one came from another checkout or an older commit).
 Default: Claude backend, ~/.agentcraft, ports 7878/7879. --dev mutes the game,
-keeps it from taking focus, and disables desktop notifications.`);
+keeps it from taking focus, and disables desktop notifications.
+--world/--preset/--seed pick the world the dev client opens or creates (default the flat
+"AgentCraft HQ"; any other name is a plain creative world without the HQ rules or studio;
+preset and seed only apply when the world is created). Example:
+  node tools/mac.mjs launch --backend sim --dev --world "Docs World" --preset normal`);
   process.exit(code);
 }
 
 function options(argv) {
   const out = { action: argv.shift(), repo: [], foremanArgs: [] };
-  const values = new Set(['backend', 'repo', 'home', 'profile', 'port', 'dev-port', 'showcase', 'summary-json', 'foreman-arg']);
+  const values = new Set(['backend', 'repo', 'home', 'profile', 'port', 'dev-port', 'showcase', 'summary-json', 'foreman-arg', 'world', 'preset', 'seed']);
   const switches = new Set(['use-claude-login', 'dev', 'reset', 'no-game', 'no-foreman', 'no-wait', 'game', 'foreman', 'stop-daemon', 'restart-foreman', 'dry-run']);
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i].replace(/^--/, '');
@@ -59,6 +64,9 @@ function options(argv) {
     out.profile ??= out.showcase === 'late' ? 'showcase-late' : 'showcase';
   }
   if (!['sim', 'claude'].includes(out.backend)) throw new Error('backend must be sim or claude');
+  if (out.preset && !['flat', 'normal'].includes(out.preset)) throw new Error('preset must be flat or normal');
+  if (out.seed !== undefined && !/^-?\d{1,19}$/.test(out.seed)) throw new Error('seed must be a whole number');
+  if (out.world !== undefined && (!out.world.trim() || /[\/\\:*?"<>|]/.test(out.world) || out.world.startsWith('.'))) throw new Error('invalid --world name');
   out.profileExplicit = out.profile;
   out.profile ??= out.backend;
   if (!/^[\w-]+$/.test(out.profile)) throw new Error('profile must contain only letters, digits, _ or -');
@@ -226,6 +234,7 @@ async function launch(opt, summary) {
   if (owned(game)) {
     if (!await portOpen(game.devPort)) await waitPort(game.devPort, 600000, game, 'Minecraft');
     console.log(`Minecraft is already running (PID ${game.pid}, DevBridge :${game.devPort})`);
+    if (opt.world || opt.preset || opt.seed) console.warn('--world/--preset/--seed are ignored: the running game keeps its world. Stop it first (stop --game).');
     summary.game.devPort = game.devPort;
     if (game.foremanPort !== fmPort) console.warn(`It was launched for Foreman :${game.foremanPort}; stop the game before switching ports.`);
     return;
@@ -239,6 +248,9 @@ async function launch(opt, summary) {
     AGENTCRAFT_HOME: opt.home, AGENTCRAFT_PROFILE: opt.profile,
     AGENTCRAFT_MUTE: opt.dev ? '1' : '0', AGENTCRAFT_FOCUS: opt.dev ? '0' : '1',
   };
+  if (opt.world) env.AGENTCRAFT_AUTOWORLD_NAME = opt.world;
+  if (opt.preset) env.AGENTCRAFT_AUTOWORLD_PRESET = opt.preset;
+  if (opt.seed) env.AGENTCRAFT_AUTOWORLD_SEED = opt.seed;
   game = { ...start('/bin/sh', [path.join(root, 'mod', 'gradlew'), 'runClient', '--console=plain'], path.join(root, 'mod'), path.join(logDir, 'mac-game.log'), env), devPort: opt['dev-port'], foremanPort: fmPort };
   saveJson(gameFile, game);
   summary.game.started = true;

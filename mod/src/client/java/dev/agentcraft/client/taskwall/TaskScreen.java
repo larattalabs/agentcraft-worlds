@@ -199,7 +199,7 @@ public class TaskScreen extends Screen implements dev.agentcraft.client.ui.HasPa
 		List<FormattedCharSequence> title = t == null ? List.of()
 			: clip(font.split(Component.literal(t.title().replace("`", "").strip()), (int) (inner / ts)), 2);
 		List<FormattedCharSequence> desc = t == null || t.description() == null || t.description().isBlank() ? List.of()
-			: clip(TextUtil.wrap(font, t.description().replace("`", ""), inner), 4);
+			: clipText(t.description().replace("`", ""), inner, 4);
 		boolean assigned = t != null && t.assignee() != null && !t.assignee().isBlank();
 		ForemanState fs0 = Foreman.state();
 		Agent who = assigned && fs0 != null ? fs0.agent(t.assignee()) : null;
@@ -212,11 +212,11 @@ public class TaskScreen extends Screen implements dev.agentcraft.client.ui.HasPa
 		h += depRows > 0 ? 12 + depRows * 11 + 4 : 0;
 		h += 12; // CI + branch line
 		boolean blocked = t != null && t.status() == TaskStatus.BLOCKED;
-		List<FormattedCharSequence> reason = blocked && t.blockedReason() != null ? clip(TextUtil.wrap(font, "Blocked: " + t.blockedReason(), inner), 2)
+		List<FormattedCharSequence> reason = blocked && t.blockedReason() != null ? clipText("Blocked: " + t.blockedReason(), inner, 2)
 			: List.of();
 		h += reason.isEmpty() ? 0 : reason.size() * 10 + 4;
 		List<FormattedCharSequence> summary = t != null && t.summary() != null && !t.summary().isBlank() && t.status() == TaskStatus.DONE
-			? clip(TextUtil.wrap(font, t.summary(), inner), 2) : List.of();
+			? clipText(t.summary(), inner, 2) : List.of();
 		h += summary.isEmpty() ? 0 : summary.size() * 10 + 4;
 		if (confirmCancel && System.nanoTime() > confirmUntil) {
 			confirmCancel = false;
@@ -633,6 +633,20 @@ public class TaskScreen extends Screen implements dev.agentcraft.client.ui.HasPa
 	static String statusFamily(Task t) {
 		String f = dev.agentcraft.client.ui.StatusMap.task(dev.agentcraft.client.foreman.Foreman.state(), t);
 		return "cancelled".equals(f) ? "idle" : f;
+	}
+
+	/** {@code text} wrapped to {@code w}, at most {@code max} lines; a cut last line ends in "…" (it used to stop mid-sentence). */
+	private List<FormattedCharSequence> clipText(String text, int w, int max) {
+		List<String> lines = TextUtil.wrapPlain(font, text, w);
+		if (lines.size() > max) {
+			lines = new ArrayList<>(lines.subList(0, max));
+			lines.set(max - 1, TextUtil.ellipsize(font, lines.get(max - 1) + TextUtil.ELLIPSIS, w));
+		}
+		List<FormattedCharSequence> out = new ArrayList<>();
+		for (String l : lines) {
+			out.add(Component.literal(l).getVisualOrderText());
+		}
+		return out;
 	}
 
 	private static List<FormattedCharSequence> clip(List<FormattedCharSequence> lines, int max) {

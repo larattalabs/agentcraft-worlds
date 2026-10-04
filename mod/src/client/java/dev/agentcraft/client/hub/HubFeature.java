@@ -68,11 +68,16 @@ public final class HubFeature {
 				}
 
 				@Override
+				public int prs() {
+					return c.prs();
+				}
+
+				@Override
 				public dev.agentcraft.client.foreman.Protocol.ForemanHold hold() {
 					return hold;
 				}
 			};
-		});
+		}, Inbox::revision); // "All read" or a viewed reply changes the badge and line at once, not up to 1.5 s later
 		Keys.ensureRegistered();
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hub.tick", () -> {
 			while (Keys.hub.consumeClick()) {

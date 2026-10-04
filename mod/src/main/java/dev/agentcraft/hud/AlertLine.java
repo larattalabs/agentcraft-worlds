@@ -21,17 +21,23 @@ import org.jspecify.annotations.Nullable;
  * "paused → 14:20") and {@link Level#DOTS} (just the numbers next to their coloured dots). {@link #fit}
  * picks the widest that fits.
  */
-public record AlertLine(int decisions, int blocked, int replies, @Nullable String holdReason, @Nullable Long holdUntil,
+public record AlertLine(int decisions, int blocked, int replies, int prs, @Nullable String holdReason, @Nullable Long holdUntil,
 	@Nullable String holdMessage) {
 
 	public static final String SEP = " · ";
-	public static final AlertLine NONE = new AlertLine(0, 0, 0, null, null, null);
+	public static final AlertLine NONE = new AlertLine(0, 0, 0, 0, null, null, null);
 
 	public AlertLine {
 		decisions = Math.max(0, decisions);
 		blocked = Math.max(0, blocked);
 		replies = Math.max(0, replies);
+		prs = Math.max(0, prs);
 		holdReason = holdReason == null || holdReason.isBlank() ? null : holdReason.strip().toLowerCase(Locale.ROOT);
+	}
+
+	/** No PRs needing attention. */
+	public AlertLine(int decisions, int blocked, int replies, @Nullable String holdReason, @Nullable Long holdUntil, @Nullable String holdMessage) {
+		this(decisions, blocked, replies, 0, holdReason, holdUntil, holdMessage);
 	}
 
 	public enum Level {
@@ -39,8 +45,8 @@ public record AlertLine(int decisions, int blocked, int replies, @Nullable Strin
 	}
 
 	/**
-	 * One part of the line. {@code kind}: decisions, blocked, replies, hold; {@code family}: the status-dot
-	 * family the client draws in front of it (waiting, error, thinking, idle).
+	 * One part of the line. {@code kind}: decisions, blocked, replies, prs, hold; {@code family}: the status-dot
+	 * family the client draws in front of it (waiting, error, thinking, working, idle).
 	 */
 	public record Part(String kind, String family, String full, String brief, String dots) {
 		public String at(Level l) {
@@ -54,12 +60,15 @@ public record AlertLine(int decisions, int blocked, int replies, @Nullable Strin
 
 	/** Anything to show (some count non-zero or a hold). */
 	public boolean visible() {
-		return decisions > 0 || blocked > 0 || replies > 0 || holdReason != null;
+		return decisions > 0 || blocked > 0 || replies > 0 || prs > 0 || holdReason != null;
 	}
 
-	/** decisions + blocked + replies: what the "need you" counts mean (holds are not counted). */
+	/**
+	 * The Inbox's "Needs you" group size (the inbox tab badge, the away toast): decisions + blocked + replies + PRs,
+	 * plus one while a hold is on (the Inbox lists the hold as an item; {@code InboxModel.Counts.needsYou}).
+	 */
 	public int needsYou() {
-		return decisions + blocked + replies;
+		return decisions + blocked + replies + prs + (holdReason != null ? 1 : 0);
 	}
 
 	public List<Part> parts(ZoneId zone, long now) {
@@ -72,6 +81,9 @@ public record AlertLine(int decisions, int blocked, int replies, @Nullable Strin
 		}
 		if (replies > 0) {
 			out.add(new Part("replies", "thinking", plural(replies, "reply", "replies"), replies + " msg", Integer.toString(replies)));
+		}
+		if (prs > 0) {
+			out.add(new Part("prs", "working", prs == 1 ? "1 PR" : prs + " PRs", prs + " PR", Integer.toString(prs)));
 		}
 		if (holdReason != null) {
 			out.add(new Part("hold", "idle", holdText(holdReason, holdUntil, zone, now, false), holdText(holdReason, holdUntil, zone, now, true),

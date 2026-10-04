@@ -796,7 +796,13 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 		if (UiBits.hintsWidth(font, hints) > w) {
 			hints = new String[] {"Enter", "send", "Tab", "complete", "↑↓", "history", "Esc", "close"};
 		}
-		UiBits.hints(g, font, x, fy, false, hints);
+		if (UiBits.hintsWidth(font, hints) > w) {
+			// 426x240 (4K at auto GUI scale): "Esc close" ran past the panel
+			hints = new String[] {"Enter", "send", "Tab", "complete", "Esc", "close"};
+		}
+		if (UiBits.hintsWidth(font, hints) <= w) {
+			UiBits.hints(g, font, x, fy, false, hints);
+		}
 	}
 
 	private boolean overlayOpen() {

@@ -87,7 +87,9 @@ public final class TextFieldView {
 		String v = m.value();
 		int ink = UiBits.ink();
 		if (m.isEmpty() && st.placeholder() != null) {
-			g.text(font, st.placeholder(), tx, ty, UiStyle.color("ink_ui.ghost_on_paper", 0xFFBCAD95), false);
+			// cut to the field (a long placeholder in a narrow field ran past its border at 426x240)
+			g.text(font, dev.agentcraft.client.ui.TextUtil.ellipsize(font, st.placeholder(), Math.max(0, x + w - p.right() - tx)), tx, ty,
+				UiStyle.color("ink_ui.ghost_on_paper", 0xFFBCAD95), false);
 		}
 		int caretX = tx;
 		int caretY = ty;

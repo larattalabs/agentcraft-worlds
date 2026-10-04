@@ -71,7 +71,9 @@ GRADLE_USER_HOME=C:/Projects/agentcraft/.gradle-home ./gradlew --stop       # st
    marker file `agentcraft-world.json` in the world folder. Players who join in spectator or survival
    are put back into creative.
 
-Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world.
+Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world. For docs or QA on natural terrain
+(welcome card, walking routes): `node tools/mac.mjs launch --backend sim --dev --world "Docs World" --preset
+normal [--seed N]` (env switches `AGENTCRAFT_AUTOWORLD_NAME/_PRESET/_SEED` below; tools/README.md).
 
 ### Environment switches (env var, or `-Dagentcraft.xxx=` system property)
 
@@ -83,6 +85,9 @@ Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world.
 | `AGENTCRAFT_MUTE` | 1 | Forces master and music volume to 0 at startup. **Set `0` for real use** (for example in launch.ps1) to keep your own volume |
 | `AGENTCRAFT_FOCUS` | 0 | `0`: the window is shown **without activating it**, so it never steals focus. `1`: normal "come to front" |
 | `AGENTCRAFT_AUTOWORLD` | 1 | `0`: stay on the title screen |
+| `AGENTCRAFT_AUTOWORLD_NAME` | `AgentCraft HQ` | The world (save folder and level name) AutoWorld loads, or creates if missing. Only `AgentCraft HQ` gets the HQ rules/studio (`HqWorld.isHq` is by name), so another name is a plain creative world (welcome card, no studio). `tools/mac.mjs --world NAME` |
+| `AGENTCRAFT_AUTOWORLD_PRESET` | `flat` | Terrain of a **new** world: `flat` = the superflat meadow below, `normal` = natural terrain (creative, peaceful, cheats on, no structures). `--preset` |
+| `AGENTCRAFT_AUTOWORLD_SEED` | flat: `"agentcraft-hq".hashCode()`, normal: `2026` | Seed of a new world (a number, or text hashed like the vanilla box). 2026 spawns in a birch meadow on a hill (y~118) with forest, lakes and a cherry grove within ~150 blocks. `--seed N`. Parsed by the pure `dev.agentcraft.world.AutoWorldSpec` (`AutoWorldSpecTest`) |
 | `AGENTCRAFT_PAUSE` | (dev run or DevBridge: 0, else 1) | Whether AgentCraft screens pause a singleplayer game (contract C6). Everyday play pauses like vanilla menus; dev runs and clients with the DevBridge on keep the world running for QA. `dev.ui.pause {on}` changes it at runtime |
 | `AGENTCRAFT_SHOTS_DIR` | `<repo>/artifacts/shots` | Where `dev.screenshot` writes |
 | `AGENTCRAFT_DEV_ALLOW_ORIGIN` | 0 | `1` lets browser pages (which send an Origin header) connect. They are refused by default |
@@ -876,9 +881,10 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
 ### HUD check-in (wave 2)
 The contract is docs/WAVE2.md W5-W7 ("As implemented: hud" there). Code in `client.hud` and `client.hub`; pure rules
 in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTest`, `HudRulesTest`).
-- **Alert line** (`GoalBar.drawAlerts`, counts from `Alerts.line()` over an `AlertCounts` source, today
-  `ForemanAlertCounts`; `Alerts.setSource` swaps in the Inbox model): under the decisions badge, full / short / dots
-  width by what fits, hub keycap at the end. The whole goal bar is skipped while the HUD is hidden (F1, `dev.hud
+- **Alert line** (`GoalBar.drawAlerts`, counts from `Alerts.line()` over an `AlertCounts` source: the Inbox's
+  (`HubFeature.init`: `Alerts.setSource("inbox", …, Inbox::revision)`; `ForemanAlertCounts` before it is set):
+  decisions, blocked, replies, PRs, hold; under the decisions badge, full / short / dots width by what fits, hub keycap
+  at the end. `needsYou` = the Inbox's Needs you (the hold counts one), the inbox tab badge and the away toast. The whole goal bar is skipped while the HUD is hidden (F1, `dev.hud
   {hidden}`).
 - **Goal bar with several open goals**: urgent pinned, else 8 s turns, "+N more" (`HudRules.pickGoal`).
 - **`HudWatch`** (client tick, guarded as `hud.watch`): hub on screen (also under screens opened from it) ->
@@ -887,7 +893,7 @@ in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTe
 - **Files**: `<gameDir>/agentcraft/hub-hud.json` (per world: `lastTab`, `hubSeenAt`, `lastAwayToastAt`, `repliesSeen`,
   `welcomeDismissed`), next to `hub-seen.json` (same world key: save folder name, "multiplayer" otherwise).
 - **DevBridge**:
-  - `dev.hud.state` gains `hudHidden`, `hubKey`, `alert{source, visible, decisions, blocked, replies, needsYou, hold,
+  - `dev.hud.state` gains `hudHidden`, `hubKey`, `alert{source, visible, decisions, blocked, replies, prs, needsYou, hold,
     holdUntil, holdMessage, text, parts[{kind, family, full, short, dots}], drawn, level: full|short|dots|null,
     layout{needed, available, overflow, x, y, w, h, guiWidth, guiHeight, guiScale}}`, `goalBar{goalId, index, open,
     more, pinned}`, `away{world, hubSeenAt, lastAwayToastAt, awaySince, awayForMs, joinPending, lastCheckAt, checking,
@@ -1010,6 +1016,21 @@ name on the screen).
   arrived as `C:/Program Files/Git/agentcraft hq`). Use `devcli cmd "agentcraft hq"`; the slash is optional.
 - A Foreman profile can only run once at a time. Parallel specialists must use their own `--profile`
   (and port).
+
+#### Layout checks at the user's setup (wave 2, stream layout)
+4K fullscreen with GUI scale auto (= 9) is **426x240 GUI px**. The dev client reproduces it exactly with `dev.window
+{width:1278, height:720}` + `dev.review.guiScale {scale:0}` (auto picks 3 there: 1278/3 x 720/3); scales 2/3/4 at the
+default 1920x1080 window give 960x540, 640x360 and 480x270. No panel layout depends on the scale value itself (it only snaps
+scrolling to physical pixels in Diff/Library, caps nameplate size, and sizes TaskScreen's title at (s+1)/s, which is
+smaller at 9 than at 3), so 3 at 1278x720 lays out like 9 at 3840x2160 (the shots are the worst case). Put the window back with `dev.window
+{width:1920, height:1080}` + `dev.review.guiScale {scale:3}`. Overflow reports: `dev.hub.state` (`tabs`, `statusTab`,
+`inboxTab.layout`, `reposTab/goalsTab/teamTab/settingsTab.layout`), `dev.hud.state alert.layout`, `dev.walk.state.ui`,
+`dev.agents.card layout`, `dev.onboarding welcomeLayout`, `dev.design.state form.layout` (`scrolls` = the left column
+scrolls). An `overflow` on a pane that scrolls (Inbox detail with `detail.flow`, Status > Keys & help) is expected.
+Small-screen rules from that pass: the decision question shrinks to 2-5 lines (tooltip with the whole text), the
+blueprint step's preview shrinks before its buttons leave the screen, the design form's left column scrolls, the
+placement/plot panels move below the crosshair with shorter key rows, toasts never stack over the hotbar or those panels,
+the agent card drops to one log row, the Buildings tab drops minor facts so its buttons stay inside the hub.
 
 #### Inbox (wave 2, stream inbox)
 The contract is docs/WAVE2.md W1-W4 (and its "As implemented: inbox stream"), the screen docs/HUB.md "Inbox"; code in

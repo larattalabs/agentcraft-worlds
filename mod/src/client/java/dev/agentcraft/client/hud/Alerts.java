@@ -23,6 +23,8 @@ public final class Alerts {
 	private static final long MAX_AGE_MS = 500;
 	private static Supplier<? extends AlertCounts> source = ForemanAlertCounts::compute;
 	private static String sourceName = "foreman-state";
+	/** Bumps when the source's counts may have changed without a Foreman revision (read marks); 0 = none. */
+	private static java.util.function.LongSupplier sourceRevision = () -> 0;
 	private static AlertLine cached = AlertLine.NONE;
 	private static long cachedRev = Long.MIN_VALUE;
 	private static long cachedAt;
@@ -32,6 +34,12 @@ public final class Alerts {
 
 	/** Replaces where the counts come from (the Inbox's model at merge). */
 	public static void setSource(String name, Supplier<? extends AlertCounts> counts) {
+		setSource(name, counts, () -> 0);
+	}
+
+	/** Like {@link #setSource(String, Supplier)}, with the source's own change counter (read marks recount at once). */
+	public static void setSource(String name, Supplier<? extends AlertCounts> counts, java.util.function.LongSupplier revision) {
+		sourceRevision = Objects.requireNonNull(revision);
 		source = Objects.requireNonNull(counts);
 		sourceName = name;
 		invalidate();
@@ -46,15 +54,15 @@ public final class Alerts {
 		cachedRev = Long.MIN_VALUE;
 	}
 
-	/** The current line (decisions, blocked, replies, hold). */
+	/** The current line (decisions, blocked, replies, PRs, hold). */
 	public static AlertLine line() {
 		ForemanState s = Foreman.state();
-		long rev = s == null ? -1 : s.revision();
+		long rev = (s == null ? -1 : s.revision()) * 31 + sourceRevision.getAsLong();
 		long now = System.currentTimeMillis();
 		if (rev != cachedRev || now - cachedAt > MAX_AGE_MS) {
 			AlertCounts c = source.get();
 			Protocol.ForemanHold h = c.hold();
-			cached = new AlertLine(c.decisions(), c.blocked(), c.replies(), h == null ? null : h.reason(), h == null ? null : h.until(),
+			cached = new AlertLine(c.decisions(), c.blocked(), c.replies(), c.prs(), h == null ? null : h.reason(), h == null ? null : h.until(),
 				h == null ? null : h.message());
 			cachedRev = rev;
 			cachedAt = now;
@@ -72,6 +80,7 @@ public final class Alerts {
 		o.addProperty("decisions", a.decisions());
 		o.addProperty("blocked", a.blocked());
 		o.addProperty("replies", a.replies());
+		o.addProperty("prs", a.prs());
 		o.addProperty("needsYou", a.needsYou());
 		o.addProperty("hold", a.holdReason());
 		o.addProperty("holdUntil", a.holdUntil());

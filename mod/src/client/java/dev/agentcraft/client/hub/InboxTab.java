@@ -674,6 +674,14 @@ final class InboxTab implements HubPane {
 		y += TOP_H;
 		h -= TOP_H;
 		needed += TOP_H;
+		// the "since you were away" digest at the top (docs/WAVE2.md W6: H after the away toast opens the Inbox)
+		HubGoals.DigestState away = HubGoals.away();
+		if (showList && away != null && !away.dismissed && (away.loading() || away.digest != null && !away.digest.goals().isEmpty())) {
+			int ah = drawAway(g, away, x, y, w, mx, my);
+			y += ah;
+			h -= ah;
+			needed += ah;
+		}
 		if (rows.isEmpty()) {
 			list.hide();
 			panel.hide();
@@ -698,6 +706,29 @@ final class InboxTab implements HubPane {
 		}
 		// the list needs room for two rows; the detail added what it needs (header, body minimum, pinned area)
 		needed = Math.max(needed, TOP_H + ROW_H * 2 + 6);
+	}
+
+	/** One row: "Since you were away (14:02): 2 goals moved · 1 needs you", click = the Goals tab (its full digest), Dismiss. */
+	private int drawAway(GuiGraphicsExtractor g, HubGoals.DigestState st, int x, int y, int w, int mx, int my) {
+		String text;
+		if (st.loading()) {
+			text = "Since you were away: asking the Foreman…";
+		} else {
+			int n = st.digest.goals().size();
+			int needs = dev.agentcraft.client.hud.Alerts.line().needsYou();
+			text = (compact ? "Away (" : "Since you were away (") + UiBits.clock(st.since) + "): " + UiBits.plural(n, "goal", "goals") + " moved"
+				+ (needs > 0 ? " · " + needs + " need" + (needs == 1 ? "s" : "") + " you" : "");
+		}
+		String goals = compact ? "Goals ›" : "See Goals ›";
+		String dis = compact ? "×" : "Dismiss";
+		int dw = hub.bw(dis);
+		int gw = font().width(goals) + 12;
+		Panels.inset(g, x, y, w - dw - 4, 20);
+		hub.button(g, "inbox_away_dismiss", dis, x + w - dw, y, dw, false, false, false, mx, my, HubGoals::dismissAway);
+		int gx = x + w - dw - 8 - gw;
+		chip(g, "away:goals", goals, gx, y + 3, false, mx, my, () -> hub.setTab(HubTab.GOALS));
+		g.text(font(), TextUtil.ellipsize(font(), text, gx - x - 10), x + 6, y + 6, UiStyle.CLAY_DARK, false);
+		return 24;
 	}
 
 	private void drawFilters(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
@@ -803,7 +834,7 @@ final class InboxTab implements HubPane {
 		int sel = cur == null ? -1 : display.indexOf(cur);
 		int ink = UiBits.ink();
 		int muted = UiBits.muted();
-		List<Row> disp = List.copyOf(display);
+		List<@Nullable Row> disp = new ArrayList<>(display); // nulls are the group headers (List.copyOf refuses them)
 		list.draw(g, x, y, w, h, disp.size(), sel, mx, my, (i, rx, ry, rw) -> {
 			Row r = disp.get(i);
 			if (r == null) {
@@ -1234,7 +1265,8 @@ final class InboxTab implements HubPane {
 		boolean inTop = toTopBar(g, btns, mx, my);
 		layoutDetail(g, tw -> {
 			Body b = new Body();
-			wrapInto(b, it.title() + ": " + InboxModel.holdText(hold, ZoneId.systemDefault()), tw, UiBits.ink());
+			String ht = InboxModel.holdText(hold, ZoneId.systemDefault()); // "usage paused until 14:20" (the title said "agents paused" again)
+			wrapInto(b, ht.isEmpty() ? it.title() : Character.toUpperCase(ht.charAt(0)) + ht.substring(1), tw, UiBits.ink());
 			for (String p : InboxModel.holdExplain(hold, ZoneId.systemDefault())) {
 				blank(b);
 				wrapInto(b, p, tw, UiBits.muted());
