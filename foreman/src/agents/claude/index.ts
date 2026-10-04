@@ -1643,7 +1643,7 @@ export class ClaudeBackend implements Backend {
         // a failed turn is an error (red); a worker that gave up is blocked
         this.fm.setAgent(job.agentId, failed ? { state: 'error', station: 'desk', activity: `${t.id}: ${this.failure(stats)}` } : { state: 'blocked', station: 'desk', activity: `${t.id} blocked` });
         this.fm.bus.send(job.agentId, this.fm.leadOfTask(t), `${t.id} is blocked: ${this.fm.tasks.get(t.id)?.blockedReason}`, { taskId: t.id });
-        this.fm.notify('warn', `${this.fm.nameOf(job.agentId)}: ${t.id} ${failed ? 'failed' : 'is blocked'} (${this.fm.tasks.get(t.id)?.blockedReason ?? ''}) - /task ${t.id} retry when ready`);
+        this.fm.notify('warn', `${this.fm.nameOf(job.agentId)}: ${t.id} ${failed ? 'failed' : 'is blocked'} (${this.fm.tasks.get(t.id)?.blockedReason ?? ''}) - when ready: Retry on the task's card (task wall, or hub Goals > Tasks), or /task ${t.id} retry`);
       }
       return;
     }
@@ -1832,7 +1832,7 @@ export class ClaudeBackend implements Backend {
     if (!a) return;
     if (this.isStopped(id)) {
       // stays unread; delivered when the user resumes the agent (deliverPending)
-      this.fm.bus.send(id, 'user', `(${this.fm.nameOf(id)} is off shift - /resume @${id} to bring them back; your message is queued.)`);
+      this.fm.bus.send(id, 'user', `(${this.fm.nameOf(id)} is off shift - bring them back with Spawn on their agent card (hub Team tab), or /resume @${id}; your message is queued.)`);
       return;
     }
     // in a turn: delivered with its next agentcraft tool result, or right after the turn ends
@@ -1878,7 +1878,7 @@ export class ClaudeBackend implements Backend {
   onGoalMessage(goal: Goal, leadId: string): void {
     if (this.isStopped(leadId)) {
       // stays unread: queued again when the lead is resumed
-      this.fm.bus.send(leadId, 'user', `(${this.fm.nameOf(leadId)} is off shift - /resume @${leadId} to bring them back; your message about ${goal.id} is queued.)`, { goalId: goal.id });
+      this.fm.bus.send(leadId, 'user', `(${this.fm.nameOf(leadId)} is off shift - bring them back with Spawn on their agent card (hub Team tab), or /resume @${leadId}; your message about ${goal.id} is queued.)`, { goalId: goal.id });
       return;
     }
     this.enqueueGoalMessage(leadId, goal.id);
