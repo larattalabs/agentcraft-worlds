@@ -296,6 +296,13 @@ backoff (about 3 s in the Phase 2 test). The model keeps the last known state wh
 (`isStale()`): agents stay in place with a dimmed "Foreman offline" plate and the HUD says
 "Reconnecting to the Foreman".
 
+Before the first connection the HUD pill reads "Foreman not running" and gives a hint from
+`hub.ConnectionHints` (pure, `ConnectionHintsTest`). In a dev run the hint is `tools/mac.mjs launch`.
+In a launcher jar it reads "it starts with the game; or run tools/foreman-daemon.sh". The auth
+banner falls back on the same split when the Foreman sends no message of its own. A jar in Prism
+gets its port and profile as `-Dagentcraft.port` / `-Dagentcraft.profile` JVM args, which
+`tools/hardcore-setup.mjs` writes (tools/README.md "Playing in a Hardcore world").
+
 **Client token** (docs/HUB.md "Client token"). `hello` carries `token` when the mod finds one, so a newer Foreman
 gives the mod a full (not read-only) connection; an older Foreman never sees the field. `ClientToken.resolve`
 (pure, `ClientTokenTest`) runs on **every connect** (a restarted Foreman has a new token): the run file whose
