@@ -1124,8 +1124,8 @@ export class RepoManager {
   }
 
   /**
-   * Protected files the branch has COMMITTED changes to since its base. Uncommitted edits are fine:
-   * AgentCraft's own commits leave protected paths out (commitAll).
+   * Protected files the branch has COMMITTED changes to since its base. Uncommitted edits are left
+   * out of AgentCraft's own commits (commitAll), but they refuse landing (protectedUncommitted).
    */
   async protectedChanges(repoId: string, worktreeId: string): Promise<string[]> {
     if (!this.protectedPaths(repoId).length) return [];
@@ -1135,6 +1135,88 @@ export class RepoManager {
     if (mb.code !== 0) return [];
     const names = await gitOut(r.path, ['diff', '--name-only', '--no-renames', mb.stdout.trim(), `refs/heads/${w.branch}`]);
     return names.split('\n').filter(Boolean).filter((f) => this.isProtected(repoId, f));
+  }
+
+  /**
+   * Protected files (repoSettings.protect) with UNCOMMITTED changes in a worktree: they never land
+   * (commitAll leaves them out), although the tests ran with them. Landing is refused while there
+   * are any (Foreman.applyMergeAnswer); `dropProtectedEdits` saves and removes them.
+   */
+  async protectedUncommitted(repoId: string, worktreeId: string): Promise<string[]> {
+    if (!this.protectedPaths(repoId).length) return [];
+    const r = this.require(repoId);
+    const w = this.findWorktree(repoId, worktreeId);
+    if (!w || w.status !== 'active' || !fs.existsSync(w.path)) return [];
+    // never run git through a worktree whose .git link was changed (commitAll refuses those anyway)
+    if (!(await this.verifyWorktreeGit(r, w)).ok) return [];
+    return (await this.statusEntries(w.path)).filter((e) => this.isProtected(repoId, e.path)).map((e) => e.path);
+  }
+
+  /** `git status` entries of a worktree (renames: the new path), untracked files included. */
+  private async statusEntries(dir: string): Promise<Array<{ code: string; path: string }>> {
+    const out = (await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { allowFail: true })).stdout;
+    const parts = out.split('\0');
+    const entries: Array<{ code: string; path: string }> = [];
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]!;
+      if (p.length < 4) continue;
+      const code = p.slice(0, 2);
+      entries.push({ code, path: p.slice(3) });
+      if (code[0] === 'R' || code[0] === 'C') i++; // the source path follows
+    }
+    return entries;
+  }
+
+  /** Where dropped protected edits are saved (next to the worktrees). */
+  get protectedEditsDir(): string {
+    return path.join(path.dirname(this.worktreeRoot), 'protected-edits');
+  }
+
+  /**
+   * Remove the uncommitted edits to protected files from a worktree, after saving them under
+   * protectedEditsDir/<label>-<time>/ (changes.patch for tracked files, files/ for new ones) so they
+   * can be applied by hand. Only paths inside the worktree are touched.
+   */
+  dropProtectedEdits(repoId: string, worktreeId: string, label: string): Promise<{ dropped: string[]; saved?: string }> {
+    return this.serial(repoId, async () => {
+      const r = this.require(repoId);
+      const w = this.requireWorktree(repoId, worktreeId);
+      if (w.status !== 'active') return { dropped: [] };
+      const v = await this.verifyWorktreeGit(r, w);
+      if (!v.ok) throw new RepoError(`${TAMPERED} ${w.id}: ${v.reason}`, 'refused');
+      const entries = (await this.statusEntries(w.path)).filter((e) => this.isProtected(repoId, e.path));
+      if (!entries.length) return { dropped: [] };
+      const dir = ensureDir(path.join(this.protectedEditsDir, `${slugify(label)}-${new Date(this.ctx.now()).toISOString().replace(/[:.]/g, '-')}`));
+      const tracked = entries.filter((e) => e.code !== '??');
+      const untracked = entries.filter((e) => e.code === '??');
+      if (tracked.length) {
+        const patch = await git(w.path, ['diff', '--binary', 'HEAD', '--', ...tracked.map((e) => e.path)], { allowFail: true });
+        fs.writeFileSync(path.join(dir, 'changes.patch'), patch.stdout);
+      }
+      for (const e of untracked) {
+        const from = path.resolve(w.path, e.path);
+        if (!isInsideOrEqual(from, w.path) || !fs.existsSync(from)) continue;
+        const to = path.join(dir, 'files', e.path);
+        ensureDir(path.dirname(to));
+        fs.cpSync(from, to, { recursive: true });
+      }
+      fs.writeFileSync(path.join(dir, 'README.txt'), `Uncommitted edits to protected files of ${r.name} (repoSettings.protect), taken out of worktree ${w.id} (${w.branch}) before landing.\nchanges.patch: git apply it in your checkout; files/: new files, copy them by hand.\n${entries.map((e) => `${e.code} ${e.path}`).join('\n')}\n`);
+      for (const e of tracked) {
+        const inHead = (await git(w.path, ['cat-file', '-e', `HEAD:${e.path}`], { allowFail: true })).code === 0;
+        if (inHead) await git(w.path, ['checkout', '-q', 'HEAD', '--', e.path], { allowFail: true });
+        else {
+          await git(w.path, ['rm', '-q', '--cached', '-f', '--', e.path], { allowFail: true });
+          const abs = path.resolve(w.path, e.path);
+          if (isInsideOrEqual(abs, w.path) && abs !== path.resolve(w.path)) fs.rmSync(abs, { force: true, recursive: true });
+        }
+      }
+      for (const e of untracked) {
+        const abs = path.resolve(w.path, e.path);
+        if (isInsideOrEqual(abs, w.path) && abs !== path.resolve(w.path)) fs.rmSync(abs, { force: true, recursive: true });
+      }
+      await this.refresh(r.id).catch(() => undefined);
+      return { dropped: entries.map((e) => e.path), saved: dir };
+    });
   }
 
   /** repoSettings.env expanded against `base` (~, $VAR, ${VAR}). */

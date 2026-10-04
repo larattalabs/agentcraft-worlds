@@ -137,6 +137,14 @@ export class DecisionQueue {
     return d;
   }
 
+  /** Replace an open decision's context (e.g. a note added after it was created). */
+  setContext(id: string, context: string): void {
+    const d = this.get(id);
+    if (!d || d.context === context) return;
+    d.context = context;
+    this.touch(d);
+  }
+
   cancel(id: string, reason?: string): Decision | undefined {
     const d = this.get(id);
     if (!d || d.status !== 'open') return d;

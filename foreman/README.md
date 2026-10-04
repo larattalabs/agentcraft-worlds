@@ -143,7 +143,12 @@ For a workspace of several repos with local-only setup, three more per-repo sett
 `baseBranch` is what agents start from and land into, whatever your checkout has checked out (the
 local branch is created from `origin/<base>` if needed). `protect` paths are never committed:
 AgentCraft's commits leave them out, editing them asks first, and a branch that commits one goes
-back to the worker before review. `env` applies to the agents' shells, setup and CI (`GIT_*` is
+back to the worker before review. An approved edit that stays uncommitted in the worktree ran with
+the tests but can never land: the merge decision lists such files and landing is refused while they
+are there. Approving shows a question next to it: "Drop them" saves them under
+`<profile>/protected-edits/<task>-<time>/` (`changes.patch` to `git apply` in your checkout, `files/`
+for new files), removes them from the worktree and runs the tests again; then approve again.
+`env` applies to the agents' shells, setup and CI (`GIT_*` is
 ignored). `CLAUDE.md` / `AGENTS.md` in the folders above a repository (a workspace holding several
 repos, up to your home folder) are read too, and that folder is readable for agents
 (`claude.context.workspaceInstructions`, default on).

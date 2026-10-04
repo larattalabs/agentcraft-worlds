@@ -651,7 +651,7 @@ export class ClaudeBackend implements Backend {
 
   /** An agent's own open question (the PR watcher's decisions to the user are not the agent's). */
   private openQuestion(agentId: string): Decision | undefined {
-    return this.fm.decisions.open().find((d) => d.kind === 'question' && d.agentId === agentId && !this.prs.owns(d.id));
+    return this.fm.decisions.open().find((d) => d.kind === 'question' && d.agentId === agentId && !this.prs.owns(d.id) && !this.fm.ownsDecision(d.id));
   }
 
   /** A job matching `pred` is queued, running or paused (waiting for /resume) for this agent. */
@@ -2310,7 +2310,7 @@ export class ClaudeBackend implements Backend {
 
   /** Withdraw an agent's open questions and permission prompts (not merge decisions: those are the user's). */
   private withdrawDecisions(agentId: string, why: string): void {
-    for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge' && !this.prs.owns(x.id))) this.fm.decisions.cancel(d.id, why);
+    for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge' && !this.prs.owns(x.id) && !this.fm.ownsDecision(x.id))) this.fm.decisions.cancel(d.id, why);
   }
 
   /**

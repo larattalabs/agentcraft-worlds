@@ -838,7 +838,88 @@ export class Foreman {
     return this.decisions.create(input);
   }
 
+  /** The note a merge decision carries while its worktree has uncommitted protected edits. */
+  private static readonly PROTECTED_NOTE = /\n*Uncommitted edits to protected files[^\n]*(\n[^\n]*)?$/;
+
+  /** A merge decision whose worktree has uncommitted edits to protected files says so (B8). */
+  private async noteProtectedEdits(d: Decision): Promise<string[]> {
+    if (d.kind !== 'merge' || !d.repoId || !d.worktree || !this.repos.get(d.repoId)) return [];
+    const files = await this.repos.protectedUncommitted(d.repoId, d.worktree).catch(() => [] as string[]);
+    const cur = this.decisions.get(d.id);
+    if (!cur || cur.status !== 'open') return files;
+    const base = (cur.context ?? '').replace(Foreman.PROTECTED_NOTE, '');
+    const note = files.length ? `Uncommitted edits to protected files: ${files.join(', ')}.\nThe tests ran with them, but they never land: landing is refused until they are dropped (a copy is kept for you).` : '';
+    this.decisions.setContext(d.id, `${base}${note ? `${base ? '\n\n' : ''}${note}` : ''}`);
+    return files;
+  }
+
+  /** Ask (once per merge) whether to drop the protected edits; the Foreman owns the answer. */
+  private askDropProtected(d: Decision, files: string[]): void {
+    const drops = (this.store.data.protectedDrops ??= {});
+    const open = Object.entries(drops).find(([id, x]) => x.mergeDecisionId === d.id && this.decisions.get(id)?.status === 'open');
+    if (open) return;
+    const q = this.decisions.create({
+      agentId: d.agentId,
+      kind: 'question',
+      question: `${d.taskId ?? d.worktree}: drop the uncommitted edits to ${files.join(', ')}? They are protected files (never committed), so they cannot land.`,
+      options: ['Drop them', 'Leave them'],
+      textAllowed: false,
+      context: `"Drop them" saves the edits under ${this.repos.protectedEditsDir} (a patch to apply by hand in your checkout), removes them from the worktree and runs the tests again; then approve the merge again. "Leave them" keeps them; the merge stays refused while they are there.`,
+      ...(d.taskId ? { taskId: d.taskId } : {}),
+      ...(d.goalId ? { goalId: d.goalId } : {}),
+    });
+    drops[q.id] = { repoId: d.repoId!, worktree: d.worktree!, mergeDecisionId: d.id, ...(d.taskId ? { taskId: d.taskId } : {}) };
+    this.store.markDirty();
+  }
+
+  /** A decision the Foreman itself asked (not an agent's question; backends leave it alone). */
+  ownsDecision(id: string): boolean {
+    return !!this.store.data.protectedDrops?.[id];
+  }
+
+  /** The user answered a protected-edits question (Foreman-owned, not an agent's). */
+  private async applyProtectedDrop(d: Decision): Promise<void> {
+    const drops = this.store.data.protectedDrops ?? {};
+    const target = drops[d.id];
+    delete drops[d.id];
+    this.store.markDirty();
+    if (!target || d.status !== 'answered') return;
+    const merge = this.decisions.get(target.mergeDecisionId);
+    if (d.answer?.option !== 'Drop them') {
+      this.bus.feed('merge', `Kept the protected edits in ${target.worktree}; landing stays refused while they are there`, { agentId: 'user', goalId: d.goalId });
+      return;
+    }
+    const res = await this.repos.dropProtectedEdits(target.repoId, target.worktree, target.taskId ?? target.worktree);
+    if (!res.dropped.length) {
+      this.bus.feed('merge', `No protected edits left in ${target.worktree}`, { agentId: 'user', goalId: d.goalId });
+    } else {
+      this.bus.feed('merge', `Dropped the edits to ${res.dropped.join(', ')} from ${target.worktree}; saved for you at ${res.saved}`, { agentId: 'user', goalId: d.goalId });
+      this.notify('info', `Protected edits saved to ${res.saved}`);
+    }
+    // the tests ran with those edits: run them again without
+    const task = target.taskId ? this.tasks.get(target.taskId) : undefined;
+    const wt = this.repos.findWorktree(target.repoId, target.worktree);
+    let tests = '';
+    if (wt && wt.status === 'active') {
+      try {
+        if (task) this.tasks.update(task.id, { ci: 'running' });
+        const ci = await this.repos.runTests(target.repoId, wt.id, this.repos.testCommand(target.repoId, wt.path, this.config.claude.ciCommand));
+        if (task) this.tasks.update(task.id, { ci: ci.pass ? 'pass' : 'fail' });
+        this.repos.setCi(target.repoId, ci.pass ? 'pass' : 'fail');
+        tests = `tests without them: ${ci.pass ? 'pass' : 'FAIL'} (${ci.command})`;
+        this.bus.feed('ci', `${task?.id ?? wt.id}: ${tests}`, { ...(task?.assignee ? { agentId: task.assignee } : {}), ...(task ? { taskId: task.id } : {}) });
+      } catch (e) {
+        this.log.warn(`tests after dropping protected edits: ${(e as Error).message}`);
+      }
+    }
+    if (merge && merge.status === 'open') {
+      const base = (merge.context ?? '').replace(/\n*Merge refused: [\s\S]*$/, '').replace(Foreman.PROTECTED_NOTE, '');
+      this.decisions.setContext(merge.id, `${base}\n\nProtected edits dropped (saved at ${res.saved ?? 'n/a'})${tests ? `; ${tests}` : ''}. Approve again to land.`);
+    }
+  }
+
   private onDecisionCreated(d: Decision): void {
+    if (d.kind === 'merge') void this.noteProtectedEdits(d).catch((e) => this.log.warn(`protected edits for ${d.id}: ${(e as Error).message}`));
     const who = this.nameOf(d.agentId);
     const label = d.kind === 'merge' ? 'merge review' : d.kind === 'permission' ? 'permission' : 'question';
     this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user', goalId: d.goalId });
@@ -877,6 +958,15 @@ export class Foreman {
     }
     const answerText = [d.answer?.option, d.answer?.text].filter(Boolean).join(' — ');
     this.bus.feed('decision', `${userName()} answered ${this.nameOf(d.agentId)}: ${answerText}`, { agentId: 'user', to: d.agentId, goalId: d.goalId });
+    if (this.store.data.protectedDrops?.[d.id]) {
+      // the Foreman's own question: never handed to the backend (it is no agent's ask_user)
+      try {
+        await this.applyProtectedDrop(d);
+      } finally {
+        this.decisions.settle(d.id);
+      }
+      return d;
+    }
     if (d.kind === 'merge') await this.applyMergeAnswer(d);
     if (d.status === 'answered' || d.status === 'cancelled') {
       this.decisions.settle(d.id);
@@ -894,6 +984,12 @@ export class Foreman {
     const option = d.answer?.option;
     if (option === 'Merge') {
       try {
+        // B8: uncommitted edits to protected files ran in CI but would not land: refuse until resolved
+        const pending = d.repoId && d.worktree ? await this.repos.protectedUncommitted(d.repoId, d.worktree) : [];
+        if (pending.length) {
+          this.askDropProtected(d, pending);
+          throw new RepoError(`uncommitted edits to protected files (${pending.join(', ')}) are in the worktree: the tests ran with them, but they would not land. Drop them (the question next to this one; a copy is kept) or take them out yourself, then approve again.`, 'refused');
+        }
         const res = await this.repos.land(
           d,
           task
