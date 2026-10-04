@@ -216,7 +216,7 @@ node tools/foremancli.mjs status --port 27878           # Foreman: backend/auth,
 node tools/foremancli.mjs diff --decision d3 --port 27878
 node tools/foremancli.mjs send user.message to=kit "text=hi there" --port 27878   # any client message, prints the ack
 node tools/shoot.mjs tools/scenes/qa.json --only qa01_exterior_hero --port 7889 --foreman 27878 --prefix wip/
-node tools/qa.mjs --port 27878 --dev-port 7889 --home C:\Projects\agentcraft\.agentcraft-home
+node tools/qa.mjs --port 27878 --dev-port 7889 --home <checkout>/.agentcraft-home
 node tools/record.mjs tools/shots/desk_story.json --port 7889 --hold 3000   # play a camera shot for OBS (shots/README.md)
 npm test --prefix tools
 ```
@@ -225,7 +225,7 @@ The Foreman serves only reads to clients without its client token. `foremancli.m
 `lib/foremanclient.mjs`, `shoot.mjs` and `qa.mjs` find the token through the Foreman's run file
 under its home: add `--home <dir>` (or set `AGENTCRAFT_HOME`) when the Foreman runs with a home
 other than `~/.agentcraft`, e.g. `node tools/foremancli.mjs send config.get --port 27878 --home
-C:\Projects\agentcraft\.agentcraft-home`. `AGENTCRAFT_CLIENT_TOKEN` overrides
+<checkout>/.agentcraft-home`. `AGENTCRAFT_CLIENT_TOKEN` overrides
 (foreman/README.md "Client token").
 
 Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.md).
@@ -241,4 +241,9 @@ Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.
 | `record.mjs`, `shots/*.json` | real-time shot player for screen recording (`dev.play`: camera paths, timed Foreman injections, typing); format in `shots/README.md` |
 | `qa.mjs`, `lib/contactsheet.mjs`, `scenes/qa.json` | QA suite, contact sheet (pngjs) |
 | `scenes/phase1.json`, `scenes/qa-selftest.json` | Phase 1 proof scene, runner self-test |
+| `mac.mjs`, `lib/macprocs.mjs`, `lib/foremanproc.mjs`, `lib/logrotate.mjs` | macOS launcher: ps parsing and run files, finding a running Foreman, log rotation |
+| `hardcore-setup.mjs`, `lib/prismcfg.mjs` | set up a Prism instance to play with AgentCraft from a stable checkout ("Playing in a Hardcore world") |
+| `foreman-daemon.sh`, `foreman-daemon.mjs`, `lib/daemonplan.mjs` | keep one Foreman running for a game launched outside a terminal (Prism's PreLaunchCommand) |
+| `blueprints/` | blueprints as code: the parametric kit, `build.mjs`, the checker (`verify.mjs`) and the offline renderer (`render.mjs`); see `blueprints/VERIFY.md` |
+| `agents-live.mjs`, `agents-typing.mjs` | live checks of the agents feature (observe agent life; the agent card's message line by keyboard) |
 | `routines-qa.mjs`, `lib/routinesqa.mjs` | village routines check against a running dev world: night rest in beds, morning return (mod/DEV.md "Village routines") |
