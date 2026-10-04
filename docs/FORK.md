@@ -109,6 +109,11 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   Config hardened (backup ~/.agentcraft/config.json.pre-audit-2026-10-03); Iris disabled in the instance.
   Open: wave 2 (Inbox/Team surface, persistent HUD alerts, away digest, badges/onboarding, 4K layout pass,
   walking routes), real-Claude shakedown, then `node tools/hardcore-setup.mjs --apply` with Prism closed.
+- **Wave 2 merged 2026-10-04 (docs/WAVE2.md):** Inbox tab + AnswerPanel, HUD alert line, away toast,
+  badges, welcome card + Keys & help, walking between buildings, in-game QA fixes and a 426x240 layout
+  pass (4K auto scale), natural-terrain dev world (`mac.mjs --world/--preset/--seed`). Open: placement
+  should level/clear the approach in front of each entrance (rough terrain makes walking fall back to
+  teleport); then the real-Claude shakedown and the Hardcore install.
 - **Next (in order):** (1) Phase 0 step 3 shakedown on the real Claude backend: a small real goal in
   agentcraft or another personal repo (parallel leads, goal threads/plan/instructions, token + guards, usage
   limits) and the first real design job; (2) work-project rollout step 2: one real goal in `prWatch: observe`,
