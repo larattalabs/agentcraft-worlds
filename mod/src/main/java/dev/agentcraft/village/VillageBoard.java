@@ -46,12 +46,19 @@ public final class VillageBoard {
 	/**
 	 * A building (never a fixture) as the board sees it.
 	 *
+	 * @param repos the repo ids (what goals and PRs match); {@code repoNames} what the row shows (the Foreman's names)
 	 * @param leadId the lead assigned to it, null when Marlow leads it (home, overflow) or leads are unknown
 	 * @param lead the lead's display name ("Marlow (home)", "no lead: Foreman offline")
 	 */
-	public record Site(String id, String name, List<String> repos, @Nullable String leadId, String lead, boolean home) {
+	public record Site(String id, String name, List<String> repos, List<String> repoNames, @Nullable String leadId, String lead, boolean home) {
 		public Site {
 			repos = List.copyOf(repos);
+			repoNames = List.copyOf(repoNames);
+		}
+
+		/** A site whose repos show by their ids. */
+		public Site(String id, String name, List<String> repos, @Nullable String leadId, String lead, boolean home) {
+			this(id, name, repos, repos, leadId, lead, home);
 		}
 	}
 
@@ -181,7 +188,7 @@ public final class VillageBoard {
 			}
 			open += po;
 			merged += pm;
-			rows.add(new Row(s.id(), s.name(), String.join(", ", s.repos()), s.leadId(), s.lead(), s.home(), active == null ? null : firstLine(active.text()),
+			rows.add(new Row(s.id(), s.name(), String.join(", ", s.repoNames()), s.leadId(), s.lead(), s.home(), active == null ? null : firstLine(active.text()),
 				active == null ? -1 : clamp01(active.progress()), more, po, pm, failing));
 		}
 		return new Content(rows, milestones(in, byRepo), in.hold(), Math.max(0, in.needsYou()), in.needsLine(), week, open, merged);
