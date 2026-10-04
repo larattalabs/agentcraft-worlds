@@ -21,7 +21,7 @@ class Cancelled extends Error {}
 
 /** The bundled blueprint a sim job copies for a request. */
 export function simSource(req: DesignRequest): string {
-  return req.kind === 'group' ? `campus${Math.min(4, Math.max(2, req.wings))}` : 'workshop';
+  return req.kind === 'group' ? `campus${Math.min(5, Math.max(2, req.wings))}` : 'workshop';
 }
 
 export class SimDesigner {

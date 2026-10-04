@@ -77,9 +77,9 @@ class DesignSpecTest {
 		assertFalse(s[0] >= 29 && s[1] >= 15 && s[2] >= 32);
 		int[] m = DesignSpec.preset("M", "single", 1);
 		assertTrue(m[0] >= 29 && m[1] >= 15 && m[2] >= 32);
-		// group M fits the bundled campus2..4 (63/77/91 x 18 x 34), which the sim copies
-		int[][] campus = {{63, 18, 34}, {77, 18, 34}, {91, 18, 34}};
-		for (int n = 2; n <= 4; n++) {
+		// group M fits the bundled campus2..5 (63/77/91/105 x 18 x 34), which the sim copies
+		int[][] campus = {{63, 18, 34}, {77, 18, 34}, {91, 18, 34}, {105, 18, 34}};
+		for (int n = 2; n <= 5; n++) {
 			int[] g = DesignSpec.preset("M", "group", n);
 			int[] c = campus[n - 2];
 			assertTrue(g[0] >= c[0] && g[1] >= c[1] && g[2] >= c[2], "M for " + n + " wings");

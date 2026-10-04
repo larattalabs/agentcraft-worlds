@@ -13,17 +13,28 @@ import { normalize, qualify, isCube } from './blocks.mjs';
 /** DataVersion of Minecraft 26.3 (version.json world_version in the 26.3 jar). */
 export const DATA_VERSION = 5023;
 
-/** Block ids (shorthand for designs). */
+/**
+ * Block ids (shorthand for designs).
+ *
+ * Materials (docs/BUILDINGS.md "Materials", contract C5): structure, floors, walls, roofs, trim and light are VANILLA
+ * blocks, so a world opened without the mod keeps its buildings (only the station blocks go missing). The names keep
+ * the AgentCraft look they stand for: plaster = smooth quartz, plaster frame = calcite, walnut = stripped dark oak
+ * log, walnut trim = dark oak planks, tile = terracotta, parquet = oak planks, glow panel = ochre froglight.
+ * AgentCraft blocks only where they are functional: monitor, task board, decision podium, console terminal, status
+ * lamp, merge station, memory archive / catalog. The checker refuses the decorative AgentCraft blocks.
+ */
 export const B = {
   air: 'minecraft:air',
-  plaster: 'agentcraft:plaster_panel',
-  plasterFrame: 'agentcraft:plaster_frame',
-  walnut: 'agentcraft:walnut_panel',
-  walnutTrim: 'agentcraft:walnut_trim',
-  tile: 'agentcraft:terracotta_tile',
-  parquet: 'agentcraft:oak_parquet',
-  glowPanel: 'agentcraft:glow_panel',
-  glowStrip: 'agentcraft:glow_strip',
+  plaster: 'minecraft:smooth_quartz',
+  plasterFrame: 'minecraft:calcite',
+  walnut: 'minecraft:stripped_dark_oak_log',
+  walnutTrim: 'minecraft:dark_oak_planks',
+  tile: 'minecraft:terracotta',
+  parquet: 'minecraft:oak_planks',
+  glowPanel: 'minecraft:ochre_froglight',
+  seaLantern: 'minecraft:sea_lantern',
+  glowStrip: 'minecraft:end_rod', // legacy name (older designs): a strip light is an end rod now
+  button: 'minecraft:stone_button',
   monitor: 'agentcraft:monitor',
   taskBoard: 'agentcraft:task_board',
   podium: 'agentcraft:decision_podium',
@@ -38,7 +49,7 @@ export const B = {
   chairStairs: 'minecraft:dark_oak_stairs',
   sofaStairs: 'minecraft:brown_wool_stairs',
   meetingStairs: 'minecraft:birch_stairs',
-  door: 'minecraft:dark_oak_door',
+  door: 'minecraft:iron_door',
   light: 'minecraft:light',
   lantern: 'minecraft:lantern',
   candle: 'minecraft:candle',
@@ -74,7 +85,10 @@ export class Blueprint {
   /**
    * @param {{id:string,name?:string,description?:string,kind?:'single'|'group',wings?:number,
    *   size:number[]|{x:number,y:number,z:number},groundY?:number,front?:string,materials?:string,
-   *   walk?:number[]|object}} o
+   *   foundationBlock?:string,walk?:number[]|object}} o
+   * `materials`: 'agentcraft' (default) = the AgentCraft look built from vanilla blocks (the B palette);
+   * 'vanilla' = any vanilla look. Both use AgentCraft blocks only for the station blocks.
+   * `foundationBlock`: the vanilla block the mod fills under the floor down to the ground on placement (contract C4).
    */
   constructor(o) {
     if (!/^[a-z0-9_]+$/.test(o.id ?? '')) throw new Error(`blueprint id must match [a-z0-9_]+ (got '${o.id}')`);
@@ -88,6 +102,7 @@ export class Blueprint {
     this.groundY = o.groundY ?? 1;
     this.front = o.front ?? 'south';
     this.materials = o.materials ?? 'agentcraft';
+    this.foundationBlock = o.foundationBlock ?? 'minecraft:stone_bricks';
     this.cells = new Map(); // "x,y,z" -> { state:{name,props}, nbt }
     this.anchors = {};
     // `origin` shifts every design coordinate (set/get/anchor/walk) so a design can be written relative to its
@@ -182,10 +197,23 @@ export class Blueprint {
   /** Glass panes over a wall rectangle (connections are computed in finalize()). */
   window(x0, y0, z0, x1, y1, z1, pane = B.pane) { return this.fill([x0, y0, z0, x1, y1, z1], pane); }
 
-  /** A two-high door in the wall cell (x,y,z); the cell above it is the door's upper half. */
-  door(x, y, z, facing, { hinge = 'left', open = false, block = B.door } = {}) {
+  /**
+   * A two-high door in the wall cell (x,y,z); the cell above it is the door's upper half. `facing` is the side
+   * the door faces (an entrance: the outside). Default: an IRON door (zombies cannot break it), written closed,
+   * with a stone button on BOTH sides at y+1 on the jamb next to it (`buttonSide` +1 = the +x / +z jamb, -1 the
+   * other). The jamb cell becomes `jamb` (a full, conductive block: the button powers it, it powers the door).
+   * `buttons: false` for a plain door (e.g. a wooden interior door: `block: 'minecraft:dark_oak_door'`).
+   */
+  door(x, y, z, facing, { hinge = 'left', open = false, block = B.door, buttons = block === 'minecraft:iron_door', buttonSide = 1, jamb = B.walnut } = {}) {
     this.set(x, y, z, block, { facing, half: 'lower', hinge, open: String(open) });
     this.set(x, y + 1, z, block, { facing, half: 'upper', hinge, open: String(open) });
+    if (buttons) {
+      const f = DIR[facing];
+      const [jx, jz] = f.dx === 0 ? [x + buttonSide, z] : [x, z + buttonSide];
+      this.set(jx, y + 1, jz, jamb);
+      this.set(jx + f.dx, y + 1, jz + f.dz, B.button, { face: 'wall', facing });
+      this.set(jx - f.dx, y + 1, jz - f.dz, B.button, { face: 'wall', facing: OPPOSITE[facing] });
+    }
     return this;
   }
 
@@ -316,16 +344,19 @@ export class Blueprint {
 
   // ------------------------------------------------------------------ lights, decor
 
-  /** glow_panel set flush (e.g. in a ceiling row). */
+  /** A flush light block (ochre froglight; e.g. in a ceiling row or a wall band). */
   glowPanel(x, y, z) { return this.set(x, y, z, B.glowPanel); }
 
-  /** glow_strip whose front faces `facing` (attached to the wall on the opposite side). */
-  glowStrip(x, y, z, facing, axis) {
-    const ax = axis ?? (facing === 'east' || facing === 'west' ? 'z' : 'x');
-    return this.set(x, y, z, B.glowStrip, { facing, axis: ax });
-  }
+  /**
+   * A small strip light: an end rod sticking out of the wall towards `facing` (light 14). Prefer a light band in
+   * a wall/header (glowPanel) or lanterns; end rods suit porches and shelves.
+   */
+  glowStrip(x, y, z, facing) { return this.set(x, y, z, 'minecraft:end_rod', { facing }); }
 
-  /** Invisible light source block (no collision). */
+  /**
+   * Invisible light source block (no collision). The checker does NOT count it as light (rooms are lit by visible
+   * sources), so only use it for effects.
+   */
   invisibleLight(x, y, z, level = 15) { return this.set(x, y, z, B.light, { level }); }
 
   plant(x, y, z) { return this.set(x, y, z, B.plant); }
@@ -337,6 +368,21 @@ export class Blueprint {
   /** A status lamp station block bound to `binding` ("ci:#1", "goal", "merge", "agent:kit"...). */
   statusLamp(x, y, z, binding, status = 'idle') {
     return this.set(x, y, z, B.statusLamp, { status }, { binding });
+  }
+
+  /**
+   * A status lamp set into a wall cell, facing `facing` (into the room). When the cell behind it is outside the
+   * building (unwritten), it gets `backing` (a small dark-oak plate), so a world without the mod has no hole in the
+   * shell (C5).
+   */
+  wallLamp(x, y, z, facing, binding, status = 'idle', { backing = B.walnutTrim } = {}) {
+    this.statusLamp(x, y, z, binding, status);
+    const f = DIR[facing];
+    const bx = x - f.dx;
+    const bz = z - f.dz;
+    // only an UNWRITTEN cell is outside (rooms are carved to explicit air): a lamp in an inner partition stays as is
+    if (!this.get(bx, y, bz) && this.inBounds(bx, y, bz)) this.set(bx, y, bz, backing);
+    return this;
   }
 
   // ------------------------------------------------------------------ anchors
@@ -406,17 +452,20 @@ export class Blueprint {
 
   /**
    * A wide task board on a wall: boards over the segment (x0,z0)-(x1,z1) (one cell thick, cells next to the
-   * wall), `height` rows high above a walnut sill, with a walnut header and posts, each cell bound
+   * wall), `height` rows high above a walnut sill, with a header and walnut posts, each cell bound
    * `repo:#<wing>`. `facing` is the direction the board faces. Anchor task_wall@<wing> = centre of the surface.
+   * The header is a light band (`light: true`, default): froglights alternating with walnut, lighting the board.
    */
-  taskWall(x0, z0, x1, z1, facing, height, wing = 1, { y = this.feet } = {}) {
+  taskWall(x0, z0, x1, z1, facing, height, wing = 1, { y = this.feet, light = true } = {}) {
     const f = DIR[facing];
     const cells = cellsOf(x0, z0, x1, z1);
-    for (const [x, z] of cells) {
+    const axis = z0 === z1 ? 'x' : 'z';
+    cells.forEach(([x, z], i) => {
       this.set(x, y, z, B.walnutTrim);
       for (let h = 1; h <= height; h++) this.set(x, y + h, z, B.taskBoard, { facing }, { binding: `repo:#${wing}` });
-      this.set(x, y + height + 1, z, B.walnut);
-    }
+      if (light && i % 2 === 0) this.set(x, y + height + 1, z, B.glowPanel, { axis });
+      else this.set(x, y + height + 1, z, B.walnutTrim);
+    });
     const alongX = z0 === z1;
     const [px, pz] = alongX ? [[Math.min(x0, x1) - 1, z0], [Math.max(x0, x1) + 1, z0]] : [[x0, Math.min(z0, z1) - 1], [x0, Math.max(z0, z1) + 1]];
     for (const [x, z] of [px, pz]) for (let h = 0; h <= height + 1; h++) this.set(x, y + h, z, B.walnut);
@@ -444,20 +493,29 @@ export class Blueprint {
     const order = [...cells.keys()].sort((a, b) => Math.abs(a - (cells.length - 1) / 2) - Math.abs(b - (cells.length - 1) / 2));
     for (const i of order) this.spot('mergestation', cells[i][0] + f.dx, cells[i][1] + f.dz, yawOf(OPPOSITE[facing]), { y });
     if (lamp) {
+      // in the wall behind the middle station block, backed on the outside (wallLamp)
       const [mx, mz] = cells[Math.floor(cells.length / 2)];
-      this.statusLamp(mx - f.dx, y + 2, mz - f.dz, 'merge', 'off');
+      this.wallLamp(mx - f.dx, y + 2, mz - f.dz, facing, 'merge', 'off');
     }
     return this;
   }
 
-  /** A console terminal block; `station` ('terminal' | 'testbench') gets a stand spot in front, facing it. */
-  console(x, z, facing, station = 'terminal', { y = this.feet, slots = 1 } = {}) {
+  /**
+   * A console terminal block; `station` ('terminal' | 'testbench') gets a stand spot in front, facing it.
+   * `wing` (group buildings): the spots are also written as per-wing anchors `<station>@<wing>`,
+   * `<station>_2@<wing>`.. (placement renames them `<station>:<repoId>`), next to the shared slots.
+   */
+  console(x, z, facing, station = 'terminal', { y = this.feet, slots = 1, wing = null } = {}) {
     const f = DIR[facing];
     const lat = { dx: -f.dz, dz: f.dx };
     this.set(x, y, z, B.console, { facing });
     for (let i = 0; i < slots; i++) {
       const off = i === 0 ? 0 : (i % 2 ? 1 : -1) * Math.ceil(i / 2);
-      this.spot(station, x + f.dx + lat.dx * off, z + f.dz + lat.dz * off, yawOf(OPPOSITE[facing]), { y });
+      const name = this.spot(station, x + f.dx + lat.dx * off, z + f.dz + lat.dz * off, yawOf(OPPOSITE[facing]), { y });
+      if (wing != null) {
+        const a = this.anchors[name];
+        this.anchors[`${i === 0 ? station : `${station}_${i + 1}`}@${wing}`] = { ...a };
+      }
     }
     return this;
   }
@@ -576,6 +634,7 @@ export class Blueprint {
       groundY: this.groundY,
       front: this.front,
       materials: this.materials,
+      foundationBlock: this.foundationBlock,
       walk: { ...this.walk },
       anchors: Object.fromEntries(Object.entries(this.anchors).map(([k, v]) => [k, { ...v }])),
     };

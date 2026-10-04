@@ -384,7 +384,7 @@ export const DesignRequest = z
     kind: z.enum(['single', 'group']).describe('single: one repo (wings must be 1); group: N repos, one wing each (wings >= 2)'),
     wings: z.number().int().min(1).max(8),
     style: DesignStyle,
-    materials: z.enum(['agentcraft', 'vanilla']).describe('agentcraft: AgentCraft blocks first; vanilla: vanilla blocks allowed freely'),
+    materials: z.enum(['agentcraft', 'vanilla']).describe('agentcraft: the AgentCraft look built from vanilla blocks; vanilla: any vanilla look (both: AgentCraft blocks only for the station blocks)'),
     features: z.array(DesignFeature).max(5),
     maxSize: SizeBox([9, 128], [6, 48], [9, 128]).describe('the largest template allowed (x/z 9..128, y 6..48), e.g. from a marked plot'),
     remix: z.string().regex(/^[a-z0-9_]+$/).optional().describe('start from this blueprint id (bundled or user)'),

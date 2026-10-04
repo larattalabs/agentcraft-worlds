@@ -116,6 +116,24 @@ function makeSpec(id, props, unknown) {
       if (props.axis === 'x') spec.boxes[0].b[0] = 0, spec.boxes[0].b[3] = 1; else if (props.axis === 'z') spec.boxes[0].b[2] = 0, spec.boxes[0].b[5] = 1;
       break;
     }
+    case 'button': { // small plate on the block it is attached to (wall: behind `facing`; floor/ceiling)
+      const f = props.facing ?? 'north';
+      const face = props.face ?? 'wall';
+      const t = 0.125;
+      const n = f === 'north' || f === 'south';
+      const [u0, u1] = [0.3125, 0.6875];
+      spec.boxes = [{ b: face === 'floor' ? (n ? [u0, 0, 0.375, u1, t, 0.625] : [0.375, 0, u0, 0.625, t, u1])
+        : face === 'ceiling' ? (n ? [u0, 1 - t, 0.375, u1, 1, 0.625] : [0.375, 1 - t, u0, 0.625, 1, u1])
+        : f === 'north' ? [u0, 0.375, 1 - t, u1, 0.625, 1] : f === 'south' ? [u0, 0.375, 0, u1, 0.625, t]
+        : f === 'west' ? [1 - t, 0.375, u0, 1, 0.625, u1] : [0, 0.375, u0, t, 0.625, u1] }];
+      break;
+    }
+    case 'rod': { // end rod along its facing axis
+      const f = props.facing ?? 'up';
+      const [a, c] = [0.4375, 0.5625];
+      spec.boxes = [{ b: f === 'up' || f === 'down' ? [a, 0, a, c, 1, c] : f === 'east' || f === 'west' ? [0, a, a, 1, c, c] : [a, a, 0, c, c, 1] }];
+      break;
+    }
     case 'potted': spec.boxes = [{ b: [0.31, 0, 0.31, 0.69, 0.375, 0.69], mat: { color: hexToRgb('#a85a3c'), alpha: 1 } }, { b: [0.22, 0.375, 0.22, 0.78, 0.85, 0.78] }]; break;
     case 'small': spec.boxes = [{ b: mat.box }]; break;
     case 'lantern': spec.boxes = [{ b: props.hanging === 'true' ? [0.3, 0.1, 0.3, 0.7, 0.6, 0.7] : [0.3, 0, 0.3, 0.7, 0.5, 0.7] }]; break;

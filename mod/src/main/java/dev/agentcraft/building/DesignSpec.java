@@ -33,8 +33,8 @@ public final class DesignSpec {
 		new Choice("custom", "Custom", "described only by your notes"));
 
 	public static final List<Choice> MATERIALS = List.of(
-		new Choice("agentcraft", "AgentCraft first", "AgentCraft blocks wherever they fit"),
-		new Choice("vanilla", "Vanilla allowed", "vanilla blocks used freely"));
+		new Choice("agentcraft", "AgentCraft look", "the AgentCraft style in vanilla blocks"),
+		new Choice("vanilla", "Any vanilla", "any vanilla look"));
 
 	public static final List<Choice> FEATURES = List.of(
 		new Choice("porch", "Porch", "a covered porch at the entrance"),

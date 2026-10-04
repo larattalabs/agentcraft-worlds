@@ -181,6 +181,14 @@ describe('sim backend design jobs', () => {
     expect(h.fm.designs.get(d.id)!.blueprintId).toBe('gen_sim_2');
   });
 
+  it('five wings copies the bundled campus5', async () => {
+    const d = h.fm.requestDesign(request(outDir, { kind: 'group', wings: 5, style: 'campus', maxSize: { x: 128, y: 48, z: 128 } }));
+    await until(() => h.fm.designs.get(d.id)!.status === 'done');
+    const sc = JSON.parse(fs.readFileSync(path.join(outDir, `${h.fm.designs.get(d.id)!.blueprintId}.blueprint.json`), 'utf8')) as Sidecar;
+    expect(sc.wings).toBe(5);
+    expect(sc.size).toEqual({ x: 105, y: 18, z: 34 });
+  });
+
   it('fails a request the bundled blueprint does not fit', async () => {
     const d = h.fm.requestDesign(request(outDir, { maxSize: { x: 20, y: 16, z: 20 } }));
     await until(() => h.fm.designs.get(d.id)!.status === 'failed');

@@ -51,10 +51,15 @@ Where they live:
   `decision_podium` are written unbound.
 - The whole `walk` region is written (interior air included) so placing a building clears it.
 - Front doors are written closed (in Hardcore an open door lets mobs in at night); agents inside a
-  building do not need to path through it, and moving between buildings teleports for now.
-- `foundationBlock` (contract C4): the vanilla block placement fills below the floor with ("Terrain fit"
-  below). Optional, default `minecraft:stone_bricks`; a bare `cobblestone` means `minecraft:cobblestone`; an
-  unknown id falls back to the default (logged, and a sidecar warning).
+  building do not need to path through it, and moving between buildings teleports for now. Every
+  outside door is a `minecraft:iron_door` (zombies cannot break it) with a `minecraft:stone_button` on
+  both sides (inside and outside), each on a full, conductive vanilla block next to the door (the
+  button powers that block, the block powers the door; a button on glass does nothing). The kit's
+  `door()` writes exactly that.
+- `foundationBlock` (contract C4): the vanilla block the mod fills below the floor row down to solid
+  ground on placement (default `minecraft:stone_bricks` when absent). Bundled: `stone_bricks` (studio,
+  campus*), `cobblestone` (workshop). Must be a full, opaque `minecraft:` block.
+  An unknown id falls back to the default (logged, and a sidecar warning).
 - `kind`: `single` (one repo) or `group` (up to `wings` repos; wing `n` is the n-th repo chosen).
 - `walk`: the walkable region (becomes the building's layout bounds after placement).
 - `anchors`: the names and meanings of `dev.agentcraft.layout.AnchorNames` (spots = feet position,
@@ -71,10 +76,30 @@ Where they live:
   Wing placeholders: `repo:#<n>` (a task wall showing wing n's repo) and `ci:#<n>` (a CI lamp)
   are rewritten to `repo:<repoId>` / `ci:<repoId>` at placement. Monitors bound to an agent id
   (`kit`) as today.
-- Materials: AgentCraft blocks first (`agentcraft:plaster_panel`, `plaster_frame`, `walnut_panel`,
-  `walnut_trim`, `terracotta_tile`, `oak_parquet`, `glow_panel`, `glow_strip`), vanilla where needed
-  (glass, doors, stairs, lights). Multi-block monitors / task boards: same block, same `facing`,
-  adjacent; store `up/down/left/right` = false (connections are recomputed after placement).
+- Materials (contract C5): structure, floors, walls, roofs, trim and light are **vanilla blocks**, so a
+  world opened without the mod keeps its buildings and only the station blocks go missing.
+  AgentCraft blocks only where they are functional: `monitor`, `task_board`, `decision_podium`,
+  `console_terminal`, `status_lamp`, `merge_station`, `memory_archive`, `memory_catalog`. The
+  decorative AgentCraft blocks (`plaster_panel`, `plaster_frame`, `walnut_panel`, `walnut_trim`,
+  `terracotta_tile`, `oak_parquet`, `glow_panel`, `glow_strip`) stay registered in the mod for old
+  worlds but are not used by blueprints (the checker refuses them). `materials: "agentcraft"` means
+  the AgentCraft look built from vanilla blocks (the kit's palette: plaster = `smooth_quartz`, plaster
+  frame = `calcite`, walnut = `stripped_dark_oak_log`, walnut trim = `dark_oak_planks`, tile =
+  `terracotta`, parquet = `oak_planks`, glow panel = `ochre_froglight`; lanterns, candles and
+  froglight bands for the rest); `"vanilla"` means any vanilla look. Multi-block monitors / task
+  boards: same block, same `facing`, adjacent; store `up/down/left/right` = false (connections are
+  recomputed after placement).
+- Shell: every functional block in or on an outer wall has a solid vanilla block behind it on the
+  outside (the kit's `wallLamp()` adds a dark-oak plate behind a wall lamp), so with every
+  `agentcraft:*` cell turned to air the outer shell has no openings.
+- Light: every walk cell an entity can stand in gets block light >= 1 from vanilla emitters alone
+  (froglights, sea lanterns, lanterns, lit candles, ...; not AgentCraft blocks, not monitors, not the
+  invisible `minecraft:light`), so nothing spawns inside at night. Roofs, porches and the attic are
+  exterior and not checked.
+- Per-wing station spots (group blueprints): `testbench@<n>` / `testbench_2@<n>` next to the shared
+  `testbench`, `testbench_2..` slots (the bundled campuses write both). Placement renames them
+  `testbench:<repoId>` like any `@<n>` anchor; routing still uses the shared slots (an agent picking
+  its wing's bench needs the client change noted under "Client (routing)").
 
 ## Buildings in a world
 
@@ -289,6 +314,10 @@ old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step).
   shown (rather than appearing at home's coordinates in the wrong level). Lookups by position
   (`Routing.siteAt/regionAt` with a dimension) never confuse two buildings at the same coordinates in two
   dimensions.
+- Per-wing stations: not yet. A placed group building has `testbench:<repoId>` anchors (from
+  `testbench@<n>`), but agents look up the shared `testbench`/`testbench_N` slots, so a repo's tester
+  may use another wing's bench. To route by wing, the client's station lookup should try
+  `<station>:<agent's repoId>` (and its `_N` slots) first, then the shared name.
 - Task walls bound `repo:<repoId>` show only that repo's tasks, titled with the repo's name; unbound show
   all (as today).
 - Off-shift agents idle in the home building. A building without the agent's desk, its station or a
@@ -337,6 +366,29 @@ explicit and reversible.
 4. Confirm runs `Buildings.place(level, bp, origin, rotation, repos, force=false)` on the integrated
    server in the player's dimension; the building id (or the refusal) comes back as a toast and HUD
    line. A refusal keeps placement mode.
+
+## Checker (tools)
+
+`tools/blueprints/lib/check.mjs` (run by `build.mjs` and by the Foreman on every design) enforces this
+contract offline: template format, palette states, sidecar fields, required anchors and their cells,
+explicit interior air, bindings, and C5:
+- decorative AgentCraft blocks are refused (with the vanilla block to use);
+- shell: the outside (padded template box above the ground row; unwritten cells there count as open)
+  is flood-filled through everything a mob could pass (air, carpet, buttons, lanterns and other small
+  blocks; not cubes, glass, panes, closed doors, slabs, stairs), once with the AgentCraft blocks and
+  once with them as air; any cell (walk, attic, cavity) reached only without them is an error naming
+  the AgentCraft block in the shell. A pass that cannot rise above `walk.maxY` finds openings in the
+  walls: walk cells it reaches are an error (a doorway without a closed door, a gap); walk cells
+  reached only from above are a warning (open to the sky: a courtyard);
+- light: vanilla block light from vanilla emitters only, -1 per step, opaque cubes stop it, glass and
+  panes pass it, slabs and stairs block it through their full faces (2x2x2 voxel faces, vanilla's
+  shape occlusion); run with AgentCraft blocks as opaque non-emitters and again as air; every walk
+  cell with no collision (air, carpet, buttons) needs level >= 1;
+  dark spots in enclosed space outside walk (an attic) where a mob could spawn are a warning;
+- doors: written closed; a door next to an outside cell is iron; every iron door has a stone button
+  on each side on a full, opaque, redstone-conductive block (not glowstone or a sea lantern) touching one of its
+  halves;
+- `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block.
 
 ## Verify loop (tools)
 

@@ -80,7 +80,7 @@ The form keeps its content across plot marking and reopening (per session).
 
 Size presets (`DesignSpec.preset`, x × y × z in the template's frame, x along the entrance side):
 single S 24×14×24, M 36×16×36, L 56×18×40; a group of N wings S (24+12N)×16×30, M (35+14N)×18×36 (the
-bundled campus2..4 fit), L (44+18N)×22×48, x capped at 128.
+bundled campus2..5 fit), L (44+18N)×22×48, x capped at 128.
 
 **Fit a plot…** closes the form and enters plot marking (`PlotMarker`, built on placement mode's look
 ray, key capture, HUD slot and renderer): look at a corner, Enter; look at the other, Enter. A
@@ -94,7 +94,8 @@ for the design it is sent with.
 - **For**: one repo (single) or N repos (group, N wings).
 - **Style preset**: `modern` (glass, plaster, flat/hip roof), `cabin` (logs, stone, gable roof),
   `townhouse` (brick, gable), `workshop` (the current workshop's look), `campus` (hall + wings).
-- **Materials**: AgentCraft-first (default) or vanilla allowed.
+- **Materials**: AgentCraft look (default: the AgentCraft style built from vanilla blocks) or any
+  vanilla look. Both keep AgentCraft blocks only for the stations (docs/BUILDINGS.md "Materials").
 - **Features** (checkboxes): porch, skylights, courtyard, big windows, garden.
 - **Size**: S / M / L, or **fit a plot**: the player marks a rectangle on the ground (placement-mode
   style: look at a corner, confirm, look at the other corner, confirm) -> max footprint x/z; max
