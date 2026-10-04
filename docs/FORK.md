@@ -95,6 +95,17 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   renderer, iterate) -> blueprint in the user folder -> reviewed as the ghost -> placed on confirm.
 - P2.10 PR watching + triage (docs/PRWATCH.md), then P2.11 a lead per building (shared worker pool).
 - P2.7 DevBridge token; then a trial in a copy of the Hardcore world; then the real one (fresh backup).
+- **Status 2026-10-03:** P2.1-P2.6 and P2.8-P2.11 code complete and tested in the dev world against
+  the sim backend (P2.7 DevBridge token done earlier); the Foreman client token + agent guards were
+  security-reviewed (GPT-6.1, two passes; the Bash guard is best effort by decision, agent-run code
+  can still read the token). Nothing has run against real Claude yet.
+- **Next (in order):** (1) Phase 0 step 3 shakedown on the real Claude backend: a small real goal in
+  agentcraft or another personal repo (parallel leads, goal threads/plan/instructions, token + guards, usage
+  limits) and the first real design job; (2) work-project rollout step 2: one real goal in `prWatch: observe`,
+  compare the lead's triage with the user's, then `on`; (3) Phase 0 steps 1-2, then the mod into
+  the Hardcore instance (fresh backup) with buildings for the registered repos; (4) polish: sunken path stones,
+  studio/campus roofs, the campus single roof, a manual check of plot marking by look+Enter,
+  re-queued goal messages after a full restart; (5) upstream PRs on the user's say-so.
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
