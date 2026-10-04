@@ -121,6 +121,10 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   the Hardcore instance (fresh backup) with buildings for the registered repos; (4) polish: sunken path stones,
   studio/campus roofs, the campus single roof, a manual check of plot marking by look+Enter,
   re-queued goal messages after a full restart; (5) upstream PRs on the user's say-so.
+- **2026-10-04:** first real-Claude run built trophies end to end (3 tasks, about 45 min, a few percent of the plan's
+  windows); `commitIdentity` (agents' commits as the user); the repo's history was rewritten to drop client and
+  personal details (upstream's signed commits kept); village features merged and QA'd in game (docs/VILLAGE.md:
+  roads, village board, beds and routines). Open: docs/README/screenshot pass, soak + Hardcore install.
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
