@@ -726,11 +726,15 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
   hudShown}}` (`ui.needed` counts the whole note, also when it is cut at the pane's bottom; `strip` = the Buildings tab's
   list switch with Place new…/Design new…; `compact` 0 = full labels, 1 = counts dropped, 2 = also "Place…"/"Design…").
 - `dev.roads.plan {a, b, fresh?}` -> the road route only `{status, length, cells, why?}`.
+- `dev.roads.blocks {x0, y0, z0, x1, y1, z1}` (QA, at most 262 144 cells) -> `{box, palette[], cells[], blockEntities}`: the overworld's
+  block states read on the integrated server (palette index per cell, x fastest, then z, then y). Dump a road's box before laying and
+  after removing it and compare: an exact restore is 0 differing cells (vanilla `/execute if blocks` is capped at 32 768 cells and a
+  `/clone` copy settles differently: water, falling blocks, leaves).
 - `dev.roads.preview {a, b, width?, lanterns?, bridge?}` plans the route and shows the ghost (closes screens; Enter lays,
   Esc cancels); `{cancel:true}` hides it. Replies with the client's plan (what the server will do unless the world changes).
 - `dev.roads.lay {a?, b?, width?, lanterns?, bridge?}`: lays through the integrated server (it checks and plans again);
   without `a`/`b` the shown preview (= Enter). `{ok, roadId, message}`; a refusal is `ok:false` with the reason.
-- `dev.roads.remove {id, forget?}`: Remove road (cells still as the road left them get their old blocks back); `forget`
+- `dev.roads.remove {road, forget?}` (`road` = the road id; `id` is the request id the bridge reserves): Remove road (cells still as the road left them get their old blocks back); `forget`
   drops the record and leaves the blocks.
 - Hub: `dev.hub.open {tab:"buildings", sub:"roads", roadRow:"pair:b1|b2"}` (or `road:r2`); buttons `road_width`,
   `road_lanterns`, `road_bridge`, `road_lay`, `road_plan`, `road_remove` (press twice), `road_keep`;
