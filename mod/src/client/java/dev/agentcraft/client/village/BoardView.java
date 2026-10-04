@@ -156,7 +156,8 @@ final class BoardView {
 			cardTexts.add(new Text(TextUtil.ellipsize(font, name, (int) (tw - prw - (prw > 0 ? 6 : 0))), tx, y + 3, ink));
 			// line 2: lead portrait + name, then the repos
 			float lx = tx;
-			Identifier face = r.leadId() == null ? portrait("marlow") : portrait(r.leadId());
+			// Marlow leads a building without its own lead; offline nobody does ("no lead: Foreman offline"): no face then
+			Identifier face = offline ? null : r.leadId() == null ? portrait("marlow") : portrait(r.leadId());
 			if (face != null) {
 				pics.add(new Pic(face, lx, y + 11.5f, 8, false));
 				lx += 10;

@@ -888,8 +888,9 @@ public final class HubScreen extends Screen {
 		for (Sub s : Sub.values()) {
 			subsW += bw(subLabel(s, bs, fs, bps, ds)) + 4;
 		}
-		if (sub == Sub.FIXTURES && subsW + bw(right) > w) {
-			right = "Place board…";
+		if (subsW + bw(right) > w) {
+			// 426x240 with two-digit counts: the right-hand button gives up words before it overlaps the sub switch
+			right = sub == Sub.DESIGNS ? "Design…" : sub == Sub.FIXTURES ? "Place board…" : "Place…";
 		}
 		// sub switch (left) and Place new / Design new (right)
 		int sx = x;
@@ -903,14 +904,12 @@ public final class HubScreen extends Screen {
 			sx += sw + 4;
 		}
 		if (sub == Sub.DESIGNS) {
-			String dn = "Design new…";
-			button(g, "design_new", dn, x + w - bw(dn), y, bw(dn), true, HubFeature.designNew == null, false, mx, my, this::designNew);
+			button(g, "design_new", right, x + w - bw(right), y, bw(right), true, HubFeature.designNew == null, false, mx, my, this::designNew);
 		} else if (sub == Sub.FIXTURES) {
 			boolean can = minecraft.getSingleplayerServer() != null && Blueprints.get(dev.agentcraft.client.village.VillageBoardFeature.BLUEPRINT) != null;
 			button(g, "place_board", right, x + w - bw(right), y, bw(right), true, !can, false, mx, my, this::placeVillageBoard);
 		} else {
-			String place = "Place new…";
-			button(g, "place_new", place, x + w - bw(place), y, bw(place), true, minecraft.getSingleplayerServer() == null, false, mx, my,
+			button(g, "place_new", right, x + w - bw(right), y, bw(right), true, minecraft.getSingleplayerServer() == null, false, mx, my,
 				this::placeNew);
 		}
 		y += 26;

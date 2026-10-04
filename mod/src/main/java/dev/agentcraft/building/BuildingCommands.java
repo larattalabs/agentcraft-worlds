@@ -73,6 +73,7 @@ public final class BuildingCommands {
 						Blueprints.ids().forEach(b::suggest);
 						return b.buildFuture();
 					})
+					.executes(BuildingCommands::place) // a fixture needs no further arguments
 					.then(Commands.argument("args", StringArgumentType.greedyString())
 						.executes(BuildingCommands::place))))
 			.then(Commands.literal("remove")
@@ -151,7 +152,17 @@ public final class BuildingCommands {
 			src.sendFailure(Component.literal("Unknown blueprint '" + bpId + "' (known: " + Blueprints.ids() + ")"));
 			return 0;
 		}
-		String[] tokens = StringArgumentType.getString(ctx, "args").trim().split("\\s+");
+		String args;
+		try {
+			args = StringArgumentType.getString(ctx, "args").trim();
+		} catch (IllegalArgumentException none) {
+			args = ""; // "/agentcraft place <blueprint>" alone
+		}
+		if (args.isEmpty() && !bp.isFixture()) {
+			src.sendFailure(Component.literal("Name the repo(s): /agentcraft place " + bpId + " <repo>[,<repo>...] [rotation] [force]"));
+			return 0;
+		}
+		String[] tokens = args.isEmpty() ? new String[] {"-"} : args.split("\\s+");
 		// a fixture (village board) takes no repos: "/agentcraft place village_board - [rotation] [force]" (or no "-")
 		boolean noRepos = bp.isFixture() && (tokens[0].equals("-") || tokens[0].equalsIgnoreCase("none"));
 		List<String> repos = bp.isFixture() ? List.of() : BlueprintTransform.parseRepos(tokens[0]);

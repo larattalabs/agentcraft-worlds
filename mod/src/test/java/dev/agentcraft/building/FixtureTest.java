@@ -79,6 +79,47 @@ class FixtureTest {
 		assertFalse(b.toJson().has("kind"));
 	}
 
+	static Building rec(String id, boolean fixture, boolean home) {
+		Anchors.Bounds box = new Anchors.Bounds(0, 64, 0, 6, 69, 3);
+		return new Building(id, fixture ? "village_board" : "workshop", fixture ? List.of() : List.of("repo-" + id), home, "none", box, box, Map.of(), 1L,
+			Building.OVERWORLD);
+	}
+
+	static Map<String, Building> map(Building... bs) {
+		Map<String, Building> m = new java.util.LinkedHashMap<>();
+		for (Building b : bs) {
+			m.put(b.id(), b);
+		}
+		return m;
+	}
+
+	@Test
+	void aFixtureIsNeverHome() {
+		// placed first: the next building is still the first one (place() uses noBuilding)
+		assertTrue(Buildings.noBuilding(map()));
+		assertTrue(Buildings.noBuilding(map(rec("b1", true, false))));
+		assertFalse(Buildings.noBuilding(map(rec("b1", true, false), rec("b2", false, true))));
+		// the home building removed with only a fixture left: no home at all
+		Map<String, Building> m = map(rec("b1", true, false));
+		Buildings.rehome(m, rec("b2", false, true));
+		assertFalse(m.get("b1").home());
+		// ... with a building after the fixture: that building
+		m = map(rec("b1", true, false), rec("b3", false, false));
+		Buildings.rehome(m, rec("b2", false, true));
+		assertFalse(m.get("b1").home());
+		assertTrue(m.get("b3").home());
+		// a file whose fixture says home: cleared, the first building becomes home
+		m = map(rec("b1", true, true), rec("b2", false, false), rec("b3", false, false));
+		Buildings.normalizeHome(m);
+		assertFalse(m.get("b1").home());
+		assertTrue(m.get("b2").home());
+		assertFalse(m.get("b3").home());
+		// only fixtures: nobody is home
+		m = map(rec("b1", true, true));
+		Buildings.normalizeHome(m);
+		assertFalse(m.get("b1").home());
+	}
+
 	@Test
 	void ghostRefusalsForAFixture() {
 		assertEquals(List.of(), GhostModel.refusals(true, List.of(), 0, List.of(), 60, 70, -64, 319, List.of(), 0, false));

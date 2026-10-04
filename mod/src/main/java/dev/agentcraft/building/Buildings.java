@@ -332,7 +332,7 @@ public final class Buildings {
 	}
 
 	/** True when {@code map} holds no building (fixtures do not count): the next building placed becomes home. */
-	private static boolean noBuilding(Map<String, Building> map) {
+	static boolean noBuilding(Map<String, Building> map) {
 		return map.values().stream().allMatch(Building::isFixture);
 	}
 
@@ -799,14 +799,25 @@ public final class Buildings {
 	}
 
 	/** After {@code gone} left {@code map}: when it was home, the first remaining building becomes home. */
-	private static void rehome(Map<String, Building> map, Building gone) {
+	static void rehome(Map<String, Building> map, Building gone) {
 		if (gone.home()) {
 			homeFirst(map);
 		}
 	}
 
+	/**
+	 * A loaded file's home rule: a fixture is never home (a file edited by hand could say so), and without a home the first
+	 * building (never a fixture) becomes home.
+	 */
+	static void normalizeHome(Map<String, Building> map) {
+		map.replaceAll((k, v) -> v.isFixture() && v.home() ? v.withHome(false) : v);
+		if (map.values().stream().noneMatch(Building::home)) {
+			homeFirst(map);
+		}
+	}
+
 	/** Makes the first building (never a fixture) of {@code map} home; nothing when there is none. */
-	private static void homeFirst(Map<String, Building> map) {
+	static void homeFirst(Map<String, Building> map) {
 		for (var e : map.entrySet()) {
 			if (!e.getValue().isFixture()) {
 				e.setValue(e.getValue().withHome(true));
@@ -1556,11 +1567,7 @@ public final class Buildings {
 			for (Building b : data.buildings()) {
 				map.put(b.id(), b);
 			}
-			// a fixture is never home (a file edited by hand could say so)
-			map.replaceAll((k, v) -> v.isFixture() && v.home() ? v.withHome(false) : v);
-			if (map.values().stream().noneMatch(Building::home)) {
-				homeFirst(map);
-			}
+			normalizeHome(map);
 			state = new State(Collections.unmodifiableMap(map), data.next(), data.pending());
 			AgentCraft.LOGGER.info("Loaded {} building(s) {}{}", map.size(), map.keySet(), data.pending().isEmpty() ? ""
 				: "; " + data.pending().size() + " site(s) taken down before the last save");

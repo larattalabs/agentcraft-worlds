@@ -64,7 +64,7 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
 - A fixture is never home (place, rehome, load and reconcile skip it), refuses Make home and Edit repos, and takes no repos
   (`place` refuses any; `move` skips the repo checks). One building per repo is untouched.
 - Placing: hub > Buildings > **Fixtures** > **Place village board…** (compact "Place board…"), a fixture blueprint's **Place**
-  in the Blueprints list, `/agentcraft place village_board [-] [rotation] [force]`, or `dev.build.start {blueprint:
+  in the Blueprints list, `/agentcraft place village_board [-] [rotation] [force]` (or just `/agentcraft place village_board`), or `dev.build.start {blueprint:
   "village_board"}` (no repos). The ghost and the HUD say "Placing Village board" (no "for"); the ghost's overlap check covers
   buildings and fixtures (`GhostModel.refusals(fixture, ...)`). The repo and blueprint wizard steps never offer fixtures.
 

@@ -154,7 +154,7 @@ public final class VillageBoardFeature {
 		long t0 = System.nanoTime();
 		BoardView v = VIEWS.computeIfAbsent(origin.immutable(), BoardView::new);
 		v.lastUsedNanos = t0;
-		if (v.sync(content(), w, h, forcedPage, densityOverride, !Foreman.connected(), System.currentTimeMillis())) {
+		if (v.sync(content(), w, h, forcedPage, densityOverride, offline(), System.currentTimeMillis())) {
 			DisplayStats.rebuilt(DisplayStats.Kind.BOARD);
 		}
 		DisplayStats.add(DisplayStats.Kind.BOARD, System.nanoTime() - t0);
@@ -186,6 +186,11 @@ public final class VillageBoardFeature {
 		return content;
 	}
 
+	/** The link is down (or was never up): the rows stay, without leads; the header says so. */
+	static boolean offline() {
+		return !Foreman.connected();
+	}
+
 	static VillageBoard.Input input(@Nullable ForemanState st, long now) {
 		ZoneId zone = ZoneId.systemDefault();
 		List<VillageBoard.Site> sites = new ArrayList<>();
@@ -214,8 +219,9 @@ public final class VillageBoardFeature {
 			for (Protocol.Task t : st.tasks().values()) {
 				ti.add(TrophyFeature.taskIn(t));
 				Protocol.TaskPr pr = t.pr();
-				String repo = t.repoId() != null ? t.repoId() : t.goalId() == null ? null : goalRepos.get(t.goalId());
-				if (pr != null && repo != null) {
+				// the PR's repo as the trophies take it (TrophyEvents): the task's, else (missing or blank) its goal's
+				String repo = t.repoId() != null && !t.repoId().isBlank() ? t.repoId() : t.goalId() == null ? null : goalRepos.get(t.goalId());
+				if (pr != null && repo != null && !repo.isBlank()) {
 					prs.add(new VillageBoard.Pr(repo, Integer.toString(pr.id()), pr.isOpen(), "merged".equals(pr.status()),
 						pr.updatedAt() > 0 ? pr.updatedAt() : t.updatedAt(), "failing".equals(pr.checks())));
 				}
