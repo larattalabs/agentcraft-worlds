@@ -20,7 +20,7 @@ import org.jspecify.annotations.Nullable;
  * chunks and found nothing reports {@link Status#UNLOADED} (the caller teleports instead).
  *
  * <p>The cell path is string-pulled (line of sight on one level, the agent's 0.6 width) into straight
- * segments, also incrementally, at most {@link Limits#smoothAhead} cells per segment.
+ * segments, also incrementally: from each point the farthest point within {@link Limits#smoothAhead} in plain sight.
  */
 public final class OutdoorPlanner {
 	/** The outcome so far. Everything but {@link #RUNNING} is final. */
@@ -278,7 +278,9 @@ public final class OutdoorPlanner {
 					smoothOne();
 				}
 				work++;
-				if ((work & 31) == 0 && System.nanoTime() >= deadlineNanos) {
+				// a smoothing unit tries up to smoothAhead line-of-sight checks (hundreds of lookups): check the clock
+				// after each; expansions are cheap, so every 32
+				if ((phase == 2 || (work & 31) == 0) && System.nanoTime() >= deadlineNanos) {
 					break;
 				}
 			}
@@ -535,9 +537,14 @@ public final class OutdoorPlanner {
 			status = Status.FOUND;
 			return;
 		}
+		// the farthest point within smoothAhead in plain sight, tried from the far end down: one check on a long straight
+		// stretch instead of re-checking the growing segment for every point (that was quadratic: ~10 ms in one tick)
 		int j = si + 1;
-		while (j + 1 <= last && j + 1 - si <= limits.smoothAhead() && clear(raw.get(si), raw.get(j + 1))) {
-			j++;
+		for (int k = Math.min(last, si + limits.smoothAhead()); k > si + 1; k--) {
+			if (clear(raw.get(si), raw.get(k))) {
+				j = k;
+				break;
+			}
 		}
 		smooth.add(raw.get(j));
 		si = j;
