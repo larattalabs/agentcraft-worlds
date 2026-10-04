@@ -351,11 +351,29 @@ public final class Protocol {
 	/** {@code restartRequired}: config keys written but waiting for a Foreman restart (Settings tab); null on an older Foreman. */
 	public record ForemanStatus(String version, BackendName backend, AuthStatus auth, @Nullable String message, @Nullable String account,
 		@Nullable Double speed, @Nullable Boolean showcase, @Nullable Double costUsd, @Nullable String userName, @Nullable PlanUsage usage,
-		@Nullable List<String> restartRequired) {
+		@Nullable List<String> restartRequired, @Nullable ForemanHold hold) {
 		public ForemanStatus {
 			version = version == null ? "?" : version;
 			backend = backend == null ? BackendName.UNKNOWN : backend;
 			auth = auth == null ? AuthStatus.UNKNOWN : auth;
+		}
+	}
+
+	/**
+	 * Contract C9 (docs/FIXWAVE.md): the backend holds new agent turns. {@code reason} usage|auth|offline (kept as a string),
+	 * {@code until} when it is expected to lift (usage: the window resets; offline: the next retry), {@code message} one line.
+	 */
+	public record ForemanHold(String reason, @Nullable Long until, String message) {
+		public ForemanHold {
+			reason = reason == null ? "unknown" : reason;
+			message = message == null ? "" : message;
+		}
+	}
+
+	/** The {@code agent.logs.request} ack's result (W3, docs/WAVE2.md): a page of the stored log, oldest first; {@code more} = older ones exist. */
+	public record LogPage(String agentId, List<LogEntry> entries, boolean more) {
+		public LogPage {
+			entries = entries == null ? List.of() : List.copyOf(entries);
 		}
 	}
 

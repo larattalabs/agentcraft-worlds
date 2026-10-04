@@ -581,7 +581,7 @@ export const HelloMsg = z.object({
   modVersion: z.string(),
   protocol: z.literal(PROTOCOL_VERSION),
   client: z.string().optional().describe('"mod" | "cli" | ... (informational)'),
-  token: z.string().optional().describe('the client token: the contents of the file the run file names in `tokenFile` (`<dataDir>/client.token`, new on every Foreman start). Without a valid token the connection is read-only: snapshot and events, and only `hello`, `diff.request` and `goal.digest`; every other message is refused (`ack.ok` false, "read-only connection: no client token")'),
+  token: z.string().optional().describe('the client token: the contents of the file the run file names in `tokenFile` (`<dataDir>/client.token`, new on every Foreman start). Without a valid token the connection is read-only: snapshot and events, and only `hello`, `diff.request`, `goal.digest` and `agent.logs.request`; every other message is refused (`ack.ok` false, "read-only connection: no client token")'),
 });
 export const GoalSubmitMsg = z.object({
   ...envelope('goal.submit'),
@@ -667,6 +667,12 @@ export const ConfigSetMsg = z.object({
 });
 export const ForemanRestartMsg = z.object({ ...envelope('foreman.restart') });
 export const RepoAgentsMsg = z.object({ ...envelope('repo.agents'), repoId: Id });
+export const AgentLogsRequestMsg = z.object({
+  ...envelope('agent.logs.request'),
+  agentId: Id,
+  before: Ts.optional().describe('only entries older than this (the `ts` of the oldest entry the client has); omitted = the newest'),
+  limit: z.number().int().min(1).max(500).optional().describe('at most this many entries (default 200); entries sharing the oldest one\'s `ts` are never split, so a page can be slightly longer'),
+});
 
 export const ClientMessage = z.discriminatedUnion('type', [
   HelloMsg,
@@ -694,6 +700,7 @@ export const ClientMessage = z.discriminatedUnion('type', [
   ConfigSetMsg,
   ForemanRestartMsg,
   RepoAgentsMsg,
+  AgentLogsRequestMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -784,6 +791,7 @@ export const CLIENT_MESSAGES = {
   'config.get': { schema: ConfigGetMsg, doc: 'The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository\'s repoSettings. Never contains secret values (environment values, tokens, MCP server env or arguments).' },
   'config.set': { schema: ConfigSetMsg, doc: 'Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo\'s path as config.json spells it, else its absolute path>]`.' },
   'foreman.restart': { schema: ForemanRestartMsg, doc: 'Restart the Foreman with the same arguments, environment and working directory (except `--reset`, `--goal` and `--autostart`). Acked with `{}` first; then the server closes (clients see the connection drop and reconnect), running turns are interrupted and resumed on start (`resumeOnStart`), and a new Foreman process (new pid, new client token: read the run file again) takes over the same port.' },
+  'agent.logs.request': { schema: AgentLogsRequestMsg, doc: 'Older entries of an agent\'s log (the full history the Foreman stored, across one rotation: `logs/<agent>.jsonl` and `<agent>.1.jsonl`), for a scrollable log view; read-only (allowed without the client token). Acked with `{agentId, entries: LogEntry[], more}`: `entries` oldest first, all older than `before`; `more` = older entries exist (ask again with `before` = the first entry\'s `ts`). An unknown agent is refused.' },
   'repo.agents': { schema: RepoAgentsMsg, doc: 'The repository\'s Claude Code agent files (`.claude/agents/*.md` in its checkout), for the roles picker. Acked with `{agents: [{id, name, path, description?, model?}]}`: `id` is the file name without `.md` (the value to store in `roles.<agent>`), `name` the front matter name (else the id), `path` repo-relative.' },
   'lead.sync': { schema: LeadSyncMsg, doc: 'Sent by the mod on connect for its world: every `"<world>/..."` building not in the list is released first, then each listed building is assigned (as `lead.assign`). Acked with `{leads}` (building -> lead id). Also records the world\'s `lastSync`.' },
   'lead.releaseWorld': { schema: LeadReleaseWorldMsg, doc: 'Release every lead held by buildings of another world (hub Team tab "Release" next to a world in `leads.update` that is not the current one). Acked with `{released: [leadId]}`; their open goals move to marlow as with `lead.release`. Worlds that have not synced for `claude.leadWorldTtlDays` (default 14; 0 = never) are released automatically at start and daily.' },

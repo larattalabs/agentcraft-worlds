@@ -110,8 +110,13 @@ describe('WebSocket server with a client token', () => {
       // read-only requests still work
       c.send({ type: 'goal.digest', id: 'dg', since: 0 });
       c.send({ type: 'diff.request', id: 'df', requestId: 'r1', repoId: 'nope', worktree: 'x' });
-      await until(() => !!ackOf(c.msgs, 'dg') && !!ackOf(c.msgs, 'df'));
+      c.send({ type: 'agent.logs.request', id: 'lg', agentId: 'kit', limit: 5 });
+      await until(() => !!ackOf(c.msgs, 'dg') && !!ackOf(c.msgs, 'df') && !!ackOf(c.msgs, 'lg'));
       expect(ackOf(c.msgs, 'dg')!.ok).toBe(true);
+      expect(ackOf(c.msgs, 'lg')).toMatchObject({ ok: true, result: { agentId: 'kit', more: false } });
+      c.send({ type: 'agent.logs.request', id: 'lg2', agentId: 'nobody' });
+      await until(() => !!ackOf(c.msgs, 'lg2'));
+      expect(ackOf(c.msgs, 'lg2')).toMatchObject({ ok: false, error: 'no agent named "nobody"' });
       expect(c.msgs.some((m) => m.type === 'diff' && m.requestId === 'r1')).toBe(true);
       // anything that changes something is refused
       for (const [id, msg] of [

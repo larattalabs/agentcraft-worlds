@@ -10,9 +10,9 @@ Shots: `tools/scenes/console.json` (showcase busy state).
 | --- | --- |
 | `` ` `` (Backtick) | open the console (again with an empty input: close it) |
 | `Enter` while looking at a console terminal | open the console (a right-click on the terminal does too) |
-| `J` | open the decision queue (a right-click on the Decision Podium does too) |
+| `J` | open the decision queue (the fast path; a right-click on the Decision Podium opens the hub Inbox on that podium's decisions) |
 | (unbound) | open the building wizard (docs/BUILDINGS.md "Wizard"); bind it in Options > Controls, the hub's "Place new…" opens it too |
-| `H` | open the hub (docs/HUB.md): buildings, blueprints, designs, status |
+| `H` | open the hub (docs/HUB.md): inbox, buildings, blueprints, designs, status |
 
 In singleplayer every AgentCraft screen pauses the game like a vanilla menu (contract C6); dev runs
 (`gradlew runClient`) and clients with the DevBridge on keep the world running (`AGENTCRAFT_PAUSE=0|1`
@@ -42,7 +42,8 @@ back the next time it opens (this session), and the console terminal shows it on
 | `/task <id> cancel\|retry\|prioritize [n]\|reassign @x` | `task.action` |
 | `/diff [worktree\|@agent\|task]` | opens the diff screen (`diff`, owned by the diff feature); without one, prints a file summary from `diff.request` |
 | `/status`, `/help`, `/decide`, `/clear`, `/sound on\|off` | local |
-| `/hub [buildings\|repos\|goals\|team\|settings\|status]` | opens the hub at that tab (default Buildings; 3+ letters are enough, Tab completes) |
+| `/hub [inbox\|buildings\|repos\|goals\|team\|settings\|status]` | opens the hub at that tab (default Buildings; 3+ letters are enough, Tab completes) |
+| `/inbox [@agent]` (also `/i`) | opens the hub Inbox (docs/HUB.md "Inbox"); with an agent, that agent's view: its card summary, its items and its full log |
 | `/hub design` | opens the hub's design form (Buildings -> Design new…; docs/HUB.md "Generated buildings") |
 
 Tab completes agent names (also after `/pause` etc.), commands, decision ids and options, task ids

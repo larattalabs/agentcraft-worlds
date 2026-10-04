@@ -51,3 +51,34 @@ never misses what needs them, finds their way without docs, and the village feel
   and invalidated by block changes near them. Walking agents keep their nameplate/state; at night they
   still walk (they cannot be hurt). A per-world setting (Settings > General or hub Buildings) can turn
   walking off.
+
+## As implemented: inbox stream (branch `wave2/inbox`)
+
+API for the **hud** stream (client thread; all pure parts unit-tested in `InboxModelTest`):
+- `dev.agentcraft.client.hub.Inbox.counts()` -> `dev.agentcraft.hub.InboxModel.Counts` record
+  `(int decisions, int blocked, int replies, int prs, @Nullable InboxModel.Hold hold)`:
+  - `decisions`: open decisions not being answered from this client; `blocked`: blocked tasks;
+    `replies`: **unread** agent replies; `prs`: PRs needing attention; `hold`: `foreman.status.hold` (C9) or null.
+  - `needsYou()` = the sum (+1 while a hold is on) = the Inbox's "Needs you" group size = the hub tab badge.
+  - `parts(ZoneId)` -> the W5 line parts, each only when non-zero, in order: "2 decisions", "1 blocked",
+    "3 replies", "1 PR", "usage paused until 14:20" (`InboxModel.holdText`); `line(ZoneId)` joins them with " · ".
+- `Inbox.open(@Nullable String filter)` opens the hub on the Inbox (`filter`: `all` | `needs_you` |
+  `building:<id>` | `agent:<id>` | `podium:<buildingId|home>`; null keeps the last); returns the `HubScreen`.
+  `Inbox.openAgent(agentId)`, `Inbox.openPodium(@Nullable buildingId)`, `Inbox.openItem(key)`.
+- `Inbox.markAgentSeen(agentId)`: the agent card marks that agent's replies read (called by AgentCardScreen).
+- `Inbox.revision()`: bumps whenever counts may have changed (cheap change check for a HUD line).
+- `HubTab.INBOX` is the first tab (order: Inbox, Buildings, Repos, Goals, Team, Settings, Status). `H` and
+  `HubFeature.open(null)` still open Buildings (the hud stream owns W6, "H opens the Inbox when away").
+- Read state: `hub-seen.json` worlds gain `"inbox": {"all": ts, "items": {key: ts}, "agents": {id: ts}}`
+  (version 2; version 1 files load unchanged). A reply is read when its ts <= the newest of: Mark all read, its
+  own mark (viewed in the Inbox), its agent's mark (agent card), its goal's own mark (opened in the goal thread).
+- W2 `client/decisions/AnswerPanel` (Host + Options): `Options.SCREEN` (DecisionScreen: numbered, Review diff, **no merge
+  confirm**: 1-9 behind the 350 ms arm as before, so `J` behaves exactly as in wave 1), `Options.EMBEDDED` (Inbox, goal
+  thread: Merge and Reject ask twice), the card uses `(confirmMerge, diff, no numbers, 2 lines)`. Held-key / OS-repeat
+  detection stays in each host. The goal thread keeps its hub button ids (`answer:<id>:<opt|text|open>`).
+- W3 Foreman: `agent.logs.request {agentId, before?, limit? (1..500, default 200)}` -> ack `{agentId, entries, more}`,
+  read backwards through `logs/<agent>.jsonl` then `<agent>.1.jsonl`; entries sharing the oldest entry's `ts` are never
+  split across pages (page by `before = entries[0].ts`); unknown agent refused; allowed without the client token.
+- W4: podium right-click -> `Inbox.openPodium(building)` (`dev.decision {podium}` follows the right-click; `screen:true`
+  keeps the old scoped DecisionScreen); monitor right-click -> `Inbox.openAgent` (feed monitor: the Inbox); `/inbox
+  [@agent]`. Task board cards still open the TaskScreen.

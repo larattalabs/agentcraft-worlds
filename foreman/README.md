@@ -488,7 +488,7 @@ pool every lead assigns from.
 included. So every start writes a new random token to `<home>/<profile>/client.token` (mode 0600)
 and names it in the run file (`foreman.json`, field `tokenFile`). A client that sends it in
 `hello` (`token`) may do everything; any other connection is **read-only**: it gets the snapshot
-and the events and may send `hello`, `diff.request` and `goal.digest`; everything else is refused
+and the events and may send `hello`, `diff.request`, `goal.digest` and `agent.logs.request`; everything else is refused
 (`ack.ok: false`, "read-only connection: no client token"). Tokens are compared in constant time,
 never logged, and the file is removed on a clean exit. The mod reads the run file;
 `tools/foremancli.mjs`, the tools' `ForemanClient`, `npm run tui`, `qa.mjs` and `shoot.mjs` find it
@@ -686,7 +686,9 @@ spawns git with an empty environment); the policy refuses every command it can s
   foreman.json           pid/port of the Foreman running this profile, and tokenFile
   client.token           the client token (0600, new on every start, removed on exit)
   logs/<agent>.jsonl     agent logs (snapshots carry the last 60 lines per agent); rotated at 8 MB
-                         into <agent>.1.jsonl (one old file kept); start-up reads only their ends
+                         into <agent>.1.jsonl (one old file kept); start-up reads only their ends;
+                         `agent.logs.request {agentId, before?, limit?}` pages back through both (read-only;
+                         lines newer than `before` are skipped by their `{"ts":N` prefix, unparsed)
   memory/shared/*.md     shared notes (hand-editable)
   memory/agents/<id>/*.md
   worktrees/<repo>/<agent>-<task>/

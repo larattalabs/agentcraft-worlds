@@ -8,6 +8,7 @@ import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.building.Building;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.console.TextKeys;
+import dev.agentcraft.client.decisions.AnswerPanel;
 import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.diff.ReviewKit;
 import dev.agentcraft.client.foreman.Foreman;
@@ -71,8 +72,8 @@ final class GoalsTab implements HubPane {
 		}
 	}
 
-	/** Option keys / clicks on a decision are ignored this long after it shows up (the decision screen's ARM_MS). */
-	static final long ARM_MS = 350;
+	/** Option clicks on a decision are ignored this long after it shows up ({@link AnswerPanel#ARM_MS}). */
+	static final long ARM_MS = AnswerPanel.ARM_MS;
 	static final long CONFIRM_MS = 6000;
 	private static final int TOP_H = 24;
 
@@ -101,9 +102,10 @@ final class GoalsTab implements HubPane {
 	private int instrEditing = -1;
 	private @Nullable String armedCancel;
 	private long armedAt;
-	private final Map<String, Long> decisionSeenAt = new HashMap<>();
-	private @Nullable String confirmReject;
-	private long confirmRejectUntil;
+	/** One answer component per decision in the thread (W2): its guards (arm, Reject / Merge twice, change requests). */
+	private final Map<String, AnswerPanel> panels = new HashMap<>();
+	/** The last answer sent from the thread (completes with its note after the ack). */
+	private @Nullable CompletableFuture<String> lastSend;
 	private @Nullable String note;
 	private boolean noteError;
 	private @Nullable String formNote;
@@ -496,54 +498,76 @@ final class GoalsTab implements HubPane {
 		});
 	}
 
-	/** Answers a decision from the thread with the decision screen's guards. Returns the outcome note. */
-	CompletableFuture<String> answer(Decision d, @Nullable String option) {
-		if (!Foreman.connected() || Foreman.state().isStale()) {
-			return done("Foreman offline: answers are disabled until it reconnects", true);
+	/**
+	 * The thread's answer component for {@code d}: created (and armed: presses wait {@link AnswerPanel#ARM_MS}) when the
+	 * decision first shows up; {@code arm} false for the DevBridge. The text it uses is the message box's.
+	 */
+	AnswerPanel panelFor(Decision d, boolean arm) {
+		AnswerPanel p = panels.get(d.id());
+		if (p == null) {
+			if (panels.size() > 64) {
+				panels.values().removeIf(x -> {
+					Decision o = Foreman.state() == null || x.decisionId() == null ? null : Foreman.state().decision(x.decisionId());
+					return o == null || !o.isOpen();
+				});
+			}
+			p = new AnswerPanel(new AnswerPanel.Host() {
+				@Override
+				public void textFocus(boolean on) {
+					if (on) {
+						focus(message); // the message box is the thread's answer / feedback box
+					}
+				}
+
+				@Override
+				public boolean send(Decision dd, @Nullable String option, @Nullable String text, String label, boolean wasRequestChanges) {
+					lastSend = sendAnswer(dd, option, text, label);
+					return true;
+				}
+
+				@Override
+				public boolean status(String msg, boolean error) {
+					setNote(msg, error);
+					return true;
+				}
+			}, AnswerPanel.Options.EMBEDDED);
+			p.bind(d, arm);
+			panels.put(d.id(), p);
 		}
+		return p;
+	}
+
+	/**
+	 * Answers a decision from the thread through its {@link AnswerPanel} (the decision screen's guards; Merge asks twice
+	 * here). {@code option} null = "Answer with text" (the message box's text). Returns the outcome note.
+	 */
+	CompletableFuture<String> answer(Decision d, @Nullable String option) {
 		if (!d.isOpen() || DecisionsFeature.isAnswering(d.id())) {
 			return done(d.id() + " is already answered", false);
 		}
-		long seenAt = decisionSeenAt.getOrDefault(d.id(), 0L);
-		if (Util.getMillis() - seenAt < ARM_MS) {
-			return done(d.id() + " just came up: press again to answer it", false);
-		}
-		String text = null;
-		if (option == null && !d.freeText()) {
-			return done(d.id() + " takes one of its options only (no free text)", true);
-		}
+		AnswerPanel p = panelFor(d, true);
+		lastSend = null;
+		String box = message.value();
 		if (option == null) {
-			text = message.value().strip();
-			if (text.isEmpty()) {
-				focus(message);
-				return done("Type the answer in the message box, then Answer", true);
-			}
-		} else if (d.kind() == DecisionKind.MERGE && option.equals(Protocol.REQUEST_CHANGES)) {
-			text = message.value().strip();
-			if (text.isEmpty()) {
-				focus(message);
-				return done("Type the feedback for the worker in the message box first, then Request changes", true);
-			}
-		} else if (d.kind() == DecisionKind.MERGE && option.equals(Protocol.REJECT)) {
-			if (!d.id().equals(confirmReject) || Util.getMillis() > confirmRejectUntil) {
-				confirmReject = d.id();
-				confirmRejectUntil = Util.getMillis() + 3000;
-				return done("Reject abandons the branch: press Reject again", true);
-			}
-		} else if (d.kind() == DecisionKind.QUESTION && d.freeText() && !message.value().isBlank()) {
-			text = message.value().strip(); // an option with a note, like the decision screen's text box
+			p.sendTextWith(d, box);
+		} else {
+			p.chooseWith(d, option, box);
 		}
-		confirmReject = null;
-		String label = option == null ? "your answer" : d.kind() == DecisionKind.PERMISSION ? PermissionBody.buttonLabel(option) : option;
+		p.focusText(false); // the message box keeps the focus it got, if any
+		CompletableFuture<String> sent = lastSend;
+		lastSend = null;
+		return sent != null ? sent : CompletableFuture.completedFuture(note);
+	}
+
+	private CompletableFuture<String> sendAnswer(Decision d, @Nullable String option, @Nullable String text, String label) {
 		setNote("Sending " + d.id() + ": " + label + "…", false);
-		String sentText = text;
-		if (sentText != null) {
+		if (text != null) {
 			message.set("");
 		}
-		return DecisionsFeature.answer(d.id(), option, sentText).thenApply(err -> {
+		return DecisionsFeature.answer(d.id(), option, text).thenApply(err -> {
 			if (err != null) {
-				if (sentText != null && message.value().isEmpty()) {
-					message.set(sentText);
+				if (text != null && message.value().isEmpty()) {
+					message.set(text);
 				}
 				setNote(d.id() + " was not sent: " + err, true);
 				return note;
@@ -1102,7 +1126,7 @@ final class GoalsTab implements HubPane {
 					colors.add(muted);
 				}
 			} else if (d != null) {
-				decisionSeenAt.putIfAbsent(d.id(), now);
+				AnswerPanel ap = d.isOpen() ? panelFor(d, true) : null;
 				String kind = switch (d.kind()) {
 					case MERGE -> "asks to merge";
 					case PERMISSION -> "asks permission";
@@ -1117,8 +1141,14 @@ final class GoalsTab implements HubPane {
 				if (d.isOpen() && !DecisionsFeature.isAnswering(d.id())) {
 					for (String o : d.options()) {
 						String label = d.kind() == DecisionKind.PERMISSION ? PermissionBody.buttonLabel(o) : o;
-						if (d.kind() == DecisionKind.MERGE && o.equals(Protocol.REJECT) && d.id().equals(confirmReject) && now < confirmRejectUntil) {
+						if (d.kind() == DecisionKind.MERGE && o.equals(Protocol.REJECT) && ap != null && ap.confirmingReject()) {
 							label = "Confirm reject";
+						}
+						if (d.kind() == DecisionKind.MERGE && o.equals(Protocol.MERGE) && ap != null && ap.confirmingMerge()) {
+							label = "Confirm merge";
+						}
+						if (d.kind() == DecisionKind.MERGE && o.equals(Protocol.REQUEST_CHANGES) && ap != null && ap.requestChanges()) {
+							label = "Send feedback";
 						}
 						buttons.add(new String[] {o, label});
 					}
@@ -1684,8 +1714,8 @@ final class GoalsTab implements HubPane {
 	@Nullable Decision decision(String id) {
 		ForemanState s = Foreman.state();
 		Decision d = s == null ? null : s.decision(id);
-		if (d != null) {
-			decisionSeenAt.putIfAbsent(d.id(), 0L);
+		if (d != null && d.isOpen()) {
+			panelFor(d, false).armNow(); // the DevBridge does not wait out the arm delay
 		}
 		return d;
 	}

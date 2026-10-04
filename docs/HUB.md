@@ -18,6 +18,8 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
 - Opened with a key (default `H`, rebindable, AgentCraft category; vanilla binds H only as F3+H) and
   from the console (`/hub [tab]`). *(done)*
 - Tabs, in this order (later waves fill the ones marked *later*):
+  0. **Inbox** *(wave 2, branch `wave2/inbox`, see "Inbox" below)*: the first tab: decisions, agent replies,
+     blocked tasks, the Foreman's hold and PRs that need you, in one list with a detail per item.
   1. **Buildings** *(done)*: the world's buildings (blueprint, repos, home marker, box, rotation),
      actions: place new (opens the existing wizard), make home, remove (two-step confirm), teleport to
      (the entrance anchor, same dimension, a free spot with a floor); a blueprint browser (bundled +
@@ -305,7 +307,7 @@ Details and DevBridge in mod/DEV.md "Hub" -> "Repos and Goals tabs". Notes where
   read "not reported". Decisions without `goalId` are put in a goal's thread through their task's `goalId`.
 - The thread shows what is in the mod's feed tail (200 items, replaced by every snapshot); older history needs
   a Foreman query (not in this contract).
-- Inline decision answers keep the decision screen's guards (350 ms arm, Reject twice, Request changes needs
+- Inline decision answers keep the decision screen's guards (350 ms arm, Reject twice, and since wave 2 Merge twice too (AnswerPanel), Request changes needs
   the message box's text); "Open…" opens the decision screen over the hub.
 - "Since you were away": asked on opening the hub or the Goals tab when the tab was last looked at >= 10
   minutes ago, once per away stretch; the goal's own digest is asked on opening a goal that had activity since
@@ -324,7 +326,7 @@ decisions, and with config.set loosen its own permissions). From now on:
 - The Foreman writes a random token to `<dataDir>/client.token` (mode 0600, new per start) and lists
   its path in the run file.
 - `hello` takes `token?`. Without a valid token a connection is **read-only**: snapshot and events, and
-  only `hello`/`diff.request`/`goal.digest`. Every other client message is refused (`ok:false`,
+  only `hello`/`diff.request`/`goal.digest`/`agent.logs.request`. Every other client message is refused (`ok:false`,
   "read-only connection: no client token").
 - The mod (it reads the run file's token path), `tools/foremancli.mjs` and the dev tools send it.
 - The agent policy denies agents: reading `client.token` or anything under the Foreman home's profile
@@ -493,3 +495,60 @@ the mod fills gaps in this contract (the Foreman side was built in parallel; ali
   until the link is synced with a newer snapshot.- DevBridge names: the task's "set {key, value}", "apply", "revert", "confirm", "restart" are `dev.hub.action`
   aliases of `settings_set`, `settings_apply`, `settings_revert`, `settings_confirm`, `foreman_restart`; "select
   agent" is `team_select {agentId}` (`select` is the Buildings tab's).
+
+## Inbox (wave 2, docs/WAVE2.md W1-W4; branch `wave2/inbox`)
+
+The first hub tab: everything that needs the player or happened for them, in one list. Code:
+`client/hub/{Inbox,InboxTab,AgentLogView,InboxDev}`, `client/decisions/AnswerPanel`, the pure
+`dev.agentcraft.hub.InboxModel` (unit-tested in `InboxModelTest`) and the read state in `HubSeen`.
+
+- **Items**, grouped **Needs you** (the hold pinned on top, then newest first) and **Updates** (newest first):
+  - decisions (all kinds) with the agent, the goal and the building whose podium shows them; open ones need
+    you, answered / withdrawn ones are updates (the last 30);
+  - agent replies to the player (feed `message` items from an agent `to: "user"`, goal replies included): unread
+    ones need you, read ones are updates (the last 60). Read = viewed in the Inbox for a moment, the goal opened in
+    its thread, the agent's card opened, or "Mark all read";
+  - blocked tasks (reason, assignee, goal);
+  - the hold (`foreman.status.hold`, C9): usage / auth / offline, what it means and when it lifts;
+  - PRs needing attention: tasks in status `pr` whose PR has changes requested, failing checks or new threads.
+- **Filters** (chips): All · Needs you n · Building ▾ (cycles the world's buildings) · Agent ▾ (cycles the agents:
+  the agent view). A podium's right-click opens the Inbox on **Podium: b3 ×** (the decisions that podium shows,
+  wave 1's `podiumFor` / `LeadRouting.podiumShowsTarget`) with **All decisions** next to it for the full queue.
+  The filter is kept between visits. "Mark all read" on the right.
+- **Detail** per kind (the body scrolls; the answer / reply area stays at the bottom):
+  - decision: the question and its context, the **AnswerPanel** (options, the text box when the decision takes
+    text, Review diff for merges; Merge and Reject ask twice, Request changes opens the feedback box), Open
+    thread (its goal) and Decision screen (the full decision screen, Esc back to the hub);
+  - reply: the whole message, a reply box (Ctrl+Enter or Send: `goal.message` to the goal's lead when the reply
+    is about a goal, so it lands in that goal's thread, else `user.message` to the agent), Open thread, Open card;
+  - blocked task: the reason in red, assignee, repo, branch; **Retry** (`task.action retry`), Open task (the task
+    screen, Esc back), Open card;
+  - hold: the line ("usage paused until 14:20"), what it means and when it lifts (`InboxModel.holdExplain`), Usage
+    settings / Status tab;
+  - PR: why it needs you, state, checks, threads, branch, link; Goal's tasks (the Goals tab's Tasks view of its
+    goal), Refresh PRs, Open task.
+- **Agent view** (Agent filter, a monitor's right-click, `/inbox @agent`): a pinned first row with the card's
+  summary (portrait, title · role, state, activity, task, building) and the agent's **full log**: pages of the
+  Foreman's stored log (`agent.logs.request`, 200 per page, both rotation files) joined with the live tail;
+  scrolling up at the top loads the page before (the view keeps its place), "Load older" does the same; a message
+  box (`user.message`) and Open card. An older Foreman shows the live tail with "older lines need a newer Foreman".
+  A failed first page is asked for again after 5 s. When more entries arrive than the live tail keeps (200) while
+  the view is open, it pages back from the tail until it meets the fetched pages, so the log has no hole
+  (`LogJoin`); the fetched pages stop at 2,000 entries (older ones: the Foreman's `logs/<agent>.jsonl`). The
+  wrapped lines are cached and rebuilt only when the entries or the width change.
+- **Deep links** (W4): podium right-click -> Inbox on that podium's decisions; monitor right-click (empty hand or a
+  non-block item; with a block in hand the click places it, so monitor walls still build) -> the Inbox view of the
+  agent that panel shows (the feed monitor: the Inbox); console `/inbox [@agent]`; `J` still opens
+  the decision screen (the fast path), which hosts the same AnswerPanel.
+- **Layout**: compact under 470 × 200 GUI px (GUI scale 4 at 1080p, 4K with auto scale ~426 × 240): the list or
+  the detail with "‹ Inbox", shorter chip and button labels; in the compact detail the item's action buttons
+  (Thread / Full view, Card, Retry, ...) sit in the top bar next to "‹ Inbox" when they fit there, and the answer
+  and reply boxes are one line (they scroll to the caret). Every detail is laid out by `DetailLayout`: the body
+  keeps at least three lines (or all of a shorter text) above the pinned answer / reply area; when that does not
+  fit, the whole detail flows and scrolls as one column (wheel, `inbox_detail_scroll`), focusing a box scrolls it
+  into view, and buttons scrolled under the top bar are not clickable. Nothing is drawn over the pill, title and
+  agent line. `dev.inbox.state` `layout` = `{guiWidth, guiHeight, guiScale, compact, width, needed, available,
+  overflow, detail{flow, offset, max, bodyH, pinnedY, contentH, actionsInTopBar, fieldLines}, logRebuilds,
+  tabStrip{needed, available, overflow}}` (the tab strip's
+  seven labels are measured too: the hud stream adds badges to them).
+

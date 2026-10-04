@@ -152,6 +152,16 @@ public final class ConsoleActions {
 				}
 				return After.CLOSE;
 			}
+			case ConsoleCommands.OpenInbox oi -> {
+				ConsoleLog.remember(raw);
+				clearFeedback();
+				if (oi.agentId() == null) {
+					dev.agentcraft.client.hub.Inbox.open(null);
+				} else {
+					dev.agentcraft.client.hub.Inbox.openAgent(oi.agentId());
+				}
+				return After.CLOSE;
+			}
 			case Decide d -> {
 				ConsoleLog.remember(raw);
 				clearFeedback();

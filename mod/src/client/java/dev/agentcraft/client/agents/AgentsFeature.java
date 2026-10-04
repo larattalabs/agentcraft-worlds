@@ -158,11 +158,14 @@ public final class AgentsFeature {
 			return new AgentCardScreen(id);
 		});
 		DevBridge.register("dev.agents.card", 10_000,
-			"{agent, press?: message|pause|stop|review} -> open the agent card for one agent (like sneak + right-clicking it); press = a card button"
-				+ " (on the open card of that agent; stop needs two presses)", (req, mc) -> {
+			"{agent, press?: message|pause|stop|review, answer?: opt:<option>|send|diff|cancel, text?} -> open the agent card for one agent (like "
+				+ "sneak + right-clicking it); press = a card button (on the open card of that agent; stop needs two presses); answer = the card's answer "
+				+ "component for the decision it waits on (its guards apply: Merge / Reject twice; no arm delay through the DevBridge)", (req, mc) -> {
 			Fields f = Fields.of(req);
 			String id = f.nonBlank("agent");
 			String press = f.optStr("press", null);
+			String answer = f.optStr("answer", null);
+			String text = f.optStr("text", null);
 			return DevBridge.onClient(mc, () -> {
 				if (Foreman.state() == null || Foreman.state().agent(id) == null) {
 					throw new DevBridge.DevException("no agent '" + id + "'");
@@ -175,11 +178,44 @@ public final class AgentsFeature {
 				if (press != null) {
 					card.pressDev(press);
 				}
+				if (answer != null) {
+					String did = card.reviewDecision();
+					Protocol.Decision d = did == null ? null : Foreman.state().decision(did);
+					if (d == null) {
+						throw new DevBridge.DevException("answer: " + id + " waits on no decision");
+					}
+					var p = card.answerPanel();
+					p.bind(d, false);
+					p.armNow(); // no arm delay through the DevBridge (a confirm in progress is kept)
+					if (text != null) {
+						p.setText(text);
+					}
+					switch (answer) {
+						case "send" -> p.sendText(d);
+						case "diff" -> p.reviewDiff(d);
+						case "cancel" -> p.cancelRequestChanges();
+						default -> {
+							if (!answer.startsWith("opt:") || !d.options().contains(answer.substring(4))) {
+								throw new DevBridge.DevException("answer must be opt:<one of " + d.options() + ">, send, diff or cancel");
+							}
+							p.choose(d, answer.substring(4));
+						}
+					}
+				}
 				JsonObject o = new JsonObject();
 				o.addProperty("screen", mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());
 				o.addProperty("agent", id);
 				o.addProperty("stopArmed", card.stopArmed());
 				o.addProperty("status", card.statusText());
+				o.addProperty("review", card.reviewDecision());
+				o.add("panel", card.answerPanel().state());
+				JsonObject lay = new JsonObject();
+				lay.addProperty("panelInline", card.panelInline());
+				lay.addProperty("neededWithPanel", card.layoutNeeded());
+				lay.addProperty("needed", card.cardHeight());
+				lay.addProperty("available", mc.getWindow().getGuiScaledHeight() - 8);
+				lay.addProperty("overflow", card.cardHeight() > mc.getWindow().getGuiScaledHeight() - 8);
+				o.add("layout", lay);
 				return o;
 			});
 		});

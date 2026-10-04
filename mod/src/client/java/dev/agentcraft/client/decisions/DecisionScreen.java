@@ -1,9 +1,7 @@
 package dev.agentcraft.client.decisions;
 
 import com.mojang.blaze3d.platform.InputConstants;
-import dev.agentcraft.client.console.TextFieldView;
 import dev.agentcraft.client.console.TextKeys;
-import dev.agentcraft.client.console.TextModel;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
@@ -62,7 +60,7 @@ import org.jspecify.annotations.Nullable;
 public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int MAX_W = 440;
 	/** Option keys are ignored this long after the screen opens or a decision comes up by itself. */
-	static final int ARM_MS = 350;
+	static final int ARM_MS = AnswerPanel.ARM_MS;
 	/** A decision answered somewhere else stays on screen (read-only) this long before moving on. */
 	private static final int ELSEWHERE_MS = 1400;
 	/** How long the footer reports the last answer ("✔ d5: Merge"). */
@@ -72,16 +70,34 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 	private @Nullable String currentId;
 	private final @Nullable Screen parent;
-	private final TextModel answer = new TextModel(4000);
-	private final TextFieldView answerView = new TextFieldView();
 	private final TextUtil.Scroll scroll = new TextUtil.Scroll();
 	private boolean initialized;
-	private boolean textFocused;
-	private boolean requestChanges;
-	/** Keyboard highlight (what Enter fires), -1 = none. */
-	private int highlight = -1;
-	private long confirmRejectUntil;
-	private long armedAt;
+	/** The options, the text box and their guards (W2): shared with the Inbox, the goal thread and the agent card. */
+	private final AnswerPanel panel = new AnswerPanel(new AnswerPanel.Host() {
+		@Override
+		public void textFocus(boolean on) {
+			if (minecraft != null) {
+				minecraft.onTextInputFocusChange(DecisionScreen.this, on);
+			}
+		}
+
+		@Override
+		public boolean send(Decision d, @Nullable String option, @Nullable String text, String label, boolean wasRequestChanges) {
+			DecisionScreen.this.send(d, option, text, label, wasRequestChanges);
+			return true;
+		}
+
+		@Override
+		public boolean status(String message, boolean error) {
+			setStatus(message, error);
+			return true;
+		}
+
+		@Override
+		public boolean openDiff(Decision d) {
+			return DiffLink.open(d.repoId(), d.worktree(), d, DecisionScreen.this);
+		}
+	}, AnswerPanel.Options.SCREEN);
 	private @Nullable String status;
 	private boolean statusError;
 	private long statusAt;
@@ -101,25 +117,13 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 	private final Set<Integer> downHere = new HashSet<>();
 
 	// layout of the last frame (hit-testing)
-	private final List<Btn> buttons = new ArrayList<>();
 	private int px;
 	private int py;
 	private int pw;
 	private int ph;
-	private int fieldX;
-	private int fieldY;
-	private int fieldW;
-	private int fieldH;
 	private int prevX0;
 	private int nextX0;
 	private int navY;
-
-	private record Btn(String option, String label, int number, int x, int y, int w, boolean primary, boolean danger, Action action) {
-	}
-
-	private enum Action {
-		OPTION, REVIEW_DIFF, SEND_TEXT, CANCEL_TEXT
-	}
 
 	/** An answer sent from this screen: {@code pending} until the ack, {@code error} when refused. */
 	private record Sent(String id, String label, long at, boolean pending, @Nullable String error, boolean elsewhere) {
@@ -177,6 +181,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 	public static DecisionScreen preview(Decision sample) {
 		DecisionScreen s = new DecisionScreen(sample.id(), null);
 		s.preview = sample;
+		s.panel.setPreview(true);
 		return s;
 	}
 
@@ -196,7 +201,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 	@Override
 	public boolean isInputCaptured() {
-		return textFocused;
+		return panel.textFocused();
 	}
 
 	@Override
@@ -205,7 +210,6 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			return; // a resize
 		}
 		initialized = true;
-		armedAt = Util.getMillis() + ARM_MS;
 		for (int k : guardedKeys()) {
 			if (InputConstants.isKeyDown(k)) {
 				heldAtOpen.add(k);
@@ -214,11 +218,9 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		Decision d = current();
 		if (d != null) {
 			currentId = d.id();
-			highlight = defaultHighlight(d);
-			if (d.kind() == DecisionKind.QUESTION && d.options().isEmpty()) {
-				focusText(true);
-			}
+			panel.rebind(d, false);
 		}
+		panel.rearm();
 	}
 
 	/** Keys that answer or close: watched for "held from before the screen" and repeats. */
@@ -239,7 +241,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 	@Override
 	public void removed() {
-		focusText(false);
+		panel.focusText(false);
 		super.removed();
 	}
 
@@ -295,7 +297,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 						String how = d.status() == Protocol.DecisionStatus.CANCELLED ? "was withdrawn"
 							: "answered elsewhere" + (d.answer() != null && d.answer().option() != null ? ": " + d.answer().option() : "");
 						last = new Sent(d.id(), how, now, false, null, true);
-						focusText(false);
+						panel.focusText(false);
 					}
 					if (now < elsewhereUntil) {
 						return d;
@@ -324,15 +326,20 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 	}
 
 	public int highlight() {
-		return highlight;
+		return panel.highlight();
 	}
 
 	public boolean textFocused() {
-		return textFocused;
+		return panel.textFocused();
 	}
 
 	public boolean requestChangesMode() {
-		return requestChanges;
+		return panel.requestChanges();
+	}
+
+	/** The shared answer component (DevBridge state). */
+	public AnswerPanel panel() {
+		return panel;
 	}
 
 	public @Nullable String status() {
@@ -349,17 +356,11 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 	}
 
 	public boolean armed() {
-		return Util.getMillis() >= armedAt;
+		return panel.armed();
 	}
 
 	public String answerText() {
-		return answer.value();
-	}
-
-	private static int defaultHighlight(@Nullable Decision d) {
-		// questions start on the first (recommended) option; merges and permissions on none, so a
-		// reflex Enter can never merge or grant anything
-		return d != null && d.kind() == DecisionKind.QUESTION && !d.options().isEmpty() ? 0 : -1;
+		return panel.text();
 	}
 
 	/** Show decision {@code id}; {@code auto}: it came up by itself (after an answer), so input is armed again. */
@@ -368,29 +369,11 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			return;
 		}
 		currentId = id;
-		requestChanges = false;
-		confirmRejectUntil = 0;
-		answer.clear();
 		scroll.toTop();
 		Decision d = Foreman.state() == null ? null : Foreman.state().decision(id);
-		highlight = defaultHighlight(d);
-		focusText(d != null && d.kind() == DecisionKind.QUESTION && d.options().isEmpty());
-		if (auto) {
-			armedAt = Util.getMillis() + ARM_MS;
-		}
+		panel.rebind(d, auto);
 		closeWhenEmpty = false;
 		status = null;
-	}
-
-	private void focusText(boolean on) {
-		if (textFocused == on) {
-			return;
-		}
-		textFocused = on;
-		answer.touch();
-		if (minecraft != null) {
-			minecraft.onTextInputFocusChange(this, on);
-		}
 	}
 
 	private void step(int dir) {
@@ -414,7 +397,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 	/** Free text: questions that accept it (C1 {@code textAllowed}), a merge's change request. */
 	private boolean allowsText(Decision d) {
-		return d.kind() == DecisionKind.QUESTION && d.freeText() || d.kind() == DecisionKind.MERGE && requestChanges;
+		return panel.allowsText(d);
 	}
 
 	@Override
@@ -440,13 +423,6 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 	// ------------------------------------------------------------------ answering
 
-	private String labelOf(Decision d, @Nullable String option) {
-		if (option == null) {
-			return "your answer";
-		}
-		return d.kind() == DecisionKind.PERMISSION ? PermissionBody.buttonLabel(option) : option;
-	}
-
 	/** "Merge" -> "merge" for the footer hint, but the agent's own words keep their case ("CLI", "JSON"). */
 	static String decap(String s) {
 		if (s.isEmpty() || (s.length() > 1 && Character.isUpperCase(s.charAt(1)))) {
@@ -455,77 +431,9 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		return Character.toLowerCase(s.charAt(0)) + s.substring(1);
 	}
 
-	private void choose(Decision d, String option) {
-		if (preview != null) {
-			setStatus("Preview: \"" + labelOf(d, option) + "\" was not sent", false);
-			return;
-		}
-		if (sending.containsKey(d.id()) || !d.isOpen()) {
-			return;
-		}
-		if (!armed()) {
-			setStatus("A new decision just came up: press again to answer it", false);
-			return;
-		}
-		if (Foreman.state().isStale()) {
-			setStatus("Foreman offline: answers are disabled until it reconnects", true);
-			return;
-		}
-		// only a press that counts moves the highlight (a dropped early press must not arm Enter)
-		highlight = Math.max(0, d.options().indexOf(option));
-		if (d.kind() == DecisionKind.MERGE && option.equals(Protocol.REQUEST_CHANGES)) {
-			if (!requestChanges) {
-				requestChanges = true;
-				focusText(true);
-				setStatus("Say what should change, then Enter", false);
-				return;
-			}
-			if (answer.value().isBlank()) {
-				setStatus("Type the feedback for the worker first", true);
-				focusText(true);
-				return;
-			}
-		}
-		if (d.kind() == DecisionKind.MERGE && option.equals(Protocol.REJECT) && Util.getMillis() > confirmRejectUntil) {
-			confirmRejectUntil = Util.getMillis() + 3000;
-			setStatus("Reject abandons the branch: press " + (d.options().indexOf(option) + 1) + " again", true);
-			return;
-		}
-		String text = answer.value().isBlank() ? null : answer.value().strip();
-		if (d.kind() == DecisionKind.MERGE && !option.equals(Protocol.REQUEST_CHANGES) || !d.freeText()) {
-			text = null;
-		}
-		send(d, option, text);
-	}
-
-	private void sendText(Decision d) {
-		String text = answer.value().strip();
-		if (d.kind() == DecisionKind.MERGE && requestChanges) {
-			choose(d, Protocol.REQUEST_CHANGES);
-			return;
-		}
-		if (preview != null) {
-			setStatus("Preview: your answer was not sent", false);
-			return;
-		}
-		if (text.isEmpty()) {
-			setStatus("Type an answer, or pick an option (1-" + Math.max(1, d.options().size()) + ")", true);
-			return;
-		}
-		if (!armed() || sending.containsKey(d.id()) || !d.isOpen()) {
-			return;
-		}
-		if (Foreman.state().isStale()) {
-			setStatus("Foreman offline: answers are disabled until it reconnects", true);
-			return;
-		}
-		send(d, null, text);
-	}
-
-	private void send(Decision d, @Nullable String option, @Nullable String text) {
+	/** The panel's answer: sent here, so the next decision comes up at once (the queue is this screen's). */
+	private void send(Decision d, @Nullable String option, @Nullable String text, String label, boolean wasRequestChanges) {
 		String id = d.id();
-		String label = labelOf(d, option);
-		boolean wasRequestChanges = requestChanges;
 		long now = Util.getMillis();
 		mine.add(id);
 		sending.put(id, option);
@@ -537,7 +445,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		if (next != null) {
 			switchTo(next.id(), true);
 		} else {
-			focusText(false);
+			panel.focusText(false);
 			status = null;
 		}
 		DecisionsFeature.answer(id, option, text).thenAccept(error -> {
@@ -566,10 +474,8 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			}
 			// bring it back, with what was typed
 			switchTo(id, false);
-			if (text != null && answer.isEmpty()) {
-				answer.set(text);
-				requestChanges = wasRequestChanges;
-				focusText(true);
+			if (text != null) {
+				panel.restore(text, wasRequestChanges);
 			}
 			setStatus(id + " was not sent: " + msg, true);
 		});
@@ -577,7 +483,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 	/** Moving the highlight answers a hint ("pick one with 1-3", "a new decision just came up"): drop it. */
 	private void clearHint() {
-		if (status != null && !statusError && confirmRejectUntil < Util.getMillis()) {
+		if (status != null && !statusError) {
 			status = null;
 		}
 	}
@@ -601,18 +507,18 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		}
 		Decision d = current();
 		if (e.isEscape()) {
-			if (textFocused && (requestChanges || !answer.isEmpty())) {
-				if (requestChanges) {
-					requestChanges = false;
+			if (panel.textFocused() && (panel.requestChanges() || !panel.text().isEmpty())) {
+				if (panel.requestChanges()) {
+					panel.cancelRequestChanges();
 				}
-				focusText(false);
+				panel.focusText(false);
 				status = null;
 				return true;
 			}
 			onClose();
 			return true;
 		}
-		if (k == InputConstants.KEY_A && scope != null && !textFocused && !repeat) {
+		if (k == InputConstants.KEY_A && scope != null && !panel.textFocused() && !repeat) {
 			toggleShowAll(); // this podium's decisions / all of them
 			return true;
 		}
@@ -623,75 +529,15 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			return true;
 		}
 		if (k == InputConstants.KEY_TAB) {
-			if (textFocused && !requestChanges && !allowsText(d)) {
-				focusText(false);
+			if (panel.textFocused() && !panel.requestChanges() && !allowsText(d)) {
+				panel.focusText(false);
 			}
 			step(e.hasShiftDown() ? -1 : 1);
 			return true;
 		}
-		if (textFocused) {
-			if (TextKeys.isEnter(e)) {
-				if (repeat) {
-					return true;
-				}
-				// single-line answer: Enter (and Ctrl+Enter) sends, Shift+Enter is a new line
-				if (TextKeys.enter(e, false) == dev.agentcraft.ui.UiRules.EnterAction.NEWLINE) {
-					answer.insert("\n");
-				} else if (requestChanges) {
-					choose(d, Protocol.REQUEST_CHANGES);
-				} else if (answer.isEmpty() && !d.options().isEmpty() && highlight >= 0) {
-					choose(d, d.options().get(Math.min(highlight, d.options().size() - 1)));
-				} else {
-					sendText(d);
-				}
-				return true;
-			}
-			if (k == InputConstants.KEY_UP || k == InputConstants.KEY_DOWN) {
-				if (!answer.vertical(font, TextFieldView.wrapWidth(font, answer, fieldW, fieldStyle(d)), k == InputConstants.KEY_UP ? -1 : 1, e.hasShiftDown()) && k == InputConstants.KEY_UP && answer
-					.isEmpty()) {
-					focusText(false);
-				}
-				return true;
-			}
-			TextKeys.handle(e, answer);
-			return true;
-		}
-		int n = d.options().size();
-		int digit = TextKeys.digit(e);
-		if (digit > 0) {
-			if (repeat) {
-				return true;
-			}
-			if (digit <= n) {
-				choose(d, d.options().get(digit - 1));
-			} else {
-				setStatus("No option " + digit, true);
-			}
-			return true;
-		}
-		if (TextKeys.isEnter(e)) {
-			if (repeat) {
-				return true;
-			}
-			if (n == 0) {
-				focusText(true);
-			} else if (highlight < 0) {
-				setStatus("Pick one with " + (n == 1 ? "1" : "1-" + n) + " (or the arrows, then Enter)", false);
-			} else {
-				choose(d, d.options().get(Math.min(highlight, n - 1)));
-			}
-			return true;
-		}
-		if (k == InputConstants.KEY_LEFT || k == InputConstants.KEY_UP) {
-			if (n > 0) {
-				highlight = highlight < 0 ? n - 1 : Math.max(0, highlight - 1);
-				clearHint();
-			}
-			return true;
-		}
-		if (k == InputConstants.KEY_RIGHT || k == InputConstants.KEY_DOWN) {
-			if (n > 0) {
-				highlight = highlight < 0 ? 0 : Math.min(n - 1, highlight + 1);
+		boolean typing = panel.textFocused();
+		if (panel.keyPressed(font, e, d, repeat, true)) {
+			if (!typing && (k == InputConstants.KEY_LEFT || k == InputConstants.KEY_RIGHT || k == InputConstants.KEY_UP || k == InputConstants.KEY_DOWN)) {
 				clearHint();
 			}
 			return true;
@@ -705,18 +551,13 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			return true;
 		}
 		if (k == InputConstants.KEY_D && d.kind() == DecisionKind.MERGE) {
-			reviewDiff(d);
+			panel.reviewDiff(d);
 			return true;
 		}
 		if (Keys.matches(Keys.decisions, e) && !allowsText(d)) {
 			if (!repeat) {
 				onClose();
 			}
-			return true;
-		}
-		if (TextKeys.isPaste(e) && allowsText(d)) {
-			focusText(true);
-			TextKeys.handle(e, answer);
 			return true;
 		}
 		return super.keyPressed(e);
@@ -735,20 +576,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		if (d == null) {
 			return false;
 		}
-		int cp = e.codepoint();
-		if (textFocused) {
-			if (cp >= 32) {
-				answer.insert(e.codepointAsString());
-			}
-			return true;
-		}
-		// start typing an answer without clicking the field (digits pick options instead)
-		if (allowsText(d) && d.isOpen() && cp > 32 && !(cp >= '0' && cp <= '9')) {
-			focusText(true);
-			answer.insert(e.codepointAsString());
-			return true;
-		}
-		return false;
+		return panel.charTyped(e, d, true);
 	}
 
 	@Override
@@ -763,26 +591,10 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		if (d == null) {
 			return super.mouseClicked(e, doubleClick);
 		}
-		for (Btn b : buttons) {
-			if (mx >= b.x() && mx < b.x() + b.w() && my >= b.y() && my < b.y() + 20) {
-				switch (b.action()) {
-					case OPTION -> choose(d, b.option());
-					case REVIEW_DIFF -> reviewDiff(d);
-					case SEND_TEXT -> sendText(d);
-					case CANCEL_TEXT -> {
-						requestChanges = false;
-						focusText(false);
-						status = null;
-					}
-				}
-				return true;
-			}
-		}
-		if (fieldH > 0 && mx >= fieldX && mx < fieldX + fieldW && my >= fieldY && my < fieldY + fieldH) {
-			focusText(true);
-			int idx = answerView.hit(font, answer, fieldX, fieldY, fieldW, fieldStyle(d), mx, my);
-			if (idx >= 0) {
-				answer.moveTo(idx, e.hasShiftDown());
+		boolean wasRequestChanges = panel.requestChanges();
+		if (panel.mouseClicked(font, d, mx, my, e.hasShiftDown())) {
+			if (wasRequestChanges && !panel.requestChanges()) {
+				status = null; // Cancel
 			}
 			return true;
 		}
@@ -796,8 +608,8 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 				return true;
 			}
 		}
-		if (textFocused && answer.isEmpty() && !requestChanges) {
-			focusText(false);
+		if (panel.textFocused() && panel.text().isEmpty() && !panel.requestChanges()) {
+			panel.focusText(false);
 		}
 		return super.mouseClicked(e, doubleClick);
 	}
@@ -808,15 +620,6 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		return true;
 	}
 
-	private void reviewDiff(Decision d) {
-		if (d.repoId() == null || d.worktree() == null) {
-			setStatus("This merge has no worktree to diff", true);
-			return;
-		}
-		if (!DiffLink.open(d.repoId(), d.worktree(), d, this)) {
-			setStatus("The file list above is the diff summary (no diff screen in this build)", false);
-		}
-	}
 
 	@Override
 	public void onClose() {
@@ -834,11 +637,6 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		g.fillGradient(0, 0, width, height, top, bottom);
 	}
 
-	private TextFieldView.Style fieldStyle(Decision d) {
-		String ph = requestChanges ? "What should change? (Enter sends it to the worker)" : d.options().isEmpty() ? "Type your answer… (Enter sends)"
-			: "Or type your own answer…";
-		return new TextFieldView.Style(null, 0, ph, null, null, 0, 4);
-	}
 
 	/** The worker whose branch a merge decision is about (from the worktree), or null. */
 	private static @Nullable Worktree worktreeOf(Decision d) {
@@ -860,11 +658,10 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float a) {
-		buttons.clear();
-		fieldH = 0;
 		Decision d = current();
 		ForemanState s = Foreman.state();
 		if (d == null || s == null) {
+			panel.hide();
 			drawEmpty(g);
 			return;
 		}
@@ -889,14 +686,10 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			qLines = qLines.subList(0, 5);
 		}
 		// closed choices (C1 textAllowed false) show no text box: only the options answer them
-		boolean fieldVisible = d.kind() == DecisionKind.QUESTION && d.freeText() && !readOnly || requestChanges;
-		int fieldHeight = fieldVisible ? answerView.height(font, answer, cw, fieldStyle(d)) : 0;
-		List<Btn> rowButtons = layoutButtons(d, cw);
-		int buttonRows = 1;
-		for (Btn b : rowButtons) {
-			buttonRows = Math.max(buttonRows, b.y() / 28 + 1);
-		}
-		int fixed = 18 /*header*/ + 26 /*agent*/ + qLines.size() * 10 + 6 + (fieldVisible ? fieldHeight + 6 : 0) + buttonRows * 28 + 2 + 16 /*footer*/;
+		int fieldHeight = panel.fieldHeight(font, d, cw, readOnly);
+		boolean fieldVisible = fieldHeight > 0;
+		int buttonsH = panel.buttonsHeight(font, d, cw) + 8;
+		int fixed = 18 /*header*/ + 26 /*agent*/ + qLines.size() * 10 + 6 + (fieldVisible ? fieldHeight + 6 : 0) + buttonsH + 2 + 16 /*footer*/;
 		int maxH = height - 20;
 		int bodyNatural = bodyNaturalHeight(d, cw);
 		int bodyMax = Math.max(30, maxH - fixed - pad.top() - pad.bottom());
@@ -1006,31 +799,14 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		}
 
 		// free-text field
-		if (fieldVisible) {
-			fieldX = x;
-			fieldY = y;
-			fieldW = cw;
-			fieldH = answerView.draw(g, font, answer, x, y, cw, textFocused, fieldStyle(d));
-			y += fieldH + 6;
-		}
+		y += panel.drawField(g, font, d, x, y, cw, readOnly);
 
 		// buttons (4 px of room above for the focus ring)
 		y += 2;
 		long now = Util.getMillis();
 		boolean sendingThis = sending.containsKey(d.id());
-		String sentOption = sending.get(d.id());
 		boolean busy = readOnly || s.isStale() && preview == null;
-		for (Btn b : rowButtons) {
-			Btn placed = new Btn(b.option(), b.label(), b.number(), x + b.x(), y + b.y(), b.w(), b.primary(), b.danger(), b.action());
-			buttons.add(placed);
-			boolean hover = mouseX >= placed.x() && mouseX < placed.x() + placed.w() && mouseY >= placed.y() && mouseY < placed.y() + 20;
-			int idx = b.action() == Action.OPTION ? d.options().indexOf(b.option()) : -2;
-			boolean focused = !busy && !textFocused && idx >= 0 && idx == highlight;
-			boolean chosen = sendingThis && b.action() == Action.OPTION && b.option().equals(sentOption);
-			UiBits.ButtonState st = chosen ? UiBits.ButtonState.PRESSED : busy && b.action() != Action.REVIEW_DIFF ? UiBits.ButtonState.DISABLED
-				: hover ? UiBits.ButtonState.HOVER : UiBits.ButtonState.NORMAL;
-			UiBits.button(g, font, b.label(), chosen ? 0 : b.number(), placed.x(), placed.y(), b.w(), b.primary(), st, b.danger(), focused);
-		}
+		panel.drawButtons(g, font, d, x, y, cw, mouseX, mouseY, busy, sendingThis ? sending.get(d.id()) : null, true);
 
 		// footer: status right (it wins the room), key hints left
 		int fy = py + ph - pad.bottom() - 12;
@@ -1120,7 +896,9 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 
 		// key hints as (key, verb, priority); the least important go first when room is short
 		List<String[]> hints = new ArrayList<>();
-		if (textFocused) {
+		boolean requestChanges = panel.requestChanges();
+		int highlight = panel.highlight();
+		if (panel.textFocused()) {
 			hints.add(new String[] {"Enter", requestChanges ? "send feedback" : "send", "5"});
 			hints.add(new String[] {"Esc", requestChanges ? "back" : "stop typing", "4"});
 			hints.add(new String[] {"Shift+Enter", "new line", "1"});
@@ -1130,7 +908,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 				hints.add(new String[] {n == 1 ? "1" : "1-" + n, "choose", "5"});
 			}
 			if (highlight >= 0 && highlight < n && !readOnlyNow(d)) {
-				hints.add(new String[] {"Enter", decap(labelOf(d, d.options().get(highlight))), "4"});
+				hints.add(new String[] {"Enter", decap(AnswerPanel.labelOf(d, d.options().get(highlight))), "4"});
 			}
 			if (d.kind() == DecisionKind.MERGE) {
 				hints.add(new String[] {"D", "diff", "2"});
@@ -1174,54 +952,6 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 	/** Nothing can be answered right now: answered / on its way, or the Foreman is offline. */
 	private boolean readOnlyNow(Decision d) {
 		return preview == null && (!d.isOpen() || sending.containsKey(d.id()) || Foreman.state() == null || Foreman.state().isStale());
-	}
-
-	private List<Btn> layoutButtons(Decision d, int cw) {
-		List<Btn> out = new ArrayList<>();
-		int bx = 0;
-		int row = 0;
-		long now = Util.getMillis();
-		if (d.kind() == DecisionKind.MERGE) {
-			int w = UiBits.buttonWidth(font, "Review diff", 0);
-			out.add(new Btn("", "Review diff", 0, 0, 0, w, false, false, Action.REVIEW_DIFF));
-			bx = w + 14;
-		}
-		for (int i = 0; i < d.options().size(); i++) {
-			String opt = d.options().get(i);
-			String label = d.kind() == DecisionKind.PERMISSION ? PermissionBody.buttonLabel(opt) : opt;
-			if (opt.equals(Protocol.REQUEST_CHANGES) && requestChanges) {
-				label = "Send feedback";
-			}
-			if (opt.equals(Protocol.REJECT) && now < confirmRejectUntil) {
-				label = "Confirm reject";
-			}
-			// sized for the label it shows now (Reject grows into "Confirm reject" only while confirming)
-			int w = Math.min(cw, UiBits.buttonWidth(font, label, i + 1));
-			if (bx > 0 && bx + w > cw) {
-				row++;
-				bx = 0;
-			}
-			boolean danger = opt.equals(Protocol.REJECT) || opt.equals(Protocol.DENY);
-			boolean primary = i == 0 && !(d.kind() == DecisionKind.MERGE && requestChanges);
-			if (d.kind() == DecisionKind.MERGE && requestChanges && opt.equals(Protocol.REQUEST_CHANGES)) {
-				primary = true;
-			}
-			out.add(new Btn(opt, label, i + 1, bx, row * 28, w, primary, danger, Action.OPTION));
-			bx += w + BTN_GAP;
-		}
-		if (d.options().isEmpty() && d.kind() == DecisionKind.QUESTION) {
-			int w = UiBits.buttonWidth(font, "Send answer", 0);
-			out.add(new Btn("", "Send answer", 0, 0, 0, w, true, false, Action.SEND_TEXT));
-		}
-		if (requestChanges) {
-			int w = UiBits.buttonWidth(font, "Cancel", 0);
-			if (bx > 0 && bx + w > cw) {
-				row++;
-				bx = 0;
-			}
-			out.add(new Btn("", "Cancel", 0, bx, row * 28, w, false, false, Action.CANCEL_TEXT));
-		}
-		return out;
 	}
 
 	// ------------------------------------------------------------------ bodies

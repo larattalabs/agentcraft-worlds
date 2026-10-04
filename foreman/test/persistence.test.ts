@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { claimRunFiles, homeRunFile, liveOwner, profileRunFile, releaseRunFiles } from '../src/runfile.js';
-import { Store } from '../src/store.js';
+import { Store, tsPrefix } from '../src/store.js';
 import { makeForeman, rmrf, tempDir } from './helpers.js';
 
 const dirs: string[] = [];
@@ -102,6 +102,55 @@ describe('persistence', () => {
     expect(tail).toHaveLength(200);
     expect(tail[tail.length - 1]!.ts).toBe(599);
     expect(tail[0]!.ts).toBe(400);
+  });
+
+  it('pages through the full agent log across the rotation (agent.logs.request)', () => {
+    const dir = tempDir();
+    dirs.push(dir);
+    const s = new Store(dir, { debounceMs: 1, logMaxBytes: 20_000 });
+    // two entries share every timestamp: a page never splits such a pair
+    for (let i = 0; i < 300; i++) s.appendLog('kit', [{ ts: 1000 + i, kind: 'text', text: `a ${i} ${'x'.repeat(40)}` }, { ts: 1000 + i, kind: 'tool', text: `b ${i}` }]);
+    expect(fs.existsSync(path.join(dir, 'logs', 'kit.1.jsonl'))).toBe(true);
+    const first = s.readLog('kit', undefined, 7);
+    expect(first.more).toBe(true);
+    expect(first.entries.map((e) => e.ts)).toEqual([1296, 1296, 1297, 1297, 1298, 1298, 1299, 1299]); // 7 + the rest of 1296's pair
+    expect(first.entries.at(-1)!.text).toBe('b 299'); // oldest first, file order kept
+    // walk back to the start of what is stored; nothing repeats, nothing is lost
+    const seen = [...first.entries];
+    let before = first.entries[0]!.ts;
+    for (let guard = 0; guard < 1000; guard++) {
+      const page = s.readLog('kit', before, 50);
+      expect(page.entries.every((e) => e.ts < before)).toBe(true);
+      seen.unshift(...page.entries);
+      if (!page.more) break;
+      before = page.entries[0]!.ts;
+    }
+    const ts = seen.map((e) => e.ts);
+    expect(ts).toEqual([...ts].sort((a, b) => a - b));
+    expect(new Set(seen.map((e) => e.text)).size).toBe(seen.length);
+    // everything both files hold, i.e. more than the in-memory tail
+    const stored = ['kit.1.jsonl', 'kit.jsonl'].map((f) => fs.readFileSync(path.join(dir, 'logs', f), 'utf8').split('\n').filter(Boolean).length).reduce((a, b) => a + b);
+    expect(seen).toHaveLength(stored);
+    expect(seen.length).toBeGreaterThan(200);
+    expect(s.readLog('nobody', undefined, 10)).toEqual({ entries: [], more: false });
+  });
+
+  it('reads a stored line\'s ts from its prefix, and pages lines written in another key order too', () => {
+    expect(tsPrefix(Buffer.from('{"ts":1234,"kind":"text","text":"x"}'))).toBe(1234);
+    expect(tsPrefix(Buffer.from('{"ts":7}'))).toBe(7);
+    expect(tsPrefix(Buffer.from('{"kind":"text","ts":5,"text":"x"}'))).toBeUndefined(); // other order: parsed instead
+    expect(tsPrefix(Buffer.from('{"ts":1.5,"kind":"text"}'))).toBeUndefined();
+    expect(tsPrefix(Buffer.from('{"ts":'))).toBeUndefined();
+    const dir = tempDir();
+    dirs.push(dir);
+    const s = new Store(dir, { debounceMs: 1 });
+    s.appendLog('kit', [{ ts: 1, kind: 'text', text: 'one' }]);
+    // a line whose keys are not ts-first (hand-edited or an older writer) still pages by its ts
+    fs.appendFileSync(path.join(dir, 'logs', 'kit.jsonl'), '{"kind":"text","text":"two","ts":2}\n{"torn":\n');
+    s.appendLog('kit', [{ ts: 3, kind: 'text', text: 'three' }]);
+    expect(s.readLog('kit', undefined, 10).entries.map((e) => e.text)).toEqual(['one', 'two', 'three']);
+    expect(s.readLog('kit', 3, 10).entries.map((e) => e.text)).toEqual(['one', 'two']);
+    expect(s.readLog('kit', 2, 10)).toEqual({ entries: [{ ts: 1, kind: 'text', text: 'one' }], more: false });
   });
 
   it('run files: one per profile; a live owner keeps <home>/foreman.json; release hands it over', async () => {

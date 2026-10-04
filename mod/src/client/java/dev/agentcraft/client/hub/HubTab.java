@@ -9,6 +9,7 @@ import org.jspecify.annotations.Nullable;
  * next" panel listing what they will hold.
  */
 public enum HubTab {
+	INBOX("inbox", "Inbox", true, List.of()),
 	BUILDINGS("buildings", "Buildings", true, List.of()),
 	REPOS("repos", "Repos", true, List.of()),
 	GOALS("goals", "Goals", true, List.of()),
@@ -30,7 +31,7 @@ public enum HubTab {
 		this.comingNext = comingNext;
 	}
 
-	/** The tab named {@code s} (id or label, any case; "1".."6" by position), or null. */
+	/** The tab named {@code s} (id or label, any case; "1".."7" by position), or null. */
 	public static @Nullable HubTab parse(@Nullable String s) {
 		if (s == null || s.isBlank()) {
 			return null;
@@ -47,7 +48,7 @@ public enum HubTab {
 		return null;
 	}
 
-	/** "buildings, repos, goals, team, settings, status". */
+	/** "inbox, buildings, repos, goals, team, settings, status". */
 	public static String ids() {
 		StringBuilder b = new StringBuilder();
 		for (HubTab t : values()) {

@@ -289,7 +289,108 @@ export class Store {
     return tail;
   }
 
+  /**
+   * A page of an agent's stored log, newest last (agent.logs.request): up to `limit` entries older than
+   * `before` (all when absent), read backwards from the end of the current file and then the rotated one
+   * (`<agent>.1.jsonl`), so paging walks across a rotation. Entries sharing the timestamp of the page's
+   * oldest entry are kept together (a page may exceed `limit` by that group, never splits it, so paging by
+   * `before = page[0].ts` loses nothing). `more`: older entries exist.
+   */
+  readLog(agentId: string, before: number | undefined, limit: number): { entries: LogEntry[]; more: boolean } {
+    const out: LogEntry[] = []; // newest first while collecting
+    let more = false;
+    let cut: number | undefined; // ts of the last entry taken once the limit was reached
+    outer: for (const file of [this.logFile(agentId), this.rotatedLogFile(agentId)]) {
+      for (const line of readLinesBackward(file)) {
+        // cheap skip: the ts from the line's prefix (no decode, no JSON.parse) for the lines newer than `before`
+        const quick = tsPrefix(line);
+        if (quick !== undefined && before !== undefined && quick >= before) continue;
+        let e: LogEntry;
+        try {
+          e = JSON.parse(line.toString('utf8')) as LogEntry;
+        } catch {
+          continue; // torn line
+        }
+        if (typeof e?.ts !== 'number') continue;
+        if (before !== undefined && e.ts >= before) continue;
+        if (cut !== undefined) {
+          if (e.ts === cut && out.length < limit * 2) {
+            out.push(e);
+            continue;
+          }
+          more = true;
+          break outer;
+        }
+        out.push(e);
+        if (out.length >= limit) cut = e.ts;
+      }
+    }
+    return { entries: out.reverse(), more };
+  }
+
   close(): void {
     this.flush();
   }
+}
+
+const TS_PREFIX = Buffer.from('{"ts":');
+
+/**
+ * The `ts` of a stored log line from its first bytes (`{"ts":<digits>`, the order JSON.stringify writes a LogEntry
+ * in), without decoding or parsing the line; undefined when the line does not start that way (the caller parses it).
+ */
+export function tsPrefix(line: Buffer): number | undefined {
+  if (line.length <= TS_PREFIX.length || line.compare(TS_PREFIX, 0, TS_PREFIX.length, 0, TS_PREFIX.length) !== 0) return undefined;
+  let i = TS_PREFIX.length;
+  let n = 0;
+  const start = i;
+  while (i < line.length && i - start < 16) {
+    const c = line[i]!;
+    if (c < 0x30 || c > 0x39) break;
+    n = n * 10 + (c - 0x30);
+    i++;
+  }
+  // digits, then the next key or the end of the object (a float or exponent is left to JSON.parse)
+  if (i === start || i >= line.length || (line[i] !== 0x2c && line[i] !== 0x7d)) return undefined;
+  return n;
+}
+
+/** The complete lines of a file (raw bytes), last first, read in chunks from the end (a missing file yields nothing). */
+function* readLinesBackward(file: string, chunk = 64 * 1024): Generator<Buffer> {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return;
+  }
+  try {
+    let pos = fs.fstatSync(fd).size;
+    let rest = Buffer.alloc(0); // bytes after the last newline seen so far (the start of a line)
+    while (pos > 0) {
+      const len = Math.min(chunk, pos);
+      pos -= len;
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, pos);
+      const data = rest.length ? Buffer.concat([buf, rest]) : buf;
+      let end = data.length;
+      // native newline search (no per-byte loop in JS)
+      for (let i = data.lastIndexOf(0x0a, end - 1); i >= 0; i = i > 0 ? data.lastIndexOf(0x0a, i - 1) : -1) {
+        const line = data.subarray(i + 1, end);
+        if (!isBlank(line)) yield line;
+        end = i;
+      }
+      rest = Buffer.from(data.subarray(0, end)); // a copy: `data` is not kept
+    }
+    if (!isBlank(rest)) yield rest;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function isBlank(b: Buffer): boolean {
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i];
+    if (c !== 0x20 && c !== 0x0d && c !== 0x09) return false; // stops at the first byte of a real line
+  }
+  return true;
 }
