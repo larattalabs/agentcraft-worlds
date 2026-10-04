@@ -99,6 +99,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   the sim backend (P2.7 DevBridge token done earlier); the Foreman client token + agent guards were
   security-reviewed (GPT-6.1, two passes; the Bash guard is best effort by decision, agent-run code
   can still read the token). Nothing has run against real Claude yet.
+- **Audit 2026-10-03 (docs/AUDIT-2026-10-03.md): not ready for Hardcore yet; fix its blockers first.**
 - **Next (in order):** (1) Phase 0 step 3 shakedown on the real Claude backend: a small real goal in
   agentcraft or another personal repo (parallel leads, goal threads/plan/instructions, token + guards, usage
   limits) and the first real design job; (2) work-project rollout step 2: one real goal in `prWatch: observe`,
