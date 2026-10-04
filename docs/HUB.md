@@ -371,7 +371,9 @@ decisions, and with config.set loosen its own permissions). From now on:
   designs}`, on any `client.token` (also through links), Grep over a folder containing the home;
   Bash/PowerShell mentioning such a path (`~`, `$HOME`, relative paths resolved), `client.token`,
   `foremancli`, `$AGENTCRAFT_HOME`/`_CLIENT_TOKEN`/`_PROFILE`, or the Foreman's port next to a
-  loopback host or `ws://`. Best effort (documented in foreman/README.md "Permissions").
+  loopback host or `ws://` (quoting and escapes undone first); recursive search/list/copy/archive
+  commands rooted at the home or above it; instruction files and `@imports` that are or reach these
+  files are skipped with a note. Best effort (documented in foreman/README.md "Permissions").
 - **SettingDef**: as specified, plus `readOnly?: true` (`claude.context.mcpServers`, a repository's
   `env`; `config.set` refuses them). `value` is the *configured* value (config.json + flags +
   environment now), which for a restart-only key may differ from what is running until the restart.
