@@ -137,11 +137,40 @@ public final class Buildings {
 
 	// ------------------------------------------------------------------ reads
 
-	/** All buildings in placement order. */
+	/**
+	 * All buildings in placement order, without the fixtures (docs/VILLAGE.md V2: a village board is no building for
+	 * routing, leads, trophies or the hub's building list; see {@link #fixtures()} and {@link #everything()}).
+	 */
 	public static List<Building> all() {
+		List<Building> out = new ArrayList<>();
+		for (Building b : state.byId().values()) {
+			if (!b.isFixture()) {
+				out.add(b);
+			}
+		}
+		return List.copyOf(out);
+	}
+
+	/** The placed fixtures (village boards) in placement order. Any thread. */
+	public static List<Building> fixtures() {
+		List<Building> out = new ArrayList<>();
+		for (Building b : state.byId().values()) {
+			if (b.isFixture()) {
+				out.add(b);
+			}
+		}
+		return List.copyOf(out);
+	}
+
+	/**
+	 * Buildings and fixtures in placement order: everything that occupies a site. Use this for overlap and collision
+	 * checks (a road or a ghost must not run through a fixture either; removing a fixture restores its snapshot box).
+	 */
+	public static List<Building> everything() {
 		return List.copyOf(state.byId().values());
 	}
 
+	/** A building or a fixture by id (remove, move and the hub act on both), or null. */
 	public static @Nullable Building get(String id) {
 		return state.byId().get(id);
 	}
@@ -206,7 +235,9 @@ public final class Buildings {
 		if (v == null || v.state() != s || v.current() != cur) {
 			List<Routing.Site> sites = new ArrayList<>();
 			for (Building b : s.byId().values()) {
-				sites.add(Routing.Site.of(b));
+				if (!b.isFixture()) {
+					sites.add(Routing.Site.of(b)); // a fixture is no routing site (docs/VILLAGE.md V2)
+				}
 			}
 			List<Routing.Site> list = List.copyOf(sites);
 			if (v != null && v.state() == s) {
@@ -270,7 +301,13 @@ public final class Buildings {
 	public static Building place(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force)
 		throws BuildingException {
 		MinecraftServer server = level.getServer();
-		checkRepos(bp.id(), bp.wings(), repos, null);
+		if (bp.isFixture()) {
+			if (!repos.isEmpty()) {
+				throw new BuildingException(bp.name() + " is a fixture: it takes no repos");
+			}
+		} else {
+			checkRepos(bp.id(), bp.wings(), repos, null);
+		}
 		if (loadFailed) {
 			throw new BuildingException(FILE + " could not be read when the world started (see the log); fix or move it, then restart");
 		}
@@ -283,15 +320,20 @@ public final class Buildings {
 		Built built = build(level, bp, origin, rotation, repos, force, null, snapshotFile(server, id));
 		Map<String, Building> map = new LinkedHashMap<>(s.byId());
 		long now = System.currentTimeMillis();
-		Building b = new Building(id, bp.id(), repos, map.isEmpty(), BlueprintTransform.rotationName(built.turns()), built.box(), built.bounds(),
+		Building b = new Building(id, bp.id(), repos, !bp.isFixture() && noBuilding(map), BlueprintTransform.rotationName(built.turns()), built.box(), built.bounds(),
 			built.anchors(), now, dimensionId(level), built.snapshotBox(), now, null, built.pin());
 		map.put(id, b);
 		commit(server, new State(Collections.unmodifiableMap(map), next + 1, s.pending()));
 		lastNote = built.note();
-		AgentCraft.LOGGER.info("Placed building {} ({}) for {} at {} rotation {}: box {}, snapshot {}, {} anchors{}{}", id, bp.id(), repos,
+		AgentCraft.LOGGER.info("Placed {} {} ({}) for {} at {} rotation {}: box {}, snapshot {}, {} anchors{}{}", bp.isFixture() ? "fixture" : "building", id, bp.id(), repos,
 			origin.toShortString(), b.rotation(), str(b.box()), str(b.restoreBox()), b.anchors().size(), force ? " (forced)" : "",
 			built.note() == null ? "" : "; " + built.note());
 		return b;
+	}
+
+	/** True when {@code map} holds no building (fixtures do not count): the next building placed becomes home. */
+	private static boolean noBuilding(Map<String, Building> map) {
+		return map.values().stream().allMatch(Building::isFixture);
 	}
 
 	/** What the last {@link #place} / {@link #move} had to say beside success (hostile mobs removed, water), or null. Server thread. */
@@ -758,9 +800,18 @@ public final class Buildings {
 
 	/** After {@code gone} left {@code map}: when it was home, the first remaining building becomes home. */
 	private static void rehome(Map<String, Building> map, Building gone) {
-		if (gone.home() && !map.isEmpty()) {
-			var first = map.entrySet().iterator().next();
-			first.setValue(first.getValue().withHome(true));
+		if (gone.home()) {
+			homeFirst(map);
+		}
+	}
+
+	/** Makes the first building (never a fixture) of {@code map} home; nothing when there is none. */
+	private static void homeFirst(Map<String, Building> map) {
+		for (var e : map.entrySet()) {
+			if (!e.getValue().isFixture()) {
+				e.setValue(e.getValue().withHome(true));
+				return;
+			}
 		}
 	}
 
@@ -769,6 +820,9 @@ public final class Buildings {
 		State s = state;
 		if (!s.byId().containsKey(id)) {
 			throw new BuildingException("No building " + id);
+		}
+		if (s.byId().get(id).isFixture()) {
+			throw new BuildingException(id + " is a fixture (" + s.byId().get(id).blueprint() + "), not a building: it cannot be home");
 		}
 		Map<String, Building> map = new LinkedHashMap<>();
 		s.byId().forEach((k, v) -> map.put(k, v.withHome(k.equals(id))));
@@ -790,6 +844,9 @@ public final class Buildings {
 		Building b = get(id);
 		if (b == null) {
 			throw new BuildingException("No building " + id);
+		}
+		if (b.isFixture()) {
+			throw new BuildingException(id + " is a fixture (" + b.blueprint() + "): it takes no repos");
 		}
 		List<String> rs = List.copyOf(repos);
 		Building.Pin pin = b.pin();
@@ -853,7 +910,13 @@ public final class Buildings {
 			throw new BuildingException(FILE + " could not be read when the world started; nothing was moved");
 		}
 		// the new site is placed from the blueprint as it is now, which may have fewer wings than when it was placed
-		checkRepos(bp.id(), bp.wings(), b.repos(), id);
+		if (b.isFixture() != bp.isFixture()) {
+			throw new BuildingException(b.blueprint() + " is " + (bp.isFixture() ? "a fixture" : "a building") + " blueprint now, but " + id + " is "
+				+ (b.isFixture() ? "a fixture" : "a building") + "; nothing was moved");
+		}
+		if (!b.isFixture()) {
+			checkRepos(bp.id(), bp.wings(), b.repos(), id);
+		}
 		refusePlayerIn(oldLevel, b.restoreBox(), id, "moving it");
 		if (!force) {
 			List<String> blockers = removalBlockers(oldLevel, b);
@@ -1183,7 +1246,7 @@ public final class Buildings {
 						if (!p.snapshot().equals(gone.id() + ".before.nbt")) {
 							continue;
 						}
-						map.put(gone.id(), gone.withHome(map.isEmpty()));
+						map.put(gone.id(), gone.withHome(!gone.isFixture() && noBuilding(map)));
 						report(gone.id(), false, gone.id() + "'s removal was not saved before the game stopped: it stands again (remove it again)");
 					}
 					recovered.add(gone.id());
@@ -1493,9 +1556,10 @@ public final class Buildings {
 			for (Building b : data.buildings()) {
 				map.put(b.id(), b);
 			}
-			if (!map.isEmpty() && map.values().stream().noneMatch(Building::home)) {
-				var first = map.entrySet().iterator().next();
-				first.setValue(first.getValue().withHome(true));
+			// a fixture is never home (a file edited by hand could say so)
+			map.replaceAll((k, v) -> v.isFixture() && v.home() ? v.withHome(false) : v);
+			if (map.values().stream().noneMatch(Building::home)) {
+				homeFirst(map);
 			}
 			state = new State(Collections.unmodifiableMap(map), data.next(), data.pending());
 			AgentCraft.LOGGER.info("Loaded {} building(s) {}{}", map.size(), map.keySet(), data.pending().isEmpty() ? ""

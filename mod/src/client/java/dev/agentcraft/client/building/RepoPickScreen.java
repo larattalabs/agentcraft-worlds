@@ -238,6 +238,9 @@ final class RepoPickScreen extends WizardScreen {
 
 	/** Why {@code bp} cannot take {@code n} repos (null = it can): a single blueprint takes one, a group up to its wings. */
 	static @Nullable String fits(Blueprint bp, int n) {
+		if (bp.isFixture()) {
+			return bp.name() + " is a fixture: it takes no repos (hub > Buildings > Fixtures places it)";
+		}
 		if (!bp.isGroup() && n != 1) {
 			return bp.name() + " is a single building: pick exactly one repo";
 		}

@@ -78,7 +78,7 @@ public final class BuildingCommands {
 			.then(Commands.literal("remove")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
-						Buildings.all().forEach(x -> b.suggest(x.id()));
+						Buildings.everything().forEach(x -> b.suggest(x.id())); // fixtures are removed the same way
 						return b.buildFuture();
 					})
 					.executes(ctx -> remove(ctx, false, false))
@@ -127,11 +127,13 @@ public final class BuildingCommands {
 	}
 
 	private static int listBuildings(CommandContext<CommandSourceStack> ctx) {
-		var all = Buildings.all();
-		ctx.getSource().sendSuccess(() -> Component.literal(all.size() + " building(s)" + (all.isEmpty() ? "" : ":")), false);
+		var all = Buildings.everything();
+		int fixtures = Buildings.fixtures().size();
+		ctx.getSource().sendSuccess(() -> Component.literal((all.size() - fixtures) + " building(s)" + (fixtures > 0 ? ", " + fixtures + " fixture(s)" : "")
+			+ (all.isEmpty() ? "" : ":")), false);
 		for (Building b : all) {
-			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s%s  %s  repos %s  %s  box %s  %d anchors",
-				b.id(), b.home() ? " (home)" : "", b.blueprint(), String.join(",", b.repos()), b.rotation(), Buildings.str(b.box()),
+			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s%s  %s  %s  %s  box %s  %d anchors",
+				b.id(), b.home() ? " (home)" : "", b.blueprint(), b.isFixture() ? "fixture" : "repos " + String.join(",", b.repos()), b.rotation(), Buildings.str(b.box()),
 				b.anchors().size())), false);
 			Buildings.Report r = Buildings.reports().get(b.id());
 			if (r != null) {
@@ -150,10 +152,12 @@ public final class BuildingCommands {
 			return 0;
 		}
 		String[] tokens = StringArgumentType.getString(ctx, "args").trim().split("\\s+");
-		List<String> repos = BlueprintTransform.parseRepos(tokens[0]);
+		// a fixture (village board) takes no repos: "/agentcraft place village_board - [rotation] [force]" (or no "-")
+		boolean noRepos = bp.isFixture() && (tokens[0].equals("-") || tokens[0].equalsIgnoreCase("none"));
+		List<String> repos = bp.isFixture() ? List.of() : BlueprintTransform.parseRepos(tokens[0]);
 		int turns = -1;
 		boolean force = false;
-		for (int i = 1; i < tokens.length; i++) {
+		for (int i = bp.isFixture() && !noRepos ? 0 : 1; i < tokens.length; i++) {
 			String t = tokens[i];
 			if (t.equalsIgnoreCase("force")) {
 				force = true;
@@ -184,7 +188,8 @@ public final class BuildingCommands {
 		try {
 			Building b = Buildings.place(level, bp, new BlockPos(o[0], o[1], o[2]), Rotation.values()[turns], repos, force);
 			String note = Buildings.lastNote();
-			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ") for " + String.join(", ", b.repos()) + ", "
+			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ")" + (b.isFixture() ? "" : " for " + String.join(", ", b.repos()))
+				+ ", "
 				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")")
 				+ ". Undo: the hub (H) > Buildings > " + b.id() + " > Remove"), true);
 			return 1;

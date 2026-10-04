@@ -425,8 +425,21 @@ public final class GhostModel {
 	 */
 	public static List<String> refusals(List<String> repos, int wings, List<String> reposWithBuilding, int boxMinY, int boxMaxY, int levelMinY,
 		int levelMaxY, List<String> overlapping, int foreignBlockEntities, boolean force) {
+		return refusals(false, repos, wings, reposWithBuilding, boxMinY, boxMaxY, levelMinY, levelMaxY, overlapping, foreignBlockEntities, force);
+	}
+
+	/**
+	 * {@link #refusals(List, int, List, int, int, int, int, List, int, boolean)} for a building, or for a fixture
+	 * ({@code fixture}: docs/VILLAGE.md V2), which takes no repos: any repo is then the refusal, none is fine.
+	 */
+	public static List<String> refusals(boolean fixture, List<String> repos, int wings, List<String> reposWithBuilding, int boxMinY, int boxMaxY,
+		int levelMinY, int levelMaxY, List<String> overlapping, int foreignBlockEntities, boolean force) {
 		List<String> out = new ArrayList<>();
-		if (repos.isEmpty()) {
+		if (fixture) {
+			if (!repos.isEmpty()) {
+				out.add("a fixture takes no repos");
+			}
+		} else if (repos.isEmpty()) {
 			out.add("no repo chosen");
 		}
 		for (int i = 0; i < repos.size(); i++) {
@@ -434,7 +447,7 @@ public final class GhostModel {
 				out.add("bad or repeated repo id '" + repos.get(i) + "'");
 			}
 		}
-		if (repos.size() > wings) {
+		if (!fixture && repos.size() > wings) {
 			out.add(repos.size() + " repos for " + wings + " wing" + (wings == 1 ? "" : "s"));
 		}
 		for (String r : reposWithBuilding) {
