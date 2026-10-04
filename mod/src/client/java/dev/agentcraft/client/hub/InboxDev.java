@@ -158,7 +158,8 @@ final class InboxDev {
 					throw new DevBridge.DevException("option (one of " + d.options() + ") or text is required");
 				}
 				var p = t.panel();
-				p.bind(d, false); // the DevBridge does not wait out the arm delay
+				p.bind(d, false);
+				p.armNow(); // the DevBridge does not wait out the arm delay (a confirm in progress is kept)
 				if (text != null) {
 					p.setText(text);
 				}
@@ -175,6 +176,7 @@ final class InboxDev {
 				Item it = item(t, f);
 				Decision d = InboxTab.decisionOf(it);
 				String id = f.nonBlank("button");
+				t.panel().armNow();
 				if (d == null || !t.panel().press(d, id)) {
 					throw new DevBridge.DevException("button: no answer button '" + id + "' was drawn last frame (see dev.inbox.state panel.buttons)");
 				}

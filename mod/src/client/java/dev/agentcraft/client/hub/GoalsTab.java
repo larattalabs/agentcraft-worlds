@@ -1715,7 +1715,7 @@ final class GoalsTab implements HubPane {
 		ForemanState s = Foreman.state();
 		Decision d = s == null ? null : s.decision(id);
 		if (d != null && d.isOpen()) {
-			panelFor(d, false);
+			panelFor(d, false).armNow(); // the DevBridge does not wait out the arm delay
 		}
 		return d;
 	}

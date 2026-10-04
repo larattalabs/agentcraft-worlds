@@ -652,8 +652,8 @@ The contract is docs/HUB.md "Repos and Goals tabs" (+ its multi-repo amendment);
     goal) is it + pending messages, in time order, in a scissored, wheel-scrolled area that follows the
     newest. Only what is in the model's feed tail (200 items, replaced by each snapshot). Open decisions get
     their options as buttons through `DecisionsFeature.answer` (shared with `DecisionScreen`: mark answering,
-    send, record / unmark) with the decision screen's guards: a decision that just showed up ignores clicks
-    for 350 ms, Reject asks twice, Request changes takes the message box's text as the feedback, a question's
+    send, record / unmark) with the decision screen's guards (AnswerPanel, wave 2): a decision that just showed up ignores clicks
+    for 350 ms, Reject and Merge ask twice, Request changes takes the message box's text as the feedback, a question's
     option sends the box's text along; "Answer with text" and "Open…" (the decision screen, back to the hub).
     The message box (multi-line, Enter = newline) sends `goal.message` with Ctrl+Enter or Send: a "You ·
     sending…" line shows at once and leaves on the ack (the Foreman's own feed item replaces it); a refusal
@@ -927,7 +927,9 @@ agent log, `InboxDev` = DevBridge), `client.decisions.AnswerPanel` and the pure 
 - **AnswerPanel** (W2): `DecisionScreen` (Options.SCREEN: numbered, Review diff, no merge confirm: 1-9 + the 350 ms
   arm guard it as before), the Inbox (Options.EMBEDDED: Merge and Reject ask twice), the goal thread (EMBEDDED with
   the message box as its text: button ids `answer:<id>:<opt|text|open>` unchanged) and the agent card (Merge/Reject
-  twice, 2-line box; R still opens the full review screen; the old "press a row twice" option rows are gone). Held
+  twice, 2-line box; R still opens the full review screen; the old "press a row twice" option rows and the 1-4 keys are
+  gone; when the card would not fit the screen with the panel and two log rows (a merge at ~240 GUI px) it shows the
+  single Review button instead: `dev.agents.card` `layout{panelInline, neededWithPanel, needed, available, overflow}`). Held
   keys and OS repeats stay the host's (DecisionScreen passes `repeat`); hosts own SDL text input (`Host.textFocus`).
 - Deep links: `DecisionsFeature.openPodium` (podium right-click) -> `Inbox.openPodium(building)`; the old scoped
   decision screen is `openPodiumScreen` (`dev.decision {podium, screen:true}`); `MonitorFeature.agentAt(level, pos)` +

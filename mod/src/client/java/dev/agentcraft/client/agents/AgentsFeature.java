@@ -186,6 +186,7 @@ public final class AgentsFeature {
 					}
 					var p = card.answerPanel();
 					p.bind(d, false);
+					p.armNow(); // no arm delay through the DevBridge (a confirm in progress is kept)
 					if (text != null) {
 						p.setText(text);
 					}
@@ -208,6 +209,13 @@ public final class AgentsFeature {
 				o.addProperty("status", card.statusText());
 				o.addProperty("review", card.reviewDecision());
 				o.add("panel", card.answerPanel().state());
+				JsonObject lay = new JsonObject();
+				lay.addProperty("panelInline", card.panelInline());
+				lay.addProperty("neededWithPanel", card.layoutNeeded());
+				lay.addProperty("needed", card.cardHeight());
+				lay.addProperty("available", mc.getWindow().getGuiScaledHeight() - 8);
+				lay.addProperty("overflow", card.cardHeight() > mc.getWindow().getGuiScaledHeight() - 8);
+				o.add("layout", lay);
 				return o;
 			});
 		});

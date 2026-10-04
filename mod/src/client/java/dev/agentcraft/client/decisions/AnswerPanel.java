@@ -167,6 +167,11 @@ public final class AnswerPanel {
 		armedAt = Util.getMillis() + ARM_MS;
 	}
 
+	/** Lifts the arm delay now (the DevBridge: a scripted press is deliberate). Confirms in progress are kept. */
+	public void armNow() {
+		armedAt = 0;
+	}
+
 	public boolean armed() {
 		return Util.getMillis() >= armedAt;
 	}

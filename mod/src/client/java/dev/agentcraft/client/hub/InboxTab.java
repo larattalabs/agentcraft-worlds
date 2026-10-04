@@ -641,6 +641,7 @@ final class InboxTab implements HubPane {
 		if (rows.isEmpty()) {
 			list.hide();
 			panel.hide();
+			panel.focusText(false);
 			drawEmpty(g, x, y, w, h);
 			needed += 40;
 			return;
@@ -657,6 +658,7 @@ final class InboxTab implements HubPane {
 			drawDetail(g, cur.item(), dx, y, dw, h, mx, my);
 		} else {
 			panel.hide();
+			panel.focusText(false);
 		}
 		// the list needs room for two rows; the detail added what it needs (header, body minimum, pinned area)
 		needed = Math.max(needed, TOP_H + ROW_H * 2 + 6);
@@ -832,6 +834,7 @@ final class InboxTab implements HubPane {
 		}
 		if (it.kind() != Kind.DECISION) {
 			panel.hide();
+			panel.focusText(false); // a hidden text box must not keep the keys
 		}
 	}
 
@@ -917,6 +920,7 @@ final class InboxTab implements HubPane {
 		Decision d = decisionOf(it);
 		if (d == null) {
 			panel.hide();
+			panel.focusText(false);
 			g.text(font(), "This decision is no longer in the Foreman's list.", x, y + 4, UiBits.muted(), false);
 			return;
 		}
@@ -958,6 +962,7 @@ final class InboxTab implements HubPane {
 			py += panel.draw(g, font(), d, x, py, w, mx, my, readOnly);
 		} else {
 			panel.hide();
+			panel.focusText(false);
 			py += 12;
 		}
 		actions(g, x, py + 2, w, mx, my, btns);

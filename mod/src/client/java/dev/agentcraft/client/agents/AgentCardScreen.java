@@ -366,14 +366,35 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 		return first;
 	}
 
-	private int decisionBlockHeight(boolean hasReview, int options) {
+	private int decisionBlockHeight(boolean inline) {
 		if (owned == null) {
 			return 0;
 		}
 		int inner = 4 + 10 + 2 + decisionLines.size() * ROW + (decisionContext != null ? ROW : 0) + 3;
-		inner += 2 + panel.fieldHeight(this.font, owned, panelWidth(), !live()) + (panel.fieldVisible(owned, !live()) ? 6 : 0)
-			+ panel.buttonsHeight(this.font, owned, panelWidth());
+		inner += inline ? 2 + panel.fieldHeight(this.font, owned, panelWidth(), !live()) + (panel.fieldVisible(owned, !live()) ? 6 : 0)
+			+ panel.buttonsHeight(this.font, owned, panelWidth()) : 20;
 		return inner + 4 + 6;
+	}
+
+	/**
+	 * The answer component sits on the card when the card still fits the screen with it (two log rows at least);
+	 * otherwise (a short GUI, ~240 px at 4K auto scale) the block shows one Review button (R) like before wave 2.
+	 */
+	private boolean panelInline = true;
+	private int layoutNeeded;
+
+	/** QA: whether the answer component is on the card (else the Review button), and the card's needed height. */
+	public boolean panelInline() {
+		return panelInline;
+	}
+
+	public int layoutNeeded() {
+		return layoutNeeded;
+	}
+
+	/** QA: the card's height as laid out last (with the panel or the Review button). */
+	public int cardHeight() {
+		return h;
 	}
 
 	/** Width of the answer component inside the decision block. */
@@ -389,10 +410,16 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 		}
 		int taskLines = taskLines(font).size();
 		Kit.Padding pp = Kit.padding("panel_paper");
-		boolean hasReview = owned != null && hasReviewScreen(owned);
-		int options = owned == null || hasReview ? 0 : Math.min(MAX_OPTIONS, owned.options().size());
-		int fixed = pp.top() + 32 + 16 + (taskLines > 0 ? taskLines * ROW + 12 : 12) + filed.size() * 11 + 4
-			+ decisionBlockHeight(hasReview, options) + (field != null ? 24 : 0) + 26 + 10 + pp.bottom();
+		int base = pp.top() + 32 + 16 + (taskLines > 0 ? taskLines * ROW + 12 : 12) + filed.size() * 11 + 4 + (field != null ? 24 : 0) + 26 + 10
+			+ pp.bottom();
+		int withPanel = base + decisionBlockHeight(true);
+		// keep the panel while the card fits with two log rows, or while its text box is in use
+		panelInline = owned == null || panel.textFocused() || withPanel + 2 * ROW + 8 + 6 <= this.height - 8;
+		if (!panelInline) {
+			panel.hide();
+		}
+		layoutNeeded = withPanel + 2 * ROW + 8 + 6;
+		int fixed = base + decisionBlockHeight(panelInline);
 		logRows = owned != null ? 4 : 6;
 		while (logRows > 2 && fixed + logRows * ROW + 8 + 6 > this.height - 8) {
 			logRows--;
@@ -584,8 +611,7 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 	/** The "waits on you" block: kind, ids, the question, one context line, then the review button or the option rows. */
 	private int drawDecision(GuiGraphicsExtractor g, Font font, Decision d, @Nullable AgentView v, int ix, int y, int iw, boolean hasReview, int mx,
 		int my, boolean live) {
-		int options = hasReview ? 0 : Math.min(MAX_OPTIONS, d.options().size());
-		int bh = decisionBlockHeight(hasReview, options) - 6;
+		int bh = decisionBlockHeight(panelInline) - 6;
 		Panels.inset(g, ix, y, iw, bh);
 		int bx = ix + 6;
 		int bw = iw - 12;
@@ -611,12 +637,29 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 			by += ROW;
 		}
 		by += 3;
-		// the answer component: options (Merge / Reject ask twice), the text box when the decision takes text
-		boolean ro = !live;
-		by += panel.drawField(g, font, d, bx, by, bw, ro);
-		by += 2;
-		by += panel.drawButtons(g, font, d, bx, by, bw, mx, my, ro, null, false);
-		review.w = 0;
+		if (panelInline) {
+			// the answer component: options (Merge / Reject ask twice), the text box when the decision takes text
+			boolean ro = !live;
+			by += panel.drawField(g, font, d, bx, by, bw, ro);
+			by += 2;
+			by += panel.drawButtons(g, font, d, bx, by, bw, mx, my, ro, null, false);
+			review.w = 0;
+		} else {
+			// no room on a short screen: one button to the full review screen (R)
+			review.label = switch (d.kind()) {
+				case MERGE -> "Review the diff";
+				case PERMISSION -> "Decide";
+				default -> "Answer";
+			};
+			review.primary = true;
+			review.disabled = !live;
+			review.x = bx;
+			review.y = by;
+			review.w = bw;
+			review.h = 20;
+			drawButton(g, font, review, mx, my);
+			by += 20;
+		}
 		return y + bh + 6;
 	}
 
@@ -858,7 +901,11 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 					return true;
 				}
 			}
-			if (owned != null && panel.mouseClicked(this.font, owned, event.x(), event.y(), event.hasShiftDown())) {
+			if (review.hit(event.x(), event.y())) {
+				press("review");
+				return true;
+			}
+			if (owned != null && panelInline && panel.mouseClicked(this.font, owned, event.x(), event.y(), event.hasShiftDown())) {
 				return true;
 			}
 			for (Btn row : filedRows) {

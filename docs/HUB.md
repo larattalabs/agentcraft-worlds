@@ -307,7 +307,7 @@ Details and DevBridge in mod/DEV.md "Hub" -> "Repos and Goals tabs". Notes where
   read "not reported". Decisions without `goalId` are put in a goal's thread through their task's `goalId`.
 - The thread shows what is in the mod's feed tail (200 items, replaced by every snapshot); older history needs
   a Foreman query (not in this contract).
-- Inline decision answers keep the decision screen's guards (350 ms arm, Reject twice, Request changes needs
+- Inline decision answers keep the decision screen's guards (350 ms arm, Reject twice, and since wave 2 Merge twice too (AnswerPanel), Request changes needs
   the message box's text); "Open…" opens the decision screen over the hub.
 - "Since you were away": asked on opening the hub or the Goals tab when the tab was last looked at >= 10
   minutes ago, once per away stretch; the goal's own digest is asked on opening a goal that had activity since
