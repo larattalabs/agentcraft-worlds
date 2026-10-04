@@ -37,6 +37,7 @@ final class PlacementHud implements HudElement {
 		String status = BuildPlacement.status();
 		boolean fresh = status != null && Util.getMillis() - BuildPlacement.statusAt < STATUS_MS;
 		if (v == null && !fresh) {
+			lastRect = null;
 			return;
 		}
 		int maxW = Math.min(420, g.guiWidth() - 16);
@@ -85,6 +86,14 @@ final class PlacementHud implements HudElement {
 		String[] hints = v == null ? new String[0] : v.forceArmed()
 			? new String[] {"Shift+Enter", "force", "R", "rotate", "Esc", "cancel"}
 			: new String[] {"R", "rotate", "Arrows", "nudge", "PgUp/Dn", "raise", "L", v.locked() ? "unlock" : "lock", "Enter", "place", "Esc", "cancel"};
+		if (hints.length > 0 && UiBits.hintsWidth(font, hints) > inner) {
+			// 426x240 (4K at auto GUI scale): the full row ran past the panel
+			hints = v.forceArmed() ? new String[] {"Shift+Enter", "force", "Esc", "cancel"}
+				: new String[] {"R", "rotate", "L", v.locked() ? "unlock" : "lock", "Enter", "place", "Esc", "cancel"};
+			if (UiBits.hintsWidth(font, hints) > inner) {
+				hints = new String[] {"Enter", "place", "Esc", "cancel"};
+			}
+		}
 		int hintW = hints.length == 0 ? 0 : UiBits.hintsWidth(font, hints);
 		int textW = hintW;
 		for (Line l : lines) {
@@ -94,6 +103,12 @@ final class PlacementHud implements HudElement {
 		int h = p.top() + lines.size() * 10 + (hints.length == 0 ? 0 : 15) + p.bottom() - 1;
 		int x = (g.guiWidth() - w) / 2;
 		int y = g.guiHeight() - 64 - h;
+		if (y < g.guiHeight() / 2 + 8) {
+			// a short screen: never over the crosshair (the ghost is aimed with it); creative has no hearts above the hotbar
+			boolean bars = mc.gameMode != null && mc.gameMode.getPlayerMode().isSurvival();
+			y = Math.max(g.guiHeight() / 2 + 8, g.guiHeight() - (bars ? 50 : 26) - h);
+		}
+		lastRect = new int[] {x, y, w, h};
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h, 0xF0FFFFFF);
 		int ty = y + p.top();
 		for (Line l : lines) {
@@ -107,6 +122,9 @@ final class PlacementHud implements HudElement {
 			UiBits.hints(g, font, x + p.left(), ty + 2, true, hints);
 		}
 	}
+
+	/** The panel drawn last frame (x, y, w, h), null when hidden: the goal bar and toasts keep clear of it. */
+	static volatile int @org.jspecify.annotations.Nullable [] lastRect;
 
 	private record Line(String text, int color, String right, int rightColor) {
 	}

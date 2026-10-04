@@ -52,6 +52,12 @@ import org.jspecify.annotations.Nullable;
  * can walk around the ghost; a DevBridge start with an explicit origin is locked there.
  */
 public final class BuildPlacement {
+	/** The placement (or plot-marking) HUD panel drawn last frame (x, y, w, h) or null: toasts stop above it. */
+	public static int @org.jspecify.annotations.Nullable [] hudRect() {
+		int[] r = PlacementHud.lastRect;
+		return r != null ? r : PlotHud.lastRect;
+	}
+
 	static final int REACH = 64;
 	/** How far below the looked-at spot the ground is searched for (a ray that hits a wall lands on the floor below). */
 	private static final int GROUND_SEARCH = 24;

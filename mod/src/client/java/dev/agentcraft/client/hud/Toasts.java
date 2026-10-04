@@ -177,12 +177,20 @@ public final class Toasts implements HudElement {
 		if (GoalBar.right > g.guiWidth() - 6 - W - 4) {
 			y = Math.max(y, GoalBar.bottom + 6);
 		}
+		// never over the hotbar or the placement panel (426x240: the stack reached both); the rest wait their turn
+		int[] placing = dev.agentcraft.client.building.BuildPlacement.hudRect();
+		int limit = placing != null ? placing[1] - 4 : g.guiHeight() - 26;
 		for (Toast t : ACTIVE) {
-			y += draw(g, font, t, now, y) + 4;
+			int h = draw(g, font, t, now, y, limit);
+			if (h < 0) {
+				break;
+			}
+			y += h + 4;
 		}
 	}
 
-	private static int draw(GuiGraphicsExtractor g, Font font, Toast t, long now, int y) {
+	/** Draws the toast at {@code y} and returns its height, or -1 (nothing drawn) when it would reach below {@code limit}. */
+	private static int draw(GuiGraphicsExtractor g, Font font, Toast t, long now, int y, int limit) {
 		Kit.Padding p = Kit.padding("panel_paper");
 		boolean need = t.n().level() == NotifyLevel.NEED_USER;
 		int textX = p.left() + 26;
@@ -195,6 +203,9 @@ public final class Toasts implements HudElement {
 		}
 		boolean hint = t.hintKey() != null;
 		int h = Math.max(p.top() + 20 + p.bottom() - 2, p.top() + 10 + lines.size() * 10 + (hint ? 12 : 0) + p.bottom() - 2);
+		if (y + h > limit) {
+			return -1;
+		}
 		long age = now - t.start();
 		float slide = Math.min(1f, age / (float) SLIDE_MS);
 		slide = 1f - (1f - slide) * (1f - slide);

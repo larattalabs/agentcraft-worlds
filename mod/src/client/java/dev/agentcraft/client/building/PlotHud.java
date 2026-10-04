@@ -17,6 +17,9 @@ import net.minecraft.util.Util;
 
 /** The plot-marking HUD: the same ink panel as {@link PlacementHud}, with the step, the plot's size and limit, and the keys. */
 final class PlotHud implements HudElement {
+	/** The panel drawn last frame (x, y, w, h), null when hidden: toasts stop above it. */
+	static volatile int @org.jspecify.annotations.Nullable [] lastRect;
+
 	private static final long STATUS_MS = 6000;
 	private static final int ORANGE = 0xFFF0A060;
 
@@ -31,6 +34,7 @@ final class PlotHud implements HudElement {
 		String status = PlotMarker.status();
 		boolean fresh = status != null && Util.getMillis() - PlotMarker.statusAt < STATUS_MS;
 		if (v == null && !fresh) {
+			lastRect = null;
 			return;
 		}
 		int maxW = Math.min(420, g.guiWidth() - 16);
@@ -66,6 +70,11 @@ final class PlotHud implements HudElement {
 			lines.add(new String[] {status, Integer.toString(cream)});
 			hints = new String[0];
 		}
+		if (hints.length > 0 && UiBits.hintsWidth(font, hints) > inner) {
+			// 426x240 (4K at auto GUI scale): the row was dropped altogether; keep the keys that finish the plot
+			hints = v != null && v.first() == null ? new String[] {"Enter", "corner", "PgUp/Dn", "height", "Esc", "back"}
+				: new String[] {"Enter", "done", "Bksp", "redo", "Esc", "back"};
+		}
 		int hintW = hints.length == 0 ? 0 : UiBits.hintsWidth(font, hints);
 		int textW = hintW;
 		for (String[] l : lines) {
@@ -75,6 +84,12 @@ final class PlotHud implements HudElement {
 		int hgt = p.top() + lines.size() * 10 + (hints.length == 0 ? 0 : 15) + p.bottom() - 1;
 		int x = (g.guiWidth() - w) / 2;
 		int y = g.guiHeight() - 64 - hgt;
+		if (y < g.guiHeight() / 2 + 8) {
+			// a short screen: keep the crosshair (the corner is aimed with it) clear
+			boolean bars = mc.gameMode != null && mc.gameMode.getPlayerMode().isSurvival();
+			y = Math.max(g.guiHeight() / 2 + 8, g.guiHeight() - (bars ? 50 : 26) - hgt);
+		}
+		lastRect = new int[] {x, y, w, hgt};
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, hgt, 0xF0FFFFFF);
 		int ty = y + p.top();
 		for (String[] l : lines) {
