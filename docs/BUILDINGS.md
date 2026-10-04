@@ -306,8 +306,14 @@ old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step).
   bulbs) show the merges of its repos (the home building also repos without a building, and merges without a
   repo); its `goal` / `goal:atrium` lamps show the newest goal of its repos or its lead (home: also goals
   without a repo or whose repos have no building). The HQ studio keeps showing everything.
-- Station targets, desks, seats, monitors and the pathfinder use that building's layout; moving
-  between buildings teleports (for now).
+- Station targets, desks, seats, monitors and the pathfinder use that building's layout. Moving between
+  buildings walks (fix wave 2, docs/WAVE2.md W8, mod/DEV.md "Walking between buildings"): inside to the
+  building's `entrance`, outdoors to the other building's `entrance` along a route planned over the
+  client's loaded terrain, inside to the spot. It teleports with a puff at both ends instead when walking
+  is off for the world (hub > Buildings), a building is in another dimension or has no `entrance`, the
+  entrances are more than 256 blocks apart, chunks on the way are not loaded, the player is beyond render
+  distance, or the route is missing, blocked or takes far too long. A released lead going home still
+  teleports to the home lounge first.
 - Dimensions: every building is driven in its own dimension (`ServerTasks.run(dimension, ...)`; the HQ studio
   is in the overworld): lamps, podiums, merge stations, monitors and signal bulbs. Agents only route and
   spawn to buildings in the player's dimension; an agent whose building and home are both elsewhere is not

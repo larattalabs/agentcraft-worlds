@@ -182,6 +182,9 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.team.release` | `world` | The Team tab's Release for a world holding leads (`lead.releaseWorld {world}`; the hub must be open); returns the note |
 | `dev.agents.fx` | `agent`, `fx` = `confetti`/`puff`/`sparkle`/`say`, `text?`, `to?` | Plays an agent effect now (QA preview; `say` shows a local speech bubble, nothing is sent) |
 | `dev.agents.keys` | `keys` (comma-separated: key names `space return escape back tab left right`, or text typed letter by letter, a-z 0-9 space) | **Test only** (`AGENTCRAFT_DEV_TEST=1`): presses keys as SDL reports a keyboard (SDL events queued for the game window, one key every 3 frames, through Minecraft's SDL event loop; printable keys produce text events only while SDL text input is on). Returns `{pressed, textEvents, screen, input?, textInputActive}`. `tools/agents-typing.mjs` uses it to check the agent card's message line |
+| `dev.walk.state` | | Walking between buildings (W8): `enabled, world, walking, planning, trips[{agent, from, to, phase planning\|walking, length, ticks, limit, target, pos, remainingPoints}], jobs, cache{size, hits, misses, invalidations, blockChanges, routes[{key, length, points, cells, nodes, micros}]}, planner{plans, found, tickNodes, tickBudgetUs, lastTickUs, maxTickUs, last{key, status, nodes, micros, ticks, length, points, unloadedHits}}, reasons{walk\|disabled\|other_dimension\|no_entrance\|too_far\|unloaded\|player_far\|no_path\|no_door_path\|budget\|blocked\|stuck\|rerouted\|settled: count}, recent[{agent, from, to, outcome walk\|teleport, reason, why, length?}], ui{drawn, needed, available, overflow, compact}` (also `dev.state.walk`) |
+| `dev.walk.plan` | `from`, `to` (building id or `home`), `fresh?` (false), `show?` (true) | Plans entrance to entrance with the agents' planner and cache (replies when the incremental job finishes): `{decision, key, status found\|no_path\|unloaded\|budget\|too_far\|no_start\|no_goal, cached, nodes, micros, ticks, length, cells, from, to, points[[x,y,z]]}` or `reason`; `show` draws the route with end-rod particles for 20 s (screenshots) |
+| `dev.walk.toggle` | `on?` (bool; omit = flip) | "Agents walk between buildings" for this world (`walking.json`); returns `{enabled, world}` |
 | `dev.test.foremanMessage` | `message:{type, ...}` | **Test only** (`AGENTCRAFT_DEV_TEST=1`): applies a Foreman message to the state model as if received (e.g. `foreman.status` with `auth:"failed"` to see the auth banner) |
 | `dev.displays` | `look?` = `paper` / `dark` / `split`, `reset?` | Monitor look (default dark; split alternates per monitor for comparisons), every laid-out monitor screen `{pos, agent, mode, style, size, ppb, rows, ageMs}`, and `stats` = display CPU cost per frame since the last reset (`monitor`/`board`: `usPerFrame`, `callsPerFrame`, `rebuilds`) |
 | `dev.taskwall` | `open?` (task id), `press?` (button id), `aim?` (task id), `board?` ("x y z" origin for `aim`), `lightFloor?` (0-15), `ppb?` (0-256, 0 = auto), `relayout?` | Task Wall boards and their cards (column counts, widths and cards per row, hidden ids, card positions, size full/brief/compact, title lines, state dot, glowing, `layoutUs` of the last re-plan). `lightFloor`/`ppb` override the block-light floor and the pixel density for A/B shots, `relayout` forces a re-plan. `open` opens that task's screen, `press` presses a button in the open task screen (`prev next retry prioritize reassign cancel to:<agent>`), `aim` returns the world point of a card and an eye 2.5 blocks in front (then `dev.camera` + `dev.key {mapping:"key.use"}` clicks it the real way; use `mode:"creative"`, spectators cannot click) |
@@ -448,7 +451,8 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   revision whichever way it is reached). A building that has neither the agent's desk, its station nor a
   lounge sends it home (`Routing.canHost`) instead of dropping it. `AgentManager` groups agents by layout
   name: one `StationAssigner`, pathfinder and seat cache (`layout|anchor`) per layout; a layout's revision
-  change snaps only its agents; a changed building teleports the agent with a vanilla poof at both ends.
+  change snaps only its agents; a changed building walks the agent there outdoors, or teleports it with a
+  vanilla poof at both ends (see "Walking between buildings").
   The player's building alone pulls waiting agents to the player. `AgentView.layout` is what
   `AgentLife` (monitor gaze) uses; `dev.agents` lists `layout` and `repo` per agent.
 - Regions: `HqWorldDriver` (lamps, podium, merge station, monitors, signal bulbs), `HqClientFeature`
@@ -521,6 +525,56 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   `<world>/generated/<ns>/structure/<name>.nbt`), copy it to `run/agentcraft/blueprints/<id>.nbt`,
   write `<id>.blueprint.json` next to it (size = the structure block's size), then
   `/agentcraft blueprints reload`.
+
+### Walking between buildings (fix wave 2, W8)
+
+An agent whose building changes walks there (docs/WAVE2.md W8). Code: pure planner and rules in
+`dev.agentcraft.walk` (`WalkCell`, `OutdoorPlanner`, `RouteCache`, `WalkRules`, `WalkSettings`, unit-tested
+on synthetic terrain in `src/test/java/dev/agentcraft/walk`), client side `agents/OutdoorRoutes` (planner
+queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states -> cell codes),
+`AgentManager` trips and `mixin/ClientLevelBlockMixin` (block changes).
+
+- **Decision** (`WalkRules.decide`, in this order): walking on for the world (hub > Buildings toggle,
+  `<gameDir>/agentcraft/walking.json` keyed by the save folder name, default on); both buildings found in
+  the player's dimension; both have an `entrance` anchor; entrances <= 256 blocks apart (horizontal); the
+  player within render distance (`options.getEffectiveRenderDistance() * 16`) of the straight line between
+  them; every chunk within 1 chunk of that line loaded on the client. Otherwise: teleport with a puff at both
+  ends (as before), the reason counted in `dev.walk.state`.
+- **Route**: A* from entrance to entrance over `WalkCell` codes. Standable: a floor below (collision top
+  14..16 sixteenths: full blocks, dirt path, soul sand) with open, door or 1-deep water feet, or a block up
+  to a bottom slab in the feet cell; the head cell open (water there = too deep). Never a floor: leaves,
+  fences/walls (top > 16), trapdoors, water. Hazards (lava, fire, magma, powder snow, campfire, cactus,
+  berry bush, wither rose) are avoided as floor, feet and head. Moves: 8 directions (diagonals on one level,
+  no corner cutting), step up <= 1 (with headroom), drop <= 3 (the column above the landing open), so
+  cliffs over 3 are never taken; wading costs extra, doors a little. **Doors, fence gates and trapdoors are
+  passed through visually** (decision: client-only agents open nothing in the world; routing around closed
+  doors would make every iron-door building unreachable). Search box: the endpoints +-40 blocks (y +-26),
+  60 000 expansions max; then string pulling (agent width 0.6, at most 24 cells a segment) with an extra
+  waypoint at the edge of every step/drop (the agent climbs or drops at the edge, not through the corner).
+- **Budget**: `OutdoorRoutes.tick` (from `AgentManager.tick`, client thread) steps the queued jobs with
+  2 500 expansions and 2 ms per tick, whichever runs out first; one job per building pair, shared by every
+  agent making that trip. Measured (unit test `corridor256Performance`, hills + a 2-deep river with fords +
+  tree clumps, a 253-block corridor): ~22 000 expansions, ~18-20 ms in total over ~15 ticks, worst tick
+  2.0 ms, a 288-block route of ~97 points. No snapshotting or threads: the level is read on the client thread.
+- **Trip** (`AgentManager.Trip`): planning (the agent stays where it is) -> walking: one route handed to
+  `AgentMotion` = inside A to its entrance (`GridPathfinder`, standing up first) + outdoor points + inside B
+  from its entrance to the spot (seat approach and the last step onto the seat). Normal retargeting is
+  skipped while a trip runs (a station change in B updates the trip's target; retargeting resumes on
+  arrival). Ends: arrival; `player_far` (the player > render distance from the agent: it is placed at its
+  spot); `blocked` (the next outdoor waypoint is no longer standable, checked every 10 ticks: the route is
+  dropped and the agent teleports; the next trip re-plans); `stuck` (3x the walking time + 15 s);
+  `rerouted` (sent to a third building mid-walk: teleport). Deadlines count unpaused ticks only (every
+  AgentCraft screen pauses singleplayer). `dev.agents {settle:true}` finishes trips (`settled`).
+- **Cache** (`RouteCache`, 32 routes, LRU): key `<from layout>><to layout>` (not reversible: drop 3 / climb 1).
+  Dropped when a block changes within 2 blocks of a route cell (`ClientLevel.sendBlockUpdated` HEAD inject,
+  `require = 0`), on any building change (`Buildings.regionsSignature`) and on a level change; checked
+  again (every cell still standable) before reuse, which also covers chunk reloads.
+- **Not done**: a released lead going home still teleports to the home lounge (`startDeparture`); no
+  re-plan from mid-route when blocked (teleport instead).
+- QA: `dev.walk.toggle {on:true}`, `dev.walk.plan {from:"b1", to:"b2"}` (particles for 20 s, then
+  `dev.screenshot`), `dev.walk.state` while an agent changes building (e.g. assign a task of b2's repo to an
+  agent working in b1), `dev.hub.open {tab:"buildings"}` + `dev.hub.action {action:"press",
+  button:"walk_toggle"}` for the toggle.
 
 ### A lead per building (`dev.agentcraft.client.leads`)
 The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUILDINGS.md "Client (routing)".
