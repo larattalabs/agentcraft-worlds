@@ -13,11 +13,12 @@ public abstract class KeyboardHandlerMixin {
 	/**
 	 * While the building wizard is placing (no screen open), its keys (R, arrows, PgUp/PgDn, L, Enter,
 	 * Esc, Backspace) are consumed before vanilla sees them, so Esc cancels instead of pausing and L
-	 * does not open the advancements. Releases always pass through.
+	 * does not open the advancements. Releases always pass through. The same for a road preview (Enter lays, Esc
+	 * cancels; docs/VILLAGE.md V1).
 	 */
 	@Inject(method = "keyPress", at = @At("HEAD"), cancellable = true)
 	private void agentcraft$wizardKeys(long window, int action, KeyEvent event, CallbackInfo ci) {
-		if (BuildingWizardFeature.onKey(action, event)) {
+		if (BuildingWizardFeature.onKey(action, event) || dev.agentcraft.client.road.RoadsFeature.onKey(action, event)) {
 			ci.cancel();
 		}
 	}

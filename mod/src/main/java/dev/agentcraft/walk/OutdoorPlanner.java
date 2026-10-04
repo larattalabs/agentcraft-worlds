@@ -2,6 +2,8 @@ package dev.agentcraft.walk;
 
 import it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.PriorityQueue;
@@ -13,7 +15,7 @@ import org.jspecify.annotations.Nullable;
  * client ticks and never blocks a frame. Pure: no game classes, unit-tested on synthetic terrain.
  *
  * <p>Rules: a cell is standable per {@link WalkCell#floor}; moves go to the 8 neighbours (diagonals only on
- * one level and never cutting a corner), step up at most 1 block (with headroom to do it), drop at most 3
+ * one level and never cutting a corner), step up at most 1 block (with headroom to do it), drop at most 3 ({@link Limits#maxDrop}: 1 for roads)
  * (the column above the landing open), so cliffs higher than 3 are never taken; water is waded (1 deep) at
  * a cost, doors and gates are passed through. The search stays inside the endpoints' box padded by
  * {@link Limits#pad} and gives up after {@link Limits#maxNodes} expansions. A route that touched unloaded
@@ -49,14 +51,39 @@ public final class OutdoorPlanner {
 	 * @param smoothAhead the longest straight segment (in path cells) string pulling tries
 	 * @param maxPad when the search runs out of cells after pressing against its box's edge, it starts again with the
 	 *               pad doubled, up to this (a ridge or a lake wider than the box is walked around)
+	 * @param maxDrop the deepest drop a step may take (3 for agents; 1 for a road, so it is walkable both ways)
 	 */
-	public record Limits(int maxNodes, int pad, int maxDistance, int smoothAhead, int maxPad) {
-		public static final Limits DEFAULT = new Limits(120_000, 32, 256, 24, 128);
+	public record Limits(int maxNodes, int pad, int maxDistance, int smoothAhead, int maxPad, int maxDrop) {
+		public static final Limits DEFAULT = new Limits(120_000, 32, 256, 24, 128, 3);
+		/** A road's route (docs/VILLAGE.md V1): as {@link #DEFAULT}, but no step drops more than a block. */
+		public static final Limits ROAD = DEFAULT.withMaxDrop(1);
+
+		public Limits {
+			if (maxDrop < 1 || maxDrop > 3) {
+				throw new IllegalArgumentException("maxDrop must be 1..3");
+			}
+		}
+
+		public Limits(int maxNodes, int pad, int maxDistance, int smoothAhead, int maxPad) {
+			this(maxNodes, pad, maxDistance, smoothAhead, maxPad, 3);
+		}
 
 		public Limits(int maxNodes, int pad, int maxDistance, int smoothAhead) {
 			this(maxNodes, pad, maxDistance, smoothAhead, pad);
 		}
+
+		public Limits withMaxDrop(int d) {
+			return new Limits(maxNodes, pad, maxDistance, smoothAhead, maxPad, d);
+		}
 	}
+
+	/**
+	 * A step onto a laid road (docs/VILLAGE.md V1) costs this much of a step elsewhere, so routes prefer roads. When a
+	 * road cell lies inside the search box, the heuristic is scaled by it too (it stays an estimate of the cheapest way,
+	 * or the search would rush past the road); with no road in the box it is not, so a road elsewhere in the dimension
+	 * costs other searches nothing.
+	 */
+	public static final double ROAD_FACTOR = 0.6;
 
 	private static final double SQRT2 = Math.sqrt(2);
 	/** Heuristic weight: slightly greedy (routes within a few % of the shortest, far fewer expansions). */
@@ -70,6 +97,10 @@ public final class OutdoorPlanner {
 
 	private final Terrain terrain;
 	private final Limits limits;
+	/** Feet cells ({@link WalkCell#pack}) on a laid road, or null. */
+	private final @Nullable LongSet roads;
+	/** The heuristic weight this round: {@link #H_WEIGHT}, times {@link #ROAD_FACTOR} when a road lies in the box. */
+	private double hWeight = H_WEIGHT;
 	private final Point from;
 	private final Point to;
 	private final Long2IntOpenHashMap codes = new Long2IntOpenHashMap();
@@ -116,10 +147,16 @@ public final class OutdoorPlanner {
 	private long @Nullable [] cells;
 
 	public OutdoorPlanner(Terrain terrain, Point from, Point to, Limits limits) {
+		this(terrain, from, to, limits, null);
+	}
+
+	/** With {@code roads} (feet cells on a laid road): steps onto them cost {@link #ROAD_FACTOR}. */
+	public OutdoorPlanner(Terrain terrain, Point from, Point to, Limits limits, @Nullable LongSet roads) {
 		this.terrain = terrain;
 		this.from = from;
 		this.to = to;
 		this.limits = limits;
+		this.roads = roads == null || roads.isEmpty() ? null : roads;
 		this.pad = limits.pad();
 		floors.defaultReturnValue(UNKNOWN);
 		best.defaultReturnValue(Double.MAX_VALUE);
@@ -312,6 +349,7 @@ public final class OutdoorPlanner {
 		maxZ = Math.max(fz, tz) + pad;
 		minY = Math.min(fy, ty) - vpad;
 		maxY = Math.max(fy, ty) + vpad;
+		pickWeight();
 		int[] s = cellAt(fx, fy, fz);
 		int[] g = cellAt(tx, ty, tz);
 		if (s == null) {
@@ -371,10 +409,32 @@ public final class OutdoorPlanner {
 		return v;
 	}
 
+	/** Scales the heuristic only when some road cell lies inside the search box (see {@link #ROAD_FACTOR}). */
+	private void pickWeight() {
+		hWeight = H_WEIGHT;
+		if (roads == null) {
+			return;
+		}
+		for (LongIterator it = roads.iterator(); it.hasNext(); ) {
+			long c = it.nextLong();
+			int x = WalkCell.unpackX(c);
+			int z = WalkCell.unpackZ(c);
+			if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
+				hWeight = H_WEIGHT * ROAD_FACTOR;
+				return;
+			}
+		}
+	}
+
+	/** The heuristic weight in use (for tests). */
+	double heuristicWeight() {
+		return hWeight;
+	}
+
 	private double h(int x, int y, int z) {
 		int dx = Math.abs(x - gx);
 		int dz = Math.abs(z - gz);
-		return H_WEIGHT * (Math.max(dx, dz) + (SQRT2 - 1) * Math.min(dx, dz)) + 0.1 * Math.abs(y - gy);
+		return hWeight * (Math.max(dx, dz) + (SQRT2 - 1) * Math.min(dx, dz)) + 0.1 * Math.abs(y - gy);
 	}
 
 	private void searchOne() {
@@ -436,7 +496,7 @@ public final class OutdoorPlanner {
 					continue;
 				}
 				double rise = f1 - f0;
-				if (rise > 1.0 + 1e-6 || rise < -3.0 - 1e-6) {
+				if (rise > 1.0 + 1e-6 || rise < -limits.maxDrop() - 1e-6) {
 					break;
 				}
 				if (rise > 0.5 + 1e-6 && !roomToStepUp) {
@@ -446,7 +506,8 @@ public final class OutdoorPlanner {
 					break;
 				}
 				int feet = code(nx, ny, nz);
-				double cost = (diagonal ? SQRT2 : 1.0) + (rise > 0.01 ? 0.5 * rise : 0) + (rise < -0.01 ? 0.25 * -rise : 0)
+				double step = (diagonal ? SQRT2 : 1.0) * (roads != null && roads.contains(WalkCell.pack(nx, ny, nz)) ? ROAD_FACTOR : 1.0);
+				double cost = step + (rise > 0.01 ? 0.5 * rise : 0) + (rise < -0.01 ? 0.25 * -rise : 0)
 					+ (feet == WalkCell.WATER ? 1.5 : 0) + (feet == WalkCell.DOOR || code(nx, ny + 1, nz) == WalkCell.DOOR ? 0.3 : 0)
 					+ (code(nx, ny + 1, nz) == WalkCell.LEAVES ? 0.6 : 0);
 				double g = n.g + cost;
@@ -482,6 +543,7 @@ public final class OutdoorPlanner {
 		maxZ = Math.max(fz, tz) + pad;
 		minY = Math.min(sy, gy) - vpad;
 		maxY = Math.max(sy, gy) + vpad;
+		pickWeight();
 		best.put(WalkCell.pack(sx, sy, sz), 0.0);
 		open.add(new Node(sx, sy, sz, 0, h(sx, sy, sz), null));
 	}

@@ -61,6 +61,15 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      ("tight") and then shorter ("Night Stand Lib", "short") when the column is narrow. Button ids
      `routine_toggle:night|standups|library` (`dev.hub.action {action:"press", button:"routine_toggle:night"}`, or
      `dev.routines.toggle`); the row's fit is in `dev.routines.state` `ui{needed, available, mode, overflow}`.
+     Village V1 (stream roads, docs/VILLAGE.md, docs/BUILDINGS.md "Roads"): a fourth list, **Roads**
+     (`sub:"roads"`): building pairs of the player's dimension (entrances <= 256 blocks apart) with their road route
+     (length / planning / no route and why) and road (id pill), roads whose building was removed or moved first ("!
+     b3 was removed: remove it?"). A pair without a road: **Width 1-3**, **Lanterns: On/Off**, **Bridges: On/Off**, **Lay
+     road…** (closes the hub and shows the ghost; Enter lays, Esc cancels) and **Plan again**; a road: its facts and notes
+     and **Remove road…** (two-step, like Remove); an orphan: **Remove road…** and **Keep it**. "Place new…" is hidden on
+     this list. Button ids `road_*`, rows `pair:<a>|<b>` / `road:<id>` (mod/DEV.md "Roads"). When the switch and
+     the right button do not fit (GUI scale 4, ~426 px wide) the counts go first ("Buildings", "Roads": each list says
+     them again), then the button reads "Place…" / "Design…" (`dev.roads.state ui.strip.compact`).
   2. **Repos** *(done, branch `mod/goals-tabs`)*: registered repos and their `repoSettings`.
   3. **Goals** *(done in the mod, branch `mod/goals-tabs`; Foreman side in `foreman/goals-tabs`)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the

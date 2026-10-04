@@ -64,9 +64,9 @@ public final class HubScreen extends Screen {
 	static final long CONFIRM_MS = 6000;
 	private static final DateTimeFormatter RESETS = DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ROOT);
 
-	/** Buildings tab: the world's buildings, its fixtures (village boards, docs/VILLAGE.md V2), the blueprint browser or the building designs. */
+	/** Buildings tab: the world's buildings, its fixtures (village boards, docs/VILLAGE.md V2), the blueprint browser, the building designs or the roads between buildings. */
 	public enum Sub {
-		BUILDINGS, FIXTURES, BLUEPRINTS, DESIGNS
+		BUILDINGS, FIXTURES, BLUEPRINTS, DESIGNS, ROADS
 	}
 
 	record Btn(String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger, Runnable action) {
@@ -119,6 +119,8 @@ public final class HubScreen extends Screen {
 	final SettingsTab settings = new SettingsTab(this);
 	final InboxTab inbox = new InboxTab(this);
 	final StatusPane status = new StatusPane(this);
+	/** Buildings > Roads (docs/VILLAGE.md V1). */
+	final RoadsView roadsView = new RoadsView(this);
 	// tab strip layout last frame (dev.hub.state tabs): badges per tab id, compact = badges shrunk to dots
 	private int tabsNeeded;
 	private int tabsAvailable;
@@ -602,6 +604,8 @@ public final class HubScreen extends Screen {
 				if (!list.isEmpty()) {
 					selectBuilding(list.get(Math.max(0, Math.min(list.size() - 1, i + d))).id());
 				}
+			} else if (sub == Sub.ROADS) {
+				roadsView.move(d);
 			} else {
 				List<Blueprint> list = blueprints();
 				int i = 0;
@@ -679,6 +683,8 @@ public final class HubScreen extends Screen {
 					selectDesign(id);
 				} else if (sub == Sub.BUILDINGS || sub == Sub.FIXTURES) {
 					selectBuilding(id);
+				} else if (sub == Sub.ROADS) {
+					roadsView.select(id);
 				} else {
 					if (!id.equals(selectedBlueprint)) {
 						view = null;
@@ -882,20 +888,31 @@ public final class HubScreen extends Screen {
 		List<Building> fs = fixtures();
 		List<Blueprint> bps = blueprints();
 		List<Design> ds = designs();
-		// the right-hand button: Design new / Place village board / Place new (compact when the sub switch needs the room)
-		String right = sub == Sub.DESIGNS ? "Design new…" : sub == Sub.FIXTURES ? "Place village board…" : "Place new…";
-		int subsW = 0;
-		for (Sub s : Sub.values()) {
-			subsW += bw(subLabel(s, bs, fs, bps, ds)) + 4;
+		// sub switch (left) and Place new / Place village board / Design new (right). Narrow (GUI scale 4, ~426 px): the
+		// counts go first (each list says them again), then the right button's label shortens, so the strip never overlaps
+		boolean running = ds.stream().anyMatch(d -> d.status().isRunning());
+		String rightFull = sub == Sub.DESIGNS ? "Design new…" : sub == Sub.FIXTURES ? "Place village board…" : sub == Sub.ROADS ? null : "Place new…";
+		String rightShort = sub == Sub.DESIGNS ? "Design…" : sub == Sub.FIXTURES ? "Place board…" : "Place…";
+		int level = 0;
+		int needed = 0;
+		for (; level < 3; level++) {
+			needed = 0;
+			for (Sub s : Sub.values()) {
+				needed += bw(subLabel(s, level > 0, bs.size(), fs.size(), bps.size(), ds.size(), running)) + 4;
+			}
+			if (rightFull != null) {
+				needed += bw(level > 1 ? rightShort : rightFull);
+			} else {
+				needed -= 4;
+			}
+			if (needed <= w) {
+				break;
+			}
 		}
-		if (subsW + bw(right) > w) {
-			// 426x240 with two-digit counts: the right-hand button gives up words before it overlaps the sub switch
-			right = sub == Sub.DESIGNS ? "Design…" : sub == Sub.FIXTURES ? "Place board…" : "Place…";
-		}
-		// sub switch (left) and Place new / Design new (right)
+		level = Math.min(level, 2);
 		int sx = x;
 		for (Sub s : Sub.values()) {
-			String label = subLabel(s, bs, fs, bps, ds);
+			String label = subLabel(s, level > 0, bs.size(), fs.size(), bps.size(), ds.size(), running);
 			int sw = bw(label);
 			button(g, "sub:" + s.name().toLowerCase(Locale.ROOT), label, sx, y, sw, false, false, false, mx, my, () -> setSub(s));
 			if (s == sub) {
@@ -903,14 +920,18 @@ public final class HubScreen extends Screen {
 			}
 			sx += sw + 4;
 		}
-		if (sub == Sub.DESIGNS) {
-			button(g, "design_new", right, x + w - bw(right), y, bw(right), true, HubFeature.designNew == null, false, mx, my, this::designNew);
-		} else if (sub == Sub.FIXTURES) {
-			boolean can = minecraft.getSingleplayerServer() != null && Blueprints.get(dev.agentcraft.client.village.VillageBoardFeature.BLUEPRINT) != null;
-			button(g, "place_board", right, x + w - bw(right), y, bw(right), true, !can, false, mx, my, this::placeVillageBoard);
-		} else {
-			button(g, "place_new", right, x + w - bw(right), y, bw(right), true, minecraft.getSingleplayerServer() == null, false, mx, my,
-				this::placeNew);
+		dev.agentcraft.client.road.RoadsFeature.reportStrip(needed, w, level);
+		if (rightFull != null) {
+			String right = level > 1 ? rightShort : rightFull;
+			if (sub == Sub.DESIGNS) {
+				button(g, "design_new", right, x + w - bw(right), y, bw(right), true, HubFeature.designNew == null, false, mx, my, this::designNew);
+			} else if (sub == Sub.FIXTURES) {
+				boolean can = minecraft.getSingleplayerServer() != null && Blueprints.get(dev.agentcraft.client.village.VillageBoardFeature.BLUEPRINT) != null;
+				button(g, "place_board", right, x + w - bw(right), y, bw(right), true, !can, false, mx, my, this::placeVillageBoard);
+			} else {
+				button(g, "place_new", right, x + w - bw(right), y, bw(right), true, minecraft.getSingleplayerServer() == null, false, mx, my,
+					this::placeNew);
+			}
 		}
 		y += 26;
 		h -= 26;
@@ -919,15 +940,19 @@ public final class HubScreen extends Screen {
 			case FIXTURES -> drawFixtures(g, fs, x, y, w, h, mx, my);
 			case BLUEPRINTS -> drawBlueprints(g, bps, x, y, w, h, mx, my);
 			case DESIGNS -> drawDesigns(g, ds, x, y, w, h, mx, my);
+			case ROADS -> roadsView.draw(g, x, y, w, h, mx, my);
 		}
 	}
 
-	private static String subLabel(Sub s, List<Building> bs, List<Building> fs, List<Blueprint> bps, List<Design> ds) {
+	/** A Buildings sub-switch label, with its count unless {@code compact}. */
+	private static String subLabel(Sub s, boolean compact, int buildings, int fixtures, int blueprints, int designs, boolean running) {
+		String dot = running ? " ●" : "";
 		return switch (s) {
-			case BUILDINGS -> "Buildings " + bs.size();
-			case FIXTURES -> "Fixtures " + fs.size();
-			case BLUEPRINTS -> "Blueprints " + bps.size();
-			case DESIGNS -> "Designs " + ds.size() + (ds.stream().anyMatch(d -> d.status().isRunning()) ? " ●" : "");
+			case BUILDINGS -> compact ? "Buildings" : "Buildings " + buildings;
+			case FIXTURES -> compact ? "Fixtures" : "Fixtures " + fixtures;
+			case BLUEPRINTS -> compact ? "Blueprints" : "Blueprints " + blueprints;
+			case DESIGNS -> (compact ? "Designs" : "Designs " + designs) + dot;
+			case ROADS -> compact ? "Roads" : "Roads " + dev.agentcraft.building.Roads.all().size();
 		};
 	}
 
@@ -1204,7 +1229,9 @@ public final class HubScreen extends Screen {
 			noteColor = UiBits.errorText();
 		} else if (armedHere) {
 			long left = Math.max(0, (CONFIRM_MS - (System.currentTimeMillis() - armedAt) + 999) / 1000);
-			note = "Click Confirm remove to take " + id + " down: the terrain that was there comes back exactly. (" + left + " s)";
+			int roads = dev.agentcraft.building.Roads.forBuilding(id).size();
+			note = "Click Confirm remove to take " + id + " down: the terrain that was there comes back exactly" + (roads == 0 ? "" : "; its "
+				+ (roads == 1 ? "road stays" : roads + " roads stay") + " (Roads offers to remove " + (roads == 1 ? "it" : "them") + ")") + ". (" + left + " s)";
 			noteColor = UiBits.errorText();
 		} else if (busy) {
 			note = "Working…";

@@ -99,6 +99,98 @@ class OutdoorPlannerTest {
 	}
 
 	@Test
+	void roadRoutesDropAtMostOneBlock() {
+		// a 2-block drop straight ahead, a ramp 6 blocks to the side: agents drop, a road takes the ramp
+		GridTerrain t = new GridTerrain((x, z) -> x < 10 ? 64 : z >= 6 && x < 12 ? 64 - (x - 9) : 62);
+		Limits road = SMALL.withMaxDrop(1);
+		OutdoorPlanner agent = plan(t, p(0.5, 65, 0.5), p(20.5, 63, 0.5), SMALL);
+		assertEquals(Status.FOUND, agent.status());
+		OutdoorPlanner p = plan(t, p(0.5, 65, 0.5), p(20.5, 63, 0.5), new Limits(60_000, 12, 256, 32, 12, 1));
+		assertEquals(Status.FOUND, p.status(), p.explain());
+		long[] cells = p.cells();
+		for (int i = 1; i < cells.length; i++) {
+			assertTrue(Math.abs(WalkCell.unpackY(cells[i]) - WalkCell.unpackY(cells[i - 1])) <= 1, "a step of more than one block");
+		}
+		// so the road is walkable both ways
+		assertEquals(Status.FOUND, plan(t, p(20.5, 63, 0.5), p(0.5, 65, 0.5), new Limits(60_000, 12, 256, 32, 12, 1)).status());
+		assertEquals(1, road.maxDrop());
+		assertEquals(1, Limits.ROAD.maxDrop());
+		assertEquals(3, Limits.DEFAULT.maxDrop());
+	}
+
+	@Test
+	void routesPreferLaidRoads() {
+		// a road along z = 4 from x 2 to 98; the straight line is along z = 0
+		GridTerrain t = GridTerrain.flat();
+		it.unimi.dsi.fastutil.longs.LongOpenHashSet road = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+		for (int x = 2; x <= 98; x++) {
+			road.add(WalkCell.pack(x, 65, 4));
+		}
+		Point a = p(0.5, 65, 0.5);
+		Point b = p(100.5, 65, 0.5);
+		OutdoorPlanner without = plan(t, a, b, Limits.DEFAULT);
+		OutdoorPlanner with = new OutdoorPlanner(t, a, b, Limits.DEFAULT, road);
+		with.runAll();
+		assertEquals(Status.FOUND, with.status());
+		assertWalkable(t, with);
+		long onRoad = java.util.Arrays.stream(with.cells()).filter(road::contains).count();
+		long before = java.util.Arrays.stream(without.cells()).filter(road::contains).count();
+		assertEquals(0, before);
+		assertTrue(onRoad > 80, "the route keeps to the road: " + onRoad + " cells on it");
+		assertTrue(with.expanded() < 30_000, "expansions " + with.expanded());
+		System.out.printf("V1 road preference 100: %d nodes with roads, %d without%n", with.expanded(), without.expanded());
+		assertTrue(with.heuristicWeight() < 1.0, "a road in the box scales the heuristic");
+		// a road far off the way is not worth the detour
+		it.unimi.dsi.fastutil.longs.LongOpenHashSet far = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+		for (int x = 2; x <= 98; x++) {
+			far.add(WalkCell.pack(x, 65, 40));
+		}
+		OutdoorPlanner p = new OutdoorPlanner(t, a, b, Limits.DEFAULT, far);
+		p.runAll();
+		assertEquals(0, java.util.Arrays.stream(p.cells()).filter(far::contains).count());
+		// on rough terrain the budget still holds
+		GridTerrain m = new GridTerrain(OutdoorPlannerTest::mountains);
+		it.unimi.dsi.fastutil.longs.LongSet none = it.unimi.dsi.fastutil.longs.LongSet.of(WalkCell.pack(5000, 64, 5000));
+		Point ma = p(0.5, mountains(0, 0) + 1, 0.5);
+		Point mb = p(160.5, mountains(160, 30) + 1, 30.5);
+		OutdoorPlanner mp = new OutdoorPlanner(m, ma, mb, Limits.DEFAULT, none);
+		mp.runAll();
+		assertEquals(Status.FOUND, mp.status(), mp.explain());
+		System.out.printf("V1 road weighting on mountains 160: %d nodes%n", mp.expanded());
+		OutdoorPlanner mNone = plan(m, ma, mb, Limits.DEFAULT);
+		assertTrue(mp.expanded() <= mNone.expanded() * 3 / 2, "unrelated road: " + mp.expanded() + " vs " + mNone.expanded());
+	}
+
+	/** A road elsewhere in the dimension must not slow every agent's search (the heuristic stays unscaled). */
+	@Test
+	void unrelatedRoadsDoNotSlowTheCorridor() {
+		GridTerrain t = hills();
+		Point a = p(0.5, height(0, 0) + 1, 0.5);
+		Point b = p(250.5, height(250, 40) + 1, 40.5);
+		it.unimi.dsi.fastutil.longs.LongOpenHashSet road = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+		for (int x = 0; x <= 250; x++) {
+			road.add(WalkCell.pack(x, height(x, 400) + 1, 400)); // a long road, far outside the search box
+		}
+		OutdoorPlanner without = plan(t, a, b, Limits.DEFAULT);
+		OutdoorPlanner with = new OutdoorPlanner(t, a, b, Limits.DEFAULT, road);
+		with.runAll();
+		assertEquals(Status.FOUND, without.status());
+		assertEquals(Status.FOUND, with.status(), with.explain());
+		assertEquals(1.08, with.heuristicWeight(), 1e-9);
+		System.out.printf("V1 corridor 256 with an unrelated road: %d nodes, %d without%n", with.expanded(), without.expanded());
+		assertTrue(with.expanded() <= without.expanded() * 3 / 2, "expansions " + with.expanded() + " vs " + without.expanded());		// a short road inside the box (a village): the heuristic is scaled, the search must still finish within budget
+		it.unimi.dsi.fastutil.longs.LongOpenHashSet near = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+		for (int x = 100; x <= 130; x++) {
+			near.add(WalkCell.pack(x, height(x, 20) + 1, 20));
+		}
+		OutdoorPlanner in = new OutdoorPlanner(t, a, b, Limits.DEFAULT, near);
+		in.runAll();
+		assertEquals(Status.FOUND, in.status(), in.explain());
+		System.out.printf("V1 corridor 256 with a 30-block road in the box: %d nodes%n", in.expanded());
+		assertTrue(in.expanded() < Limits.DEFAULT.maxNodes() / 2, "expansions " + in.expanded());
+	}
+
+	@Test
 	void hazardsAreAvoided() {
 		GridTerrain t = GridTerrain.flat();
 		for (int z = -8; z <= 8; z++) {

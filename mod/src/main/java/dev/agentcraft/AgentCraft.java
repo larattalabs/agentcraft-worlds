@@ -4,6 +4,7 @@ import dev.agentcraft.block.ModBlocks;
 import dev.agentcraft.building.BuildingCommands;
 import dev.agentcraft.building.Blueprints;
 import dev.agentcraft.building.Buildings;
+import dev.agentcraft.building.Roads;
 import dev.agentcraft.building.Trophies;
 import dev.agentcraft.block.ModItems;
 import dev.agentcraft.block.entity.ModBlockEntities;
@@ -39,6 +40,7 @@ public class AgentCraft implements ModInitializer {
 		Blueprints.init();
 		Buildings.init();
 		Trophies.init();
+		Roads.init();
 		AgentCraftCommands.init();
 		BuildingCommands.init();
 		HqFeature.init();

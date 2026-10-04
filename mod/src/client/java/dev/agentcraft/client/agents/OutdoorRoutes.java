@@ -72,6 +72,8 @@ public final class OutdoorRoutes {
 	private final LinkedHashMap<String, Job> jobs = new LinkedHashMap<>();
 	private @Nullable ClientLevel level;
 	private long regionsSignature = Long.MIN_VALUE;
+	/** {@link dev.agentcraft.building.Roads#signature()} the cache was planned with (a road laid or removed: plan again). */
+	private long roadsSignature = Long.MIN_VALUE;
 	private @Nullable WalkSettings settings;
 	private long lastSave;
 	// stats
@@ -186,6 +188,25 @@ public final class OutdoorRoutes {
 	 * planner job (shared with every request for the same key) that completes on a later client tick.
 	 */
 	CompletableFuture<Outcome> request(ClientLevel lvl, String key, Point from, Point to, boolean fresh) {
+		return request(lvl, key, from, to, fresh, OutdoorPlanner.Limits.DEFAULT);
+	}
+
+	/**
+	 * A road's route (docs/VILLAGE.md V1) from entrance {@code from} to {@code to}: as agents plan theirs (laid roads
+	 * preferred, cached the same way), but no step drops more than a block ({@link OutdoorPlanner.Limits#ROAD}), so the
+	 * road is walkable both ways. Keyed {@code road:<key>}. Client thread.
+	 */
+	public CompletableFuture<Outcome> requestRoad(ClientLevel lvl, String key, Point from, Point to, boolean fresh) {
+		return request(lvl, "road:" + key, from, to, fresh, OutdoorPlanner.Limits.ROAD);
+	}
+
+	/** Feet cells on laid roads in the level's dimension (steps onto them are cheaper), or null when there are none. */
+	private static it.unimi.dsi.fastutil.longs.@Nullable LongSet roads(ClientLevel lvl) {
+		it.unimi.dsi.fastutil.longs.LongSet s = dev.agentcraft.building.Roads.feetCells(lvl.dimension().identifier().toString());
+		return s.isEmpty() ? null : s;
+	}
+
+	private CompletableFuture<Outcome> request(ClientLevel lvl, String key, Point from, Point to, boolean fresh, OutdoorPlanner.Limits limits) {
 		if (lvl != level) {
 			resetFor(lvl);
 		}
@@ -200,7 +221,7 @@ public final class OutdoorRoutes {
 		}
 		Job j = jobs.get(key);
 		if (j == null) {
-			j = new Job(key, new OutdoorPlanner(new LevelTerrain(lvl), from, to));
+			j = new Job(key, new OutdoorPlanner(new LevelTerrain(lvl), from, to, limits, roads(lvl)));
 			jobs.put(key, j);
 		}
 		CompletableFuture<Outcome> f = new CompletableFuture<>();
@@ -241,9 +262,11 @@ public final class OutdoorRoutes {
 			resetFor(lvl);
 		}
 		long sig = Buildings.regionsSignature();
-		if (sig != regionsSignature) {
+		long roadSig = dev.agentcraft.building.Roads.signature();
+		if (sig != regionsSignature || roadSig != roadsSignature) {
 			regionsSignature = sig;
-			cache.clear(); // a building placed, moved or removed: routes may cross it now
+			roadsSignature = roadSig;
+			cache.clear(); // a building placed, moved or removed (routes may cross it now), a road laid or removed (prefer it)
 		}
 		if (lvl == null) {
 			return;

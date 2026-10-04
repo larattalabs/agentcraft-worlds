@@ -41,6 +41,7 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 | `building`, `walk` (main) | buildings / walking | buildings in a world (place, move, remove, snapshots, terrain fit, approach); the pure outdoor planner |
 | `client.agents` `Routines` + `routine` (main) | routines | village routines (docs/VILLAGE.md V3): night rest in beds, stand-ups, library visits; pure `RoutineRules`, `BedPicker`, `BedRest`, `StandupTracker`, `LibraryVisits`, `RoutineSettings` |
 | `client.trophy` + `trophy` (main) | buildings | trophies: `TrophyFeature` (Foreman updates -> `Trophies.award`, hub toggle, `dev.trophies.*`); pure `TrophyEvents`, `TrophySettings` |
+| `client.road` + `building.Road*` (main) | village (roads) | roads between buildings: `RoadsFeature` (routes, ghost preview, lay/remove through the server, removal offers, `dev.roads.*`), `RoadGhost`, `RoadHud`; pure `RoadPlan`, server `Roads`; the hub's `RoadsView` |
 | `client.hq` + `hq` (main) | HQ specialist | the real HQ builder (main), world blocks driven by state (client), `StatusLampRenderer` |
 | `client.ui` | core (additive) | kit drawing, style tokens, text utils (screens + world) |
 | `client.world` | core (additive) | `StationRenderer` base, `ServerTasks`, `StationInteractions`, dev helpers |
@@ -537,6 +538,18 @@ Contract: docs/VILLAGE.md V3 ("As implemented: routines"); notes in mod/DEV.md "
   the agents working as usual (logged at most every 10 s).
 - Per-world toggles in hub > Buildings ("Night", "Stand-ups", "Library"), `routines.json`, default on. DevBridge:
   `dev.routines.state`, `dev.routines.toggle`, `dev.routines.time`, `dev.routines.standup`, `dev.routines.library`.
+## Roads (`client.road`: `RoadsFeature`, `RoadGhost`, `RoadHud`; `building`: `RoadPlan`, `Road`, `Roads`, `RoadTerrain`; hub `RoadsView`)
+
+Contract: docs/VILLAGE.md V1; details in docs/BUILDINGS.md "Roads", QA in mod/DEV.md "Roads". Hub > Buildings > **Roads**
+lists the building pairs of the player's dimension (route length and status, road) and roads whose building went. **Lay
+road…** plans the route agents walk (no drop over one block, so it works both ways), shows a ghost (tan paved, orange
+cleared, red left out, brass lanterns) and a HUD panel; Enter lays it through the integrated server, which checks and plans
+it all again. Width 1-3 (default 2), lanterns on fence posts every ~12 blocks (default on), plank bridges over 1-deep water
+(opt in). Only natural blocks are paved or cleared (dirt path, gravel, packed mud; plants, snow, leaves, whole tall-plant
+stacks); never block entities, logs, a player's blocks, fluids or buildings. **Remove road…** (twice) puts back every cell
+nobody changed since, from a per-cell snapshot. A building removed or moved offers its roads for removal (toast + list),
+never silently. Agents prefer laid roads (cheaper planner steps; the search's heuristic is scaled only when a road lies in
+its box, so roads elsewhere never slow it). Enter lays only the ghost the player confirmed (the server's plan must match it).
 
 ## Displays (`client.monitor`, `client.taskwall`)
 
