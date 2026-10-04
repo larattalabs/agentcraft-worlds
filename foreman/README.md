@@ -252,6 +252,21 @@ nothing and starts no fold-in: Marlow's verdicts go to the feed and to a shared 
     "prReview": { "autoSeverities": ["critical", "important"], "maxRounds": 2 } } } }
 ```
 
+Which comment threads are automated reviews is set per repo with `prReview.bots`, a list of
+`{ "name"?, "author"?, "marker", "ignoreMarkers"? }`: a thread whose first comment starts with
+`marker` (and, when `author` is set, is written by an author matching that case-insensitive regular
+expression) is parsed as a review in the "Claude Code Review" format; a thread by a matching `author`
+that is not a review, or one containing an `ignoreMarkers` string, is ignored as bot noise. A
+configured list replaces the built-in one (`[]` recognises nothing); invalid entries stop the
+Foreman with the offending path. The built-in list:
+
+```json
+"bots": [
+  { "name": "claude-code-review", "marker": "**Claude Code Review**", "ignoreMarkers": ["<!-- changelog-draft -->"] },
+  { "name": "ado-build-service", "author": "^Project Collection Build Service\\b", "marker": "**Claude Code Review**" }
+]
+```
+
 Check what the watcher would see on an existing PR (read-only, your own az/gh login):
 `npm run pr-probe -- https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>`.
 

@@ -11,6 +11,7 @@ import { DEFAULT_CONTEXT, type AgentContextConfig } from './agents/claude/contex
 import { DEFAULT_PERMISSIONS, type PermissionsConfig } from './agents/claude/permissions.js';
 import { DEFAULT_SUBAGENTS, type SubagentsConfig } from './agents/claude/subagents.js';
 import { DEFAULT_DISCORD, type DiscordNotifyConfig } from './notifier.js';
+import { parseReviewBots, type ReviewBot } from './prreview.js';
 
 /**
  * config.json `notify`: a boolean (desktop notifications), or an object
@@ -177,6 +178,8 @@ export interface PrReviewSettings {
   autoSeverities?: Array<'critical' | 'important' | 'minor' | 'testing' | 'performance' | 'teachable'>;
   /** fold-in rounds driven by automated reviews per PR before the user decides (default 2) */
   maxRounds?: number;
+  /** automated reviewers on this repo's PRs; replaces the built-in list (prreview.ts DEFAULT_REVIEW_BOTS); [] = none */
+  bots?: ReviewBot[];
 }
 
 export interface PrSettings {
@@ -546,6 +549,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
         const sev = ['critical', 'important', 'minor', 'testing', 'performance', 'teachable'];
         if (Array.isArray(q.autoSeverities)) pv.autoSeverities = q.autoSeverities.filter((x): x is NonNullable<PrReviewSettings['autoSeverities']>[number] => typeof x === 'string' && sev.includes(x));
         if (typeof q.maxRounds === 'number' && q.maxRounds >= 0) pv.maxRounds = Math.floor(q.maxRounds);
+        if (q.bots !== undefined) pv.bots = parseReviewBots(q.bots, `repoSettings[${k}].prReview.bots`);
         s.prReview = pv;
       }
       if (o.env && typeof o.env === 'object') {

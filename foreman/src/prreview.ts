@@ -1,6 +1,7 @@
-// Automated PR reviews posted as comment threads. Today: a "Claude Code Review" pipeline
-// (a review pipeline): one PR-level thread per review run, posted
-// by the build service identity, its body rendered by render-review.sh:
+// Automated PR reviews posted as comment threads. Which threads are automated reviews is set per
+// repo (repoSettings.prReview.bots, default DEFAULT_REVIEW_BOTS). The parser follows the
+// "Claude Code Review" format a review pipeline posts: one PR-level thread per review run, posted
+// by a build identity (on Azure DevOps "Project Collection Build Service (<org>)"), its body:
 //
 //   **Claude Code Review**
 //   Review completed at <ts> UTC
@@ -56,12 +57,70 @@ export interface ParsedReview {
 
 export const REVIEW_MARKER = '**Claude Code Review**';
 export const CHANGELOG_MARKER = '<!-- changelog-draft -->';
-/** Azure DevOps' standard build identity ("Project Collection Build Service (<org>)") */
-export const BUILD_SERVICE = /^Project Collection Build Service\b/i;
+/** Azure DevOps' standard build identity, "Project Collection Build Service (<org>)" */
+export const BUILD_SERVICE = '^Project Collection Build Service\\b';
 
-/** Is this comment body an automated Claude Code Review? */
-export function isAutomatedReview(text: string): boolean {
-  return text.trimStart().startsWith(REVIEW_MARKER);
+/**
+ * An automated reviewer on a repo's PRs (repoSettings.prReview.bots).
+ * - A thread whose first comment starts with `marker` (and, with `author`, is written by a matching
+ *   author) is an automated review: parsed into findings and triaged.
+ * - A thread by a matching `author` that is not a review, or one containing any of `ignoreMarkers`,
+ *   is an informational bot thread: ignored.
+ */
+export interface ReviewBot {
+  /** a label for the bot (logs, docs) */
+  name?: string;
+  /** regular expression (case-insensitive) on the comment author's display name */
+  author?: string;
+  /** text the review comment starts with */
+  marker: string;
+  /** threads containing any of these are ignored (e.g. a bot's changelog drafts) */
+  ignoreMarkers?: string[];
+}
+
+/** The built-in automated reviewers; a repo's configured `bots` replace them. */
+export const DEFAULT_REVIEW_BOTS: ReviewBot[] = [
+  { name: 'claude-code-review', marker: REVIEW_MARKER, ignoreMarkers: [CHANGELOG_MARKER] },
+  { name: 'ado-build-service', author: BUILD_SERVICE, marker: REVIEW_MARKER },
+];
+
+/**
+ * Validate a configured bots list (config.json input). Throws with the offending path, e.g.
+ * `repoSettings[/x].prReview.bots[1].author: not a valid regular expression`.
+ */
+export function parseReviewBots(x: unknown, where: string): ReviewBot[] {
+  if (!Array.isArray(x)) throw new Error(`${where}: expected a list of { author?, marker, ignoreMarkers? }`);
+  return x.map((b, i) => {
+    const at = `${where}[${i}]`;
+    if (!b || typeof b !== 'object' || Array.isArray(b)) throw new Error(`${at}: expected an object { author?, marker, ignoreMarkers? }`);
+    const o = b as Record<string, unknown>;
+    for (const k of Object.keys(o)) if (!['name', 'author', 'marker', 'ignoreMarkers'].includes(k)) throw new Error(`${at}.${k}: unknown key (name, author, marker, ignoreMarkers)`);
+    if (typeof o.marker !== 'string' || !o.marker.trim()) throw new Error(`${at}.marker: expected a non-empty string`);
+    const bot: ReviewBot = { marker: o.marker };
+    if (o.name !== undefined) {
+      if (typeof o.name !== 'string' || !o.name.trim()) throw new Error(`${at}.name: expected a non-empty string`);
+      bot.name = o.name;
+    }
+    if (o.author !== undefined) {
+      if (typeof o.author !== 'string' || !o.author) throw new Error(`${at}.author: expected a regular expression string`);
+      try {
+        new RegExp(o.author, 'i');
+      } catch {
+        throw new Error(`${at}.author: not a valid regular expression: ${o.author}`);
+      }
+      bot.author = o.author;
+    }
+    if (o.ignoreMarkers !== undefined) {
+      if (!Array.isArray(o.ignoreMarkers) || o.ignoreMarkers.some((m) => typeof m !== 'string' || !m.trim())) throw new Error(`${at}.ignoreMarkers: expected a list of non-empty strings`);
+      bot.ignoreMarkers = [...(o.ignoreMarkers as string[])];
+    }
+    return bot;
+  });
+}
+
+/** Is this comment body an automated review (it starts with the marker)? */
+export function isAutomatedReview(text: string, marker: string = REVIEW_MARKER): boolean {
+  return text.trimStart().startsWith(marker);
 }
 
 /** Order of severities, most severe first. */
@@ -128,9 +187,9 @@ function finding(severity: FindingSeverity, lines: string[]): ReviewFinding {
   return f;
 }
 
-/** Parse a Claude Code Review comment. Returns undefined when the text is not one. */
-export function parseAutomatedReview(text: string): ParsedReview | undefined {
-  if (!isAutomatedReview(text)) return undefined;
+/** Parse a Claude Code Review comment. Returns undefined when the text does not start with `marker`. */
+export function parseAutomatedReview(text: string, marker: string = REVIEW_MARKER): ParsedReview | undefined {
+  if (!isAutomatedReview(text, marker)) return undefined;
   const out: ParsedReview = { findings: [] };
   const lines = reviewBlock(text.replace(/\r\n/g, '\n')).split('\n');
   let section: FindingSeverity | 'verdict' | undefined;
