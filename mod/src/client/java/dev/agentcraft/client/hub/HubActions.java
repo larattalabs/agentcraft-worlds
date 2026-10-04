@@ -67,7 +67,7 @@ public final class HubActions {
 		return run("remove", id, (level, player) -> {
 			Building b = requireHere(level, id, "remove");
 			BlockPos feet = player.blockPosition();
-			Anchors.Bounds box = b.box();
+			Anchors.Bounds box = b.restoreBox(); // the foundation fill too
 			if (box.contains(feet.getX(), feet.getY(), feet.getZ()) || box.contains(feet.getX(), feet.getY() + 1, feet.getZ())) {
 				throw new Buildings.BuildingException("Step out of " + id + " first: removing it puts the old terrain back where you stand");
 			}
