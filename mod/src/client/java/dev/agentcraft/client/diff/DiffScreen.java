@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.agentcraft.client.diff.DiffDoc.FileInfo;
 import dev.agentcraft.client.diff.DiffDoc.Row;
+import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.diff.ReviewKit.ButtonKind;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
@@ -35,7 +36,7 @@ import org.jspecify.annotations.Nullable;
  * cards on paper: a file list with A/M/D badges and +/- counts, a unified diff with both line
  * numbers, hunk headers (with the unchanged lines they skip), tinted add/del rows, a syntax-ish
  * tint, smooth scrolling and keyboard navigation. Opened from a merge decision it answers it:
- * {@code Merge} (click, then "Confirm merge"; Ctrl+Enter merges at once), {@code Request changes}
+ * {@code Merge} (click or Ctrl+Enter, then "Confirm merge" / Enter: never in one keystroke), {@code Request changes}
  * (with feedback text), {@code Reject} (after a confirm). "Copy path" puts the selected file's
  * absolute path in the worktree on the clipboard (open it in your editor; Shift+c: the worktree).
  * Text is ink with a syntax tint on the add/del row tints (more readable than coloured text; the
@@ -44,10 +45,11 @@ import org.jspecify.annotations.Nullable;
  * <pre>
  * keys: j k / arrows scroll · space PgDn PgUp · g G Home End · n p Tab file · ] [ hunk · w wrap
  *       h l / Shift+wheel side-scroll (no wrap) · c copy path · r request changes · x reject
- *       Ctrl+Enter merge · F5 / u refresh · t text colours · Esc close
+ *       Ctrl+Enter merge (asks to confirm: Enter) · F5 / u refresh · t text colours · Esc back (to the screen it
+ *       was opened from: decisions, console, agent card)
  * </pre>
  */
-public final class DiffScreen extends Screen {
+public final class DiffScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	/** What to review: a merge decision (preferred) or a bare repo + worktree. */
 	public record Target(@Nullable String decisionId, @Nullable String repoId, @Nullable String worktree) {
 		public boolean isEmpty() {
@@ -75,6 +77,8 @@ public final class DiffScreen extends Screen {
 	private static final long DONE_CLOSE_MS = 1400;
 
 	private final Target target;
+	/** Where Esc / a finished answer returns to (the decision screen, console or agent card), null = the world. */
+	private @Nullable Screen parent;
 	private Load load = Load.NONE;
 	private Protocol.@Nullable Diff diff;
 	private @Nullable String error;
@@ -136,6 +140,25 @@ public final class DiffScreen extends Screen {
 		this.target = target;
 	}
 
+	/** Return to {@code parent} on Esc and after an answer (instead of closing to the world). */
+	public DiffScreen withParent(@Nullable Screen parent) {
+		this.parent = parent == this ? null : parent;
+		return this;
+	}
+
+	@Override
+	public @Nullable Screen parent() {
+		return parent;
+	}
+
+	@Override
+	public void onClose() {
+		if (feedback != null) {
+			removeWidget(feedback);
+		}
+		minecraft.gui.setScreen(parent);
+	}
+
 	/** QA only: show a ready-made diff (no Foreman request). */
 	static DiffScreen preview(Protocol.Diff diff) {
 		DiffScreen s = new DiffScreen(new Target(null, diff.repoId(), diff.worktree()));
@@ -164,9 +187,14 @@ public final class DiffScreen extends Screen {
 		return target.decisionId() == null || st() == null ? null : st().decision(target.decisionId());
 	}
 
+	/**
+	 * The screen answers only its own decision: the one it was opened for, still open, a merge, and about
+	 * the very repo + worktree shown (never "the oldest merge").
+	 */
 	private boolean decisionOpen() {
 		Decision d = decision();
-		return d != null && d.isOpen() && d.kind() == Protocol.DecisionKind.MERGE;
+		return d != null && d.isOpen() && d.kind() == Protocol.DecisionKind.MERGE && java.util.Objects.equals(d.repoId(), target.repoId())
+			&& java.util.Objects.equals(d.worktree(), target.worktree());
 	}
 
 	private @Nullable Repo repo() {
@@ -1240,7 +1268,7 @@ public final class DiffScreen extends Screen {
 					int w2 = ReviewKit.buttonWidth(font, req);
 					int w3 = ReviewKit.buttonWidth(font, rej);
 					boolean ready = load == Load.READY && !offline;
-					button(g, "merge", merge, x, y, w1, ButtonKind.PRIMARY, ready, mx, my, ready ? "Ctrl+Enter  ·  merge into "
+					button(g, "merge", merge, x, y, w1, ButtonKind.PRIMARY, ready, mx, my, ready ? "Ctrl+Enter, then Enter  ·  merge into "
 						+ (worktreeInfo() != null ? worktreeInfo().base() : "the base branch") : offline ? "Foreman offline" : "Waiting for the diff");
 					button(g, "request", req, x + w1 + 4, y, w2, ButtonKind.NORMAL, !offline, mx, my, "r  ·  send feedback to "
 						+ ReviewKit.agentName(worker()));
@@ -1396,7 +1424,7 @@ public final class DiffScreen extends Screen {
 
 	private void send(String option, @Nullable String text) {
 		Decision d = decision();
-		if (d == null || !d.isOpen() || offline()) {
+		if (d == null || !decisionOpen() || offline()) {
 			flash("This decision is no longer open", true);
 			return;
 		}
@@ -1406,8 +1434,7 @@ public final class DiffScreen extends Screen {
 		}
 		mode = Mode.SENDING;
 		sentOption = option;
-		Foreman.answer(d.id(), option, text).whenComplete((ack, err) -> {
-			String problem = err != null ? (err.getMessage() == null ? err.toString() : err.getMessage()) : ack.ok() ? null : ack.error();
+		DecisionsFeature.answer(d.id(), option, text).thenAccept(problem -> {
 			if (problem != null) {
 				mode = before;
 				if (feedback != null) {
@@ -1583,8 +1610,9 @@ public final class DiffScreen extends Screen {
 				}
 			}
 			case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> {
+				// Ctrl+Enter = the Merge button: it asks to confirm (Enter / Confirm merge), never merges in one keystroke
 				if (ctrl && decisionOpen() && load == Load.READY && !offline()) {
-					send(Protocol.MERGE, null);
+					act("merge");
 				}
 			}
 			default -> {

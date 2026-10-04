@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import dev.agentcraft.block.DecisionPodiumBlock;
 import dev.agentcraft.block.ModBlocks;
 import dev.agentcraft.block.entity.ModBlockEntities;
+import dev.agentcraft.client.agents.AgentsFeature;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Foreman;
@@ -53,6 +54,12 @@ public final class DecisionsFeature {
 		Keys.ensureRegistered();
 		DevBridge.registerScreen("decision", mc -> new DecisionScreen(null, null));
 		StationInteractions.onUse(ModBlocks.DECISION_PODIUM, (player, pos, state, be) -> openQueue(null, null));
+		// the agent card's Answer / Decide: exactly that decision, Esc back to the card (merges: the diff feature's screen)
+		for (DecisionKind kind : DecisionKind.values()) {
+			if (kind != DecisionKind.MERGE) {
+				AgentsFeature.registerDecisionScreen(kind, (mc, d, parent) -> new DecisionScreen(d.id(), parent));
+			}
+		}
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (mc.player == null) {
 				return;

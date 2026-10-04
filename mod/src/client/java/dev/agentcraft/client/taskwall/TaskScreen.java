@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
  * {@code Foreman.taskAction}, with the Foreman's answer shown in place. Left/right browse the
  * other tasks in wall order. Paper panel, ink text, one clay primary action, no shadows.
  */
-public class TaskScreen extends Screen {
+public class TaskScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int W = 320;
 	private String taskId;
 	private final @Nullable String repoFilter;
@@ -80,6 +80,11 @@ public class TaskScreen extends Screen {
 
 	/** Where Esc goes back to (the hub's goal Tasks view); null = the world. */
 	private net.minecraft.client.gui.screens.@Nullable Screen parent;
+
+	@Override
+	public net.minecraft.client.gui.screens.@Nullable Screen parent() {
+		return parent;
+	}
 
 	/** Opened from another screen: Esc returns there. */
 	public TaskScreen withParent(net.minecraft.client.gui.screens.@Nullable Screen parent) {

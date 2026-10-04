@@ -59,7 +59,7 @@ import org.jspecify.annotations.Nullable;
  *       merges and permissions on none (pick with 1-9, or the arrows then Enter); Space does nothing.</li>
  * </ul>
  */
-public class DecisionScreen extends Screen {
+public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int MAX_W = 440;
 	/** Option keys are ignored this long after the screen opens or a decision comes up by itself. */
 	static final int ARM_MS = 350;
@@ -139,6 +139,11 @@ public class DecisionScreen extends Screen {
 		DecisionScreen s = new DecisionScreen(sample.id(), null);
 		s.preview = sample;
 		return s;
+	}
+
+	@Override
+	public @Nullable Screen parent() {
+		return parent;
 	}
 
 	public boolean isPreview() {

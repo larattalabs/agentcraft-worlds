@@ -1,7 +1,6 @@
 package dev.agentcraft.client.decisions;
 
 import dev.agentcraft.AgentCraft;
-import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.Diff;
@@ -9,17 +8,17 @@ import dev.agentcraft.client.foreman.Protocol.DiffFile;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Function;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The bridge from decisions/console to the diff review screen owned by the diff feature. That
- * screen is found through the DevBridge screen registry ({@code "diff"}, which opens the oldest open
- * merge decision when it gets no arguments, see docs/QA.md). The integrator can install a precise
- * opener ({@link #setOpener}) that takes the exact repo/worktree/decision; without any diff screen
- * a summary is fetched with {@code Foreman.requestDiff} instead.
+ * The bridge from decisions/console/agent card to the diff review screen owned by the diff feature,
+ * which installs a precise opener ({@link #setOpener}, in {@code DiffFeature.init}) taking the exact
+ * repo/worktree/decision and the screen to return to. There is deliberately no fallback to the DevBridge
+ * {@code "diff"} screen: that one opens the <i>oldest</i> open merge, so {@code D} / {@code /diff} could
+ * approve the wrong merge (docs/AUDIT-2026-10-03.md B5). Without an opener a summary is fetched with
+ * {@code Foreman.requestDiff} instead.
  */
 public final class DiffLink {
 	/** Opens the diff screen for a target; returns the screen to show (or null when it cannot). */
@@ -38,24 +37,20 @@ public final class DiffLink {
 	}
 
 	public static boolean hasDiffScreen() {
-		return opener != null || DevBridge.screens().containsKey("diff");
+		return opener != null;
 	}
 
 	/** Open the diff screen for this worktree; false when there is none (use {@link #summary}). */
 	public static boolean open(String repoId, String worktree, @Nullable Decision decision, @Nullable Screen parent) {
 		Minecraft mc = Minecraft.getInstance();
 		try {
-			if (opener != null) {
-				Screen s = opener.open(repoId, worktree, decision, parent);
+			Opener o = opener;
+			if (o != null) {
+				Screen s = o.open(repoId, worktree, decision, parent);
 				if (s != null) {
 					mc.gui.setScreen(s);
 					return true;
 				}
-			}
-			Function<Minecraft, Screen> f = DevBridge.screens().get("diff");
-			if (f != null) {
-				mc.gui.setScreen(f.apply(mc));
-				return true;
 			}
 		} catch (Exception e) {
 			AgentCraft.LOGGER.warn("Could not open the diff screen for {}/{}", repoId, worktree, e);

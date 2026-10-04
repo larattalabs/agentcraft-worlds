@@ -42,10 +42,10 @@ public final class AgentsFeature {
 		void clicked(Player player, ClientAgentEntity agent);
 	}
 
-	/** Builds the review/answer screen for one open decision (null = cannot open it). */
+	/** Builds the review/answer screen for one open decision, returning to {@code parent} (null = cannot open it). */
 	@FunctionalInterface
 	public interface DecisionScreenFactory {
-		@Nullable Screen create(Minecraft mc, Protocol.Decision decision);
+		@Nullable Screen create(Minecraft mc, Protocol.Decision decision, @Nullable Screen parent);
 	}
 
 	private static final List<ClickHandler> CLICK_HANDLERS = new CopyOnWriteArrayList<>();
@@ -71,6 +71,18 @@ public final class AgentsFeature {
 
 	static @Nullable DecisionScreenFactory decisionScreen(Protocol.DecisionKind kind) {
 		return DECISION_SCREENS.get(kind);
+	}
+
+	/**
+	 * Open an agent's card from a screen (the hub's Team tab, a task's assignee, the console roster); Esc
+	 * returns to {@code parent}. False when the Foreman does not know the agent.
+	 */
+	public static boolean openCard(String agentId, @Nullable Screen parent) {
+		if (Foreman.state() == null || Foreman.state().agent(agentId) == null) {
+			return false;
+		}
+		Minecraft.getInstance().gui.setScreen(new AgentCardScreen(agentId).withParent(parent));
+		return true;
 	}
 
 	public static void init() {

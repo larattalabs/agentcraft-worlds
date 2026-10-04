@@ -40,7 +40,7 @@ import org.jspecify.annotations.Nullable;
  * console's own lines, each agent in its colour). Non-pausing, so the HQ keeps moving behind it.
  * See {@link ConsoleCommands} for the input language and {@link ConsoleActions} for what is sent.
  */
-public class ConsoleScreen extends Screen {
+public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.HasParent {
 	private static final int M = 8;
 	private static final int ROW = 10;
 	private static final int MAX_POPUP = 6;
@@ -52,6 +52,8 @@ public class ConsoleScreen extends Screen {
 	private boolean openedByKey;
 	/** Save what is typed as the draft when it closes (not for QA consoles). */
 	private boolean keepDraft = true;
+	/** Where Esc returns to (the agent card's Message), null = the world. */
+	private @Nullable Screen parent;
 	private int historyIndex = -1;
 	private String draft = "";
 	private int compSel;
@@ -124,6 +126,22 @@ public class ConsoleScreen extends Screen {
 			lastValue = input.value();
 			popupHidden = true;
 		}
+	}
+
+	/** Return to {@code parent} on Esc (instead of the world). */
+	public ConsoleScreen withParent(@Nullable Screen parent) {
+		this.parent = parent == this ? null : parent;
+		return this;
+	}
+
+	@Override
+	public void onClose() {
+		minecraft.gui.setScreen(parent);
+	}
+
+	@Override
+	public @Nullable Screen parent() {
+		return parent;
 	}
 
 	public ConsoleScreen openedByKey() {

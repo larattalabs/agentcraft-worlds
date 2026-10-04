@@ -162,7 +162,8 @@ public final class ConsoleActions {
 				ConsoleLog.remember(raw);
 				clearFeedback();
 				if (DiffLink.hasDiffScreen()) {
-					DiffLink.open(d.repoId(), d.worktree(), d.decision(), null);
+					// Esc in the diff comes back to the console
+					DiffLink.open(d.repoId(), d.worktree(), d.decision(), net.minecraft.client.Minecraft.getInstance().gui.screen());
 					return After.CLOSE;
 				}
 				// no diff screen in this build: print a summary into the console
