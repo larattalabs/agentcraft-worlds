@@ -167,6 +167,7 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'notify', group: 'general', type: 'bool', objectKey: 'desktop', label: 'Desktop notifications', help: 'A desktop notification when a decision waits for you.', live: true, flags: ['notify'], envs: ['AGENTCRAFT_NOTIFY'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.notify },
     { key: 'toastSilent', group: 'general', type: 'bool', label: 'Silent notifications', help: 'Desktop notifications without sound.', live: true, flags: ['toast-silent'], envs: ['AGENTCRAFT_TOAST_SILENT'], alt: ['toast-silent'], def: false, get: (cfg) => cfg.toastSilent },
     { key: 'mergeStyle', group: 'general', type: 'enum', options: ['merge', 'squash'], label: 'Merge style', help: 'merge: a merge commit that keeps the agents\' commits; squash: one commit with the task\'s changes, authored by you.', live: true, flags: ['merge-style'], envs: ['AGENTCRAFT_MERGE_STYLE'], alt: ['merge-style'], def: 'merge', get: (cfg) => cfg.mergeStyle },
+    { key: 'commitIdentity', group: 'general', type: 'enum', options: ['agent', 'user'], label: 'Commit identity', help: 'Whose git name and email the commits AgentCraft makes carry. agent: AgentCraft Kit <kit@agentcraft.local> etc.; user: yours, from each repository\'s git config (repos without one fall back to the agent identity). Per repository: the repository\'s settings.', live: true, flags: ['commit-identity'], envs: ['AGENTCRAFT_COMMIT_IDENTITY'], def: 'agent', get: (cfg) => cfg.commitIdentity },
     { key: 'signMerges', group: 'general', type: 'bool', label: 'Sign approved merges', help: 'Sign your approved merge commits when your git config signs commits (commit.gpgsign). Agents never sign.', live: true, flags: ['sign-merges'], envs: ['AGENTCRAFT_SIGN_MERGES'], alt: ['sign-merges'], def: x.cfg.backend === 'claude', get: (cfg) => cfg.signMerges },
     // permissions
     { key: 'claude.permissions.mode', group: 'permissions', type: 'enum', options: ['policy', 'auto'], label: 'Permission mode', help: 'policy: what AgentCraft can verify is safe runs, everything else asks you in-world. auto: Claude Code\'s classifier decides what policy would ask about; git push, git internals and writes into your checkouts still ask. From the next turn.', live: true, def: DEFAULT_PERMISSIONS.mode, get: g('claude.permissions.mode') },
@@ -239,6 +240,7 @@ function repoSpecs(x: SpecCtx): Spec[] {
   const pattern = (re: RegExp, what: string) => (v: unknown): Checked => (v === undefined || re.test(v as string) ? { value: v } : { error: `must be ${what}` });
   const specs: Spec[] = [
     { key: 'land', group: 'landing', type: 'enum', options: ['merge', 'pr'], label: 'How approved work lands', help: 'merge: a local merge commit into the base branch; pr: the Foreman pushes the branch and opens a pull request.', live: true, def: 'merge', get: (_c, rs) => rs.land ?? 'merge' },
+    { key: 'commitIdentity', group: 'landing', type: 'enum', options: ['default', 'agent', 'user'], label: 'Commit identity', help: 'Whose git name and email commits for this repository carry. default: the global setting (Settings > General).', live: true, def: 'default', get: (_c, rs) => rs.commitIdentity ?? 'default', normalize: (v) => ({ value: v === 'default' ? undefined : v }) },
     { key: 'baseBranch', group: 'landing', type: 'string', label: 'Base branch', help: 'The branch agents start from and land into. Empty: whatever the checkout has checked out.', live: true, def: '', get: (_c, rs) => rs.baseBranch ?? '', normalize: pattern(/^[\w./-]+$/, 'a branch name') },
     { key: 'pr.remote', group: 'landing', type: 'string', label: 'Pull requests: remote', help: 'The remote to push to and open pull requests on. Empty: origin.', live: true, def: 'origin', get: (_c, rs) => rs.pr?.remote ?? '', normalize: pattern(/^[\w.-]+$/, 'a remote name') },
     { key: 'pr.branchPrefix', group: 'landing', type: 'string', label: 'Pull requests: branch prefix', help: 'Remote branch name prefix, e.g. feat/. Empty: the agent\'s branch name.', live: true, def: '', get: (_c, rs) => rs.pr?.branchPrefix ?? '', normalize: pattern(/^[\w./-]+$/, 'a branch name prefix') },
@@ -624,6 +626,7 @@ export function applyLive(running: Config, next: Config): void {
   else delete running.notifyDiscord;
   running.toastSilent = next.toastSilent;
   running.mergeStyle = next.mergeStyle;
+  running.commitIdentity = next.commitIdentity;
   running.signMerges = next.signMerges;
   const c = running.claude;
   const n = next.claude;

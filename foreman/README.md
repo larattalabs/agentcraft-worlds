@@ -97,6 +97,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--repo-poll-ms` | `10000` | how often checkouts are checked for head/dirty changes |
 | `--no-client-token` | | dev only: every local WebSocket client may change things (see Client token) |
 | `--merge-style merge\|squash` / `AGENTCRAFT_MERGE_STYLE` | `merge` | approved merges: a merge commit that keeps the agents' commits, or one squashed commit (see Safety guarantees) |
+| `--commit-identity agent\|user` / `AGENTCRAFT_COMMIT_IDENTITY` (config `commitIdentity`, per repo `repoSettings.commitIdentity`) | `agent` | whose git name/email the agents' commits carry: a placeholder per agent (`AgentCraft Kit <kit@agentcraft.local>`) or yours from each repo's git config (falls back to the agent identity, with a warning, when the repo has none); merges, squash and PR commits are always yours |
 | `--no-sign-merges` / `AGENTCRAFT_SIGN_MERGES=0` | signed if your git config signs (claude) | never sign approved merge commits; the sim never signs |
 | sim: `--speed`, `--seed`, `--autostart`, `--showcase [late]`, `--auto-answer`, `--no-ambient` | | |
 
@@ -517,7 +518,7 @@ for the roles picker.
 
 | applies | settings |
 | --- | --- |
-| live (from the next turn, tick or poll) | `claude.leadModel`, `leadEffort`, `workerModel`, `effort`, `designModel`, `taskModels.*`, `agents.<id>.{title,prompt,model,effort}` (a title change updates the nameplate at once), `maxConcurrent`, `throttleConcurrent`, `maxConcurrentTurns`, `leadReview`, `maxBudgetUsdPerTurn`, `usageReserve.{fiveHourPct,sevenDayPct}`, `leadSession.{maxDays,maxTurns}`, `leadWorldTtlDays`, `prWatch` / `prPollSeconds` (the watcher switches over at once), `permissions.{mode,allow,deny,webTools,protectCheckouts}`, `context.{userInstructions,maxChars,mcpAllow,connectors}`; `userName`, `notify` (written to `notify.desktop` when `notify` is an object; `notify.discord` is read live, edited in config.json), `toastSilent`, `mergeStyle`, `signMerges`, `cleanupAfterDays`; every repository setting (`baseBranch` at the repository's next refresh) |
+| live (from the next turn, tick or poll) | `claude.leadModel`, `leadEffort`, `workerModel`, `effort`, `designModel`, `taskModels.*`, `agents.<id>.{title,prompt,model,effort}` (a title change updates the nameplate at once), `maxConcurrent`, `throttleConcurrent`, `maxConcurrentTurns`, `leadReview`, `maxBudgetUsdPerTurn`, `usageReserve.{fiveHourPct,sevenDayPct}`, `leadSession.{maxDays,maxTurns}`, `leadWorldTtlDays`, `prWatch` / `prPollSeconds` (the watcher switches over at once), `permissions.{mode,allow,deny,webTools,protectCheckouts}`, `context.{userInstructions,maxChars,mcpAllow,connectors}`; `userName`, `notify` (written to `notify.desktop` when `notify` is an object; `notify.discord` is read live, edited in config.json), `toastSilent`, `mergeStyle`, `signMerges`, `commitIdentity`, `cleanupAfterDays`; every repository setting (`baseBranch` at the repository's next refresh) |
 | after a restart | `claude.workers`, `claude.leads`, `claude.context.skills`, `claude.context.sessionHistory.{enabled,days}`, `claude.subagents.{enabled,agents}`, `claude.useClaudeLogin` |
 | read-only | `claude.context.mcpServers`, a repository's `env` |
 
