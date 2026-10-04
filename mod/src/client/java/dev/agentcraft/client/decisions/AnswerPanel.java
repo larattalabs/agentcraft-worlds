@@ -310,7 +310,7 @@ public final class AnswerPanel {
 			if (!requestChanges) {
 				requestChanges = true;
 				focusText(true);
-				status("Say what should change, then Enter", false);
+				status(opts.numbers() ? "Say what should change, then Enter" : "Say what should change, then Send feedback", false);
 				return false;
 			}
 			if (text.value().isBlank()) {
@@ -337,6 +337,34 @@ public final class AnswerPanel {
 		}
 		submit(d, option, t);
 		return true;
+	}
+
+	/**
+	 * {@link #choose} with the text of a box the host owns (the goal thread's message box): a change request with text
+	 * goes out at once (that box is the feedback box).
+	 */
+	public boolean chooseWith(Decision d, String option, @Nullable String externalText) {
+		text.set(externalText == null ? "" : externalText);
+		if (d.kind() == DecisionKind.MERGE && option.equals(Protocol.REQUEST_CHANGES) && externalText != null && !externalText.isBlank()) {
+			requestChanges = true;
+		}
+		return choose(d, option);
+	}
+
+	/** {@link #sendText} with the text of a box the host owns. */
+	public boolean sendTextWith(Decision d, @Nullable String externalText) {
+		text.set(externalText == null ? "" : externalText);
+		return sendText(d);
+	}
+
+	/** Reject is waiting for its confirming press. */
+	public boolean confirmingReject() {
+		return Util.getMillis() < confirmRejectUntil;
+	}
+
+	/** Merge is waiting for its confirming press ({@link Options#confirmMerge}). */
+	public boolean confirmingMerge() {
+		return Util.getMillis() < confirmMergeUntil;
 	}
 
 	/** The text box's Send / Enter: a free-text answer, or the change request's feedback. Returns true when sent. */
