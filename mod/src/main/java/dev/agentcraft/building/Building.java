@@ -29,15 +29,63 @@ import org.jspecify.annotations.Nullable;
  * @param revision the layout revision: {@code placedAt} at placement, bumped when the repos change or the building
  *                 moves, so every layout consumer notices new anchors
  * @param movedFrom where the building stood before its last move (the hub's "Undo move"), null when it never moved
+ * @param pin what the building was placed from (template fingerprint, wings, raw anchors, own block entities), so a
+ *            later change of the blueprint under the same id never changes what this building is
+ *            (docs/BUILDINGS.md "Blueprint versions"); null for records placed before pins existed
  */
 public record Building(String id, String blueprint, List<String> repos, boolean home, String rotation, Anchors.Bounds box,
 	Anchors.Bounds bounds, Map<String, Anchor> anchors, long placedAt, @Nullable String dimension, Anchors.@Nullable Bounds snapshotBox,
-	long revision, @Nullable Site movedFrom) {
+	long revision, @Nullable Site movedFrom, @Nullable Pin pin) {
 	/** What a record without a dimension is assumed to be in. */
 	public static final String OVERWORLD = "minecraft:overworld";
 
 	/** A building's former site: its box's minimum corner, rotation and dimension. */
 	public record Site(int x, int y, int z, String rotation, String dimension) {
+	}
+
+	/**
+	 * The template a building was placed from, pinned at placement (docs/BUILDINGS.md "Blueprint versions").
+	 *
+	 * @param template {@link TemplateGrid#fingerprint} of the template it was placed from
+	 * @param wings the blueprint's wing count then
+	 * @param group whether the blueprint was a group building (per-wing anchor names carry the repo)
+	 * @param wingAnchors every sidecar anchor in world space with its raw name ({@code task_wall@2}), so the repos can be
+	 *                    changed without the blueprint ({@link BlueprintTransform#renameWings})
+	 * @param blockEntities the template's own block entities as offsets from the box's minimum corner, three ints each
+	 */
+	public record Pin(String template, int wings, boolean group, Map<String, Anchor> wingAnchors, List<Integer> blockEntities) {
+		public Pin {
+			wingAnchors = Collections.unmodifiableMap(new LinkedHashMap<>(wingAnchors));
+			blockEntities = List.copyOf(blockEntities);
+			if (blockEntities.size() % 3 != 0) {
+				throw new IllegalArgumentException("blockEntities must hold x,y,z triples");
+			}
+		}
+
+		public JsonObject toJson() {
+			JsonObject o = new JsonObject();
+			o.addProperty("template", template);
+			o.addProperty("wings", wings);
+			o.addProperty("group", group);
+			JsonObject a = new JsonObject();
+			wingAnchors.forEach((n, v) -> a.add(n, Anchors.anchorJson(v)));
+			o.add("wingAnchors", a);
+			JsonArray be = new JsonArray();
+			blockEntities.forEach(be::add);
+			o.add("blockEntities", be);
+			return o;
+		}
+
+		public static Pin fromJson(JsonObject o) {
+			List<Integer> be = new ArrayList<>();
+			if (o.has("blockEntities")) {
+				for (JsonElement e : o.getAsJsonArray("blockEntities")) {
+					be.add(e.getAsInt());
+				}
+			}
+			return new Pin(o.get("template").getAsString(), o.has("wings") ? o.get("wings").getAsInt() : 1, o.has("group") && o.get("group").getAsBoolean(),
+				o.has("wingAnchors") ? anchorsFromJson(o.getAsJsonObject("wingAnchors")) : Map.of(), be);
+		}
 	}
 
 	public Building {
@@ -51,16 +99,29 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 	/** A record as placed before terrain fit, repo edits and moves existed (revision = placedAt). */
 	public Building(String id, String blueprint, List<String> repos, boolean home, String rotation, Anchors.Bounds box, Anchors.Bounds bounds,
 		Map<String, Anchor> anchors, long placedAt, @Nullable String dimension) {
-		this(id, blueprint, repos, home, rotation, box, bounds, anchors, placedAt, dimension, null, placedAt, null);
+		this(id, blueprint, repos, home, rotation, box, bounds, anchors, placedAt, dimension, null, placedAt, null, null);
+	}
+
+	/** A record without a pin (placed before pins existed). */
+	public Building(String id, String blueprint, List<String> repos, boolean home, String rotation, Anchors.Bounds box, Anchors.Bounds bounds,
+		Map<String, Anchor> anchors, long placedAt, @Nullable String dimension, Anchors.@Nullable Bounds snapshotBox, long revision,
+		@Nullable Site movedFrom) {
+		this(id, blueprint, repos, home, rotation, box, bounds, anchors, placedAt, dimension, snapshotBox, revision, movedFrom, null);
 	}
 
 	public Building withHome(boolean h) {
-		return new Building(id, blueprint, repos, h, rotation, box, bounds, anchors, placedAt, dimension, snapshotBox, revision, movedFrom);
+		return new Building(id, blueprint, repos, h, rotation, box, bounds, anchors, placedAt, dimension, snapshotBox, revision, movedFrom, pin);
+	}
+
+	/** The same building with a pin (an old record whose template was confirmed at world start). */
+	public Building withPin(@Nullable Pin p) {
+		return new Building(id, blueprint, repos, home, rotation, box, bounds, anchors, placedAt, dimension, snapshotBox, revision, movedFrom, p);
 	}
 
 	/** The same building for other repos (anchors re-derived by the caller), as a new layout revision. */
 	public Building withRepos(List<String> newRepos, Map<String, Anchor> newAnchors, long newRevision) {
-		return new Building(id, blueprint, newRepos, home, rotation, box, bounds, newAnchors, placedAt, dimension, snapshotBox, newRevision, movedFrom);
+		return new Building(id, blueprint, newRepos, home, rotation, box, bounds, newAnchors, placedAt, dimension, snapshotBox, newRevision, movedFrom,
+			pin);
 	}
 
 	/** The box {@link Buildings#remove} restores: the snapshot's box (the template box plus any foundation fill below it). */
@@ -130,6 +191,9 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 			m.addProperty("dimension", movedFrom.dimension());
 			o.add("movedFrom", m);
 		}
+		if (pin != null) {
+			o.add("pin", pin.toJson());
+		}
 		return o;
 	}
 
@@ -138,14 +202,7 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 		for (JsonElement e : o.getAsJsonArray("repos")) {
 			repos.add(e.getAsString());
 		}
-		Map<String, Anchor> anchors = new LinkedHashMap<>();
-		if (o.has("anchors")) {
-			for (var e : o.getAsJsonObject("anchors").entrySet()) {
-				JsonObject a = e.getValue().getAsJsonObject();
-				anchors.put(e.getKey(), new Anchor(e.getKey(), a.get("x").getAsDouble(), a.get("y").getAsDouble(), a.get("z").getAsDouble(),
-					a.has("yaw") ? a.get("yaw").getAsFloat() : 0f, a.has("pitch") ? a.get("pitch").getAsFloat() : 0f));
-			}
-		}
+		Map<String, Anchor> anchors = o.has("anchors") ? anchorsFromJson(o.getAsJsonObject("anchors")) : Map.of();
 		Anchors.Bounds box = boundsFromJson(o.getAsJsonObject("box"));
 		Anchors.Bounds bounds = o.has("bounds") ? boundsFromJson(o.getAsJsonObject("bounds")) : box;
 		long placedAt = o.has("placedAt") ? o.get("placedAt").getAsLong() : 0L;
@@ -159,7 +216,18 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 			o.has("rotation") ? o.get("rotation").getAsString() : "none", box, bounds, anchors, placedAt,
 			o.has("dimension") ? o.get("dimension").getAsString() : null,
 			o.has("snapshotBox") ? boundsFromJson(o.getAsJsonObject("snapshotBox")) : null,
-			o.has("revision") ? o.get("revision").getAsLong() : placedAt, moved);
+			o.has("revision") ? o.get("revision").getAsLong() : placedAt, moved,
+			o.has("pin") && o.get("pin").isJsonObject() ? Pin.fromJson(o.getAsJsonObject("pin")) : null);
+	}
+
+	static Map<String, Anchor> anchorsFromJson(JsonObject o) {
+		Map<String, Anchor> anchors = new LinkedHashMap<>();
+		for (var e : o.entrySet()) {
+			JsonObject a = e.getValue().getAsJsonObject();
+			anchors.put(e.getKey(), new Anchor(e.getKey(), a.get("x").getAsDouble(), a.get("y").getAsDouble(), a.get("z").getAsDouble(),
+				a.has("yaw") ? a.get("yaw").getAsFloat() : 0f, a.has("pitch") ? a.get("pitch").getAsFloat() : 0f));
+		}
+		return anchors;
 	}
 
 	public static JsonObject boundsJson(Anchors.Bounds b) {
@@ -185,9 +253,9 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 	}
 
 	/**
-	 * A site whose building was taken down (removed, or moved away) since the world last saved: its snapshot is
-	 * kept until a save has reached the disk, because the restored blocks only live in memory until then
-	 * (docs/BUILDINGS.md "Crash safety").
+	 * A site whose building was taken down (removed, or moved away): its snapshot is kept until the next world start
+	 * finds the restored terrain on disk ({@link Reconcile#decide}), because a save does not promise to write the
+	 * restored chunks (docs/BUILDINGS.md "Crash safety").
 	 *
 	 * @param building the record as it was before the removal (its box, blueprint and dimension)
 	 * @param snapshot the snapshot's file name in the snapshot folder

@@ -8,6 +8,7 @@ import dev.agentcraft.AgentCraft;
 import dev.agentcraft.building.Blueprint;
 import dev.agentcraft.building.BlueprintTransform;
 import dev.agentcraft.building.Blueprints;
+import dev.agentcraft.building.Building;
 import dev.agentcraft.building.BuildingCommands;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.dev.DevBridge;
@@ -373,6 +374,50 @@ public final class BuildingWizardFeature {
 					o.add("screen", screenState(mc).get("screen"));
 					return o;
 				}));
+		DevBridge.register("dev.buildings.pending", 10_000, "{} - crash safety: the sites taken down this session or before "
+			+ "(pending until the next world start settles them: id, why, snapshot, snapshotExists, box), the snapshot files on disk, "
+			+ "each building's pin (template fingerprint) and the world-start reports", (req, mc) -> DevBridge.onClient(mc, () -> {
+				JsonObject o = new JsonObject();
+				var server = mc.getSingleplayerServer();
+				java.nio.file.Path dir = server == null ? null
+					: server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).resolve(Buildings.SNAPSHOT_DIR);
+				JsonArray pend = new JsonArray();
+				for (Building.Pending p : Buildings.pending()) {
+					JsonObject j = new JsonObject();
+					j.addProperty("id", p.building().id());
+					j.addProperty("why", p.why());
+					j.addProperty("snapshot", p.snapshot());
+					j.addProperty("snapshotExists", dir != null && java.nio.file.Files.exists(dir.resolve(p.snapshot())));
+					j.addProperty("box", Buildings.str(p.building().restoreBox()));
+					pend.add(j);
+				}
+				o.add("pending", pend);
+				JsonArray files = new JsonArray();
+				if (dir != null && java.nio.file.Files.isDirectory(dir)) {
+					try (var list = java.nio.file.Files.list(dir)) {
+						list.map(f -> f.getFileName().toString()).sorted().forEach(files::add);
+					} catch (java.io.IOException e) {
+						o.addProperty("filesError", e.getMessage());
+					}
+				}
+				o.add("snapshotFiles", files);
+				JsonObject pins = new JsonObject();
+				for (Building b : Buildings.all()) {
+					pins.addProperty(b.id(), b.pin() == null ? "none" : b.pin().template() + (Buildings.ownGridMatches(b) ? "" : " (blueprint changed)"));
+				}
+				o.add("pins", pins);
+				JsonObject rep = new JsonObject();
+				Buildings.reports().forEach((id, r) -> rep.addProperty(id, (r.problem() ? "check: " : "note: ") + r.message()));
+				o.add("reports", rep);
+				return o;
+			}));
+		DevBridge.register("dev.buildings.failNextRename", 10_000, "{} - test hook: the next snapshot rename of a building move fails "
+			+ "(the move must roll back: new site restored, record unchanged)", (req, mc) -> DevBridge.onClient(mc, () -> {
+				Buildings.failNextSnapshotRename();
+				JsonObject o = new JsonObject();
+				o.addProperty("armed", true);
+				return o;
+			}));
 		DevBridge.register("dev.build.rotate", 10_000, "{turns?: 1} - rotate the ghost by quarter turns (clockwise; negative = back)", (req, mc) -> {
 			int t = Fields.of(req).optInt("turns", 1, -3, 3);
 			return DevBridge.onClient(mc, () -> {

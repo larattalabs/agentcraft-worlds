@@ -106,12 +106,10 @@ public final class Buildings {
 			publishHome();
 			notifyListeners();
 		});
-		ServerLifecycleEvents.AFTER_SAVE.register((server, flush, force) -> onSaved(server, flush));
 		ServerTickEvents.END_SERVER_TICK.register(server -> Drops.tick());
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			state = State.EMPTY;
 			reports.clear();
-			PENDING_SAVES.clear();
 			Drops.reset();
 			drivesAnchors = false;
 			worldId = null;
@@ -271,7 +269,7 @@ public final class Buildings {
 	public static Building place(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force)
 		throws BuildingException {
 		MinecraftServer server = level.getServer();
-		checkRepos(bp, repos, null);
+		checkRepos(bp.id(), bp.wings(), repos, null);
 		if (loadFailed) {
 			throw new BuildingException(FILE + " could not be read when the world started (see the log); fix or move it, then restart");
 		}
@@ -285,7 +283,7 @@ public final class Buildings {
 		Map<String, Building> map = new LinkedHashMap<>(s.byId());
 		long now = System.currentTimeMillis();
 		Building b = new Building(id, bp.id(), repos, map.isEmpty(), BlueprintTransform.rotationName(built.turns()), built.box(), built.bounds(),
-			built.anchors(), now, dimensionId(level), built.snapshotBox(), now, null);
+			built.anchors(), now, dimensionId(level), built.snapshotBox(), now, null, built.pin());
 		map.put(id, b);
 		commit(server, new State(Collections.unmodifiableMap(map), next + 1, s.pending()));
 		lastNote = built.note();
@@ -305,12 +303,12 @@ public final class Buildings {
 	/** The refusal for "a player in the box" (the ghost uses the same words). */
 	public static final String PLAYER_IN_BOX = "you are standing in or next to the box (look further away or nudge it)";
 
-	private static void checkRepos(Blueprint bp, List<String> repos, @Nullable String except) throws BuildingException {
+	private static void checkRepos(String blueprint, int wings, List<String> repos, @Nullable String except) throws BuildingException {
 		if (repos.isEmpty()) {
 			throw new BuildingException("Name at least one repo");
 		}
-		if (repos.size() > bp.wings()) {
-			throw new BuildingException("Blueprint " + bp.id() + " has " + bp.wings() + " wing(s); " + repos.size() + " repos given");
+		if (repos.size() > wings) {
+			throw new BuildingException("Blueprint " + blueprint + " has " + wings + " wing(s); " + repos.size() + " repos given");
 		}
 		for (String r : repos) {
 			if (r.isBlank() || repos.indexOf(r) != repos.lastIndexOf(r)) {
@@ -325,7 +323,27 @@ public final class Buildings {
 
 	/** A template put into the world (not recorded yet). */
 	private record Built(int turns, Anchors.Bounds box, Anchors.Bounds snapshotBox, Anchors.Bounds bounds, Map<String, Anchor> anchors,
-		@Nullable String note) {
+		Building.Pin pin, @Nullable String note) {
+	}
+
+	/** What a building placed from {@code bp} / {@code grid} with {@code turns} at {@code box} pins (docs/BUILDINGS.md "Blueprint versions"). */
+	static Building.Pin pinFor(Blueprint bp, TemplateGrid grid, int turns, Anchors.Bounds box) {
+		return new Building.Pin(grid.fingerprint(), bp.wings(), bp.isGroup(), BlueprintTransform.rawWorldAnchors(bp, turns, box.minX(), box.minY(),
+			box.minZ()), grid.blockEntityOffsets(turns));
+	}
+
+	/** Whether a building's blueprint is loaded as the version it was placed from ({@link #ownGrid}). Any thread. */
+	public static boolean ownGridMatches(Building b) {
+		return ownGrid(b) != null;
+	}
+
+	/**
+	 * The loaded template grid of a building's blueprint when it is the one the building was placed from (its pin), else
+	 * null: the blueprint is missing, was changed since (regenerated under the same id), or the record predates pins.
+	 */
+	static @Nullable TemplateGrid ownGrid(Building b) {
+		TemplateGrid grid = TemplateGrid.of(b.blueprint());
+		return grid != null && b.pin() != null && grid.fingerprint().equals(b.pin().template()) ? grid : null;
 	}
 
 	/**
@@ -351,7 +369,8 @@ public final class Buildings {
 			throw new BuildingException("Internal: rotated box " + bb + " does not start at " + origin.toShortString());
 		}
 		Anchors.Bounds box = new Anchors.Bounds(bb.minX(), bb.minY(), bb.minZ(), bb.maxX(), bb.maxY(), bb.maxZ());
-		GhostModel model = TemplateGrid.of(entry).ghost(turns);
+		TemplateGrid grid = TemplateGrid.of(entry);
+		GhostModel model = grid.ghost(turns);
 		TerrainFit.Plan plan = TerrainFit.plan(model, box.minX(), box.minY(), box.minZ(), (x, y, z) -> TerrainFit.flags(level, new BlockPos(x, y, z)));
 		Anchors.Bounds snapBox = new Anchors.Bounds(box.minX(), Math.min(box.minY(), plan.minY()), box.minZ(), box.maxX(), box.maxY(), box.maxZ());
 		if (snapBox.minY() < level.getMinY() || box.maxY() > level.getMaxY()) {
@@ -434,7 +453,8 @@ public final class Buildings {
 				notes.add(plan.fillCount() + " foundation block" + (plan.fillCount() == 1 ? "" : "s"));
 			}
 			return new Built(turns, box, snapBox, BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
-				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), notes.isEmpty() ? null : String.join("; ", notes));
+				BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), pinFor(bp, grid, turns, box),
+				notes.isEmpty() ? null : String.join("; ", notes));
 		} catch (RuntimeException e) {
 			// never leave a half-built, unrecorded box behind: put the snapshot back
 			AgentCraft.LOGGER.error("Placing {} at {} failed; restoring box {}", bp.id(), origin.toShortString(), str(snapBox), e);
@@ -508,8 +528,8 @@ public final class Buildings {
 	 * Puts back exactly what was in the building's box (and foundation) before it was placed, then forgets the
 	 * building. Refuses, listing them, when the box holds things the building did not bring (containers, beds,
 	 * lecterns, item frames, armor stands, dropped items: {@link #removalBlockers}) unless {@code force} (an explicit
-	 * second confirm: they are lost). The snapshot is kept until the world has saved the restored blocks (crash
-	 * safety, see {@link #onSaved}). Server thread.
+	 * second confirm: they are lost). The snapshot is kept until the next world start confirms the restored terrain
+	 * reached the disk (crash safety, see {@link #reconcile}). Server thread.
 	 */
 	public static Building remove(ServerLevel level, String id, boolean force) throws BuildingException {
 		Building b = get(id);
@@ -543,7 +563,7 @@ public final class Buildings {
 		List<Building.Pending> pending = new ArrayList<>(s.pending());
 		pending.add(new Building.Pending(b, snap.getFileName().toString(), System.currentTimeMillis(), "removed"));
 		commit(server, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
-		AgentCraft.LOGGER.info("Removed building {} ({}): restored box {}{}; snapshot kept until the next save", id, b.blueprint(), str(b.restoreBox()),
+		AgentCraft.LOGGER.info("Removed building {} ({}): restored box {}{}; snapshot kept until the next world start", id, b.blueprint(), str(b.restoreBox()),
 			force ? " (forced)" : "");
 		return b;
 	}
@@ -581,7 +601,7 @@ public final class Buildings {
 	 */
 	public static List<String> removalBlockers(ServerLevel level, Building b) {
 		List<String> out = new ArrayList<>();
-		java.util.Set<BlockPos> own = templateBlockEntities(b);
+		java.util.Set<BlockPos> own = ownBlockEntities(b);
 		Anchors.Bounds box = b.restoreBox();
 		forEachBlockEntity(level, box, be -> {
 			BlockPos p = be.getBlockPos();
@@ -606,7 +626,9 @@ public final class Buildings {
 		int dropped = 0;
 		for (Entity e : level.getEntities((Entity) null, Occupancy.aabb(box), e -> e.isAlive() && !(e instanceof Player))) {
 			Occupancy.Found f = Occupancy.classify(e);
-			if (f.kind() == Occupancy.Kind.ITEM) {
+			if (f.kind() == Occupancy.Kind.ITEM && !(e instanceof ItemEntity)) {
+				out.add(f.name() + " at " + e.blockPosition().toShortString()); // a trident or an arrow that can be picked up: named
+			} else if (f.kind() == Occupancy.Kind.ITEM) {
 				dropped++;
 			} else if (!f.removable()) {
 				out.add(f.name() + " at " + e.blockPosition().toShortString()); // pets, villagers, item frames, armor stands...
@@ -614,6 +636,9 @@ public final class Buildings {
 		}
 		if (dropped > 0) {
 			out.add(dropped + " dropped item stack" + (dropped == 1 ? "" : "s"));
+		}
+		if (!out.isEmpty() && b.pin() == null) {
+			out.add("(" + b.id() + " was placed before AgentCraft remembered its blueprint version, so its own chests and barrels are listed too)");
 		}
 		return out;
 	}
@@ -626,19 +651,19 @@ public final class Buildings {
 		return n + " item" + (n == 1 ? "" : "s");
 	}
 
-	/** World positions of the block entities the building's template brings (its rotation, its box). */
-	static java.util.Set<BlockPos> templateBlockEntities(Building b) {
+	/**
+	 * World positions of the block entities the building brought: its pin's (the template it was placed from, even when
+	 * the blueprint changed since). Empty for a record without a pin: every block entity but the stations then counts
+	 * as the player's (the safe side).
+	 */
+	static java.util.Set<BlockPos> ownBlockEntities(Building b) {
 		java.util.Set<BlockPos> out = new java.util.HashSet<>();
-		TemplateGrid grid = TemplateGrid.of(b.blueprint());
-		if (grid == null) {
-			return out; // blueprint not loaded: every block entity but the stations counts as foreign (the safe side)
+		if (b.pin() == null) {
+			return out;
 		}
-		int turns = Math.max(0, BlueprintTransform.ROTATIONS.indexOf(b.rotation()));
-		GhostModel m = grid.ghost(turns);
-		for (int i = 0; i < m.count(); i++) {
-			if (grid.blockEntity()[i]) {
-				out.add(new BlockPos(b.box().minX() + m.x(i), b.box().minY() + m.y(i), b.box().minZ() + m.z(i)));
-			}
+		List<Integer> be = b.pin().blockEntities();
+		for (int i = 0; i + 2 < be.size(); i += 3) {
+			out.add(new BlockPos(b.box().minX() + be.get(i), b.box().minY() + be.get(i + 1), b.box().minZ() + be.get(i + 2)));
 		}
 		return out;
 	}
@@ -686,20 +711,24 @@ public final class Buildings {
 	 * Gives a building other repos without re-placing it (docs/BUILDINGS.md "Change a building's repos"): wing n
 	 * becomes {@code repos[n-1]}. Task walls and CI lamps bound to a wing's old repo (or its unfilled {@code #n}
 	 * placeholder) are rebound, a wing that loses its repo goes back to {@code #n}, and the per-wing anchors are
-	 * derived again from the blueprint. Refuses more repos than wings, a repo that has another building, and a
-	 * blueprint that is not loaded. The lead sync (the hub's listener) then sends {@code lead.assign}. Server thread.
+	 * derived again from the building's pin: the anchors and wing count of the template it was placed from, never the
+	 * blueprint's current version (docs/BUILDINGS.md "Blueprint versions"). A record without a pin keeps its anchor
+	 * positions and only renames them, and takes at most as many repos as it has now (Move re-places it from the
+	 * current blueprint). Refuses more repos than wings and a repo that has another building. The lead sync (the hub's
+	 * listener) then sends {@code lead.assign}. Server thread.
 	 */
 	public static Building setRepos(MinecraftServer server, String id, List<String> repos) throws BuildingException {
 		Building b = get(id);
 		if (b == null) {
 			throw new BuildingException("No building " + id);
 		}
-		Blueprint bp = Blueprints.get(b.blueprint());
-		if (bp == null) {
-			throw new BuildingException("Blueprint " + b.blueprint() + " is not loaded, so " + id + "'s wings are unknown; nothing was changed");
-		}
 		List<String> rs = List.copyOf(repos);
-		checkRepos(bp, rs, id);
+		Building.Pin pin = b.pin();
+		if (pin == null && rs.size() > b.repos().size()) {
+			throw new BuildingException(id + " was placed before AgentCraft remembered its blueprint version, so its empty wings are unknown: it "
+				+ "takes at most " + b.repos().size() + " repo(s) here. Move it (re-placed from the current " + b.blueprint() + ") to fill more wings");
+		}
+		checkRepos(b.blueprint(), pin != null ? pin.wings() : b.repos().size(), rs, id);
 		if (rs.equals(b.repos())) {
 			return b;
 		}
@@ -717,9 +746,9 @@ public final class Buildings {
 				}
 			}
 		});
-		int turns = Math.max(0, BlueprintTransform.ROTATIONS.indexOf(b.rotation()));
-		Building nb = b.withRepos(rs, BlueprintTransform.worldAnchors(bp, turns, b.box().minX(), b.box().minY(), b.box().minZ(), rs),
-			Math.max(System.currentTimeMillis(), b.revision() + 1));
+		Map<String, Anchor> anchors = pin != null ? BlueprintTransform.renameWings(pin.wingAnchors(), pin.group(), rs)
+			: BlueprintTransform.rebindAnchors(b.anchors(), b.repos(), rs);
+		Building nb = b.withRepos(rs, anchors, Math.max(System.currentTimeMillis(), b.revision() + 1));
 		State s = state;
 		Map<String, Building> map = new LinkedHashMap<>(s.byId());
 		map.put(id, nb);
@@ -732,7 +761,7 @@ public final class Buildings {
 	 * Moves a building (docs/BUILDINGS.md "Move a building"): the same id, repos, lead and home flag at a new site
 	 * in {@code level}. The new site gets every check of {@link #place} (it may not overlap the old one); the old
 	 * site must be clear of the player's things ({@link #removalBlockers}) unless {@code force}. Places at the new
-	 * site, then restores the old site from its snapshot (kept until the next save, as for a removal) and records
+	 * site, then restores the old site from its snapshot (kept until the next world start, as for a removal) and records
 	 * the old site in {@link Building#movedFrom()} (the hub's "Undo move" moves it back). Server thread.
 	 */
 	public static Building move(ServerLevel level, String id, BlockPos origin, Rotation rotation, boolean force) throws BuildingException {
@@ -754,6 +783,8 @@ public final class Buildings {
 		if (loadFailed) {
 			throw new BuildingException(FILE + " could not be read when the world started; nothing was moved");
 		}
+		// the new site is placed from the blueprint as it is now, which may have fewer wings than when it was placed
+		checkRepos(bp.id(), bp.wings(), b.repos(), id);
 		refusePlayerIn(oldLevel, b.restoreBox(), id, "moving it");
 		if (!force) {
 			List<String> blockers = removalBlockers(oldLevel, b);
@@ -763,25 +794,28 @@ public final class Buildings {
 		}
 		Path newSnap = oldSnap.resolveSibling(id + ".move.nbt");
 		Built built = build(level, bp, origin, rotation, b.repos(), force, b, newSnap);
-		try {
-			Drops drops = Drops.before(oldLevel, b.restoreBox());
-			restore(oldLevel, b.restoreBox(), oldSnap);
-			drops.clearNew(oldLevel);
-		} catch (BuildingException | RuntimeException e) {
-			AgentCraft.LOGGER.error("Moving {}: restoring the old site failed; taking the new site down again", id, e);
-			restore(level, built.snapshotBox(), newSnap);
-			throw new BuildingException("Moving " + id + " failed (" + e.getMessage() + "); the new site was restored, " + id + " stays");
-		}
+		// snapshots first, then the old site: a failure at any step undoes the steps before it and commits nothing, so the
+		// record never points at a site whose snapshot is another site's terrain
 		String movedName = id + ".moved-" + System.currentTimeMillis() + ".nbt";
+		Path moved = oldSnap.resolveSibling(movedName);
+		int step = 0;
 		try {
-			Files.move(oldSnap, oldSnap.resolveSibling(movedName), StandardCopyOption.ATOMIC_MOVE);
-			Files.move(newSnap, oldSnap, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-		} catch (IOException e) {
-			AgentCraft.LOGGER.error("Moving {}: could not rename the snapshots ({} -> {}, {} -> {})", id, oldSnap, movedName, newSnap, oldSnap, e);
+			renameSnapshot(oldSnap, moved);
+			step = 1;
+			renameSnapshot(newSnap, oldSnap);
+			step = 2;
+			Drops drops = Drops.before(oldLevel, b.restoreBox());
+			restore(oldLevel, b.restoreBox(), moved);
+			drops.clearNew(oldLevel);
+		} catch (IOException | BuildingException | RuntimeException e) {
+			AgentCraft.LOGGER.error("Moving {} failed at step {}; taking the new site down again", id, step, e);
+			undoMoveSteps(level, built.snapshotBox(), oldSnap, newSnap, moved, step);
+			throw new BuildingException("Moving " + id + " failed (" + e.getMessage() + "); the new site was restored, " + id + " stays where it was");
 		}
 		long now = System.currentTimeMillis();
 		Building nb = new Building(id, b.blueprint(), b.repos(), b.home(), BlueprintTransform.rotationName(built.turns()), built.box(),
-			built.bounds(), built.anchors(), b.placedAt(), dimensionId(level), built.snapshotBox(), Math.max(now, b.revision() + 1), b.site());
+			built.bounds(), built.anchors(), b.placedAt(), dimensionId(level), built.snapshotBox(), Math.max(now, b.revision() + 1), b.site(),
+			built.pin());
 		State s = state;
 		Map<String, Building> map = new LinkedHashMap<>(s.byId());
 		map.put(id, nb);
@@ -793,6 +827,47 @@ public final class Buildings {
 		AgentCraft.LOGGER.info("Moved building {} from {} ({}) to {} ({}){}", id, str(b.box()), b.dimensionOrDefault(), str(nb.box()),
 			nb.dimensionOrDefault(), built.note() == null ? "" : "; " + built.note());
 		return nb;
+	}
+
+	/**
+	 * Rolls back a move that failed after its new site was built: {@code step} 1 = the old snapshot was renamed to
+	 * {@code moved}, 2 = the new snapshot to {@code oldSnap} as well. Restores the new site from its snapshot and puts
+	 * the files back. Logged, never thrown: the caller is already failing.
+	 */
+	private static void undoMoveSteps(ServerLevel level, Anchors.Bounds newBox, Path oldSnap, Path newSnap, Path moved, int step) {
+		try {
+			if (step >= 2) {
+				Files.move(oldSnap, newSnap, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			}
+			if (step >= 1) {
+				Files.move(moved, oldSnap, StandardCopyOption.ATOMIC_MOVE);
+			}
+		} catch (IOException io) {
+			AgentCraft.LOGGER.error("Moving: could not put the snapshots back ({} / {} / {}); check {} by hand", oldSnap, newSnap, moved,
+				oldSnap.getParent(), io);
+		}
+		try {
+			restore(level, newBox, newSnap);
+			Files.deleteIfExists(newSnap);
+		} catch (BuildingException | IOException | RuntimeException e2) {
+			AgentCraft.LOGGER.error("Moving: could not take the new site {} down again", str(newBox), e2);
+		}
+	}
+
+	/** Test hook (DevBridge {@code dev.buildings.failNextRename}): the next snapshot rename of a move throws. */
+	static volatile boolean failNextRename;
+
+	/** Arms {@link #failNextRename} (DevBridge only). */
+	public static void failNextSnapshotRename() {
+		failNextRename = true;
+	}
+
+	private static void renameSnapshot(Path from, Path to) throws IOException {
+		if (failNextRename) {
+			failNextRename = false;
+			throw new IOException("injected rename failure (" + from.getFileName() + " -> " + to.getFileName() + ")");
+		}
+		Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
 	}
 
 	/** Moves a building back to where it stood before its last move ({@link Building#movedFrom()}): the hub's "Undo move". */
@@ -823,38 +898,6 @@ public final class Buildings {
 
 	// ------------------------------------------------------------------ crash safety
 
-	/**
-	 * After a world save: sites taken down before it (removed, moved away) no longer need their snapshots once the
-	 * restored blocks are on disk: after a flushed save (stop, {@code save-all flush}) or the second save since
-	 * (autosaves queue chunk writes without waiting for them). Server thread.
-	 */
-	static void onSaved(MinecraftServer server, boolean flush) {
-		State s = state;
-		if (s.pending().isEmpty() || loadFailed) {
-			return;
-		}
-		List<Building.Pending> keep = new ArrayList<>();
-		for (Building.Pending p : s.pending()) {
-			int saves = PENDING_SAVES.merge(p.snapshot(), 1, Integer::sum);
-			if (flush || saves >= 2) {
-				try {
-					Files.deleteIfExists(server.getWorldPath(LevelResource.ROOT).resolve(SNAPSHOT_DIR).resolve(p.snapshot()));
-				} catch (IOException e) {
-					AgentCraft.LOGGER.warn("Could not delete the snapshot {}", p.snapshot(), e);
-				}
-				PENDING_SAVES.remove(p.snapshot());
-			} else {
-				keep.add(p);
-			}
-		}
-		if (keep.size() != s.pending().size()) {
-			state = new State(s.byId(), s.next(), List.copyOf(keep));
-			save(server, state);
-		}
-	}
-
-	private static final Map<String, Integer> PENDING_SAVES = new java.util.concurrent.ConcurrentHashMap<>();
-
 	/** A check of the records against the world (see {@link #reconcile}); {@code problem} false = a notice. */
 	public record Report(String buildingId, boolean problem, String message) {
 	}
@@ -866,9 +909,21 @@ public final class Buildings {
 		return Map.copyOf(reports);
 	}
 
-	/** How much of a building's template stands in the world: {matching non-air blocks, non-air template blocks}. */
-	static int[] standing(MinecraftServer server, Building b) {
-		TemplateGrid grid = TemplateGrid.of(b.blueprint());
+	/** Adds a report to a building's line (a second one is appended; a problem stays a problem). */
+	private static void report(String id, boolean problem, String message) {
+		reports.merge(id, new Report(id, problem, message), (a, b) -> new Report(id, a.problem() || b.problem(), a.message() + " " + b.message()));
+	}
+
+	/** The sites taken down (removed, moved away) whose snapshots are kept until the next world start settles them. Any thread. */
+	public static List<Building.Pending> pending() {
+		return state.pending();
+	}
+
+	/**
+	 * How much of a building's template stands in the world, by {@code grid} (the building's own, {@link #ownGrid}):
+	 * {matching non-air blocks, non-air template blocks}; {0, 0} when it cannot be checked.
+	 */
+	static int[] standing(MinecraftServer server, Building b, @Nullable TemplateGrid grid) {
 		ServerLevel level = levelOf(server, b);
 		if (grid == null || level == null) {
 			return new int[] {0, 0};
@@ -892,11 +947,79 @@ public final class Buildings {
 		return new int[] {match, total};
 	}
 
+	/** Whether a building stands by its own template; null when that cannot be checked (template changed or missing, dimension not loaded). */
+	private static @Nullable Boolean stands(MinecraftServer server, Building b) {
+		int[] st = standing(server, b, b.pin() == null ? TemplateGrid.of(b.blueprint()) : ownGrid(b));
+		return st[1] == 0 ? null : Reconcile.stands(st[0], st[1]);
+	}
+
 	/**
-	 * At world start, checks the records against the world, never deleting anything (docs/BUILDINGS.md "Crash
-	 * safety"): a building whose template no longer stands is reported (Remove restores its snapshot; Forget drops
-	 * the record); a building moved just before a crash that is back at its old site gets its old record back; a
-	 * removal the world did not save (the building stands again) gets its record back. Server thread.
+	 * Whether a taken-down site shows its snapshot again (docs/BUILDINGS.md "Crash safety"): over the cells where the
+	 * snapshot and the building differ (the building's own template when its pin matches, else its pinned block
+	 * entities), the share that hold the snapshot's block ({@link Reconcile#restored}). Null when it cannot be told.
+	 */
+	static @Nullable Boolean restored(MinecraftServer server, Building b, Path snap) {
+		ServerLevel level = levelOf(server, b);
+		if (level == null || !Files.exists(snap)) {
+			return null;
+		}
+		StructureTemplate before = new StructureTemplate();
+		try {
+			before.load(level.registryAccess().lookupOrThrow(Registries.BLOCK), NbtIo.readCompressed(snap, NbtAccounter.unlimitedHeap()));
+		} catch (IOException | RuntimeException e) {
+			AgentCraft.LOGGER.warn("Buildings check: could not read {}", snap, e);
+			return null;
+		}
+		TemplateGrid saved = TemplateGrid.read(null, before);
+		Anchors.Bounds rb = b.restoreBox();
+		Map<Long, BlockState> terrain = new java.util.HashMap<>();
+		for (int i = 0; i < saved.count(); i++) {
+			terrain.put(BlockPos.asLong(rb.minX() + saved.xyz()[i * 3], rb.minY() + saved.xyz()[i * 3 + 1], rb.minZ() + saved.xyz()[i * 3 + 2]),
+				saved.states()[i]);
+		}
+		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+		int total = 0;
+		int match = 0;
+		TemplateGrid grid = b.pin() == null ? TemplateGrid.of(b.blueprint()) : ownGrid(b);
+		if (grid != null) {
+			GhostModel m = grid.ghost(Math.max(0, BlueprintTransform.ROTATIONS.indexOf(b.rotation())));
+			for (int i = 0; i < m.count(); i++) {
+				p.set(b.box().minX() + m.x(i), b.box().minY() + m.y(i), b.box().minZ() + m.z(i));
+				BlockState was = terrain.get(p.asLong());
+				if (was == null || was.is(grid.states()[i].getBlock())) {
+					continue; // the building's block equals the terrain's here: says nothing
+				}
+				total++;
+				if (level.getBlockState(p).is(was.getBlock())) {
+					match++;
+				}
+			}
+		} else if (b.pin() != null) {
+			List<Integer> be = b.pin().blockEntities();
+			for (int i = 0; i + 2 < be.size(); i += 3) {
+				p.set(b.box().minX() + be.get(i), b.box().minY() + be.get(i + 1), b.box().minZ() + be.get(i + 2));
+				BlockState was = terrain.get(p.asLong());
+				if (was == null || was.hasBlockEntity()) {
+					continue;
+				}
+				total++;
+				if (level.getBlockState(p).is(was.getBlock())) {
+					match++;
+				}
+			}
+		}
+		return Reconcile.restored(match, total);
+	}
+
+	/**
+	 * At world start, checks the records against the world and settles the sites taken down before the game stopped
+	 * (docs/BUILDINGS.md "Crash safety"). Snapshots of removed / moved-away sites are only deleted here, on positive
+	 * evidence ({@link Reconcile#decide}): the site shows its snapshot again, or a standing building covers it. A
+	 * removal or move that never reached the disk gets its record back; two copies of a building, or a taken-down
+	 * building standing under another one, are reported and keep their snapshot. A building whose own template no
+	 * longer stands is reported; one placed from an older version of its blueprint is only noted (it cannot be
+	 * checked); an old record without a pin gets one when the current blueprint matches it. Never deletes a record or
+	 * changes the world. Server thread.
 	 */
 	static void reconcile(MinecraftServer server) {
 		reports.clear();
@@ -907,49 +1030,121 @@ public final class Buildings {
 		Map<String, Building> map = new LinkedHashMap<>(s.byId());
 		List<Building.Pending> pending = new ArrayList<>(s.pending());
 		boolean changed = false;
+		Map<String, Boolean> standsNow = new java.util.HashMap<>();
 		for (Building b : List.copyOf(map.values())) {
-			int[] st = standing(server, b);
-			if (st[1] == 0 || Reconcile.stands(st[0], st[1])) {
-				continue; // standing, or cannot be checked (blueprint or dimension not loaded): nothing to say
-			}
-			Building.Pending old = null;
-			for (Building.Pending p : pending) {
-				if (p.building().id().equals(b.id()) && "moved".equals(p.why())) {
-					old = p;
+			if (b.pin() == null) {
+				Building pinned = adoptPin(server, b);
+				if (pinned != null) {
+					map.put(b.id(), pinned);
+					changed = true;
+					standsNow.put(b.id(), true);
+				} else if (TemplateGrid.of(b.blueprint()) != null && levelOf(server, b) != null) {
+					report(b.id(), false, b.id() + " was placed before AgentCraft remembered blueprint versions and does not match the current "
+						+ b.blueprint() + ", so it was not checked (normal after a blueprint update; it keeps its own layout)");
 				}
-			}
-			int[] was = old == null ? new int[] {0, 0} : standing(server, old.building());
-			if (old != null && was[1] > 0 && Reconcile.stands(was[0], was[1])) {
-				// the move never reached the disk: the building is still at its old site, with that site's snapshot
-				Path snaps = server.getWorldPath(LevelResource.ROOT).resolve(SNAPSHOT_DIR);
-				try {
-					Files.move(snaps.resolve(b.id() + ".before.nbt"), snaps.resolve(b.id() + ".unused-" + System.currentTimeMillis() + ".nbt"),
-						StandardCopyOption.ATOMIC_MOVE);
-					Files.move(snaps.resolve(old.snapshot()), snaps.resolve(b.id() + ".before.nbt"), StandardCopyOption.ATOMIC_MOVE);
-				} catch (IOException e) {
-					AgentCraft.LOGGER.error("Reconcile {}: could not swap the snapshots back", b.id(), e);
-					reports.put(b.id(), new Report(b.id(), true, Reconcile.mismatch(b.id(), st[0], st[1])));
-					continue;
-				}
-				map.put(b.id(), old.building().withHome(b.home()));
-				pending.remove(old);
-				changed = true;
-				reports.put(b.id(), new Report(b.id(), false, b.id() + "'s move was not saved before the game stopped: it is back at its old site"));
 				continue;
 			}
-			reports.put(b.id(), new Report(b.id(), true, Reconcile.mismatch(b.id(), st[0], st[1])));
+			if (ownGrid(b) == null) {
+				if (TemplateGrid.of(b.blueprint()) != null) {
+					report(b.id(), false, b.blueprint() + " changed since " + b.id() + " was placed; " + b.id()
+						+ " keeps the layout it was placed with and was not checked");
+				}
+				continue;
+			}
+			Boolean st = stands(server, b);
+			if (st != null) {
+				standsNow.put(b.id(), st);
+			}
 		}
+		Path snaps = server.getWorldPath(LevelResource.ROOT).resolve(SNAPSHOT_DIR);
+		java.util.Set<String> recovered = new java.util.HashSet<>();
 		for (Building.Pending p : List.copyOf(pending)) {
-			Building b = p.building();
-			if (!"removed".equals(p.why()) || map.containsKey(b.id())) {
-				continue;
-			}
-			int[] st = standing(server, b);
-			if (st[1] > 0 && Reconcile.stands(st[0], st[1]) && p.snapshot().equals(b.id() + ".before.nbt")) {
-				map.put(b.id(), b.withHome(map.isEmpty()));
+			Building gone = p.building();
+			boolean moved = "moved".equals(p.why());
+			Path snap = snaps.resolve(p.snapshot());
+			if (!Files.exists(snap)) {
+				AgentCraft.LOGGER.warn("Buildings check: the snapshot {} of {}'s {} site is missing; dropping the entry", p.snapshot(), gone.id(), p.why());
 				pending.remove(p);
 				changed = true;
-				reports.put(b.id(), new Report(b.id(), false, b.id() + "'s removal was not saved before the game stopped: it stands again (remove it again)"));
+				continue;
+			}
+			Reconcile.Overlap overlap = Reconcile.Overlap.NONE;
+			String over = null;
+			for (Building o : map.values()) {
+				if (o.id().equals(gone.id()) || !o.dimensionOrDefault().equals(gone.dimensionOrDefault())
+					|| !Building.intersects(o.restoreBox(), gone.restoreBox())) {
+					continue;
+				}
+				over = o.id();
+				if (Boolean.TRUE.equals(standsNow.get(o.id())) && contains(o.restoreBox(), gone.restoreBox())) {
+					overlap = Reconcile.Overlap.COVERED;
+					break;
+				}
+				overlap = Reconcile.Overlap.PARTIAL;
+			}
+			Building current = map.get(gone.id());
+			Boolean stands = stands(server, gone);
+			Boolean restored = restored(server, gone, snap);
+			Reconcile.Action action = Reconcile.decide(moved, stands, restored, overlap, current != null,
+				current == null ? null : standsNow.get(gone.id()));
+			AgentCraft.LOGGER.info("Buildings check: {} site of {} at {} (stands {}, restored {}, overlap {}): {}", p.why(), gone.id(),
+				str(gone.restoreBox()), stands, restored, overlap, action);
+			switch (action) {
+				case RELEASE -> {
+					try {
+						Files.deleteIfExists(snap);
+					} catch (IOException e) {
+						AgentCraft.LOGGER.warn("Could not delete the snapshot {}", snap, e);
+						continue;
+					}
+					pending.remove(p);
+					changed = true;
+				}
+				case RECOVER -> {
+					if (moved) {
+						// the move never reached the disk: the building is still at its old site, with that site's snapshot
+						try {
+							Files.move(snaps.resolve(gone.id() + ".before.nbt"), snaps.resolve(gone.id() + ".unused-" + System.currentTimeMillis() + ".nbt"),
+								StandardCopyOption.ATOMIC_MOVE);
+							Files.move(snap, snaps.resolve(gone.id() + ".before.nbt"), StandardCopyOption.ATOMIC_MOVE);
+						} catch (IOException e) {
+							AgentCraft.LOGGER.error("Buildings check {}: could not swap the snapshots back", gone.id(), e);
+							report(gone.id(), true, gone.id() + "'s move was not saved before the game stopped and it could not be put back; its old "
+								+ "site's saved terrain is kept as " + p.snapshot());
+							continue;
+						}
+						map.put(gone.id(), gone.withHome(current.home()));
+						report(gone.id(), false, gone.id() + "'s move was not saved before the game stopped: it is back at its old site");
+					} else {
+						if (!p.snapshot().equals(gone.id() + ".before.nbt")) {
+							continue;
+						}
+						map.put(gone.id(), gone.withHome(map.isEmpty()));
+						report(gone.id(), false, gone.id() + "'s removal was not saved before the game stopped: it stands again (remove it again)");
+					}
+					recovered.add(gone.id());
+					standsNow.put(gone.id(), true);
+					pending.remove(p);
+					changed = true;
+				}
+				case REPORT_KEEP -> {
+					String on = current != null ? gone.id() : over != null ? over : gone.id();
+					String what = over != null && current == null
+						? "a copy of " + gone.id() + " (" + p.why() + " before the game stopped, not saved) still stands partly under " + over
+						: moved ? gone.id() + " stands at its old site " + str(gone.box()) + " too: the move was only partly saved before the game stopped"
+						: "removed " + gone.id() + " stands again but could not get its record back";
+					report(on, true, what + ". Its saved terrain is kept as " + SNAPSHOT_DIR + "/" + p.snapshot() + "; nothing was changed");
+				}
+				case KEEP -> {
+				}
+			}
+		}
+		// buildings whose own template no longer stands (and were not just put back)
+		for (Building b : map.values()) {
+			Boolean st = standsNow.get(b.id());
+			if (Boolean.FALSE.equals(st) && !recovered.contains(b.id())) {
+				int[] n = standing(server, b, ownGrid(b));
+				report(b.id(), true, Reconcile.mismatch(b.id(), n[0], n[1]));
 			}
 		}
 		if (changed) {
@@ -957,6 +1152,28 @@ public final class Buildings {
 			save(server, state);
 		}
 		reports.values().forEach(r -> AgentCraft.LOGGER.warn("Buildings check: {}", r.message()));
+	}
+
+	/** An old record (no pin) gets one when the current blueprint stands there and gives the same anchors; else null. */
+	private static @Nullable Building adoptPin(MinecraftServer server, Building b) {
+		Blueprint bp = Blueprints.get(b.blueprint());
+		TemplateGrid grid = TemplateGrid.of(b.blueprint());
+		if (bp == null || grid == null) {
+			return null;
+		}
+		int[] st = standing(server, b, grid);
+		int turns = Math.max(0, BlueprintTransform.ROTATIONS.indexOf(b.rotation()));
+		if (!Reconcile.stands(st[0], st[1])
+			|| !BlueprintTransform.worldAnchors(bp, turns, b.box().minX(), b.box().minY(), b.box().minZ(), b.repos()).equals(b.anchors())) {
+			return null;
+		}
+		AgentCraft.LOGGER.info("Buildings check: {} matches the current {}; pinned it", b.id(), b.blueprint());
+		return b.withPin(pinFor(bp, grid, turns, b.box()));
+	}
+
+	private static boolean contains(Anchors.Bounds outer, Anchors.Bounds inner) {
+		return outer.minX() <= inner.minX() && outer.minY() <= inner.minY() && outer.minZ() <= inner.minZ() && outer.maxX() >= inner.maxX()
+			&& outer.maxY() >= inner.maxY() && outer.maxZ() >= inner.maxZ();
 	}
 
 	// ------------------------------------------------------------------ world work
@@ -1230,7 +1447,7 @@ public final class Buildings {
 		}
 	}
 
-	static String str(Anchors.Bounds b) {
+	public static String str(Anchors.Bounds b) {
 		return b.minX() + "," + b.minY() + "," + b.minZ() + " .. " + b.maxX() + "," + b.maxY() + "," + b.maxZ();
 	}
 }

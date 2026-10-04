@@ -28,8 +28,10 @@ import org.jspecify.annotations.Nullable;
  * @param states the block state of each cell
  * @param blockEntity whether the template stores block-entity NBT for the cell (a block the template itself
  *                    brings with a block entity: stations, lecterns, chests...)
+ * @param fingerprint {@link #fingerprint(int[], String[], boolean[])} of the cells: what a placed building pins
+ *                    ({@link Building.Pin#template()}), so a blueprint regenerated under the same id is noticed
  */
-public record TemplateGrid(Blueprint blueprint, int[] xyz, BlockState[] states, boolean[] blockEntity) {
+public record TemplateGrid(Blueprint blueprint, int[] xyz, BlockState[] states, boolean[] blockEntity, String fingerprint) {
 	private static final Map<Blueprints.Entry, TemplateGrid> CACHE = Collections.synchronizedMap(new WeakHashMap<>());
 
 	public int count() {
@@ -90,7 +92,47 @@ public record TemplateGrid(Blueprint blueprint, int[] xyz, BlockState[] states, 
 			states = java.util.Arrays.copyOf(states, k);
 			be = java.util.Arrays.copyOf(be, k);
 		}
-		return new TemplateGrid(bp, xyz, states, be);
+		String[] names = new String[states.length];
+		for (int i = 0; i < names.length; i++) {
+			names[i] = states[i].toString();
+		}
+		return new TemplateGrid(bp, xyz, states, be, fingerprint(xyz, names, be));
+	}
+
+	/**
+	 * A stable fingerprint of a template's cells (position, block state, block-entity flag), independent of the order
+	 * the cells are stored in: 16 hex chars of SHA-256 over the sorted cells. Pure.
+	 */
+	public static String fingerprint(int[] xyz, String[] states, boolean[] blockEntity) {
+		List<String> cells = new ArrayList<>(states.length);
+		for (int i = 0; i < states.length; i++) {
+			cells.add(xyz[i * 3] + "," + xyz[i * 3 + 1] + "," + xyz[i * 3 + 2] + "=" + states[i] + (blockEntity[i] ? "+be" : ""));
+		}
+		Collections.sort(cells);
+		try {
+			java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+			for (String c : cells) {
+				md.update(c.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+				md.update((byte) '\n');
+			}
+			return java.util.HexFormat.of().formatHex(md.digest(), 0, 8);
+		} catch (java.security.NoSuchAlgorithmException e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	/** The template's own block entities after {@code turns}, as offsets from the rotated box's minimum corner (x,y,z triples). */
+	public List<Integer> blockEntityOffsets(int turns) {
+		GhostModel m = ghost(turns);
+		List<Integer> out = new ArrayList<>();
+		for (int i = 0; i < m.count(); i++) {
+			if (blockEntity[i]) {
+				out.add(m.x(i));
+				out.add(m.y(i));
+				out.add(m.z(i));
+			}
+		}
+		return out;
 	}
 
 	/** As ghost cells: {@code colour} per state (alpha 0 = air: written, not drawn). */
