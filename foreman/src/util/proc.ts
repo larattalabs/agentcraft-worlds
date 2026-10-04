@@ -28,7 +28,7 @@ export function killTree(child: ChildProcess): void {
   if (!pid || child.exitCode !== null) return;
   if (process.platform === 'win32') {
     // taskkill /T walks the tree of *this* PID only
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', env: scrubEnv(process.env) });
   } else {
     try {
       process.kill(-pid, 'SIGKILL'); // the child leads its own process group (detached)
@@ -133,7 +133,7 @@ export async function killSnapshot(snapshot: ProcEntry[], table?: ProcEntry[]): 
   for (const e of snapshot) {
     const cur = alive.get(e.pid);
     if (!cur || cur.created !== e.created) continue;
-    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(e.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(e.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', env: scrubEnv(process.env) });
     else {
       try {
         process.kill(e.pid, 'SIGKILL');

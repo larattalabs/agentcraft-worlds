@@ -406,7 +406,14 @@ function indentOf(text: string | undefined): string | number {
 
 /** Write config.json atomically; the previous file is kept as config.json.bak. */
 export function writeRawConfig(file: string, raw: Raw, previousText: string | undefined): void {
-  if (previousText !== undefined) writeFileAtomic(`${file}.bak`, previousText);
+  // both keep config.json's mode (writeFileAtomic keeps the target's own mode when it exists)
+  let mode: number | undefined;
+  try {
+    mode = fs.statSync(file).mode & 0o777;
+  } catch {
+    /* no config.json yet */
+  }
+  if (previousText !== undefined) writeFileAtomic(`${file}.bak`, previousText, mode !== undefined ? { mode } : {});
   writeFileAtomic(file, `${JSON.stringify(raw, null, indentOf(previousText))}\n`);
 }
 

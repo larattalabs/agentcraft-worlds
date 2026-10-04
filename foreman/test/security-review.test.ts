@@ -128,8 +128,73 @@ describe('finding 4: Bash guard sees through quoting and recursive searches abov
   });
 
   it('lets ordinary commands in the worktree through', () => {
-    for (const command of ['rg TODO', 'rg TODO src', 'grep -rn TODO src', 'ls -la', 'find . -name "*.ts"', 'tar czf out.tgz src', 'cp -r src lib', 'du -sh .', `cd ${l.wt} && npm test`]) {
+    for (const command of [
+      'rg TODO',
+      'rg TODO src',
+      'grep -rn TODO src',
+      'ls -la',
+      'find . -name "*.ts"',
+      'tar czf out.tgz src',
+      'cp -r src lib',
+      'du -sh .',
+      `cd ${l.wt} && npm test`,
+      // patterns and option values are not roots (round 2, A)
+      'rg -e / src',
+      'rg -e/ src',
+      'rg --regexp=/ src',
+      'rg -g "/*.ts" TODO',
+      'grep -rn -e / src',
+      'grep -r --include=/x TODO .',
+      'find . -regex /',
+      'find . -name / -o -path /',
+      'find src -iname "*.md"',
+      // a subshell's cd stays in the subshell
+      '(cd ~); rg TODO',
+      '(cd / && ls) && grep -r TODO .',
+      'echo $(cd ~ && pwd); rg TODO',
+      'git log --oneline -5 && npm test -- --watch=false',
+      'rg -C3 -tts TODO',
+    ]) {
       expect(foremanPrivateCommand(command, ctx), command).toBeUndefined();
+    }
+  });
+
+  it('round 2: sees -e roots, redirections and reads after cd (B)', () => {
+    for (const command of [
+      'rg --hidden --no-ignore -e. ~',
+      'rg -e TOKEN ~',
+      'cd ~ && rg --hidden --no-ignore -e TOKEN',
+      "cat < ~/.agent'craft'/config.json",
+      'cat <~/.agentcraft/config.json',
+      'wc -l < ~/.agentcraft/claude/state.json',
+      'cd ~ && cat .agentcraft/config.json',
+      'cd ~ && cd .agentcraft && cat config.json',
+      'cd ~; (true); cat .agentcraft/config.json',
+    ]) {
+      expect(foremanPrivateCommand(command, ctx), command).toBeDefined();
+    }
+  });
+});
+
+describe('round 2, C: Windows paths keep their backslashes', () => {
+  const winHome = 'C:\\Users\\alex';
+  const ctx: PolicyContext = { role: 'worker', cwd: 'C:\\Users\\alex\\.agentcraft\\claude\\worktrees\\demo\\kit-t2', home: winHome, platform: 'win32', foreman: { home: 'C:\\Users\\alex\\.agentcraft', port: 7878 } };
+  it('denies recursive listings above the home and quote-split reads', () => {
+    for (const command of [
+      'Get-ChildItem -Recurse C:\\Users\\alex',
+      'Get-ChildItem -Path C:\\Users -Recurse -Filter *.json',
+      'gci -r $env:USERPROFILE',
+      "Get-Content C:\\Users\\alex\\.agent'craft'\\config.json",
+      'Get-Content "C:\\Users\\alex\\.agentcraft\\claude\\state.json"',
+      'type ..\\..\\..\\..\\config.json',
+      'dir /s C:\\',
+    ]) {
+      expect(foremanPrivateCommand(command, ctx, 'powershell'), command).toBeDefined();
+    }
+  });
+  it('allows the worktree', () => {
+    for (const command of ['Get-ChildItem -Recurse src', 'Get-ChildItem C:\\Users\\alex', 'Get-Content .\\README.md', 'npm test']) {
+      expect(foremanPrivateCommand(command, ctx, 'powershell'), command).toBeUndefined();
     }
   });
 });
@@ -191,6 +256,56 @@ describe('finding 6: temp files are unguessable and created exclusively', () => 
     const call = spy.mock.calls.find((c) => String(c[0]).startsWith(`${file}.`))!;
     expect(call[1]).toBe('wx');
     expect(call[2]).toBe(0o600);
+  });
+
+  it('round 2, D: refuses a link planted at the temp path, leaving target and link target alone', () => {
+    const dir = tempDir();
+    dirs.push(dir);
+    const target = path.join(dir, 'state.json');
+    const victim = path.join(dir, 'victim.txt');
+    fs.writeFileSync(target, 'old');
+    fs.writeFileSync(victim, 'untouched');
+    const real = fs.openSync.bind(fs);
+    vi.spyOn(fs, 'openSync').mockImplementation(((p: fs.PathLike, flags?: fs.OpenMode, mode?: fs.Mode) => {
+      // an attacker who could guess the name links it to another file first
+      if (String(p).endsWith('.tmp')) fs.symlinkSync(victim, String(p));
+      return real(p, flags ?? 'r', mode);
+    }) as typeof fs.openSync);
+    expect(() => writeFileAtomic(target, 'new')).toThrow(/EEXIST/);
+    expect(fs.readFileSync(target, 'utf8')).toBe('old');
+    expect(fs.readFileSync(victim, 'utf8')).toBe('untouched');
+  });
+
+  it('round 2, D: removes the temp file when the write fails', () => {
+    const dir = tempDir();
+    dirs.push(dir);
+    fs.writeFileSync(path.join(dir, 'state.json'), 'old');
+    vi.spyOn(fs, 'fsyncSync').mockImplementation(() => {
+      throw Object.assign(new Error('ENOSPC: no space left'), { code: 'ENOSPC' });
+    });
+    expect(() => writeFileAtomic(path.join(dir, 'state.json'), 'new')).toThrow(/ENOSPC/);
+    expect(fs.readdirSync(dir)).toEqual(['state.json']);
+    expect(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).toBe('old');
+  });
+
+  it.skipIf(process.platform === 'win32')('round 2, D: keeps the mode of config.json (and gives the .bak the same)', async () => {
+    const home = tempDir();
+    dirs.push(home);
+    const file = path.join(home, 'config.json');
+    fs.writeFileSync(file, '{}\n');
+    fs.chmodSync(file, 0o600);
+    const h = makeForeman(home);
+    try {
+      const out: Outbound[] = [];
+      await h.fm.handle({ v: 1, id: 'm', type: 'config.set', changes: [{ key: 'claude.prWatch', value: 'on' }] } as ClientMessage, (m) => out.push(m));
+      expect(out.find((m) => m.type === 'ack')).toMatchObject({ ok: true });
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(`${file}.bak`).mode & 0o777).toBe(0o600);
+      writeFileAtomic(file, '{}\n');
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      await h.fm.close();
+    }
   });
 });
 

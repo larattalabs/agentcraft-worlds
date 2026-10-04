@@ -10,18 +10,37 @@ function sleepSync(ms: number): void {
 /**
  * Write to a temp file in the same directory, fsync, then rename over the target. The temp file has
  * an unguessable name and is created exclusively (O_CREAT|O_EXCL: an existing file or link there
- * is never opened or followed); `mode` applies from its creation (e.g. 0o600 for secrets).
+ * is never opened or followed). Its mode: `mode` (e.g. 0o600 for secrets), else the existing
+ * target's (a file the user restricted stays restricted), else the umask default. A failed write
+ * leaves no temp file behind.
  */
 export function writeFileAtomic(file: string, data: string | Uint8Array, opts: { mode?: number } = {}): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  let mode = opts.mode;
+  if (mode === undefined) {
+    try {
+      mode = fs.statSync(file).mode & 0o777;
+    } catch {
+      /* new file */
+    }
+  }
   const tmp = `${file}.${randomBytes(12).toString('hex')}.tmp`;
-  const fd = fs.openSync(tmp, 'wx', opts.mode ?? 0o666);
+  const fd = fs.openSync(tmp, 'wx', mode ?? 0o666);
   try {
+    // exactly that mode, whatever the umask
+    if (mode !== undefined && process.platform !== 'win32') fs.fchmodSync(fd, mode);
     fs.writeSync(fd, typeof data === 'string' ? Buffer.from(data, 'utf8') : data);
     fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
+  } catch (e) {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* ignore */
+    }
+    fs.rmSync(tmp, { force: true });
+    throw e;
   }
+  fs.closeSync(fd);
   // On Windows a rename can fail transiently (EPERM/EBUSY) if a scanner holds the target open.
   for (let attempt = 0; ; attempt++) {
     try {

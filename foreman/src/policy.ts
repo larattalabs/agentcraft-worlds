@@ -75,6 +75,8 @@ export interface PolicyContext {
    * holds config.json and every profile's state), the WebSocket port and the client token file.
    */
   foreman?: ForemanPrivate;
+  /** path rules of this platform (tests simulate Windows); default: the one we run on */
+  platform?: 'win32' | 'posix';
 }
 
 export interface ForemanPrivate {
@@ -2062,74 +2064,247 @@ const LOOPBACK_TEXT = /\blocalhost\b|\b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|\[::1\]|
 const FOREMAN_VARS = /\$\{?AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)\b|%AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)%|\$env:AGENTCRAFT_(HOME|CLIENT_TOKEN|PROFILE)\b/i;
 
 /** Commands that read, list, copy or archive whole trees: never rooted at the Foreman home or above it. */
-const ALWAYS_RECURSIVE = new Set(['rg', 'ag', 'ack', 'find', 'fd', 'fdfind', 'tree', 'du', 'tar', 'bsdtar', 'rsync', '7z', '7za', 'robocopy', 'xcopy', 'get-childitem', 'gci', 'dir']);
-/** ... only with a recursive option (-r / -R / --recursive, -a for cp) */
-const RECURSIVE_WITH_FLAG = new Set(['grep', 'egrep', 'fgrep', 'ls', 'cp', 'scp', 'zip', 'chmod', 'chown', 'select-string', 'sls', 'copy-item', 'cpi']);
+const ALWAYS_RECURSIVE = new Set(['rg', 'ag', 'ack', 'find', 'fd', 'fdfind', 'tree', 'du', 'tar', 'bsdtar', 'rsync', '7z', '7za', 'robocopy', 'xcopy']);
+/** ... only with a recursive option (-r / -R / --recursive / -Recurse / /s, -a for cp) */
+const RECURSIVE_WITH_FLAG = new Set(['grep', 'egrep', 'fgrep', 'ls', 'cp', 'scp', 'zip', 'chmod', 'chown', 'select-string', 'sls', 'copy-item', 'cpi', 'get-childitem', 'gci', 'dir']);
 const PATTERN_FIRST = new Set(['rg', 'ag', 'ack', 'grep', 'egrep', 'fgrep', 'select-string', 'sls']);
 const COMMAND_WRAPPERS = new Set(['sudo', 'env', 'nice', 'nohup', 'time', 'command', 'builtin', 'exec', 'xargs', 'timeout', 'stdbuf', 'ionice']);
+const CD_COMMANDS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl']);
+
+/**
+ * Options whose value is a pattern, a count or a name, never a search root (separate or attached:
+ * `-e x`, `-ex`, `--regexp=x`). Pattern options (-e/-f/--regexp/--file) also mean every operand is
+ * a path. PowerShell's -Path/-LiteralPath values ARE roots.
+ */
+const VALUE_OPTS: Record<string, { short?: string; long?: string[]; pattern?: string[] }> = {
+  rg: { short: 'efgtTmABCjMdErE', long: ['regexp', 'file', 'glob', 'iglob', 'type', 'type-not', 'max-count', 'after-context', 'before-context', 'context', 'threads', 'max-columns', 'max-depth', 'maxdepth', 'encoding', 'pre', 'pre-glob', 'type-add', 'replace', 'sort', 'sortr', 'path-separator', 'ignore-file', 'max-filesize', 'colors', 'color', 'engine', 'field-match-separator', 'field-context-separator'], pattern: ['-e', '-f', '--regexp', '--file'] },
+  grep: { short: 'efmABCdD', long: ['regexp', 'file', 'max-count', 'after-context', 'before-context', 'context', 'include', 'exclude', 'exclude-dir', 'exclude-from', 'directories', 'devices', 'label', 'color', 'colour', 'binary-files'], pattern: ['-e', '-f', '--regexp', '--file'] },
+  ag: { short: 'GgmABC', long: ['file-search-regex', 'ignore', 'ignore-dir', 'max-count', 'after', 'before', 'context', 'depth'] },
+  ack: { short: 'gmABC', long: ['match', 'max-count', 'after-context', 'before-context', 'context', 'type', 'ignore-dir', 'ignore-file'], pattern: ['--match'] },
+  tar: { short: 'fCXTbHL', long: ['file', 'directory', 'exclude', 'files-from', 'exclude-from', 'format', 'use-compress-program'] },
+  du: { short: 'dBt', long: ['max-depth', 'block-size', 'exclude', 'threshold', 'time-style'] },
+  tree: { short: 'LPIo', long: ['filelimit', 'charset', 'sort'] },
+  rsync: { short: 'e', long: ['exclude', 'include', 'exclude-from', 'include-from', 'filter', 'rsh', 'rsync-path', 'files-from', 'chmod', 'chown', 'log-file', 'out-format', 'backup-dir', 'suffix', 'compare-dest', 'copy-dest', 'link-dest', 'partial-dir', 'temp-dir'] },
+  fd: { short: 'eEtdxXcjS', long: ['extension', 'exclude', 'type', 'max-depth', 'min-depth', 'exact-depth', 'exec', 'exec-batch', 'color', 'threads', 'size', 'changed-within', 'changed-before', 'owner', 'search-path', 'base-directory', 'path-separator', 'max-results', 'ignore-file'] },
+  zip: { short: 'xibntP', long: ['exclude', 'include'] },
+  'get-childitem': { long: ['filter', 'include', 'exclude', 'depth', 'attributes'] },
+  'select-string': { long: ['pattern', 'include', 'exclude', 'encoding', 'context'], pattern: ['-pattern'] },
+};
+VALUE_OPTS.egrep = VALUE_OPTS.grep!;
+VALUE_OPTS.fgrep = VALUE_OPTS.grep!;
+VALUE_OPTS.fdfind = VALUE_OPTS.fd!;
+VALUE_OPTS.gci = VALUE_OPTS['get-childitem']!;
+VALUE_OPTS.dir = VALUE_OPTS['get-childitem']!;
+VALUE_OPTS.sls = VALUE_OPTS['select-string']!;
 
 function recursiveFlag(cmd: string, args: string[]): boolean {
-  return args.some((a) => /^--recursive$|^-recurse$/i.test(a) || (/^-[A-Za-z]+$/.test(a) && (/[rR]/.test(a) || (cmd === 'cp' && a.includes('a')))) || /^--directories=recurse$/.test(a));
+  const ps = cmd === 'get-childitem' || cmd === 'gci' || cmd === 'dir' || cmd === 'copy-item' || cmd === 'cpi' || cmd === 'select-string' || cmd === 'sls';
+  if (ps) return args.some((a) => /^-r(e(c(u(r(s(e)?)?)?)?)?)?(:\$?true)?$/i.test(a) || /^\/s$/i.test(a));
+  return args.some((a) => /^--recursive$/.test(a) || /^--directories=recurse$/.test(a) || (/^-[A-Za-z]+$/.test(a) && (/[rR]/.test(a) || (cmd === 'cp' && a.includes('a')))));
 }
 
-/** The shell words of each simple command in `command`, with quotes and backslash escapes removed. */
-function shellCommands(command: string): string[][] {
-  const out: string[][] = [];
-  try {
-    for (const seg of splitSegments(extractHeredocs(command).text)) {
-      const words = lex(seg).words.map(unescapeWord).filter((w) => w.length);
-      if (words.length) out.push(words);
+/** Split `args` into the operands that can be paths and whether a pattern came through an option. */
+function operandsOf(cmd: string, args: string[]): { operands: string[]; patternOpt: boolean; optionPaths: string[] } {
+  if (cmd === 'find') {
+    // roots come before the first expression (-name x, -regex x, ( ... ), !)
+    const roots: string[] = [];
+    for (const a of args) {
+      if (a.startsWith('-') || a === '(' || a === '!' || a === ')') break;
+      roots.push(a);
     }
-  } catch {
-    /* unparsable: the raw text checks still run */
+    return { operands: roots, patternOpt: true, optionPaths: [] };
   }
+  const spec = VALUE_OPTS[cmd] ?? {};
+  const ps = cmd === 'get-childitem' || cmd === 'gci' || cmd === 'dir' || cmd === 'select-string' || cmd === 'sls';
+  const operands: string[] = [];
+  const optionPaths: string[] = [];
+  let patternOpt = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--') {
+      operands.push(...args.slice(i + 1));
+      break;
+    }
+    if (ps && /^-/.test(a)) {
+      const name = a.slice(1).toLowerCase().replace(/:.*$/, '');
+      if (name === 'path' || name === 'literalpath' || name === 'lp') {
+        if (args[i + 1] !== undefined) optionPaths.push(args[++i]!);
+      } else if ((spec.long ?? []).includes(name)) {
+        if ((spec.pattern ?? []).includes(`-${name}`)) patternOpt = true;
+        i++;
+      }
+      continue;
+    }
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const name = (eq > 0 ? a.slice(2, eq) : a.slice(2)).toLowerCase();
+      if ((spec.pattern ?? []).includes(`--${name}`)) patternOpt = true;
+      if (eq < 0 && (spec.long ?? []).includes(name)) i++;
+      continue;
+    }
+    if (a.startsWith('-') && a.length > 1) {
+      // -rn, -e PATTERN, -ePATTERN, -C3: the first letter that takes a value takes the rest (or the next word)
+      for (let k = 1; k < a.length; k++) {
+        if (!(spec.short ?? '').includes(a[k]!)) continue;
+        if ((spec.pattern ?? []).includes(`-${a[k]}`)) patternOpt = true;
+        if (k === a.length - 1) i++;
+        break;
+      }
+      continue;
+    }
+    operands.push(a);
+  }
+  return { operands, patternOpt, optionPaths };
+}
+
+/** A shell command split into simple commands, with ( ) / $( ) subshell boundaries kept. */
+type ShellItem = { kind: 'open' } | { kind: 'close' } | { kind: 'cmd'; words: string[]; redirects: string[] };
+
+function shellItems(command: string, posix: boolean): ShellItem[] {
+  const out: ShellItem[] = [];
+  let text: string;
+  try {
+    text = extractHeredocs(command).text;
+  } catch {
+    text = command;
+  }
+  const clean = (w: string) => (posix ? unescapeWord(w) : w);
+  const flush = (seg: string) => {
+    if (!seg.trim()) return;
+    try {
+      const l = lex(seg);
+      const words = l.words.map(clean).filter((w) => w.length);
+      const redirects = l.redirects.map((r) => clean(r.target)).filter(Boolean);
+      if (words.length || redirects.length) out.push({ kind: 'cmd', words, redirects });
+    } catch {
+      /* unparsable piece: the raw text checks still run */
+    }
+  };
+  let cur = '';
+  let q: string | undefined;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (q) {
+      cur += c;
+      if (c === '\\' && q === '"' && posix && i + 1 < text.length) cur += text[++i];
+      else if (c === q) q = undefined;
+      continue;
+    }
+    if (c === '\\' && posix && i + 1 < text.length) {
+      cur += c + text[++i];
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      q = c;
+      cur += c;
+      continue;
+    }
+    if (c === '(' || c === ')') {
+      // `$(` opens a substitution: a subshell too
+      if (c === '(' && cur.endsWith('$')) cur = cur.slice(0, -1);
+      flush(cur);
+      cur = '';
+      out.push({ kind: c === '(' ? 'open' : 'close' });
+      continue;
+    }
+    if (c === ';' || c === '\n' || c === '&' || c === '|') {
+      flush(cur);
+      cur = '';
+      continue;
+    }
+    cur += c;
+  }
+  flush(cur);
   return out;
 }
 
 /** Why a shell command reaches the Foreman's files or port, or undefined (best effort, see above). */
-export function foremanPrivateCommand(command: string, ctx: PolicyContext): string | undefined {
+export function foremanPrivateCommand(command: string, ctx: PolicyContext, shell: 'bash' | 'powershell' = 'bash'): string | undefined {
   const f = ctx.foreman;
   if (!f) return undefined;
-  const cmds = shellCommands(command);
+  const win = (ctx.platform ?? (process.platform === 'win32' ? 'win32' : 'posix')) === 'win32';
+  const P = win ? path.win32 : path;
+  // backslashes are shell escapes only in POSIX shells; on Windows they are path separators
+  const posix = shell === 'bash' && !win;
+  const items = shellItems(command, posix);
+  const cmds = items.filter((x): x is Extract<ShellItem, { kind: 'cmd' }> => x.kind === 'cmd');
   // the raw text and the text with shell quoting undone (`client'.'token`, `~/.agent"craft"`)
-  const texts = [command, cmds.map((w) => w.join(' ')).join(' ; ')];
+  const texts = [command, cmds.map((c) => [...c.words, ...c.redirects].join(' ')).join(' ; ')];
   for (const t of texts) {
     if (/client\.token/i.test(t)) return "the command mentions the Foreman's client token";
     if (/foremancli/i.test(t)) return 'agents may not drive the Foreman (foremancli)';
     if (FOREMAN_VARS.test(t)) return "the command uses the Foreman's home or token variables";
     if (f.port && new RegExp(`(^|[^\\d])${f.port}(?!\\d)`).test(t) && LOOPBACK_TEXT.test(t)) return `the command talks to the Foreman's port ${f.port}`;
   }
-  const isPathish = (w: string) => /[\\/]|^~|^\.\.?$|^\$|^%/.test(w);
-  for (const w of [...commandWords(command), ...cmds.flat()]) {
-    if (!isPathish(w)) continue;
-    const r = resolveToken(w, ctx.cwd, ctx);
-    if (r.kind !== 'path') continue;
-    const why = foremanPrivatePath(r.abs, f);
+  const userHome = homeOf(ctx);
+  const resolve = (w: string, vcwd: string): string | undefined => {
+    let p = w;
+    if (p === '~' || /^~[\\/]/.test(p)) p = userHome + p.slice(1);
+    else if (HOME_VARS.test(p)) p = p.replace(HOME_VARS, () => userHome);
+    if (/[$%`]|\u0001|\u0002/.test(p) || /^~/.test(p)) return undefined;
+    return P.resolve(vcwd, p);
+  };
+  const inside = (child: string, parent: string): boolean => {
+    const n = (s: string) => (win ? P.resolve(s).toLowerCase() : P.resolve(s));
+    const rel = P.relative(n(parent), n(child));
+    return rel === '' || (!rel.startsWith('..') && !P.isAbsolute(rel));
+  };
+  const privateWhy = (abs: string): string | undefined => {
+    if (!win) return foremanPrivatePath(abs, f);
+    if (P.basename(abs).toLowerCase() === TOKEN_NAME) return `${abs} is the Foreman's client token`;
+    if (!inside(abs, f.home)) return undefined;
+    const segs = P.relative(f.home, abs).split(/[\\/]+/).filter(Boolean);
+    return segs.length >= 2 && AGENT_SUBDIRS.has(segs[1]!.toLowerCase()) ? undefined : `${abs} is AgentCraft's own settings and state (${f.home})`;
+  };
+  const coversHome = (abs: string) => (win ? inside(f.home, abs) : containsHome(abs, f));
+
+  // any word that looks like a path, as typed (relative to the agent's directory)
+  for (const w of commandWords(command)) {
+    if (!/[\\/]|^~|^\.\.?$|^\$|^%/.test(w)) continue;
+    const abs = resolve(w, ctx.cwd);
+    const why = abs && privateWhy(abs);
     if (why) return why;
   }
-  // recursive reads, listings, copies and archives rooted at the home or above it (`rg x ~`,
-  // `cd / && grep -r x .`); `cd` is followed within the command
+  // per simple command, with `cd` followed (and undone when its ( ) subshell ends): every argument,
+  // option value and redirection target as a path; recursive commands also by their roots
   let vcwd = ctx.cwd;
-  for (const words of cmds) {
+  const stack: string[] = [];
+  for (const it of items) {
+    if (it.kind === 'open') {
+      stack.push(vcwd);
+      continue;
+    }
+    if (it.kind === 'close') {
+      vcwd = stack.pop() ?? vcwd;
+      continue;
+    }
+    const words = it.words;
     let i = 0;
-    while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || COMMAND_WRAPPERS.has(path.basename(words[i]!).toLowerCase()))) i++;
-    const cmd = path.basename(words[i] ?? '').toLowerCase().replace(/\.exe$/, '');
+    while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || COMMAND_WRAPPERS.has(P.basename(words[i]!).toLowerCase()))) i++;
+    const cmd = P.basename(words[i] ?? '').toLowerCase().replace(/\.exe$/, '');
     const args = words.slice(i + 1);
-    if (cmd === 'cd' || cmd === 'pushd' || cmd === 'set-location' || cmd === 'sl') {
+    for (const w of [...args.map((a) => (a.startsWith('-') && a.includes('=') ? a.slice(a.indexOf('=') + 1) : a)), ...it.redirects]) {
+      if (!w || (w.startsWith('-') && !w.includes('/'))) continue;
+      const abs = resolve(w, vcwd);
+      const why = abs && privateWhy(abs);
+      if (why) return why;
+    }
+    if (CD_COMMANDS.has(cmd)) {
       const target = args.find((a) => !a.startsWith('-')) ?? '~';
-      const r = resolveToken(target, vcwd, ctx);
-      if (r.kind === 'path') vcwd = r.abs;
+      const abs = resolve(target, vcwd);
+      if (abs) vcwd = abs;
       continue;
     }
     if (!ALWAYS_RECURSIVE.has(cmd) && !(RECURSIVE_WITH_FLAG.has(cmd) && recursiveFlag(cmd, args))) continue;
-    let operands = args.filter((a) => !a.startsWith('-'));
-    // searchers take the pattern first (unless it comes with -e / -f / --regexp / --file)
-    if (PATTERN_FIRST.has(cmd) && !args.some((a) => /^(-[ef]|--regexp|--file)(=|$)/.test(a))) operands = operands.slice(1);
-    // without a path operand these search where they run
-    const roots = operands.length ? operands : ['.'];
-    for (const w of roots) {
-      const r = resolveToken(w, vcwd, ctx);
-      if (r.kind === 'path' && containsHome(r.abs, f)) return `a recursive ${cmd} of ${r.abs} would reach AgentCraft's own files under ${f.home}`;
+    const { operands: ops, patternOpt, optionPaths } = operandsOf(cmd, args);
+    let operands = ops;
+    // searchers take the pattern first, unless it came through -e / -f / --regexp / --file
+    if (PATTERN_FIRST.has(cmd) && !patternOpt) operands = operands.slice(1);
+    // without a path operand these work where they run
+    const roots = [...operands, ...optionPaths];
+    for (const w of roots.length ? roots : ['.']) {
+      const abs = resolve(w, vcwd);
+      if (abs && coversHome(abs)) return `a recursive ${cmd} of ${abs} would reach AgentCraft's own files under ${f.home}`;
     }
   }
   return undefined;
@@ -2149,7 +2324,7 @@ export function foremanPrivateVerdict(toolName: string, input: Record<string, un
   if (!f) return undefined;
   const deny = (why: string): Verdict => ({ action: 'deny', reason: privateDeny(why) });
   if (toolName === 'Bash' || toolName === 'PowerShell') {
-    const why = foremanPrivateCommand(typeof input.command === 'string' ? input.command : '', ctx);
+    const why = foremanPrivateCommand(typeof input.command === 'string' ? input.command : '', ctx, toolName === 'PowerShell' ? 'powershell' : 'bash');
     return why ? deny(why) : undefined;
   }
   if (!READ_TOOLS.has(toolName) && !EDIT_TOOLS.has(toolName)) return undefined;

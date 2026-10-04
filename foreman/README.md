@@ -534,10 +534,15 @@ everything else (no "Always allow" covers it) and again by a PreToolUse hook on 
   (`(import @... skipped: AgentCraft's own files are off limits)`), so an agent cannot get the
   token into its next prompt by writing an import into its worktree.
 
-This is best effort: a text check cannot see a path a program assembles at run time, or a script
-the agent wrote and runs (`npm test` runs the agent's own code, as do worktree setup and the
-Foreman's CI). What protects the Foreman's WebSocket is the client token; these rules keep agents
-from reading it.
+**The Bash guard is best effort, by design.** It reads the command the way a shell would (quotes and
+escapes undone, `cd` followed, a `( )` subshell's `cd` left inside it, redirections, the option
+values of rg/grep/find that are patterns rather than paths), but a text check cannot see a path a
+program assembles at run time, a glob that expands to the home, or a script the agent wrote and
+runs (`npm test` runs the agent's own code, as do worktree setup and the Foreman's CI, all as your
+user). The real boundary is the client token file plus the read-only socket: they stop a
+*prompt* (a CLAUDE.md, a PR comment, a web page) from talking an agent into driving the Foreman
+through its own tool calls. They do not stop code an agent writes and then runs from reading a file
+your user can read; that is accepted, and the docs say so rather than promise more.
 
 ### Push, signing and other repositories are blocked at the git level too (src/gitsafety.ts)
 
