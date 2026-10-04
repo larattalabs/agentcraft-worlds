@@ -26,7 +26,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * In-game paper toasts for the Foreman's {@code notify}: the agent's framed portrait, who it is
- * about, two lines of text; "need you" toasts get a clay stripe and the decisions key hint. They slide
+ * about, two lines of text; "need you" toasts get a clay stripe and a key hint: the decisions key ({@code J})
+ * when the toast is about a decision, else the hub key ({@code H}, e.g. a blocked task or a reply); a toast
+ * can also carry its own hint ({@link #push(Notify, String, String)}, the away toast). They slide
  * in at the top right under the connection pill, stack (newest on top, three at most), and leave
  * early once their decision is answered. Not shown while the decision screen is open.
  */
@@ -39,7 +41,22 @@ public final class Toasts implements HudElement {
 	private static int shown;
 	private static final List<java.util.function.Predicate<Notify>> DROP = new java.util.concurrent.CopyOnWriteArrayList<>();
 
-	private record Toast(Notify n, @Nullable String agentId, String title, String body, long start, long life, @Nullable String decisionId) {
+	private record Toast(Notify n, @Nullable String agentId, String title, String body, long start, long life, @Nullable String decisionId,
+		@Nullable String hintKey, @Nullable String hintVerb) {
+	}
+
+	/** QA: the key hint of the newest toast ("J answer", "H open"), null = none. */
+	public static @Nullable String lastHint() {
+		if (ACTIVE.isEmpty()) {
+			return null;
+		}
+		Toast t = ACTIVE.get(0);
+		return t.hintKey() == null ? null : t.hintKey() + " " + t.hintVerb();
+	}
+
+	/** QA: the newest toast's title and body. */
+	public static @Nullable String lastText() {
+		return ACTIVE.isEmpty() ? null : ACTIVE.get(0).title() + ": " + ACTIVE.get(0).body();
 	}
 
 	public static void init() {
@@ -79,8 +96,16 @@ public final class Toasts implements HudElement {
 		return ACTIVE.size();
 	}
 
-	/** Add a toast for a notify (client thread). */
+	/** Add a toast for a notify (client thread); "need you" toasts get the right key hint. */
 	public static void push(Notify n) {
+		push(n, null, null);
+	}
+
+	/**
+	 * Add a toast with its own key hint ({@code hintKey} null = the default: for "need you", the decisions key when
+	 * it is about a decision, else the hub key).
+	 */
+	public static void push(Notify n, @Nullable String hintKey, @Nullable String hintVerb) {
 		ForemanState s = Foreman.state();
 		String agentId = null;
 		String body = n.text();
@@ -109,7 +134,16 @@ public final class Toasts implements HudElement {
 			case WARN -> 8000;
 			default -> 5500;
 		};
-		ACTIVE.add(0, new Toast(n, agentId, title, body, Util.getMillis(), life, n.decisionId()));
+		if (hintKey == null && n.level() == NotifyLevel.NEED_USER) {
+			if (n.decisionId() != null) {
+				hintKey = Keys.decisions == null ? "J" : Keys.label(Keys.decisions);
+				hintVerb = "answer";
+			} else {
+				hintKey = Keys.hub == null ? "H" : Keys.label(Keys.hub);
+				hintVerb = "open hub";
+			}
+		}
+		ACTIVE.add(0, new Toast(n, agentId, title, body, Util.getMillis(), life, n.decisionId(), hintKey, hintVerb == null ? "" : hintVerb));
 		while (ACTIVE.size() > MAX) {
 			ACTIVE.remove(ACTIVE.size() - 1);
 		}
@@ -122,7 +156,8 @@ public final class Toasts implements HudElement {
 			Toast t = ACTIVE.get(i);
 			if (decisionId.equals(t.decisionId())) {
 				long end = Math.min(t.start() + t.life(), now + FADE_MS);
-				ACTIVE.set(i, new Toast(t.n(), t.agentId(), t.title(), t.body(), t.start(), Math.max(0, end - t.start()), t.decisionId()));
+				ACTIVE.set(i, new Toast(t.n(), t.agentId(), t.title(), t.body(), t.start(), Math.max(0, end - t.start()), t.decisionId(), t.hintKey(),
+					t.hintVerb()));
 			}
 		}
 	}
@@ -158,7 +193,8 @@ public final class Toasts implements HudElement {
 			lines = List.of(lines.get(0), net.minecraft.network.chat.Component.literal(TextUtil.ellipsize(font, second + " …", textW))
 				.getVisualOrderText());
 		}
-		int h = Math.max(p.top() + 20 + p.bottom() - 2, p.top() + 10 + lines.size() * 10 + (need ? 12 : 0) + p.bottom() - 2);
+		boolean hint = t.hintKey() != null;
+		int h = Math.max(p.top() + 20 + p.bottom() - 2, p.top() + 10 + lines.size() * 10 + (hint ? 12 : 0) + p.bottom() - 2);
 		long age = now - t.start();
 		float slide = Math.min(1f, age / (float) SLIDE_MS);
 		slide = 1f - (1f - slide) * (1f - slide);
@@ -198,10 +234,9 @@ public final class Toasts implements HudElement {
 			g.text(font, line, tx, ly, UiStyle.withAlpha(UiBits.ink(), a), false);
 			ly += 10;
 		}
-		if (need && a > 200) {
-			String key = Keys.decisions == null ? "J" : Keys.label(Keys.decisions);
-			int hw = UiBits.hintsWidth(font, key, "answer");
-			UiBits.hints(g, font, x + W - p.right() - hw, ly, false, key, "answer");
+		if (hint && a > 200) {
+			int hw = UiBits.hintsWidth(font, t.hintKey(), t.hintVerb());
+			UiBits.hints(g, font, x + W - p.right() - hw, ly, false, t.hintKey(), t.hintVerb());
 		}
 		return h;
 	}

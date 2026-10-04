@@ -49,7 +49,8 @@ public final class HubFeature {
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hub.tick", () -> {
 			while (Keys.hub.consumeClick()) {
 				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active() && !dev.agentcraft.client.building.PlotMarker.active()) {
-					open(null);
+					// the last tab of this world; after an away toast the Inbox (else Goals) (docs/WAVE2.md W6)
+					open(dev.agentcraft.client.hud.HudWatch.hubTarget());
 				}
 			}
 		}));
@@ -60,6 +61,11 @@ public final class HubFeature {
 		DevBridge.registerScreen("hub_blueprints", mc -> {
 			HubScreen s = new HubScreen(HubTab.BUILDINGS);
 			s.setSub(HubScreen.Sub.BLUEPRINTS);
+			return s;
+		});
+		DevBridge.registerScreen("hub_status_help", mc -> {
+			HubScreen s = new HubScreen(HubTab.STATUS);
+			s.status.setView(StatusPane.View.HELP);
 			return s;
 		});
 		DevBridge.registerScreen("hub_designs", mc -> {
@@ -126,7 +132,7 @@ public final class HubFeature {
 
 	private static void registerDev() {
 		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|blueprints|designs, buildingId?, blueprint?, designId?, "
-			+ "view?: plan|iso|top|front|cutaway (Buildings) | thread|plan|instructions|tasks (Goals), goalId?, repoId?, form?: bool (Goals: the new goal "
+			+ "view?: plan|iso|top|front|cutaway (Buildings) | thread|plan|instructions|tasks (Goals) | overview|help (Status), goalId?, repoId?, form?: bool (Goals: the new goal "
 			+ "form), edit?: bool (Repos: the repoId's settings form), group?: general|permissions|context|subagents|prs|usage (Settings), agentId?: id|models "
 			+ "(Team)} - open the hub (H) and select; replies with dev.hub.state", (req, mc) -> {
 				Fields f = Fields.of(req);
@@ -166,6 +172,14 @@ public final class HubFeature {
 					}
 					if (tab == HubTab.TEAM || tab == HubTab.SETTINGS) {
 						SettingsDev.open(s, tab, group, agentId);
+						return state(mc);
+					}
+					if (tab == HubTab.STATUS) {
+						StatusPane.View sv = StatusPane.View.parse(view);
+						if (view != null && sv == null) {
+							throw new DevBridge.DevException("view must be overview or help (Status)");
+						}
+						s.status.setView(sv == null ? StatusPane.View.OVERVIEW : sv);
 						return state(mc);
 					}
 					if (sub != null) {
@@ -491,6 +505,8 @@ public final class HubFeature {
 		o.add("goalsTab", s == null ? null : s.goals.state());
 		o.add("teamTab", s == null ? null : s.team.state());
 		o.add("settingsTab", s == null ? null : s.settings.state());
+		o.add("statusTab", s == null ? null : s.status.state());
+		o.add("tabs", s == null ? null : s.tabsState());
 		if (s != null) {
 			JsonArray btns = new JsonArray();
 			for (String[] b : s.buttonsShown()) {

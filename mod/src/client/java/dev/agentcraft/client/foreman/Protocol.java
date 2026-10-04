@@ -348,10 +348,23 @@ public final class Protocol {
 		}
 	}
 
-	/** {@code restartRequired}: config keys written but waiting for a Foreman restart (Settings tab); null on an older Foreman. */
+	/**
+	 * Contract C9: the claude backend holds new agent turns. {@code reason} usage|auth|offline (others kept as sent),
+	 * {@code until} when it is expected to end (usage: the window resets; offline: the next retry).
+	 */
+	public record Hold(String reason, @Nullable Long until, @Nullable String message) {
+		public Hold {
+			reason = reason == null ? "" : reason;
+		}
+	}
+
+	/**
+	 * {@code restartRequired}: config keys written but waiting for a Foreman restart (Settings tab); null on an older Foreman.
+	 * {@code hold} (C9): set while the backend holds new turns, null otherwise (and on an older Foreman).
+	 */
 	public record ForemanStatus(String version, BackendName backend, AuthStatus auth, @Nullable String message, @Nullable String account,
 		@Nullable Double speed, @Nullable Boolean showcase, @Nullable Double costUsd, @Nullable String userName, @Nullable PlanUsage usage,
-		@Nullable List<String> restartRequired) {
+		@Nullable List<String> restartRequired, @Nullable Hold hold) {
 		public ForemanStatus {
 			version = version == null ? "?" : version;
 			backend = backend == null ? BackendName.UNKNOWN : backend;

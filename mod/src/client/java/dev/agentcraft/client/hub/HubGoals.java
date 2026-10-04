@@ -345,6 +345,10 @@ public final class HubGoals {
 		if (away != null && away.since == since) {
 			return false;
 		}
+		if (away != null && !away.dismissed && now - away.askedAt < HubSeen.AWAY_MS) {
+			// the HUD's away check (docs/WAVE2.md W6) just asked: keep the digest its toast was about
+			return false;
+		}
 		requestAway(since);
 		return true;
 	}
