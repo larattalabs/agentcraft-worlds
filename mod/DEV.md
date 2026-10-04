@@ -582,8 +582,9 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
   line-of-sight checks) and every 32 expansions. In game (branch `fix/approach`, 2026-10-04; seed 2026 and
   seed 8675309, natural terrain, studio / workshop / campus2 on hillsides, 6 pairs each, 78-411 block routes,
   774-38 000 expansions): every pair found; warm worst single step 2.0-2.9 ms, worst tick (`maxTickUs`, which also
-  covers finishing a job) 2.1-4.3 ms; one cold outlier of 131 ms right after placing new buildings (fresh chunks,
-  JIT), not reproduced on repeat. No snapshotting or threads: the level is read on the client thread.
+  covers finishing a job) 2.1-4.3 ms; one outlier: a single planner step of 131 ms (the log's "worst step") on the
+  first plan of one pair right after placing the buildings; its cause was not found and four repeats stayed at
+  2.0-3.4 ms. No snapshotting or threads: the level is read on the client thread.
 - **Trip** (`AgentManager.Trip`): planning (the agent stays where it is) -> walking: one route handed to
   `AgentMotion` = inside A to its entrance (`GridPathfinder`, standing up first) + outdoor points + inside B
   from its entrance to the spot (seat approach and the last step onto the seat). Normal retargeting is
