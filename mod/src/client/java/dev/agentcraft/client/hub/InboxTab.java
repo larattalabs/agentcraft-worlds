@@ -723,12 +723,12 @@ final class InboxTab implements HubPane {
 		String dis = compact ? "×" : "Dismiss";
 		int dw = hub.bw(dis);
 		int gw = font().width(goals) + 12;
-		Panels.inset(g, x, y, w, 16);
-		hub.button(g, "inbox_away_dismiss", dis, x + w - dw - 1, y + 1, dw, false, false, false, mx, my, HubGoals::dismissAway);
-		int gx = x + w - dw - 4 - gw;
-		chip(g, "away:goals", goals, gx, y + 1, false, mx, my, () -> hub.setTab(HubTab.GOALS));
-		g.text(font(), TextUtil.ellipsize(font(), text, gx - x - 10), x + 6, y + 4, UiStyle.CLAY_DARK, false);
-		return 20;
+		Panels.inset(g, x, y, w - dw - 4, 20);
+		hub.button(g, "inbox_away_dismiss", dis, x + w - dw, y, dw, false, false, false, mx, my, HubGoals::dismissAway);
+		int gx = x + w - dw - 8 - gw;
+		chip(g, "away:goals", goals, gx, y + 3, false, mx, my, () -> hub.setTab(HubTab.GOALS));
+		g.text(font(), TextUtil.ellipsize(font(), text, gx - x - 10), x + 6, y + 6, UiStyle.CLAY_DARK, false);
+		return 24;
 	}
 
 	private void drawFilters(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
