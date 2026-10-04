@@ -2,22 +2,18 @@
 // macOS launcher for the Foreman and the Fabric development client.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parsePs, isForemanCommand, planKill, selectProfile, staleReasons } from './lib/macprocs.mjs';
+import { isForemanCommand, planKill, selectProfile, staleReasons } from './lib/macprocs.mjs';
+import { readJson, saveJson, processStamp, owned, portOpen, psTable, gitHead as gitHeadAt, findForeman } from './lib/foremanproc.mjs';
+import { rotateLog } from './lib/logrotate.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tools = path.join(root, 'tools');
 const runDir = path.join(root, 'artifacts', 'run');
 const logDir = path.join(root, 'artifacts', 'logs');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
-const saveJson = (file, value) => {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
-};
 const runFile = (kind, profile) => path.join(runDir, `mac-${kind}-${profile}.json`);
 
 function usage(code = 0) {
@@ -76,23 +72,6 @@ function options(argv) {
   return out;
 }
 
-function processStamp(pid) {
-  if (!Number.isInteger(pid) || pid < 1) return null;
-  const result = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() || null : null;
-}
-
-function owned(info) { return info?.pid && info?.stamp && processStamp(info.pid) === info.stamp; }
-function portOpen(port) {
-  return new Promise((resolve) => {
-    const socket = net.connect({ host: '127.0.0.1', port });
-    socket.setTimeout(500);
-    socket.once('connect', () => { socket.destroy(); resolve(true); });
-    socket.once('timeout', () => { socket.destroy(); resolve(false); });
-    socket.once('error', () => resolve(false));
-  });
-}
-
 async function waitPort(port, timeoutMs, info, name) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -125,6 +104,7 @@ function installDeps(dir) {
 }
 
 function start(command, args, cwd, log, env = {}) {
+  rotateLog(log);
   const output = fs.openSync(log, 'a');
   const child = spawn(command, args, {
     cwd, env: { ...process.env, ...env }, detached: true,
@@ -137,15 +117,7 @@ function start(command, args, cwd, log, env = {}) {
   return { pid: child.pid, stamp: processStamp(child.pid), log, startedAt: new Date().toISOString() };
 }
 
-function gitHead() {
-  const result = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
-function psTable() {
-  const result = spawnSync('ps', ['-ax', '-o', 'pid,ppid,pgid,command'], { encoding: 'utf8', maxBuffer: 64 << 20 });
-  return result.status === 0 ? parsePs(result.stdout) : [];
-}
+const gitHead = () => gitHeadAt(root);
 
 function runCli(script, args, timeout = 30000) {
   const result = spawnSync(process.execPath, [path.join(tools, script), ...args], { cwd: root, encoding: 'utf8', timeout });
@@ -196,19 +168,10 @@ async function launch(opt, summary) {
   let fm = readJson(fmFile);
   let fmPort = opt.port;
   if (!opt['no-foreman']) {
-    let running = owned(fm) && await portOpen(fm.port);
-    if (!running) {
-      // restarted from the hub (foreman.restart): the launcher's pid is gone, and the Foreman's own
-      // run file names the process that took over
-      const ownHome = fm?.home ?? opt.home;
-      const own = readJson(path.join(ownHome, opt.profile, 'foreman.json'));
-      const command = own?.pid ? psTable().find((r) => r.pid === own.pid)?.command : undefined;
-      if (own?.pid && isForemanCommand(command, opt.profile) && await portOpen(own.port)) {
-        fm = { ...(fm ?? {}), pid: own.pid, stamp: processStamp(own.pid), port: own.port, backend: own.backend ?? fm?.backend, home: ownHome };
-        saveJson(fmFile, fm);
-        running = true;
-      }
-    }
+    // also finds a Foreman restarted from the hub (foreman.restart), whose pid the launcher never saw
+    const found = await findForeman({ runFile: fmFile, home: opt.home, profile: opt.profile });
+    fm = found.fm;
+    const running = found.running;
     const stale = running ? staleReasons(fm, { root, commit: gitHead() }) : [];
     if (running && stale.length) {
       const text = `Foreman ${fm.pid} on :${fm.port} is running OLD CODE: ${stale.join('; ')}.`;
