@@ -782,8 +782,9 @@ public final class HubScreen extends Screen {
 		if (bs.isEmpty()) {
 			Panels.inset(g, x, y, w, h);
 			int ty = y + 10;
-			for (String line : TextUtil.wrapPlain(font, "No buildings in this world yet. \"Place new…\" opens the building wizard (also "
-				+ Keys.label(Keys.build) + "): pick repos and a blueprint, then place its ghost. The Blueprints list shows what you can build.", w - 16)) {
+			String also = Keys.build == null || Keys.build.isUnbound() ? "" : " (also " + Keys.label(Keys.build) + ")";
+			for (String line : TextUtil.wrapPlain(font, "No buildings in this world yet. \"Place new…\" opens the building wizard" + also
+				+ ": pick repos and a blueprint, then place its ghost. The Blueprints list shows what you can build.", w - 16)) {
 				g.text(font, line, x + 8, ty, muted, false);
 				ty += 10;
 			}

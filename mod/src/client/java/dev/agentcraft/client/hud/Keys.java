@@ -9,7 +9,8 @@ import net.minecraft.client.input.KeyEvent;
 /**
  * AgentCraft key mappings (Options > Controls > Key Binds > AgentCraft, rebindable like any vanilla
  * key): the console ({@code `}), the console from a terminal you look at (Enter), the decision
- * queue ({@code J}), the building wizard ({@code B}) and the hub ({@code H}). Registered once, from whichever feature initialises first.
+ * queue ({@code J}), the building wizard (unbound by default: {@code B} clashed with Xaero's new-waypoint key; the hub's
+ * "Place new…" opens it) and the hub ({@code H}). Registered once, from whichever feature initialises first.
  */
 public final class Keys {
 	public static KeyMapping console;
@@ -40,7 +41,9 @@ public final class Keys {
 			InputConstants.KEY_RETURN, cat, 2));
 		decisions = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.decisions", InputConstants.Type.KEYBOARD, InputConstants.KEY_J, cat,
 			3));
-		build = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.build", InputConstants.Type.KEYBOARD, InputConstants.KEY_B, cat, 4));
+		// unbound by default (B is Xaero's new waypoint); bind it in Options > Controls if you want a key for the wizard
+		build = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.build", InputConstants.Type.KEYBOARD, InputConstants.UNKNOWN.getValue(),
+			cat, 4));
 		// H: vanilla only uses it as F3+H (advanced tooltips), never on its own
 		hub = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.hub", InputConstants.Type.KEYBOARD, InputConstants.KEY_H, cat, 5));
 	}

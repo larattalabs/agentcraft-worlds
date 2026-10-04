@@ -446,7 +446,7 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   entrance facing the player; ground row at the feet, near edge 2 blocks ahead, centred),
   `/agentcraft remove <id> [forget]`, `/agentcraft home <id>`.
 - Wizard (client, `dev.agentcraft.client.building`, contract in docs/BUILDINGS.md "Wizard"):
-  `BuildingWizardFeature` (key `B`, `/agentcraft build` via `BuildingCommands.wizardOpener`),
+  `BuildingWizardFeature` (key unbound by default, `/agentcraft build` via `BuildingCommands.wizardOpener`),
   `RepoPickScreen` -> `BlueprintPickScreen` -> `BuildPlacement` (state, raycast, conflict scan on the
   client level, confirm through `getSingleplayerServer().execute` in the player's dimension),
   `GhostRenderer` (`LevelRenderEvents.COLLECT_SUBMITS`, one `submitCustomGeometry` with

@@ -11,10 +11,12 @@ Shots: `tools/scenes/console.json` (showcase busy state).
 | `` ` `` (Backtick) | open the console (again with an empty input: close it) |
 | `Enter` while looking at a console terminal | open the console (a right-click on the terminal does too) |
 | `J` | open the decision queue (a right-click on the Decision Podium does too) |
-| `B` | open the building wizard (docs/BUILDINGS.md "Wizard") |
+| (unbound) | open the building wizard (docs/BUILDINGS.md "Wizard"); bind it in Options > Controls, the hub's "Place new…" opens it too |
 | `H` | open the hub (docs/HUB.md): buildings, blueprints, designs, status |
 
-Neither screen pauses the game: agents keep walking and working behind it.
+In singleplayer every AgentCraft screen pauses the game like a vanilla menu (contract C6); dev runs
+(`gradlew runClient`) and clients with the DevBridge on keep the world running (`AGENTCRAFT_PAUSE=0|1`
+overrides).
 
 ## Console
 
