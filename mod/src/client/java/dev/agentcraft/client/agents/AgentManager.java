@@ -15,6 +15,7 @@ import dev.agentcraft.client.foreman.Protocol.AgentState;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
+import dev.agentcraft.walk.WalkRules;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -48,9 +49,14 @@ import org.jspecify.annotations.Nullable;
  * <p>Buildings (docs/BUILDINGS.md "Client (routing)"): every agent works in the building of its repo
  * ({@link Routing#agentRepo}: its repo, its task's repo, the lead's goal repo), else in
  * {@link Anchors#current()} (the home building, or the HQ studio). Stations, desks, seats and the
- * pathfinder are per layout (keyed by layout name); an agent whose building changes teleports there
- * with a puff of smoke at both ends. In a world without buildings everyone uses {@code Anchors.current()}
- * exactly as before.
+ * pathfinder are per layout (keyed by layout name). An agent whose building changes <b>walks</b> there
+ * (docs/WAVE2.md W8, a {@link Trip}): inside to its building's entrance ({@link GridPathfinder}), outdoors
+ * to the other entrance along a planned route ({@link OutdoorRoutes}, planned over a few ticks, cached
+ * per building pair), inside again to its spot. It teleports with a puff of smoke at both ends instead
+ * when walking is off for the world, a building is in another dimension or has no entrance, the
+ * entrances are more than 256 blocks apart, chunks on the way are not loaded, the player is beyond
+ * render distance, no route is found, or the walk gets blocked or stuck. In a world without buildings
+ * everyone uses {@code Anchors.current()} exactly as before.
  *
  * <p>Phase 3: a station anchor with a seat block ({@link Seats}) is walked to via a free cell next
  * to the seat, then the agent steps in and sits; leaving a seat starts with standing up. An agent
@@ -96,6 +102,45 @@ public final class AgentManager {
 	private int nextEntityId = -10_000;
 	private int pathFailures;
 	private long ticks;
+	/** Unpaused ticks (trip deadlines: every AgentCraft screen pauses singleplayer, a check-in must not time walks out). */
+	private long liveTicks;
+	/** dev.walk.send: agent id -> the building (id or "home") it is routed to regardless of its work. */
+	private final Map<String, String> sendOverrides = new HashMap<>();
+	/** Agents changing building outdoors: agent id -> its trip (planning, then walking). */
+	private final Map<String, Trip> trips = new LinkedHashMap<>();
+
+	/**
+	 * One agent's walk to another building: planning (waiting for the outdoor route) then walking (the whole
+	 * route, inside A + outdoors + inside B, handed to {@link AgentMotion}). While a trip runs the normal
+	 * retargeting is skipped; when it ends, retargeting takes over in the new building.
+	 */
+	private static final class Trip {
+		final String agentId;
+		final String from;
+		final Anchors.Layout fromLayout;
+		final Anchors.Layout toLayout;
+		final String key;
+		final java.util.concurrent.CompletableFuture<OutdoorRoutes.Outcome> route;
+		Anchor target;
+		Seats.@Nullable Seat seat;
+		boolean walking;
+		long waited;
+		long walked;
+		int limit;
+		double length;
+
+		Trip(String agentId, String from, Anchors.Layout fromLayout, Anchors.Layout toLayout, String key,
+			java.util.concurrent.CompletableFuture<OutdoorRoutes.Outcome> route, Anchor target, Seats.@Nullable Seat seat) {
+			this.agentId = agentId;
+			this.from = from;
+			this.fromLayout = fromLayout;
+			this.toLayout = toLayout;
+			this.key = key;
+			this.route = route;
+			this.target = target;
+			this.seat = seat;
+		}
+	}
 
 	/** Where a waiting agent stands near the player, and where the player was when it was chosen. */
 	private record UserSpot(Anchor spot, Vec3 playerAt) {
@@ -159,11 +204,17 @@ public final class AgentManager {
 			populated = false;
 			level = lvl;
 			regionsSignature = Long.MIN_VALUE;
+			trips.clear();
+			sendOverrides.clear();
 		}
+		OutdoorRoutes.get().tick(mc);
 		if (lvl == null) {
 			return;
 		}
 		ticks++;
+		if (!mc.isPaused()) {
+			liveTicks++;
+		}
 		ForemanState st = Foreman.state();
 		if (st == null || !st.hasData()) {
 			removeAll();
@@ -201,6 +252,13 @@ public final class AgentManager {
 				l = Routing.layoutForBuilding(leads.buildingOf(a.id()), sites, current);
 			} else {
 				l = sites.isEmpty() ? current : Routing.layoutFor(repoOf(st, a), sites, current);
+			}
+			String sent = sendOverrides.get(a.id());
+			if (sent != null) {
+				Anchors.Layout s = OutdoorRoutes.layoutByName(sent, dim);
+				if (s != null) {
+					l = s; // dev.walk.send: QA sends this agent to that building
+				}
 			}
 			if (l != current && !Routing.canHost(l, StationAssigner.stationKey(a), a.id())) {
 				l = current; // the building has no place for it (no desk, station or lounge): home
@@ -302,27 +360,43 @@ public final class AgentManager {
 				}
 				Seats.Seat seat = pf == null ? null : seats.at(lvl, layout, target, ticks, pf);
 				Anchor effective = seat != null ? seat.target() : target;
+				Trip trip = trips.get(a.id());
 				if (moved) {
-					// another building: no walk across the world (for now), a puff where it leaves and where it lands
-					poof(lvl, e.position());
-					e.life().setSeat(seat);
-					place(e, effective);
-					poof(lvl, effective.pos());
-					AgentCraft.LOGGER.info("Agent {} moved from {} to {} ({})", a.id(), before, layoutName, effective.name());
+					if (trip != null && !trip.walking && layoutName.equals(trip.from)) {
+						// sent back before it left: it never went anywhere
+						trips.remove(a.id());
+						retarget(lvl, pf, e, effective, seat);
+					} else if (trip != null) {
+						// sent elsewhere mid-walk: no second outdoor leg from the middle of nowhere
+						trips.remove(a.id());
+						OutdoorRoutes.get().note(a.id(), before, layoutName, WalkRules.Reason.REROUTED, 0);
+						teleport(lvl, e, effective, seat);
+					} else if (!startTrip(mc, lvl, e, before, layout, effective, seat, dim)) {
+						// another building it does not walk to: a puff where it leaves and where it lands
+						teleport(lvl, e, effective, seat);
+						AgentCraft.LOGGER.info("Agent {} moved from {} to {} ({})", a.id(), before, layoutName, effective.name());
+					}
 				} else if (snap && !walkIn) {
+					trips.remove(a.id());
 					e.life().setSeat(seat);
 					place(e, effective);
+				} else if (trip != null) {
+					// on its way: the spot it heads for in the new building may change; retargeting resumes on arrival
+					trip.target = effective;
+					trip.seat = seat;
 				} else if (!stale) {
 					retarget(lvl, pf, e, effective, seat);
 				}
 			}
 		}
+		tickTrips(mc, lvl);
 		for (var it = entities.entrySet().iterator(); it.hasNext();) {
 			var en = it.next();
 			String id = en.getKey();
 			if (keep.contains(id)) {
 				continue;
 			}
+			trips.remove(id);
 			ClientAgentEntity e = en.getValue();
 			Long deadline = departing.get(id);
 			if (deadline == null && !stale && leads.known() && leadIds.contains(id) && startDeparture(lvl, e, current)) {
@@ -609,6 +683,31 @@ public final class AgentManager {
 		// no layout (agents in a row near the spawn): an unbounded search, as before buildings
 		GridPathfinder pf = layoutPf != null ? layoutPf : new GridPathfinder(lvl, null);
 		AgentLife life = e.life();
+		Vec3 dest = seat != null && seat.approach() != null ? seat.approach() : target.pos();
+		Leg leg = legFrom(e, pf, dest);
+		if (leg == null || length(leg.path()) > MAX_WALK) {
+			pathFailures++;
+			AgentCraft.LOGGER.info("Agent {}: no walkable route to {} ({}), teleporting", e.agentId(), target.name(),
+				leg == null ? "no path" : "too far");
+			life.setSeat(seat);
+			place(e, target);
+			return;
+		}
+		List<Vec3> route = new ArrayList<>(leg.route());
+		if (seat != null && seat.approach() != null) {
+			route.add(target.pos()); // the last step: onto the seat
+		}
+		life.setSeat(seat);
+		e.motion().walkTo(target, route, leg.delay());
+	}
+
+	/** A walk from where an agent is: {@code route} (getting out of its seat first, then {@code path}) after {@code delay} ticks. */
+	private record Leg(List<Vec3> route, List<Vec3> path, int delay) {
+	}
+
+	/** The agent's way to {@code dest} within {@code pf} (standing up and stepping out of its seat first), or null. */
+	private static @Nullable Leg legFrom(ClientAgentEntity e, GridPathfinder pf, Vec3 dest) {
+		AgentLife life = e.life();
 		List<Vec3> route = new ArrayList<>();
 		Vec3 start = e.position();
 		int delay = 0;
@@ -621,22 +720,212 @@ public final class AgentManager {
 				start = from.approach();
 			}
 		}
-		Vec3 dest = seat != null && seat.approach() != null ? seat.approach() : target.pos();
 		List<Vec3> path = start.distanceToSqr(dest) < 1e-6 ? List.of(start, dest) : pf.find(start, dest);
-		if (path == null || length(path) > MAX_WALK) {
-			pathFailures++;
-			AgentCraft.LOGGER.info("Agent {}: no walkable route to {} ({}), teleporting", e.agentId(), target.name(),
-				path == null ? "no path" : "too far");
-			life.setSeat(seat);
-			place(e, target);
-			return;
+		if (path == null) {
+			return null;
 		}
 		route.addAll(path);
-		if (seat != null && seat.approach() != null) {
-			route.add(target.pos()); // the last step: onto the seat
+		return new Leg(route, path, delay);
+	}
+
+	/** Teleport to another building: a puff where it leaves and where it lands. */
+	private static void teleport(ClientLevel lvl, ClientAgentEntity e, Anchor target, Seats.@Nullable Seat seat) {
+		poof(lvl, e.position());
+		e.life().setSeat(seat);
+		place(e, target);
+		poof(lvl, target.pos());
+	}
+
+	// ------------------------------------------------------------------ walking between buildings (W8)
+
+	/**
+	 * An agent moves from layout {@code fromName} to {@code to}: starts a {@link Trip} when it may walk
+	 * ({@link OutdoorRoutes#decide}); false = teleport (the reason is recorded).
+	 */
+	private boolean startTrip(Minecraft mc, ClientLevel lvl, ClientAgentEntity e, String fromName, Anchors.Layout to, Anchor target,
+		Seats.@Nullable Seat seat, String dim) {
+		OutdoorRoutes routes = OutdoorRoutes.get();
+		Anchors.Layout from = OutdoorRoutes.layoutByName(fromName, dim);
+		WalkRules.Reason r = routes.decide(mc, lvl, from, to);
+		if (r != WalkRules.Reason.WALK || from == null) {
+			routes.note(e.agentId(), fromName, to.name(), r, 0);
+			return false;
 		}
-		life.setSeat(seat);
-		e.motion().walkTo(target, route, delay);
+		Anchor out = OutdoorRoutes.entrance(from);
+		Anchor in = OutdoorRoutes.entrance(to);
+		String key = dev.agentcraft.walk.RouteCache.key(from.name(), to.name());
+		var future = routes.request(lvl, key, OutdoorRoutes.point(out.pos()), OutdoorRoutes.point(in.pos()), false);
+		trips.put(e.agentId(), new Trip(e.agentId(), fromName, from, to, key, future, target, seat));
+		AgentCraft.LOGGER.info("Agent {} walks from {} to {}", e.agentId(), fromName, to.name());
+		return true;
+	}
+
+	/** Advances every trip: a planned route starts the walk; arrivals end it; blocked, stuck or far-off walks teleport. */
+	private void tickTrips(Minecraft mc, ClientLevel lvl) {
+		boolean paused = mc.isPaused();
+		for (var it = trips.values().iterator(); it.hasNext();) {
+			Trip t = it.next();
+			ClientAgentEntity e = entities.get(t.agentId);
+			if (e == null || e.isRemoved()) {
+				it.remove();
+				continue;
+			}
+			WalkRules.Reason end = t.walking ? walkStep(mc, lvl, e, t, paused) : planStep(lvl, e, t, paused);
+			if (end == null) {
+				continue;
+			}
+			it.remove();
+			if (end != WalkRules.Reason.WALK) {
+				OutdoorRoutes.get().note(t.agentId, t.from, t.toLayout.name(), end, t.length);
+				teleport(lvl, e, t.target, t.seat);
+			}
+		}
+	}
+
+	/** Waiting for the route: null = keep waiting or walking now; else the trip ends (WALK = nothing to do, others teleport). */
+	private WalkRules.@Nullable Reason planStep(ClientLevel lvl, ClientAgentEntity e, Trip t, boolean paused) {
+		if (!t.route.isDone()) {
+			if (!paused && ++t.waited > 15 * 20) {
+				return WalkRules.Reason.BUDGET; // never reached in practice: a route takes a handful of ticks
+			}
+			return null;
+		}
+		OutdoorRoutes.Outcome o = t.route.getNow(null);
+		if (o == null || o.route() == null) {
+			return WalkRules.Reason.of(o == null ? dev.agentcraft.walk.OutdoorPlanner.Status.NO_PATH : o.status());
+		}
+		Anchor out = OutdoorRoutes.entrance(t.fromLayout);
+		Anchor in = OutdoorRoutes.entrance(t.toLayout);
+		if (out == null || in == null) {
+			return WalkRules.Reason.NO_ENTRANCE;
+		}
+		// inside A to its entrance
+		Leg leg = legFrom(e, new GridPathfinder(lvl, t.fromLayout.bounds()), out.pos());
+		// inside B from its entrance to the spot (via the seat's free side)
+		Vec3 dest = t.seat != null && t.seat.approach() != null ? t.seat.approach() : t.target.pos();
+		List<Vec3> inB = in.pos().distanceToSqr(dest) < 1e-6 ? List.of(in.pos(), dest) : new GridPathfinder(lvl, t.toLayout.bounds()).find(in.pos(), dest);
+		if (leg == null || inB == null) {
+			return WalkRules.Reason.NO_DOOR_PATH;
+		}
+		List<Vec3> route = new ArrayList<>(leg.route());
+		for (dev.agentcraft.walk.OutdoorPlanner.Point p : o.route().points()) {
+			append(route, new Vec3(p.x(), p.y(), p.z()));
+		}
+		for (Vec3 v : inB) {
+			append(route, v);
+		}
+		if (t.seat != null && t.seat.approach() != null) {
+			route.add(t.target.pos());
+		}
+		t.length = length(route);
+		t.limit = dev.agentcraft.walk.WalkRules.stuckTicks(t.length, AgentMotion.SPEED);
+		t.walking = true;
+		e.life().setSeat(t.seat);
+		e.motion().walkTo(t.target, route, leg.delay());
+		OutdoorRoutes.get().note(t.agentId, t.from, t.toLayout.name(), WalkRules.Reason.WALK, t.length);
+		return null;
+	}
+
+	private static void append(List<Vec3> route, Vec3 v) {
+		if (route.isEmpty() || route.getLast().distanceToSqr(v) > 1e-6) {
+			route.add(v);
+		}
+	}
+
+	/** Walking: null = keep going; WALK = arrived; else teleport for that reason. Checked every 10 unpaused ticks. */
+	private WalkRules.@Nullable Reason walkStep(Minecraft mc, ClientLevel lvl, ClientAgentEntity e, Trip t, boolean paused) {
+		if (!e.motion().walking()) {
+			return WalkRules.Reason.WALK; // arrived: retargeting takes over in the new building
+		}
+		if (paused) {
+			return null;
+		}
+		t.walked++;
+		if (t.walked > t.limit) {
+			return WalkRules.Reason.STUCK;
+		}
+		if (t.walked % 10 != 0) {
+			return null;
+		}
+		LocalPlayer p = mc.player;
+		double render = mc.options.getEffectiveRenderDistance() * 16.0;
+		if (p == null || p.position().distanceTo(e.position()) > render) {
+			return WalkRules.Reason.PLAYER_FAR; // nobody sees it walk: it just arrives
+		}
+		// outdoors (outside both buildings): the waypoint ahead must still be standable (waypoints are cell
+		// centres; the position between them may hang over a drop, so it is not checked)
+		Vec3 next = e.motion().nextPoint();
+		if (next != null && outside(t.fromLayout, next) && outside(t.toLayout, next)) {
+			if (!standable(new LevelTerrain(lvl), next)) {
+				OutdoorRoutes.get().invalidate(t.key);
+				return WalkRules.Reason.BLOCKED;
+			}
+		}
+		return null;
+	}
+
+	private static boolean outside(Anchors.Layout l, Vec3 p) {
+		Anchors.Bounds b = l.bounds();
+		return b == null || !b.contains((int) Math.floor(p.x), (int) Math.floor(p.y + 0.1), (int) Math.floor(p.z));
+	}
+
+	private static boolean standable(LevelTerrain t, Vec3 p) {
+		int x = (int) Math.floor(p.x);
+		int z = (int) Math.floor(p.z);
+		int y = dev.agentcraft.walk.WalkCell.cellY(p.y);
+		for (int dy : new int[] {0, 1, -1}) {
+			if (!Double.isNaN(dev.agentcraft.walk.WalkCell.floor(t, x, y + dy, z))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** dev.walk.send: route {@code agentId} to building {@code building} (id or "home"); null = back to its work's building. */
+	void sendTo(String agentId, @Nullable String building) {
+		if (building == null) {
+			sendOverrides.remove(agentId);
+		} else {
+			sendOverrides.put(agentId, building);
+		}
+	}
+
+	Map<String, String> sendOverrides() {
+		return Map.copyOf(sendOverrides);
+	}
+
+	/** Trips walking ({@code walking} true) or still planning. Client thread. */
+	int tripCount(boolean walking) {
+		int n = 0;
+		for (Trip t : trips.values()) {
+			if (t.walking == walking) {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/** dev.walk.state trips. Client thread. */
+	com.google.gson.JsonArray tripsJson() {
+		com.google.gson.JsonArray a = new com.google.gson.JsonArray();
+		for (Trip t : trips.values()) {
+			JsonObject o = new JsonObject();
+			o.addProperty("agent", t.agentId);
+			o.addProperty("from", t.from);
+			o.addProperty("to", t.toLayout.name());
+			o.addProperty("phase", t.walking ? "walking" : "planning");
+			o.addProperty("length", OutdoorRoutes.round(t.length));
+			o.addProperty("ticks", t.walking ? t.walked : t.waited);
+			o.addProperty("limit", t.limit);
+			o.addProperty("target", t.target.name());
+			ClientAgentEntity e = entities.get(t.agentId);
+			if (e != null) {
+				o.addProperty("pos", String.format(java.util.Locale.ROOT, "%.1f %.1f %.1f", e.getX(), e.getY(), e.getZ()));
+				o.addProperty("remainingPoints", e.motion().remainingPath().size());
+			}
+			a.add(o);
+		}
+		return a;
 	}
 
 	private static double length(List<Vec3> route) {
@@ -650,6 +939,16 @@ public final class AgentManager {
 	/** Snap every agent to its target now (QA: no one mid-walk in a screenshot). */
 	public int settle() {
 		int n = 0;
+		for (Trip t : trips.values()) {
+			ClientAgentEntity e = entities.get(t.agentId);
+			if (e != null) {
+				e.life().setSeat(t.seat);
+				place(e, t.target);
+				OutdoorRoutes.get().note(t.agentId, t.from, t.toLayout.name(), WalkRules.Reason.SETTLED, t.length);
+				n++;
+			}
+		}
+		trips.clear();
 		for (ClientAgentEntity e : entities.values()) {
 			Anchor t = e.motion().target();
 			if (t != null && e.motion().walking()) {
@@ -669,6 +968,7 @@ public final class AgentManager {
 		entities.clear();
 		byEntityId.clear();
 		departing.clear();
+		trips.clear();
 		populated = false;
 	}
 

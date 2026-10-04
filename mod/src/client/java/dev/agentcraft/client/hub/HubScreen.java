@@ -840,6 +840,30 @@ public final class HubScreen extends Screen {
 		}
 	}
 
+	/**
+	 * "Agents walk between buildings" for this world (docs/WAVE2.md W8, client side, walking.json): a toggle
+	 * under the Buildings list column ({@code w} = the column's width); "Walking: On" when the full label does
+	 * not fit. Returns the height it takes from the list.
+	 */
+	private int drawWalkToggle(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
+		dev.agentcraft.client.agents.OutdoorRoutes walk = dev.agentcraft.client.agents.OutdoorRoutes.get();
+		boolean on = walk.enabled();
+		String state = on ? "On" : "Off";
+		String full = "Agents walk between buildings: " + state;
+		boolean compact = bw(full) > w;
+		String label = compact ? "Walking: " + state : full;
+		int needed = bw(label);
+		button(g, "walk_toggle", label, x, y, Math.min(w, needed), on, false, false, mx, my, () -> walk.setEnabled(!walk.enabled()));
+		// compact: the rest of the column says what it means, when there is room for it
+		String note = on ? "agents walk outdoors" : "agents teleport";
+		int nx = x + needed + 5;
+		if (compact && x + w - nx >= font.width(note)) {
+			g.text(font, note, nx, y + 6, UiBits.muted(), false);
+		}
+		walk.reportUi(needed, w, compact);
+		return 24;
+	}
+
 	void drawList(GuiGraphicsExtractor g, int x, int y, int w, int h, int count, int selected, int mx, int my, RowDrawer drawer) {
 		listX = x;
 		listY = y;
@@ -897,7 +921,9 @@ public final class HubScreen extends Screen {
 			return;
 		}
 		int lw = Math.max(150, Math.min(220, w * 2 / 5));
-		drawList(g, x, y, lw, h, bs.size(), bs.indexOf(cur), mx, my, (i, rx, ry, rw) -> {
+		// under the list column: "Agents walk between buildings" (per world, W8)
+		int toggleH = drawWalkToggle(g, x, y + h - 20, lw, mx, my);
+		drawList(g, x, y, lw, h - toggleH, bs.size(), bs.indexOf(cur), mx, my, (i, rx, ry, rw) -> {
 			Building b = bs.get(i);
 			Blueprint bp = Blueprints.get(b.blueprint());
 			String name = bp != null ? bp.name() : b.blueprint();

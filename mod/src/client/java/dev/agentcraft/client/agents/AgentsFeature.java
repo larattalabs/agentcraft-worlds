@@ -93,6 +93,7 @@ public final class AgentsFeature {
 			return new NoopRenderer<>(ctx);
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agents.tick", () -> AgentManager.get().tick(mc)));
+		OutdoorRoutes.registerDev();
 		// nameplate declutter: every agent's render state is extracted, nothing is submitted yet
 		LevelExtractionEvents.END_EXTRACTION.register(ctx -> Guard.run("agents.plates", () -> PlateLayout.layout(ctx.levelState())));
 		Foreman.addListener(new ForemanListener() {
