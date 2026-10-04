@@ -3,10 +3,12 @@
 import fs from 'node:fs';
 import { parse, plain } from './nbt.mjs';
 import { BLOCKS, collisionOf, normalize, emissionOf, opticsOf, voxelsOf, faceMask } from './blocks.mjs';
+import { dirOfYaw } from './kit.mjs';
 
 export const CAST = ['juniper', 'kit', 'wren', 'rowan', 'tove'];
 const STATIONS = ['meeting', 'lounge', 'library', 'terminal', 'testbench', 'mergestation', 'user'];
 const STANDING_RE = /^(library|terminal|testbench|mergestation|meeting|lounge|user)(_\d+)?$/;
+const TROPHY_RE = /^trophy(_\d+)?$/;
 const SEAT_RE = /^(desk_.+|seat_.+|meeting(_\d+)?|lounge(_\d+)?)$/;
 const HORIZ = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const YAW_OF_FACING = { south: 0, west: 90, north: 180, east: -90 };
@@ -343,6 +345,8 @@ export function checkStructure(sidecar, structure) {
     return solidBelow && (feet === 'none' || feet === 'low') && head === 'none';
   };
 
+  const trophyCells = new Map();
+  const trophyWings = new Set();
   for (const [full, a] of Object.entries(anchors)) {
     const name = full.replace(/@\d+$/, ''); // per-wing anchors (testbench@2) follow their base name's rules
     const cx = Math.floor(a.x);
@@ -386,12 +390,39 @@ export function checkStructure(sidecar, structure) {
         const n = full.slice('task_wall@'.length);
         if (c.nbt?.binding !== `repo:#${n}`) err(`anchor ${full}: board binding is '${c.nbt?.binding ?? ''}', expected 'repo:#${n}'`);
       }
+    } else if (TROPHY_RE.test(name)) {
+      // trophy slot: the centre of a wall-sign cell; yaw = the sign's front, the support is the cell behind it
+      const yawOk = [0, 90, 180, -90, -180, 270].some((q) => yawDiff(a.yaw, q) < 1e-6);
+      if (!yawOk) err(`anchor ${full}: yaw ${a.yaw} must be a multiple of 90 (the direction the sign faces)`);
+      if (!inWalk(a)) err(`anchor ${full} (${a.x},${a.y},${a.z}) is outside walk`);
+      if (Math.abs(a.x - cx - 0.5) > 1e-6 || Math.abs(a.y - cy - 0.5) > 1e-6 || Math.abs(a.z - cz - 0.5) > 1e-6) warnings.push(`anchor ${full}: not at a cell centre (x+.5, y+.5, z+.5)`);
+      const cell = cellAt(cx, cy, cz);
+      if (!cell || !/^minecraft:(cave_|void_)?air$/.test(cell.name)) err(`anchor ${full}: sign cell ${cx},${cy},${cz} is ${cell ? cell.name : 'not written'} (needs explicit air)`);
+      const [bx, bz] = yawOk ? H_VEC[dirOfYaw(a.yaw)].map((v) => -v) : [0, 0];
+      const back = cellAt(cx + bx, cy, cz + bz);
+      if (!back || collisionOf(back) !== 'full' || opticsOf(back) !== 'opaque') err(`anchor ${full}: no full opaque block behind the sign (${back ? back.name : 'nothing written'} at ${cx + bx},${cy},${cz + bz})`);
+      const ck = fmt(cx, cy, cz);
+      if (trophyCells.has(ck)) err(`anchor ${full}: same sign cell as ${trophyCells.get(ck)}`);
+      else trophyCells.set(ck, full);
+      const wingOf = full.includes('@') ? Number(full.slice(full.lastIndexOf('@') + 1)) : 0;
+      trophyWings.add(wingOf);
     } else if (name === 'decision_podium') {
       const c = cellAt(cx, cy, cz);
       if (!c || c.name !== 'agentcraft:decision_podium') err(`anchor ${full}: not on an agentcraft:decision_podium block (found ${c?.name ?? 'nothing'})`);
     } else if (name === 'goal_atrium') {
       if (!inWalk(a)) err(`anchor ${full} is outside walk`);
     }
+  }
+
+  // trophy slots: not where an agent stands (feet or head cell), and every wing should have some (a warning)
+  for (const [full, a] of Object.entries(anchors)) {
+    if (!STANDING_RE.test(full.replace(/@\d+$/, '')) && !/^(desk_|seat_)/.test(full) && full !== 'entrance' && full !== 'spawn') continue;
+    const k0 = fmt(Math.floor(a.x), Math.floor(a.y + 1e-6), Math.floor(a.z));
+    const k1 = fmt(Math.floor(a.x), Math.floor(a.y + 1e-6) + 1, Math.floor(a.z));
+    for (const k of [k0, k1]) if (trophyCells.has(k)) err(`anchor ${trophyCells.get(k)}: sign cell ${k} is where anchor ${full} stands`);
+  }
+  for (let n = 1; n <= (sidecar.wings || 1); n++) {
+    if (!trophyWings.has(n) && !(sidecar.wings === 1 && trophyWings.has(0))) warnings.push(`wing ${n} has no trophy slots (trophy@${n}): the mod hangs no trophies there`);
   }
 
   // ---- everything the agents can walk through must be cleared by the template

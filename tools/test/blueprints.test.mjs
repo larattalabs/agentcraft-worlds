@@ -362,3 +362,83 @@ test('bundled blueprints are up to date with their designs (run node tools/bluep
     assert.ok(checkFiles(path.join(NBT_DIR, `${name}.nbt`), path.join(JSON_DIR, `${name}.blueprint.json`)).ok, name);
   }
 });
+
+// ---- trophy slots (docs/BUILDINGS.md "Trophy slots")
+const trophyNames = (anchors, wing) => Object.keys(anchors).filter((k) => new RegExp(`^trophy(_\\d+)?@${wing}$`).test(k));
+
+test('trophies: every bundled sidecar has 6 trophy slots per wing, in fill order, facing into the room', async () => {
+  const { listDesigns, JSON_DIR } = await import('../blueprints/build.mjs');
+  for (const name of listDesigns()) {
+    const side = JSON.parse(fs.readFileSync(path.join(JSON_DIR, `${name}.blueprint.json`), 'utf8'));
+    for (let w = 1; w <= side.wings; w++) {
+      const names = trophyNames(side.anchors, w);
+      assert.deepEqual(names.sort(), ['trophy', 'trophy_2', 'trophy_3', 'trophy_4', 'trophy_5', 'trophy_6'].map((n) => `${n}@${w}`).sort(), `${name} wing ${w}`);
+      const a = side.anchors[`trophy@${w}`];
+      assert.equal(a.x % 1, 0.5); assert.equal(a.y % 1, 0.5); assert.equal(a.z % 1, 0.5);
+      assert.ok([0, 90, 180, -90].includes(a.yaw), `${name} yaw ${a.yaw}`);
+    }
+  }
+  const { buildCampus } = await import('../blueprints/lib/campus.mjs');
+});
+
+test('trophies: trophyWall writes air cells, a backing, a frame and light; top row first, left to right', () => {
+  const bp = new Blueprint({ id: 't', size: [9, 8, 9], groundY: 1, walk: [1, 1, 1, 7, 6, 7] });
+  bp.trophyWall(0, 3, 0, 5, 'east', { slots: 6, wing: 1 });
+  for (const [x, y, z] of [[1, 2, 3], [1, 3, 5]]) assert.equal(bp.nameAt(x, y, z), 'minecraft:air');
+  for (const [x, y, z] of [[0, 2, 3], [0, 3, 5]]) assert.equal(bp.nameAt(x, y, z), B.plaster);
+  assert.equal(bp.nameAt(0, 4, 4), B.glowPanel);
+  assert.equal(bp.nameAt(0, 3, 2), B.walnut);
+  // facing east the viewer looks west: left = south (+z); top row (y 3) first
+  assert.deepEqual(bp.anchors['trophy@1'], { x: 1.5, y: 3.5, z: 5.5, yaw: -90, pitch: 0 });
+  assert.deepEqual(bp.anchors['trophy_3@1'], { x: 1.5, y: 3.5, z: 3.5, yaw: -90, pitch: 0 });
+  assert.deepEqual(bp.anchors['trophy_4@1'], { x: 1.5, y: 2.5, z: 5.5, yaw: -90, pitch: 0 });
+  assert.equal(bp.anchors['trophy_6@1'].z, 3.5);
+  assert.throws(() => bp.trophyWall(0, 3, 0, 5, 'east', { slots: 7, rows: 2 }), /do not fit/);
+  const plain1 = new Blueprint({ id: 't2', size: [9, 8, 9], groundY: 1, walk: [1, 1, 1, 7, 6, 7] }).trophyWall(0, 3, 0, 5, 'east');
+  assert.ok(plain1.anchors.trophy && plain1.anchors.trophy_6 && !plain1.anchors['trophy@1']);
+});
+
+test('trophies checker: rejects a slot with no support, outside walk, a non-air cell, a bad wing, a shared cell', () => {
+  const run = (mutate) => {
+    const bp = workshop();
+    mutate(bp);
+    return checkBlueprint(bp);
+  };
+  const base = workshop().anchors['trophy@1'];
+  assert.ok(base, 'workshop has trophy@1');
+  assert.equal(base.yaw, 90); // east wall, facing west: the support is the +x cell
+  const at = (bp, dx) => [Math.floor(base.x) - bp.ox + dx, Math.floor(base.y) - bp.oy, Math.floor(base.z) - bp.oz];
+  assert.deepEqual(checkBlueprint(workshop()).errors, []);
+  // no support: the wall behind the sign becomes air
+  let r = run((bp) => bp.air(...at(bp, 1)));
+  assert.ok(r.errors.some((e) => e.startsWith('anchor trophy@1') && e.includes('no full opaque block behind')), r.errors.join('\n'));
+  // a non-full backing (a pane)
+  r = run((bp) => bp.set(...at(bp, 1), B.pane));
+  assert.ok(r.errors.some((e) => e.includes('no full opaque block behind')), r.errors.join('\n'));
+  // non-air cell
+  r = run((bp) => bp.set(...at(bp, 0), B.plaster));
+  assert.ok(r.errors.some((e) => e.startsWith('anchor trophy@1') && e.includes('needs explicit air')), r.errors.join('\n'));
+  // outside walk (inside the wall)
+  r = run((bp) => bp.anchor('trophy_9@1', base.x - bp.ox + 1, base.y - bp.oy, base.z - bp.oz, base.yaw));
+  assert.ok(r.errors.some((e) => e.startsWith('anchor trophy_9@1') && e.includes('outside walk')), r.errors.join('\n'));
+  // bad wing
+  r = run((bp) => { bp.anchors['trophy_9@3'] = { ...base }; });
+  assert.ok(r.errors.some((e) => e.includes('trophy_9@3') && e.includes('wing out of range')), r.errors.join('\n'));
+  // two slots in one cell
+  r = run((bp) => { bp.anchors['trophy_9@1'] = { ...base }; });
+  assert.ok(r.errors.some((e) => e.includes('same sign cell')), r.errors.join('\n'));
+  // a standing anchor in the sign cell
+  r = run((bp) => bp.spot('user', at(bp, 0)[0], at(bp, 0)[2], 0));
+  assert.ok(r.errors.some((e) => e.includes('trophy') && e.includes('stands')), r.errors.join('\n'));
+  // bad yaw
+  r = run((bp) => { bp.anchors['trophy@1'] = { ...base, yaw: 45 }; });
+  assert.ok(r.errors.some((e) => e.includes('multiple of 90')), r.errors.join('\n'));
+});
+
+test('trophies checker: a wing without trophy slots is a warning, not an error', () => {
+  const bp = workshop();
+  for (const k of Object.keys(bp.anchors)) if (k.startsWith('trophy')) delete bp.anchors[k];
+  const r = checkBlueprint(bp);
+  assert.deepEqual(r.errors, []);
+  assert.ok(r.warnings.some((w) => w.includes('no trophy slots')), r.warnings.join('\n'));
+});
