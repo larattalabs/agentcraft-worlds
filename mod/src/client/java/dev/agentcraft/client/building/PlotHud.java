@@ -33,7 +33,8 @@ final class PlotHud implements HudElement {
 		PlotMarker.View v = PlotMarker.view();
 		String status = PlotMarker.status();
 		boolean fresh = status != null && Util.getMillis() - PlotMarker.statusAt < STATUS_MS;
-		if (v == null && !fresh) {
+		if (v == null && (!fresh || BuildPlacement.view() != null)) {
+			// a stale "Plot marking cancelled" never sits on top of the placement panel (same place on the screen)
 			lastRect = null;
 			return;
 		}
