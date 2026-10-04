@@ -18,8 +18,9 @@ import org.jspecify.annotations.Nullable;
  * towards it by at most one block per row, so it never steps more than one block. Per row and column:
  * <ul>
  * <li>the <b>path</b> block one below the feet ({@link Spec#block});</li>
- * <li>a bottom <b>slab</b> ({@link Spec#slab}) in the feet cell of a row that sits lower than a neighbouring row,
- * so a one-block step reads (and is walked) as two half steps;</li>
+ * <li>a bottom <b>slab</b> ({@link Spec#slab}) in the feet cell of a row that sits lower than the row before it, or
+ * at the foot of a climb from a level stretch, so steps read (and are walked) as half steps where they can be, and no
+ * step is ever more than one block ({@link #floor});</li>
  * <li><b>fill</b> with the foundation block below the path down to solid ground (at most {@link TerrainFit#MAX_FILL});</li>
  * <li><b>clear</b> to air: the {@link #HEADROOM} cells above the path (anything but air and water: plants, terrain,
  * logs, leaves, a player's blocks), then natural terrain further up (a bank) to {@link #MAX_CUT} above the path,
@@ -227,7 +228,7 @@ public final class Approach {
 		int[] bb = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
 		for (int i = 1; i <= rows; i++) {
 			int f = feet[i];
-			boolean slab = feet[i - 1] > f || (i < rows && feet[i + 1] > f);
+			boolean slab = slab(feet, i);
 			for (int c = lo - 1; c <= hi + 1; c++) {
 				int[] xz = cell(face, centre, i, c, dx, dz, alongX);
 				int x = xz[0];
@@ -293,10 +294,25 @@ public final class Approach {
 		}
 		int[] last = cell(face, centre, rows, 0, dx, dz, alongX);
 		int lf = feet[rows];
-		boolean lastSlab = rows > 0 && feet[rows - 1] > lf;
+		boolean lastSlab = rows > 0 && slab(feet, rows);
 		double[] end = {last[0] + 0.5, lf + (lastSlab ? 0.5 : 0), last[1] + 0.5};
 		Anchors.Bounds bounds = new Anchors.Bounds(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5]);
 		return new Plan(path.all(), slabs.all(), fill.all(), clear.all(), water.drawn(), water.n, lava.drawn(), lava.n, be.all(), feet, bounds, end);
+	}
+
+	/**
+	 * Whether row {@code i} gets a half-step slab: it sits lower than the row before it (going down from the door), or
+	 * it is the foot of a climb from a level stretch. Every step between rows then stays within one block, counting
+	 * the slabs (a slab at the foot of every row of a climb would make the first step 1.5).
+	 */
+	static boolean slab(int[] feet, int i) {
+		int f = feet[i];
+		return feet[i - 1] > f || i + 1 < feet.length && feet[i + 1] > f && feet[i - 1] == f;
+	}
+
+	/** The walking height of row {@code i} (its feet, plus a half for a slab; row 0 is the template's own). */
+	public static double floor(int[] feet, int i) {
+		return feet[i] + (i > 0 && slab(feet, i) ? 0.5 : 0);
 	}
 
 	/** The world (x, z) of row {@code i} (1 = just outside the box), column {@code c} (0 = the entrance's). */

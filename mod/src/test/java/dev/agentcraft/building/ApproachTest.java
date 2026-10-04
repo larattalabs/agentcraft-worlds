@@ -46,10 +46,13 @@ class ApproachTest {
 		return ((long) x << 40) ^ ((long) y << 20) ^ z;
 	}
 
+	/** No step between rows is more than a block, counting the half-step slabs (what an agent walks). */
 	static void assertGentle(Approach.Plan p) {
 		int[] f = p.feet();
 		for (int i = 1; i < f.length; i++) {
 			assertTrue(Math.abs(f[i] - f[i - 1]) <= 1, "step " + (f[i] - f[i - 1]) + " at row " + i);
+			double d = Approach.floor(f, i) - Approach.floor(f, i - 1);
+			assertTrue(Math.abs(d) <= 1.0, "walked step " + d + " at row " + i);
 		}
 	}
 
@@ -91,15 +94,19 @@ class ApproachTest {
 		assertArrayEquals(new int[] {11, 12, 13, 14, 15, 16, 17}, p.feet());
 		assertGentle(p);
 		Set<Long> clear = cells(p.clear());
-		// row 1 (feet 12, lower than row 2: a half-step slab at y 12): path at y 11, headroom 13..14 cleared, then the
-		// bank up to its top (y 16) as well
-		assertTrue(cells(p.slabs()).contains(key(4, 12, 10)));
-		for (int y = 13; y <= 16; y++) {
+		// row 1 (feet 12): path at y 11, headroom 12..14 cleared, then the bank up to its top (y 16) as well
+		for (int y = 12; y <= 16; y++) {
 			assertTrue(clear.contains(key(4, y, 10)), "y " + y);
 		}
 		assertFalse(clear.contains(key(4, 17, 10))); // air above the bank stays
-		// rows lower than the next one get a slab
-		assertEquals(3 * 5, p.slabs().length / 3);
+		// a climb straight from the door: full steps (a slab at the foot of each would make the first step 1.5)
+		assertEquals(0, p.slabs().length);
+		// a level stretch before the climb: its last row gets the half step
+		Approach.Plan q = south(ground((x, z) -> z <= 12 ? 10 : 13));
+		assertArrayEquals(new int[] {11, 11, 11, 11, 12, 13, 14}, q.feet());
+		assertEquals(3, q.slabs().length / 3);
+		assertTrue(cells(q.slabs()).contains(key(4, 11, 12)));
+		assertGentle(q);
 		assertEquals(0, p.fillCount());
 	}
 
