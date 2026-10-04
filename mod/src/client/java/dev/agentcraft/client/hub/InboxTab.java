@@ -1265,7 +1265,8 @@ final class InboxTab implements HubPane {
 		boolean inTop = toTopBar(g, btns, mx, my);
 		layoutDetail(g, tw -> {
 			Body b = new Body();
-			wrapInto(b, it.title() + ": " + InboxModel.holdText(hold, ZoneId.systemDefault()), tw, UiBits.ink());
+			String ht = InboxModel.holdText(hold, ZoneId.systemDefault()); // "usage paused until 14:20" (the title said "agents paused" again)
+			wrapInto(b, ht.isEmpty() ? it.title() : Character.toUpperCase(ht.charAt(0)) + ht.substring(1), tw, UiBits.ink());
 			for (String p : InboxModel.holdExplain(hold, ZoneId.systemDefault())) {
 				blank(b);
 				wrapInto(b, p, tw, UiBits.muted());

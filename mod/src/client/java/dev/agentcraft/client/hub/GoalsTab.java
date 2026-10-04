@@ -1018,7 +1018,8 @@ final class GoalsTab implements HubPane {
 			}
 			g.text(font(), TextUtil.ellipsize(font(), goal.id() + "  " + UiBits.oneLine(goal.text()), rx + rw - pw - 4 - tx), tx, ry, ink, false);
 			String pr = prSummary(goal);
-			String second = String.join(", ", goal.allRepos()) + " · " + UiBits.agentName(goal.lead()) + " · " + Math.round(goal.progress() * 100) + "%"
+			String repos = String.join(", ", goal.allRepos());
+			String second = (repos.isEmpty() ? "" : repos + " · ") + UiBits.agentName(goal.lead()) + " · " + Math.round(goal.progress() * 100) + "%"
 				+ (pr.isEmpty() ? "" : " · " + pr);
 			ReviewKit.face(g, font(), goal.lead(), rx, ry + 9, 8);
 			g.text(font(), TextUtil.ellipsize(font(), second, rw - 11), rx + 11, ry + 10, muted, false);

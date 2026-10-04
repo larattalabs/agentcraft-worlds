@@ -1412,18 +1412,20 @@ public final class HubScreen extends Screen {
 			if (st.message() != null && !st.message().isBlank()) {
 				ly = fact(g, "Note", st.message(), lx, ly, colW);
 			}
-			Protocol.ForemanHold hold = st.hold();
-			if (hold != null) {
-				// the Inbox's hold item sends the player here ("Status"): say what holds the agents
-				ly = fact(g, "Paused", dev.agentcraft.hud.AlertLine.holdText(hold.reason(), hold.until(), java.time.ZoneId.systemDefault(),
-					System.currentTimeMillis(), false) + (hold.message() != null && !hold.message().isBlank() ? " (" + hold.message() + ")" : ""), lx, ly, colW);
-			}
 		}
 		// right column
 		int rx = x + colW + 12;
 		int ry = y;
 		ry = section(g, "Plan usage", rx, ry, colW);
 		ry += drawUsage(g, rx, ry, colW);
+		if (st != null) {
+			Protocol.ForemanHold hold = st.hold();
+			if (hold != null) {
+				// the Inbox's hold item sends the player here ("Status"): say what holds the agents
+				ry = fact(g, "Paused", dev.agentcraft.hud.AlertLine.holdText(hold.reason(), hold.until(), java.time.ZoneId.systemDefault(),
+					System.currentTimeMillis(), false), rx, ry, colW); // one line: the Overview does not scroll (the message is in the Inbox item)
+			}
+		}
 		if (st != null && st.costUsd() != null && st.costUsd() > 0) {
 			ry = fact(g, "Spend", String.format(Locale.ROOT, "$%.2f (estimated, this profile)", st.costUsd()), rx, ry, colW);
 		}
