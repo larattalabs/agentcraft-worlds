@@ -82,6 +82,15 @@ public final class TextKeys {
 		}
 	}
 
+	/**
+	 * The one Enter rule ({@link dev.agentcraft.ui.UiRules#enter}): single-line inputs send on Enter (and Ctrl+Enter),
+	 * Shift+Enter is a new line; multi-line inputs make Enter a new line and send on Ctrl+Enter. Null when {@code e} is
+	 * not Enter.
+	 */
+	public static dev.agentcraft.ui.UiRules.@org.jspecify.annotations.Nullable EnterAction enter(KeyEvent e, boolean multiline) {
+		return isEnter(e) ? dev.agentcraft.ui.UiRules.enter(multiline, e.hasControlDown(), e.hasShiftDown()) : null;
+	}
+
 	public static boolean isEnter(KeyEvent e) {
 		return e.key() == InputConstants.KEY_RETURN || e.key() == InputConstants.KEY_NUMPADENTER;
 	}

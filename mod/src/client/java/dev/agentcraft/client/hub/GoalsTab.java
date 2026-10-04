@@ -598,7 +598,8 @@ final class GoalsTab implements HubPane {
 				return true;
 			}
 			if (TextKeys.isEnter(e)) {
-				if (e.hasControlDown()) {
+				// multi-line fields (thread message, plan): Enter = new line, Ctrl+Enter sends (UiRules.enter)
+				if (TextKeys.enter(e, true) == dev.agentcraft.ui.UiRules.EnterAction.SEND) {
 					ctrlEnter();
 				} else if (focus.multiLine) {
 					focus.model.insert("\n");
@@ -733,7 +734,8 @@ final class GoalsTab implements HubPane {
 	public String[] hints() {
 		if (focus != null) {
 			String verb = formOpen ? "submit" : focus == planEditor ? "save" : focus == instruction ? "save" : "send";
-			return new String[] {"Ctrl+Enter", verb, "Tab", "next field", "Esc", focus == planEditor ? "cancel" : "done typing"};
+			return focus.multiLine ? new String[] {"Ctrl+Enter", verb, "Enter", "new line", "Tab", "next field", "Esc", focus == planEditor ? "cancel"
+				: "done typing"} : new String[] {"Ctrl+Enter", verb, "Tab", "next field", "Esc", focus == planEditor ? "cancel" : "done typing"};
 		}
 		if (formOpen) {
 			return new String[] {"Ctrl+Enter", "submit", "Esc", "back"};

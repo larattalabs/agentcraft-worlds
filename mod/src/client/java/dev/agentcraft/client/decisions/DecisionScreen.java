@@ -591,7 +591,8 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 				if (repeat) {
 					return true;
 				}
-				if (e.hasShiftDown()) {
+				// single-line answer: Enter (and Ctrl+Enter) sends, Shift+Enter is a new line
+				if (TextKeys.enter(e, false) == dev.agentcraft.ui.UiRules.EnterAction.NEWLINE) {
 					answer.insert("\n");
 				} else if (requestChanges) {
 					choose(d, Protocol.REQUEST_CHANGES);
@@ -1043,6 +1044,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		if (textFocused) {
 			hints.add(new String[] {"Enter", requestChanges ? "send feedback" : "send", "5"});
 			hints.add(new String[] {"Esc", requestChanges ? "back" : "stop typing", "4"});
+			hints.add(new String[] {"Shift+Enter", "new line", "1"});
 		} else {
 			int n = d.options().size();
 			if (n > 0 && !readOnlyNow(d)) {

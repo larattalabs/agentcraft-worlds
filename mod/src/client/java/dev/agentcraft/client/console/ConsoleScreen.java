@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import dev.agentcraft.ui.UiRules;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -438,7 +439,8 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			}
 		}
 		if (TextKeys.isEnter(e)) {
-			if (e.hasShiftDown()) {
+			// single-line input: Enter (and Ctrl+Enter) sends, Shift+Enter is a new line
+			if (TextKeys.enter(e, false) == UiRules.EnterAction.NEWLINE) {
 				input.insert("\n");
 			} else {
 				submit();
