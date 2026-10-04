@@ -157,6 +157,27 @@ public final class Foreman {
 		return link.send(ForemanJson.msg("repo.agents").put("repoId", repoId).json());
 	}
 
+	/**
+	 * A page of an agent's stored log ({@code agent.logs.request}, read-only, W3): entries older than {@code before} (null = the
+	 * newest), at most {@code limit} (1..500). Ack result {@link Protocol.LogPage}, see {@link #logPageOf}.
+	 */
+	public static CompletableFuture<Ack> agentLogs(String agentId, @Nullable Long before, int limit) {
+		return link.send(ForemanJson.msg("agent.logs.request").put("agentId", agentId).put("before", before)
+			.put("limit", Math.max(1, Math.min(500, limit))).json());
+	}
+
+	/** The page in an {@code agent.logs.request} ack's result, or null. */
+	public static Protocol.@Nullable LogPage logPageOf(Ack ack) {
+		if (!ack.ok() || ack.result() == null) {
+			return null;
+		}
+		try {
+			return ForemanJson.read(ack.result(), Protocol.LogPage.class);
+		} catch (RuntimeException e) {
+			return null;
+		}
+	}
+
 	/** The digest in a {@code goal.digest} ack's result, or null when it has none. */
 	public static Protocol.@Nullable Digest digestOf(Ack ack) {
 		if (!ack.ok() || ack.result() == null) {
