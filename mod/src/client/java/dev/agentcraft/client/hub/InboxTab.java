@@ -834,7 +834,7 @@ final class InboxTab implements HubPane {
 		int sel = cur == null ? -1 : display.indexOf(cur);
 		int ink = UiBits.ink();
 		int muted = UiBits.muted();
-		List<Row> disp = List.copyOf(display);
+		List<@Nullable Row> disp = new ArrayList<>(display); // nulls are the group headers (List.copyOf refuses them)
 		list.draw(g, x, y, w, h, disp.size(), sel, mx, my, (i, rx, ry, rw) -> {
 			Row r = disp.get(i);
 			if (r == null) {

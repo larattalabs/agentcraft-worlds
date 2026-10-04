@@ -687,15 +687,24 @@ public final class HubScreen extends Screen {
 		drawTabs(g, cx, y, cw, mouseX, mouseY);
 		y += TAB_H + 6;
 		int footerY = bottom - 12;
-		switch (tab) {
-			case BUILDINGS -> drawBuildingsTab(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			case STATUS -> status.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			case REPOS -> repos.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			case GOALS -> goals.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			case TEAM -> team.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			case SETTINGS -> settings.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			case INBOX -> inbox.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			default -> drawComingNext(g, cx, y, cw, footerY - 4 - y);
+		int by = y;
+		int bh = footerY - 4 - y;
+		// a failing tab is logged once and counted (dev.state ui.guards "hub.draw"), never a crash of the game
+		boolean drawn = dev.agentcraft.ui.Guard.call("hub.draw", () -> {
+			switch (tab) {
+				case BUILDINGS -> drawBuildingsTab(g, cx, by, cw, bh, mouseX, mouseY);
+				case STATUS -> status.draw(g, cx, by, cw, bh, mouseX, mouseY);
+				case REPOS -> repos.draw(g, cx, by, cw, bh, mouseX, mouseY);
+				case GOALS -> goals.draw(g, cx, by, cw, bh, mouseX, mouseY);
+				case TEAM -> team.draw(g, cx, by, cw, bh, mouseX, mouseY);
+				case SETTINGS -> settings.draw(g, cx, by, cw, bh, mouseX, mouseY);
+				case INBOX -> inbox.draw(g, cx, by, cw, bh, mouseX, mouseY);
+				default -> drawComingNext(g, cx, by, cw, bh);
+			}
+			return true;
+		}, false);
+		if (!drawn) {
+			g.text(font, TextUtil.ellipsize(font, UiBits.CROSS + " This tab failed to draw (see the game log)", cw), cx, by + 4, UiBits.errorText(), false);
 		}
 		HubPane hp = pane();
 		String[] hints = hp != null ? hp.hints() : tab == HubTab.BUILDINGS ? new String[] {"Tab", "next tab", "←→", "buildings/blueprints/designs", "↑↓", "select",
