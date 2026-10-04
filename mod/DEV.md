@@ -71,7 +71,9 @@ GRADLE_USER_HOME=C:/Projects/agentcraft/.gradle-home ./gradlew --stop       # st
    marker file `agentcraft-world.json` in the world folder. Players who join in spectator or survival
    are put back into creative.
 
-Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world.
+Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world. For docs or QA on natural terrain
+(welcome card, walking routes): `node tools/mac.mjs launch --backend sim --dev --world "Docs World" --preset
+normal [--seed N]` (env switches `AGENTCRAFT_AUTOWORLD_NAME/_PRESET/_SEED` below; tools/README.md).
 
 ### Environment switches (env var, or `-Dagentcraft.xxx=` system property)
 
@@ -83,6 +85,9 @@ Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world.
 | `AGENTCRAFT_MUTE` | 1 | Forces master and music volume to 0 at startup. **Set `0` for real use** (for example in launch.ps1) to keep your own volume |
 | `AGENTCRAFT_FOCUS` | 0 | `0`: the window is shown **without activating it**, so it never steals focus. `1`: normal "come to front" |
 | `AGENTCRAFT_AUTOWORLD` | 1 | `0`: stay on the title screen |
+| `AGENTCRAFT_AUTOWORLD_NAME` | `AgentCraft HQ` | The world (save folder and level name) AutoWorld loads, or creates if missing. Only `AgentCraft HQ` gets the HQ rules/studio (`HqWorld.isHq` is by name), so another name is a plain creative world (welcome card, no studio). `tools/mac.mjs --world NAME` |
+| `AGENTCRAFT_AUTOWORLD_PRESET` | `flat` | Terrain of a **new** world: `flat` = the superflat meadow below, `normal` = natural terrain (creative, peaceful, cheats on, no structures). `--preset` |
+| `AGENTCRAFT_AUTOWORLD_SEED` | flat: `"agentcraft-hq".hashCode()`, normal: `2026` | Seed of a new world (a number, or text hashed like the vanilla box). 2026 spawns in a birch meadow on a hill (y~118) with forest, lakes and a cherry grove within ~150 blocks. `--seed N`. Parsed by the pure `dev.agentcraft.world.AutoWorldSpec` (`AutoWorldSpecTest`) |
 | `AGENTCRAFT_PAUSE` | (dev run or DevBridge: 0, else 1) | Whether AgentCraft screens pause a singleplayer game (contract C6). Everyday play pauses like vanilla menus; dev runs and clients with the DevBridge on keep the world running for QA. `dev.ui.pause {on}` changes it at runtime |
 | `AGENTCRAFT_SHOTS_DIR` | `<repo>/artifacts/shots` | Where `dev.screenshot` writes |
 | `AGENTCRAFT_DEV_ALLOW_ORIGIN` | 0 | `1` lets browser pages (which send an Origin header) connect. They are refused by default |

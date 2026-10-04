@@ -12,7 +12,18 @@ node tools/mac.mjs launch --repo /path/to/repo --use-claude-login
 node tools/mac.mjs stop                            # save/quit game, stop Foreman
 node tools/mac.mjs stop --dry-run                  # print what would be killed, change nothing
 node tools/mac.mjs launch --restart-foreman        # replace a Foreman running old code
+node tools/mac.mjs launch --backend sim --dev --world "Docs World" --preset normal   # natural terrain
 ```
+
+**Which world the dev client opens.** By default AutoWorld loads (or creates) the flat "AgentCraft HQ"
+studio. `--world NAME` opens that save instead (created if missing), `--preset flat|normal` picks the
+terrain of a new world (`normal` = natural terrain: creative, peaceful, cheats on, no structures) and
+`--seed N` its seed (default for `normal`: 2026, a birch meadow on a hill with forest, lakes and a cherry
+grove nearby). Preset and seed only matter when the world is created; delete `mod/run/saves/NAME` to
+regenerate. Only the name "AgentCraft HQ" gets the HQ game rules and studio, so any other world behaves
+like a player's own world (the welcome card shows while it has no buildings). The flags set
+`AGENTCRAFT_AUTOWORLD_NAME`, `AGENTCRAFT_AUTOWORLD_PRESET` and `AGENTCRAFT_AUTOWORLD_SEED` for the game
+(mod/DEV.md "Environment switches"). A running game keeps its world: stop it first (`stop --game`).
 
 The launcher installs npm dependencies on first use, runs the Fabric development client,
 and waits for the studio world. It reuses a running Foreman or game from the same profile.
