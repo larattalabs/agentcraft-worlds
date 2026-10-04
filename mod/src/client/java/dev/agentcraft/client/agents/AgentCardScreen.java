@@ -421,7 +421,8 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 		layoutNeeded = withPanel + 2 * ROW + 8 + 6;
 		int fixed = base + decisionBlockHeight(panelInline);
 		logRows = owned != null ? 4 : 6;
-		while (logRows > 2 && fixed + logRows * ROW + 8 + 6 > this.height - 8) {
+		// down to one log row: at 426x240 a merge card with two rows ran 8 px off the screen
+		while (logRows > 1 && fixed + logRows * ROW + 8 + 6 > this.height - 8) {
 			logRows--;
 		}
 		h = fixed + logRows * ROW + 8 + 6;
