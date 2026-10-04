@@ -34,11 +34,12 @@ public final class HudFeature {
 		HudSounds.init();
 		HudWatch.init();
 		DevBridge.registerScreen("welcome", mc -> new WelcomeScreen());
-		DevBridge.register("dev.onboarding", 10_000, "{reset?: bool, show?: bool} - the welcome card: reset forgets its dismissal in this world, "
-			+ "show opens it; replies with the onboarding state", (req, mc) -> {
+		DevBridge.register("dev.onboarding", 10_000, "{reset?: bool, show?: bool, press?: open_hub|got_it} - the welcome card: reset forgets its "
+			+ "dismissal in this world, show opens it, press presses a button of the open card; replies with the onboarding state", (req, mc) -> {
 				Fields f = Fields.of(req);
 				boolean reset = f.optBool("reset", false);
 				boolean show = f.optBool("show", false);
+				String press = f.optStr("press", null);
 				return DevBridge.onClient(mc, () -> {
 					if (mc.player == null) {
 						throw new DevBridge.DevException("not in a world");
@@ -48,6 +49,11 @@ public final class HudFeature {
 					}
 					if (show) {
 						mc.gui.setScreen(new WelcomeScreen());
+					}
+					if (press != null) {
+						if (!(mc.gui.screen() instanceof WelcomeScreen w) || !w.press(press)) {
+							throw new DevBridge.DevException("press: no welcome card open with a button '" + press + "' (open_hub, got_it; draw a frame first)");
+						}
 					}
 					JsonObject o = HudWatch.json();
 					o.addProperty("screen", mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());

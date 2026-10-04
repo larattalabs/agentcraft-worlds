@@ -58,7 +58,11 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
   4. **Team** *(done in the mod, branch `mod/settings`)*: agents, roles, models, effort, the team.
   5. **Settings** *(done in the mod, branch `mod/settings`)*: permissions, context, connectors, session history, usage.
   6. **Status** *(done)*: Foreman connection, backend, auth/account, usage windows (percent, reset
-     time), spend, mod and Foreman versions, DevBridge state.
+     time), spend, mod and Foreman versions, DevBridge state. Wave 2 (docs/WAVE2.md W7): a second view,
+     **Keys & help** (every AgentCraft key with its live binding, every in-world interaction, "Show the
+     welcome card").
+- Wave 2 (docs/WAVE2.md W5/W6, "As implemented: hud"): tabs carry badges (Inbox needs-you, Goals unread, Repos
+  failing CI, Team blocked agents); `H` reopens the world's last tab, or after an away toast the Inbox (else Goals).
 - Style: the existing UI kit (`ui/Kit`, `ui/Panels`, `gui/ui-style.json`, `palette.json`), like
   `DecisionScreen`. Shootable through `DevBridge.registerScreen("hub", ...)` with a tab argument.
   *(done: screens `hub`, `hub_<tab>`, `hub_blueprints`; `dev.hub.open {tab}`, `dev.hub.state`,

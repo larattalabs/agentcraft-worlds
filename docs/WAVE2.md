@@ -51,3 +51,59 @@ never misses what needs them, finds their way without docs, and the village feel
   and invalidated by block changes near them. Walking agents keep their nameplate/state; at night they
   still walk (they cannot be hurt). A per-world setting (Settings > General or hub Buildings) can turn
   walking off.
+
+## As implemented: hud (branch `wave2/hud`)
+Code: `mod/src/client/java/dev/agentcraft/client/hud/` (`Alerts`, `AlertCounts`, `ForemanAlertCounts`, `GoalBar`,
+`Toasts`, `HudWatch`, `HudMemory`, `HelpContent`, `WelcomeScreen`), `client/hub/` (`TabBadges`, `StatusPane`, small
+edits in `HubScreen`, `HubFeature`, `HubGoals`), pure + unit-tested `mod/src/main/java/dev/agentcraft/hud/`
+(`AlertLine`, `HudPrefs`, `HudRules`; `AlertLineTest`, `HudRulesTest`). DevBridge in mod/DEV.md "HUD check-in (wave 2)".
+- **Counts (W5) behind `AlertCounts`** (`decisions()`, `blocked()`, `replies()`, `hold()`): today
+  `ForemanAlertCounts` computes them from `ForemanState`: decisions = `DecisionsFeature.waitingCount()` (what the
+  badge shows), blocked = tasks with status `blocked`, replies = feed `message` items from an agent to the user newer
+  than their read mark (a goal-tagged one: the goal's `hub-seen.json` mark, set by opening the goal in the hub; the rest:
+  `hub-hud.json repliesSeen`, set while the console is open), hold = `foreman.status.hold`. **Merge step**: when
+  `InboxModel` lands, call `Alerts.setSource("inbox", () -> <its Needs-you counts as an AlertCounts>)` once (e.g. in
+  the inbox feature's init); the alert line, the away toast and every tab badge follow. The Inbox's read state then
+  replaces the console/goal marks above.
+- **Protocol mirror**: `Protocol.Hold(reason, until?, message?)` and `ForemanStatus.hold` (last component). The inbox
+  stream needs the same: keep one.
+- **Alert line**: drawn by `GoalBar` under the decisions badge (the badge stays the `J` fast path, so decisions show in
+  both), one tooltip-style row: each non-zero part with its status dot (decisions clay/waiting, blocked error,
+  replies thinking, hold idle), " · " between, then the hub key's keycap + "open". Three widths picked per frame
+  (`AlertLine.fit`): full ("2 decisions · 1 blocked · 3 replies · usage paused until 14:20"), short ("2 dec · 1 blk ·
+  3 msg · paused → 14:20"), dots ("2 1 3 14:20" next to their dots, keycap only). Hold texts: usage "usage paused
+  until 14:20" ("Mon 14:20" when not today, "usage paused" without `until`), auth "Claude sign-in needed", offline
+  "Claude offline, retry 14:20". Hidden when nothing needs the player, with F1 (`mc.gui.hud.isHidden()`, the whole
+  goal bar), and dimmed while the Foreman is stale. It uses the goal bar's pill-avoiding placement, so toasts stack
+  under it when they would meet.
+- **Tab badges**: `TabBadges` by tab id: `inbox` = needs-you (shows by itself once `HubTab` has an `inbox` id), `goals`
+  = goals with unread activity, `repos` = CI `fail`, `team` = agents `blocked`/`error`. A status dot and the count after
+  the label; when the strip does not fit, dots only (`compact`); still too wide, labels are cut (`overflow`).
+- **Away (W6)**: `hub-hud.json` (sibling of `hub-seen.json`, same world key) keeps `hubSeenAt` (any hub tab on screen,
+  also under a task/decision screen opened from it), `lastAwayToastAt`, `lastTab`, `repliesSeen`,
+  `welcomeDismissed`. The stretch starts at max(hubSeenAt, lastAwayToastAt) (unknown when the hub was never opened in
+  that world: no toast). Checked once on joining (as soon as the Foreman is connected) and every 2 minutes once the
+  stretch is >= 10 minutes, never while the hub is open: `goal.digest {since}` via `HubGoals.requestAway` (so the
+  Goals tab's away panel shows the same digest; `HubGoals.checkAway` no longer replaces a fresh one). A toast only
+  when a goal moved: "Since you were away: 2 goals moved, 1 needs you" (needs-you = the alert counts), with the hub
+  key hint "catch up"; nothing moved: no toast and no "nothing happened" panel. After the toast `H` opens the Inbox
+  (`HubTab.parse("inbox")`, so it switches at merge by itself) else Goals; otherwise `H` opens the world's last tab.
+  The Inbox should show `HubGoals.away()` at its top.
+- **Toast hints**: "need you" toasts hint `J answer` when about a decision, else `H open hub`; `Toasts.push(n, key, verb)`
+  for an explicit hint.
+- **Multi-goal goal bar**: open goals (planning/active) ranked by urgency (open decisions + blocked tasks of the
+  goal), then most recent update (`HudRules.pickGoal`). An urgent goal is pinned; otherwise they take turns every 8 s.
+  The title row shows "+N more" (or "+N" when tight). No open goal: the latest goal as before. Task counts are per goal
+  now (tasks without a goal id count only while there is a single goal).
+- **Welcome (W7)**: `WelcomeScreen` 2.5 s after joining a singleplayer world (not the dev HQ, buildings file readable)
+  with no building, unless dismissed in that world. Two lines on what AgentCraft is, H / J / console keys (live
+  bindings), "Place your first building: H > Buildings > Place new", the Foreman status. "Open the hub" (Buildings tab),
+  "Got it" and Esc dismiss it for good; Status > Keys & help > "Show the welcome card" shows it again.
+  `AGENTCRAFT_WELCOME=0` stops it opening by itself (scripted QA worlds). It scrolls when the window is short.
+- **Keys & help**: the Status tab has chips Overview / Keys & help (←→). Help lists every key mapping of the
+  AgentCraft category (live labels, "not bound"), the in-world interactions (podium, task board, monitor = look only,
+  console terminal, library, merge station, agent card = empty-hand sneak + right-click), the rebinding path, and
+  "Show the welcome card". Scrolls (wheel, ↑↓) and reports `{needed, available, overflow}`.
+- Decisions for the coordinator: decisions appear in both the badge and the line; the away toast uses a keycap hint
+  instead of a literal "(H)"; `hub-hud.json` instead of extending `hub-seen.json` (no schema clash with the inbox
+  stream); monitors have no right-click today (W4 adds one: update `HelpContent.INTERACTIONS` then).
