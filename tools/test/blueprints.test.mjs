@@ -329,3 +329,16 @@ test('C4 foundationBlock: sidecar default, per design, validated', async () => {
   bp.foundationBlock = 'minecraft:glass';
   assert.match(checkBlueprint(bp).errors.join('\n'), /must be a full, opaque block/);
 });
+
+test('bundled blueprints are up to date with their designs (run node tools/blueprints/build.mjs --all)', async () => {
+  const { listDesigns, NBT_DIR, JSON_DIR } = await import('../blueprints/build.mjs');
+  for (const name of listDesigns()) {
+    const { default: make } = await import(`../blueprints/designs/${name}.mjs`);
+    const bp = make();
+    const bundled = JSON.parse(fs.readFileSync(path.join(JSON_DIR, `${name}.blueprint.json`), 'utf8'));
+    assert.deepEqual(bundled, JSON.parse(JSON.stringify(bp.sidecar())), `${name}.blueprint.json is stale`);
+    const root = plain(parse(fs.readFileSync(path.join(NBT_DIR, `${name}.nbt`))));
+    assert.equal(root.blocks.length, bp.cells.size, `${name}.nbt is stale`);
+    assert.ok(checkFiles(path.join(NBT_DIR, `${name}.nbt`), path.join(JSON_DIR, `${name}.blueprint.json`)).ok, name);
+  }
+});
