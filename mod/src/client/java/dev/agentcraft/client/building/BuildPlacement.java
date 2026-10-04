@@ -560,6 +560,10 @@ public final class BuildPlacement {
 		if (lava != null) {
 			refusals.add(lava);
 		}
+		List<String> doors = Buildings.straddling(lv, snapBox, true);
+		if (!doors.isEmpty()) {
+			refusals.add("a door is cut in half by the box edge (" + doors.get(0) + ")");
+		}
 		List<Occupancy.Found> found = Occupancy.scan(lv, snapBox, e -> e instanceof ClientAgentEntity);
 		List<String> occupied = Occupancy.refusals(found);
 		refusals.addAll(occupied);

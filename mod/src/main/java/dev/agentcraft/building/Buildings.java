@@ -40,11 +40,14 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.templatesystem.LiquidSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
@@ -374,6 +377,11 @@ public final class Buildings {
 					+ "); add force to overwrite them (they come back on remove)");
 			}
 		}
+		List<String> doors = straddling(level, snapBox, true);
+		if (!doors.isEmpty()) {
+			throw new BuildingException("Not placed: a door is cut in half by the box edge (" + String.join(", ", doors.subList(0, Math.min(3, doors.size())))
+				+ "); raise, lower or move the building so the door is fully in or out");
+		}
 		List<Occupancy.Found> found = Occupancy.scan(level, snapBox, e -> false);
 		List<String> occupied = Occupancy.refusals(found);
 		if (!occupied.isEmpty()) {
@@ -381,6 +389,7 @@ public final class Buildings {
 		}
 
 		snapshot(level, snapBox, snap);
+		List<BlockPos> plants = straddlingPositions(level, snapBox, false);
 		Drops drops = Drops.before(level, snapBox);
 		try {
 			int removed = 0;
@@ -402,6 +411,14 @@ public final class Buildings {
 			}
 			for (int i = 0; i < plan.clear().length; i += 3) {
 				level.setBlock(m.set(plan.clear()[i], plan.clear()[i + 1], plan.clear()[i + 2]), Blocks.AIR.defaultBlockState(), FLAGS);
+			}
+			// a tall plant whose other half was inside the box (now gone) would float: take its outside half too
+			for (BlockPos half : plants) {
+				BlockState outside = level.getBlockState(half);
+				BlockPos inside = half.getY() < snapBox.minY() ? half.above() : half.below();
+				if (!level.getBlockState(inside).is(outside.getBlock())) {
+					level.setBlock(half, Blocks.AIR.defaultBlockState(), FLAGS);
+				}
 			}
 			drops.clearNew(level);
 			List<String> notes = new ArrayList<>();
@@ -429,6 +446,49 @@ public final class Buildings {
 			}
 			throw new BuildingException("Placing " + bp.id() + " failed (" + e.getMessage() + "); the area was restored");
 		}
+	}
+
+	/**
+	 * Two-block-high blocks (doors, tall plants) cut by the box's top or bottom face: one half inside, the other
+	 * outside, which the placement would leave orphaned. {@code doors}: only doors (refused, a player's), else only
+	 * the others (plants, cleaned up). Server thread.
+	 */
+	public static List<String> straddling(net.minecraft.world.level.BlockGetter level, Anchors.Bounds box, boolean doors) {
+		List<String> out = new ArrayList<>();
+		for (BlockPos p : straddlingPositions(level, box, doors)) {
+			out.add(p.toShortString());
+		}
+		return out;
+	}
+
+	/** The outside halves of {@link #straddling} (for doors: the inside half's position). */
+	private static List<BlockPos> straddlingPositions(net.minecraft.world.level.BlockGetter level, Anchors.Bounds box, boolean doors) {
+		List<BlockPos> out = new ArrayList<>();
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		for (int z = box.minZ(); z <= box.maxZ(); z++) {
+			for (int x = box.minX(); x <= box.maxX(); x++) {
+				// bottom face: an upper half inside whose lower half is below the box; top face: the reverse
+				for (int[] face : new int[][] {{box.minY(), -1}, {box.maxY(), 1}}) {
+					BlockState in = level.getBlockState(m.set(x, face[0], z));
+					if (!in.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)) {
+						continue;
+					}
+					DoubleBlockHalf half = in.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF);
+					if (face[1] < 0 ? half != DoubleBlockHalf.UPPER : half != DoubleBlockHalf.LOWER) {
+						continue;
+					}
+					BlockPos outside = new BlockPos(x, face[0] + face[1], z);
+					if (!level.getBlockState(outside).is(in.getBlock())) {
+						continue;
+					}
+					boolean door = in.getBlock() instanceof DoorBlock;
+					if (door == doors) {
+						out.add(doors ? new BlockPos(x, face[0], z) : outside);
+					}
+				}
+			}
+		}
+		return out;
 	}
 
 	/** The blueprint's foundation block, or the default when its id is unknown (logged). */
