@@ -51,8 +51,8 @@ describe('failure classification', () => {
     expect(classifyFailure(s({ subtype: 'error_max_turns' }))).toBe('transient');
     expect(classifyFailure(undefined, { timedOut: true })).toBe('transient');
     expect(classifyFailure(s({ errors: ['Prompt is too long'] }))).toBe('context');
-    expect(classifyFailure(s({ subtype: 'error_max_budget_usd' }))).toBe('fatal'); // never pay for it again
-    expect(classifyFailure(s({ errors: ['billing_error'] }))).toBe('fatal');
+    expect(classifyFailure(s({ subtype: 'error_max_budget_usd' }))).toBe('final'); // never pay for it again
+    expect(classifyFailure(s({ errors: ['billing_error'] }))).toBe('final');
     expect(classifyFailure(s({ errors: ['tool exploded'] }))).toBe('fatal');
   });
 });

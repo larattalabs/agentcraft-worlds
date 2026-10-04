@@ -48,7 +48,7 @@ import { DEFAULT_AUTO_SEVERITIES, DEFAULT_MAX_ROUNDS, PrWatcher, type TriageItem
 import type { RunFn } from '../../prs.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
 import { pruneUsage, readPlanUsage, reserveHold, usageLine, withWindow } from './usage.js';
-import { isAuthText, probeFailure } from './failures.js';
+import { classifyFailure, isAuthText, probeFailure } from './failures.js';
 import type { ForemanHold } from '../../protocol.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
@@ -189,6 +189,8 @@ export interface ClaudeBackendOptions {
   authRetryMs?: number;
   /** the wall-clock hold/usage check interval (tests) */
   wakeIntervalMs?: number;
+  /** delay before the automatic retry of a turn that failed for a passing reason (default 2-5 min) */
+  transientRetryMs?: number;
 }
 
 export class ClaudeBackend implements Backend {
@@ -206,6 +208,10 @@ export class ClaudeBackend implements Backend {
   private wakeTimer: NodeJS.Timeout | undefined;
   /** the usage reserve is holding new turns (announced once per episode) */
   private reserveActive = false;
+  /** agent id -> a failed turn's job waiting for its one automatic retry (see autoRetry) */
+  private delayed = new Map<string, { job: Job; timer: NodeJS.Timeout; at: number }>();
+  /** automatic retries used, per (worker task | lead plan | lead review); cleared when one succeeds */
+  private retried = new Map<string, number>();
   private stopping = false;
   private waitingUser = new Set<string>();
   private readonly queryFn: typeof query;
@@ -638,7 +644,8 @@ export class ClaudeBackend implements Backend {
   private hasQueued(agentId: string, pred: (j: Job) => boolean): boolean {
     const running = this.running.get(agentId);
     const paused = this.pausedJobs.get(agentId);
-    return (this.queues.get(agentId) ?? []).some(pred) || (running ? pred(running.job) : false) || (paused ? pred(paused) : false);
+    const later = this.delayed.get(agentId)?.job;
+    return (this.queues.get(agentId) ?? []).some(pred) || (running ? pred(running.job) : false) || (paused ? pred(paused) : false) || (later ? pred(later) : false);
   }
 
   /**
@@ -725,6 +732,8 @@ export class ClaudeBackend implements Backend {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
     if (this.wakeTimer) clearInterval(this.wakeTimer);
+    for (const d of this.delayed.values()) clearTimeout(d.timer);
+    this.delayed.clear();
     const turns = [...this.running.values()];
     for (const r of turns) this.abortTurn(r, 'shutdown');
     const designs = this.designs.stop();
@@ -1027,7 +1036,7 @@ export class ClaudeBackend implements Backend {
   private isFree(w: string): boolean {
     const a = this.fm.agent(w);
     if (!a || !a.active || a.paused || this.isStopped(w) || !this.team.includes(w)) return false;
-    if (this.running.has(w) || (this.queues.get(w)?.length ?? 0) > 0) return false;
+    if (this.running.has(w) || this.delayed.has(w) || (this.queues.get(w)?.length ?? 0) > 0) return false;
     return !this.fm.tasks.list().some((t) => t.assignee === w && t.status === 'doing');
   }
 
@@ -1712,8 +1721,93 @@ export class ClaudeBackend implements Backend {
     return truncate(stats?.subtype && stats.subtype !== 'success' ? stats.subtype.replace(/^error_/, '').replace(/_/g, ' ') : (stats?.errors[0] ?? 'error'), 36);
   }
 
+  /** Which automatic-retry budget a job uses (one retry per worker task, lead plan, lead review). */
+  private retryKey(job: Job): string {
+    if (job.kind === 'plan') return `plan:${job.goalId}`;
+    if (job.kind === 'review') return `review:${job.taskId}`;
+    if (!this.fm.isLead(job.agentId) && job.taskId) return `work:${job.taskId}`;
+    return `${job.kind}:${job.agentId}:${job.taskId ?? job.goalId ?? ''}`;
+  }
+
+  /**
+   * A turn failed for a passing reason (network, sleep, an overloaded API, its step or time limit,
+   * a too-long prompt), or a lead's plan / review failed at all: run the same job once more, after
+   * a pause (2-5 min), resuming its session (a too-long prompt: a fresh session with the original
+   * prompt). Never for auth, usage limits, the per-turn budget or billing. Returns false when no
+   * retry is due (the caller blocks / fails as before). The task or goal stays where it is meanwhile,
+   * so a restart picks it up the normal way.
+   */
+  private autoRetry(job: Job, stats: TurnStats | undefined, what: string): boolean {
+    if (this.stopping) return false;
+    const kind = classifyFailure(stats, { timedOut: stats?.subtype === 'timeout' });
+    const lead = this.fm.isLead(job.agentId);
+    const retryable = kind === 'transient' || kind === 'context' || (kind === 'fatal' && lead && (job.kind === 'plan' || job.kind === 'review'));
+    if (!retryable) return false;
+    const key = this.retryKey(job);
+    const used = this.retried.get(key) ?? 0;
+    if (used >= 1) return false;
+    this.retried.set(key, used + 1);
+    const why = this.failure(stats);
+    const hasSession = !!this.fm.store.data.sessions[job.sessionKey]?.sessionId;
+    const fresh = kind === 'context' || !hasSession;
+    const next: Job = fresh
+      ? { ...job, fresh: true, resumed: true, prompt: `${kind === 'context' ? 'Your previous session for this job ran out of room (the prompt grew too long), so this is a fresh one. Re-check where things stand (the task board; workers: git status and git log in your worktree) before you continue.\n\n' : ''}${job.prompt}` }
+      : { ...job, fresh: false, resumed: true, prompt: `Your last turn ended early (${why}). Re-check where you were (${lead ? 'the task board' : 'your worktree and the task board'}) and continue your current job.` };
+    const delay = this.opts.transientRetryMs ?? 2 * 60_000 + Math.floor(Math.random() * 3 * 60_000);
+    const at = Date.now() + delay;
+    const name = this.fm.nameOf(job.agentId);
+    this.fm.setAgent(job.agentId, { state: 'blocked', activity: `${what}: ${why} - retrying ${clock(at)}` });
+    this.fm.agentLog(job.agentId, 'error', `${what} ended early (${why}); one automatic retry at ${clock(at)}`);
+    this.fm.bus.feed('system', `${name}'s ${what} ended early (${why}); trying again at ${clock(at)}`, { agentId: job.agentId, ...(job.taskId ? { taskId: job.taskId } : {}), ...(job.goalId ? { goalId: job.goalId } : {}) });
+    const prev = this.delayed.get(job.agentId);
+    if (prev) clearTimeout(prev.timer);
+    const timer = setTimeout(() => {
+      this.delayed.delete(job.agentId);
+      if (this.stopping || !this.stillDue(next)) {
+        this.fm.log.info(`automatic retry of ${job.agentId}'s ${job.kind} dropped (no longer due)`);
+        return;
+      }
+      if (this.fm.agent(job.agentId)?.paused) {
+        this.pausedJobs.set(job.agentId, next);
+        return;
+      }
+      this.enqueue(next);
+    }, delay);
+    timer.unref?.();
+    this.delayed.set(job.agentId, { job: next, timer, at });
+    return true;
+  }
+
+  /** A delayed retry still makes sense: same agent on the same task / goal, in the same state. */
+  private stillDue(job: Job): boolean {
+    if (this.isStopped(job.agentId) || !this.fm.agent(job.agentId)) return false;
+    if (job.kind === 'plan') {
+      const g = job.goalId ? this.fm.goal(job.goalId) : undefined;
+      return !!g && g.status === 'planning' && this.fm.leadOf(g) === job.agentId && !this.fm.tasks.forGoal(g.id).length;
+    }
+    if (job.kind === 'review') {
+      const t = job.taskId ? this.fm.tasks.get(job.taskId) : undefined;
+      return !!t && t.status === 'review' && this.fm.leadOfTask(t) === job.agentId && !this.fm.decisions.open().some((d) => d.kind === 'merge' && d.taskId === t.id);
+    }
+    if (job.taskId && !this.fm.isLead(job.agentId)) {
+      const t = this.fm.tasks.get(job.taskId);
+      return !!t && t.status === 'doing' && t.assignee === job.agentId;
+    }
+    return true;
+  }
+
+  /** Drop delayed retries matching `pred` (cancel, stop, reassign, goal.cancel). */
+  private dropDelayed(pred: (agentId: string, job: Job) => boolean): void {
+    for (const [id, d] of [...this.delayed]) {
+      if (!pred(id, d.job)) continue;
+      clearTimeout(d.timer);
+      this.delayed.delete(id);
+    }
+  }
+
   private async afterTurn(job: Job, stats: TurnStats | undefined): Promise<void> {
     const failed = !stats || stats.isError;
+    if (!failed) this.retried.delete(this.retryKey(job));
     if (this.fm.isLead(job.agentId)) {
       const lead = job.agentId;
       this.fm.setAgent(lead, failed ? { state: 'error', station: 'meeting', activity: `turn failed: ${this.failure(stats)}` } : { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
@@ -1724,7 +1818,9 @@ export class ClaudeBackend implements Backend {
       if (goal && goal.status === 'planning') {
         const n = this.fm.tasks.forGoal(goal.id).length;
         if (n > 0) this.promoteGoal(goal, 'planned');
-        else if (failed) {
+        else if (failed && job.kind === 'plan' && this.autoRetry(job, stats, 'planning turn')) {
+          // tried once more after a pause; the goal stays planning meanwhile
+        } else if (failed) {
           this.fm.setGoal(goal.id, { status: 'failed' });
           this.fm.bus.feed('error', `${this.fm.nameOf(lead)}'s planning turn ended without tasks${stats?.errors.length ? `: ${stats.errors.join('; ')}` : ''}`, { agentId: lead, goalId: goal.id });
         } else if (job.kind === 'plan') {
@@ -1739,6 +1835,8 @@ export class ClaudeBackend implements Backend {
         const t = this.fm.tasks.get(job.taskId);
         const hasDecision = this.fm.decisions.open().some((d) => d.kind === 'merge' && d.taskId === job.taskId);
         if (t && t.status === 'review' && !hasDecision) {
+          // a failed review is tried once more before the merge goes to the user without a verdict
+          if (failed && this.autoRetry(job, stats, `review of ${t.id}`)) return;
           // lead gave no verdict: still surface the merge to the user (never auto-merge)
           this.openMergeDecision(t, `${this.fm.nameOf(lead)}'s review: ${truncate(stats?.resultText ?? '(no verdict)', 300)}`);
         }
@@ -1756,6 +1854,8 @@ export class ClaudeBackend implements Backend {
       return;
     }
     if (t.status === 'doing') {
+      // a passing failure (network, sleep, overload, step / time limit): one automatic resume first
+      if (failed && this.autoRetry(job, stats, `turn on ${t.id}`)) return;
       const nudges = job.nudges ?? 0;
       if (!failed && nudges < 1) {
         this.enqueue({ ...job, kind: 'followup', fresh: false, nudges: nudges + 1, prompt: `You ended your turn but ${t.id} is still "doing". If the work is complete, call update_task("${t.id}", status "review", summary). If you are stuck, call update_task with status "blocked" and blocked_reason. Otherwise continue.` });
@@ -2059,6 +2159,7 @@ export class ClaudeBackend implements Backend {
     for (const [id, r] of this.running) if (this.fm.isLead(id) && mine(r.job)) this.abortTurn(r, 'cancel');
     for (const [id, q] of this.queues) if (this.fm.isLead(id)) this.queues.set(id, q.filter((j) => !mine(j)));
     for (const [id, j] of this.pausedJobs) if (mine(j)) this.pausedJobs.delete(id);
+    this.dropDelayed((id, j) => this.fm.isLead(id) && mine(j));
     for (const [id, inf] of Object.entries(this.st.inflight)) if (inf.goalId === goal.id && (inf.kind === 'plan' || inf.kind === 'review' || inf.kind === 'triage') && !this.running.has(id)) delete this.st.inflight[id];
     this.fm.store.markDirty();
     this.tick();
@@ -2137,6 +2238,7 @@ export class ClaudeBackend implements Backend {
         if (r.job.taskId === task.id && !this.fm.isLead(id) && (action === 'cancel' || task.assignee !== id)) this.abortTurn(r, 'cancel');
       }
       for (const [id, q] of this.queues) this.queues.set(id, q.filter((j) => j.taskId !== task.id || (action === 'reassign' && task.assignee === id)));
+      this.dropDelayed((id, j) => j.taskId === task.id && (action === 'cancel' || task.assignee !== id || this.fm.isLead(id)));
       // reassigned: the new worker continues from the old worker's branch once that turn is over
       if (action === 'reassign' && task.repoId && task.worktree) {
         const wt = this.fm.repos.findWorktree(task.repoId, task.worktree);
@@ -2168,6 +2270,12 @@ export class ClaudeBackend implements Backend {
     const name = this.fm.nameOf(agentId);
     if (action === 'pause') {
       if (r) this.abortTurn(r, 'pause');
+      // a retry waiting for its time: held until the resume
+      const later = this.delayed.get(agentId);
+      if (later) {
+        this.dropDelayed((id) => id === agentId);
+        this.pausedJobs.set(agentId, later.job);
+      }
       this.fm.setAgent(agentId, { state: 'idle', activity: 'paused' });
     } else if (action === 'resume' || action === 'spawn') {
       const wasStopped = this.isStopped(agentId);
@@ -2190,6 +2298,7 @@ export class ClaudeBackend implements Backend {
       if (r) this.abortTurn(r, 'stop');
       this.queues.delete(agentId);
       this.pausedJobs.delete(agentId);
+      this.dropDelayed((id) => id === agentId);
       delete this.st.inflight[agentId];
       this.withdrawDecisions(agentId, `${name} was stopped`);
       if (!this.fm.isLead(agentId)) {
@@ -2227,6 +2336,7 @@ export class ClaudeBackend implements Backend {
     if (r) this.abortTurn(r, 'stop');
     this.queues.delete(leadId);
     this.pausedJobs.delete(leadId);
+    this.dropDelayed((id) => id === leadId);
     this.waitingUser.delete(leadId);
     delete this.st.inflight[leadId];
     this.fm.store.markDirty();
