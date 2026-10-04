@@ -458,8 +458,9 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   from inside + `shot`; `dev.trophies.list` has the cells); 7 awards on a 6-slot wing replace the oldest (the reply's
   `replaced`); `dev.trophies.toggle {on:false}` then another award gives `DISABLED` and hangs nothing; Remove the building
   (hub or `/agentcraft remove b1`): not refused because of the signs, the site is restored (the sign cells are air again).
-  The live path (a real `done` goal / merged PR) needs a Foreman that sends them; `dev.test.foremanMessage` can inject
-  one (`goal.upsert` with `status:"done"` and the repo id).
+  The live path: launch with `AGENTCRAFT_DEV_TEST=1`, `dev.test.foremanMessage {message:{type:"goal.upsert", goal:{id, text,
+  status:"active"|"done", repoId, createdAt, updatedAt, progress}}}` (active, then done) hangs a "Goal done" sign. Catch-up cap:
+  toggle off, inject 10 done `task.upsert`s, toggle on: only the newest 6 hang.
 - Placement math is `BlueprintTransform` (pure; unit tests in `src/test/java`, `gradlew test`, also
   run by `build`). Vanilla rotates about the template's origin cell (clockwise_90 puts the footprint
   at x-(sizeZ-1)..x), so `place` shifts the position by the rotated box's minimum: the `origin` is

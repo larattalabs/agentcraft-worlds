@@ -83,6 +83,24 @@ public final class TrophyEvents {
 		return out;
 	}
 
+	/**
+	 * Keeps each repo's newest {@code limit(repo)} awards (the rest could only be hung to be replaced at once), in the
+	 * given order. A catch-up in a world with a long history hangs a wall's worth, not all of it.
+	 */
+	public static List<Award> newestPerRepo(List<Award> oldestFirst, java.util.function.ToIntFunction<String> limit) {
+		Map<String, Integer> seen = new java.util.HashMap<>();
+		List<Award> out = new ArrayList<>();
+		for (int i = oldestFirst.size() - 1; i >= 0; i--) {
+			Award a = oldestFirst.get(i);
+			String repo = a.trophy().repo();
+			if (seen.merge(repo, 1, Integer::sum) <= limit.applyAsInt(repo)) {
+				out.add(a);
+			}
+		}
+		java.util.Collections.reverse(out);
+		return out;
+	}
+
 	private static Optional<Award> forGoal(GoalIn g, ZoneId zone) {
 		if (g.repoId() == null || g.repoId().isBlank()) {
 			return Optional.empty();

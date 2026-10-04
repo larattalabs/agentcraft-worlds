@@ -124,7 +124,7 @@ public final class Trophies {
 			if (!hang(level, s, lines, was != null)) {
 				continue;
 			}
-			l.put(b.id(), s.name(), new TrophyLedger.Entry(key, lines, System.currentTimeMillis()));
+			l.put(b.id(), s.name(), new TrophyLedger.Entry(key, lines, TrophySlots.nextAt(System.currentTimeMillis(), taken)));
 			l.markAwarded(key);
 			save();
 			AgentCraft.LOGGER.info("Trophy {} hung in {} slot {} at {},{},{}{}", key, b.id(), s.name(), s.x(), s.y(), s.z(),

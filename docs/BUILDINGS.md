@@ -383,7 +383,7 @@ Client side (`client.trophy.TrophyFeature`; pure `trophy.TrophyEvents` and `Trop
 - **When**: live on each goal/task update (the transition only), and a **catch-up** of everything done or merged that has no
   key yet, oldest first, on every Foreman snapshot, when a building is placed or its repo list changes, and when the toggle
   is switched on. A repo without a building, or a building without slots, awards nothing and is retried by the next
-  catch-up. History is therefore backfilled once; a full wall keeps the newest trophies.
+  catch-up. A catch-up awards only each repo's newest N (N = its wing's slot count), oldest first, so a long history does not rewrite the wall hundreds of times; older ones are never hung. The ledger's `at` is strictly increasing per building (`TrophySlots.nextAt`), so awards within one millisecond still replace in award order.
 - **Toggle**: hub > Buildings, under "Agents walk between buildings": "Trophies for merges and finished goals: On/Off", per
   world, `<gameDir>/agentcraft/trophies.json` (default on). Off hangs nothing (signs already hung stay).
 - Singleplayer only (the integrated server hangs them); DevBridge `dev.trophies.award`, `dev.trophies.list`,

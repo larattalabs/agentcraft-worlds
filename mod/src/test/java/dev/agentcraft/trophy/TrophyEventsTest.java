@@ -87,6 +87,19 @@ class TrophyEventsTest {
 	}
 
 	@Test
+	void tenEventsOnSixSlotsKeepTheNewestSix() {
+		List<TaskIn> tasks = new java.util.ArrayList<>();
+		for (int i = 1; i <= 10; i++) {
+			tasks.add(task("t" + i, true, "app", "g1", null, false, T0 + i));
+		}
+		tasks.add(task("o1", true, "other", "g1", null, false, T0));
+		List<Award> all = TrophyEvents.catchUp(List.of(), tasks, Map.of(), Z);
+		List<Award> kept = TrophyEvents.newestPerRepo(all, repo -> repo.equals("app") ? 6 : 0);
+		assertEquals(List.of("t5", "t6", "t7", "t8", "t9", "t10"), kept.stream().map(a -> a.trophy().taskId()).toList());
+		assertEquals(0, TrophyEvents.newestPerRepo(all, repo -> 0).size());
+	}
+
+	@Test
 	void settingsDefaultOnAndRoundTrip(@TempDir Path dir) throws Exception {
 		TrophySettings s = new TrophySettings();
 		assertTrue(s.enabled("New World"));

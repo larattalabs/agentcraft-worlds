@@ -121,6 +121,18 @@ public final class TrophySlots {
 		return free;
 	}
 
+	/**
+	 * The {@code at} stamp for a trophy hung now: {@code now}, but always after every trophy already in the building's
+	 * ledger, so awards made within one millisecond (a catch-up) still replace each other strictly in award order.
+	 */
+	public static long nextAt(long now, Map<String, TrophyLedger.Entry> taken) {
+		long last = Long.MIN_VALUE;
+		for (TrophyLedger.Entry e : taken.values()) {
+			last = Math.max(last, e.at());
+		}
+		return last == Long.MIN_VALUE ? now : Math.max(now, last + 1);
+	}
+
 	/** The slot a new trophy goes to ({@link #order}'s first), or null when there are none. */
 	public static @Nullable Slot choose(List<Slot> slots, Map<String, TrophyLedger.Entry> taken) {
 		List<Slot> o = order(slots, taken);

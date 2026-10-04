@@ -157,7 +157,7 @@ public final class TrophyFeature {
 		st.goals().values().forEach(g -> goals.add(goalIn(g, st)));
 		List<TrophyEvents.TaskIn> tasks = new ArrayList<>();
 		st.tasks().values().forEach(t -> tasks.add(taskIn(t)));
-		submit(TrophyEvents.catchUp(goals, tasks, goalRepos(st), zone()));
+		submit(TrophyEvents.newestPerRepo(TrophyEvents.catchUp(goals, tasks, goalRepos(st), zone()), repo -> Trophies.slotsFor(repo).size()));
 	}
 
 	/**
