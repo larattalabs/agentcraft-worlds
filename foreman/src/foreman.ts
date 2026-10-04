@@ -131,6 +131,9 @@ export function prDescription(summary: string | undefined): string {
   return lines.filter((l) => !ad.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+/** What an outside notification is about (notify.discord ping / silent lists). */
+export type ExternalNotifyKind = 'need_user' | 'blocked' | 'usage' | 'goal_done' | 'auth';
+
 export type Reply = (msg: Outbound) => void;
 
 export class ClientError extends Error {}
@@ -749,6 +752,15 @@ export class Foreman {
     this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user', goalId: d.goalId });
     this.notify('need_user', `${who}: ${truncate(d.question, 120)}`, d.id);
     this.notifier.needUser(`${who}: ${d.question}`);
+  }
+
+  /**
+   * Outside-the-game notifications (C10, notify.discord): `kind` picks the channel level. Never
+   * blocks and never throws; off unless configured.
+   */
+  notifyExternal(kind: ExternalNotifyKind, text: string): void {
+    void kind;
+    void text;
   }
 
   notify(level: 'info' | 'warn' | 'need_user', text: string, decisionId?: string): void {

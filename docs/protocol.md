@@ -279,6 +279,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `userName` | string | no | the person the team works for, as the agents address them (UI: "<name> answered") |
 | `usage` | { windows: { id: string, label: string, pct: number, resetsAt?: integer }[], updatedAt: integer } | no | claude.ai login: how much of the plan's usage windows is used (from the agents' sessions) |
 | `restartRequired` | string[] | no | config keys changed (config.set) that take effect only after a restart (`foreman.restart`); omitted when none |
+| `hold` | { reason: `usage` \| `auth` \| `offline`, until?: integer, message: string } | no | claude: the backend is holding new agent turns (usage limit or reserve, auth failure, offline); absent when nothing holds them. Running turns finish; queued work starts when the hold ends |
 
 ### <a id="agentlogs"></a>AgentLogs
 

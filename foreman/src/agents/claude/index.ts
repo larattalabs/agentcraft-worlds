@@ -47,7 +47,9 @@ import { type RepoRole, boardSummary, foldInPrompt, leadRepoContext, leadSystemP
 import { DEFAULT_AUTO_SEVERITIES, DEFAULT_MAX_ROUNDS, PrWatcher, type TriageItem } from '../../prwatch.js';
 import type { RunFn } from '../../prs.js';
 import { detectApiAuth, NO_API_AUTH_MESSAGE, withAuthMode } from './auth.js';
-import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
+import { pruneUsage, readPlanUsage, reserveHold, usageLine, withWindow } from './usage.js';
+import { isAuthText, probeFailure } from './failures.js';
+import type { ForemanHold } from '../../protocol.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
@@ -151,6 +153,11 @@ const LIMIT_BACKOFF_MAX_MS = 60 * 60_000;
 const THROTTLE_DEFAULT_MS = 30 * 60_000;
 /** how often the plan's usage windows are re-read from a live session */
 const USAGE_REFRESH_MS = 5 * 60_000;
+/** first retry of the startup auth probe after a network-type failure (doubles, up to the max) */
+const AUTH_RETRY_MS = 30_000;
+const AUTH_RETRY_MAX_MS = 10 * 60_000;
+/** wall-clock check of usage windows and holds (timers drift or stall while the machine sleeps) */
+const WAKE_INTERVAL_MS = 60_000;
 
 /**
  * Environment for an agent's CLI process (and every command it runs): git refuses all
@@ -178,6 +185,10 @@ export interface ClaudeBackendOptions {
   skipAuthCheck?: boolean;
   /** runs `az` / `gh` for pull requests (opening and watching them); tests inject a fake */
   prRunFn?: RunFn;
+  /** first auth-probe retry delay after a network failure (tests) */
+  authRetryMs?: number;
+  /** the wall-clock hold/usage check interval (tests) */
+  wakeIntervalMs?: number;
 }
 
 export class ClaudeBackend implements Backend {
@@ -186,7 +197,15 @@ export class ClaudeBackend implements Backend {
   private running = new Map<string, Running>();
   private pausedJobs = new Map<string, Job>();
   private tickTimer: NodeJS.Timeout | undefined;
+  /** sticky: the login / key is not valid (until a restart) */
   private authFailed = false;
+  private authMessage = '';
+  /** the startup auth probe could not reach Claude: retried with backoff, work waits meanwhile */
+  private offline: { delayMs: number; retryAt: number; message: string } | undefined;
+  private authRetryTimer: NodeJS.Timeout | undefined;
+  private wakeTimer: NodeJS.Timeout | undefined;
+  /** the usage reserve is holding new turns (announced once per episode) */
+  private reserveActive = false;
   private stopping = false;
   private waitingUser = new Set<string>();
   private readonly queryFn: typeof query;
@@ -227,7 +246,7 @@ export class ClaudeBackend implements Backend {
     this.designs = new DesignJobs({
       fm: this.fm,
       cfg: this.cfg,
-      canStart: () => !this.authFailed && !this.stopping && !this.limited(),
+      canStart: () => !this.stopping && !this.held(),
       holdForLimit: (stats) => {
         if (!this.limited()) this.setLimit(stats.rateLimit?.resetsAt, stats.rateLimit?.type);
         return this.st.limit?.until;
@@ -376,6 +395,13 @@ export class ClaudeBackend implements Backend {
       this.recover();
     }
     this.armLimitTimer();
+    // limits and reserve windows end on the wall clock: a timer alone can fire late after a sleep
+    this.wakeTimer = setInterval(() => {
+      this.liftExpired();
+      this.refreshHold();
+    }, this.opts.wakeIntervalMs ?? WAKE_INTERVAL_MS);
+    this.wakeTimer.unref?.();
+    this.refreshHold();
     this.prs.start();
     if (this.prs.active) this.fm.log.info(`PR watching: ${this.prs.mode} (every ${this.cfg.prPollSeconds}s)`);
     // plans recorded before goals carried their plan id
@@ -494,12 +520,23 @@ export class ClaudeBackend implements Backend {
       this.authFailed = false;
       this.fm.setStatus({ auth: 'ok', account, message: `Claude (lead ${this.cfg.leadModel}, workers ${this.cfg.workerModel})` });
       this.fm.log.info(`claude auth ok (${account})`);
+      if (this.offline) {
+        this.offline = undefined;
+        this.fm.bus.feed('system', 'Claude is reachable again: the team picks up where it stopped');
+      }
+      this.refreshHold();
       return true;
     } catch (e) {
+      const why = (e as Error).message ?? String(e);
+      if (probeFailure(why) === 'retry') {
+        // the network, a sleeping machine, an API outage: not a bad login. Retry with backoff.
+        this.goOffline(why);
+        return false;
+      }
       this.markAuthFailed(
         this.cfg.useClaudeLogin
-          ? `Claude login check failed: ${(e as Error).message}. Run \`claude\` and /login, then restart the Foreman. The sim backend still works.`
-          : `Claude API check failed: ${(e as Error).message}. Check ANTHROPIC_API_KEY (or your cloud provider settings), then restart the Foreman. The sim backend still works.`,
+          ? `Claude login check failed: ${why}. Run \`claude\` and /login, then restart the Foreman. The sim backend still works.`
+          : `Claude API check failed: ${why}. Check ANTHROPIC_API_KEY (or your cloud provider settings), then restart the Foreman. The sim backend still works.`,
       );
       return false;
     } finally {
@@ -513,11 +550,83 @@ export class ClaudeBackend implements Backend {
 
   private markAuthFailed(message: string): void {
     this.authFailed = true;
+    this.authMessage = message;
+    this.offline = undefined;
+    if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
+    this.authRetryTimer = undefined;
     this.fm.setStatus({ auth: 'failed', message });
     this.fm.log.error(message);
     this.fm.bus.feed('error', message);
     this.fm.notify('warn', message);
+    this.fm.notifyExternal('auth', message);
     if (process.stdout.isTTY) process.stdout.write('\x07');
+    this.refreshHold();
+  }
+
+  /** The auth probe could not reach Claude: hold new turns and probe again later (backoff). */
+  private goOffline(why: string): void {
+    const delayMs = this.offline ? Math.min(AUTH_RETRY_MAX_MS, this.offline.delayMs * 2) : (this.opts.authRetryMs ?? AUTH_RETRY_MS);
+    const first = !this.offline;
+    const retryAt = Date.now() + delayMs;
+    this.offline = { delayMs, retryAt, message: `Claude could not be reached (${truncate(why, 120)}); trying again at ${clock(retryAt)}. Work waits meanwhile.` };
+    this.fm.setStatus({ auth: 'checking', message: this.offline.message });
+    if (first) {
+      this.fm.log.warn(this.offline.message);
+      this.fm.bus.feed('error', this.offline.message);
+    } else this.fm.log.info(`claude still unreachable (${truncate(why, 120)}); next try ${clock(retryAt)}`);
+    this.refreshHold();
+    if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
+    this.authRetryTimer = setTimeout(() => {
+      this.authRetryTimer = undefined;
+      if (this.stopping) return;
+      void this.checkAuth().then((ok) => {
+        if (ok) this.tick();
+      });
+    }, delayMs);
+    this.authRetryTimer.unref?.();
+  }
+
+  /** New agent turns wait: auth failed, offline, a usage limit, or usage above the reserve. */
+  private held(now = Date.now()): boolean {
+    return this.authFailed || !!this.offline || this.limited(now) || !!this.reserved(now);
+  }
+
+  /** claude.usageReserve: the window above its reserve, while it lasts. */
+  private reserved(now = Date.now()): ReturnType<typeof reserveHold> {
+    return reserveHold(this.fm.status.usage, this.cfg.usageReserve, now);
+  }
+
+  /** What holds new turns right now (C9 foreman.status.hold), most important first. */
+  private currentHold(now = Date.now()): ForemanHold | undefined {
+    if (this.authFailed) return { reason: 'auth', message: this.authMessage || 'Claude authentication failed' };
+    if (this.offline) return { reason: 'offline', until: this.offline.retryAt, message: this.offline.message };
+    const l = this.st.limit;
+    if (l && now < l.until) return { reason: 'usage', until: l.until, message: `Usage limit reached${l.type ? ` (${l.type.replace(/_/g, ' ')})` : ''}: agents wait until ${clock(l.until)}, then resume` };
+    const r = this.reserved(now);
+    if (r) return { reason: 'usage', until: r.until, message: `Usage ${r.window.label} at ${r.window.pct}% (reserve ${r.limit}%): no new agent turns until ${clock(r.until)}, so some is left for you` };
+    return undefined;
+  }
+
+  /**
+   * Publish the hold (foreman.status.hold) and react to it changing: the reserve is announced once
+   * when it starts holding; when nothing holds any more, queued work starts.
+   */
+  private refreshHold(now = Date.now()): void {
+    const hold = this.currentHold(now);
+    const before = this.fm.status.hold;
+    const reserve = !!this.reserved(now) && !this.limited(now) && !this.authFailed && !this.offline;
+    if (reserve && !this.reserveActive && hold) {
+      this.fm.bus.feed('system', `${hold.message}.`);
+      this.fm.notify('warn', hold.message);
+      this.fm.notifyExternal('usage', hold.message);
+    }
+    this.reserveActive = reserve;
+    if (JSON.stringify(hold) === JSON.stringify(before)) return;
+    this.fm.setStatus({ hold });
+    if (before && !hold && !this.stopping) {
+      for (const id of this.queues.keys()) this.pump(id);
+      this.tick();
+    }
   }
 
   /** An agent's own open question (the PR watcher's decisions to the user are not the agent's). */
@@ -614,6 +723,8 @@ export class ClaudeBackend implements Backend {
     if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.limitTimer) clearTimeout(this.limitTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
+    if (this.wakeTimer) clearInterval(this.wakeTimer);
     const turns = [...this.running.values()];
     for (const r of turns) this.abortTurn(r, 'shutdown');
     const designs = this.designs.stop();
@@ -742,6 +853,7 @@ export class ClaudeBackend implements Backend {
     this.fm.setStatus({ usage: u });
     const now = usageLine(u);
     if (now !== before) this.fm.log.info(`plan usage: ${now}`);
+    this.refreshHold();
   }
 
   /** At most every few minutes, while some agent has a live session: the CLI's /usage windows. */
@@ -765,8 +877,10 @@ export class ClaudeBackend implements Backend {
     if (!prev || Date.now() >= prev.until) {
       this.fm.bus.feed('error', `${what}. Nobody starts a new turn until ${clock(until)}; interrupted work resumes then.`);
       this.fm.notify('warn', `${what}: AgentCraft resumes at ${clock(until)}`);
+      this.fm.notifyExternal('usage', `${what}: agents resume at ${clock(until)}`);
     }
     this.armLimitTimer();
+    this.refreshHold();
   }
 
   /** Wake up when the earliest limit/throttle window ends. */
@@ -807,6 +921,7 @@ export class ClaudeBackend implements Backend {
       this.fm.store.markDirty();
       this.tick();
     }
+    this.refreshHold(now);
   }
 
   /**
@@ -917,7 +1032,7 @@ export class ClaudeBackend implements Backend {
   }
 
   private async schedule(): Promise<void> {
-    if (this.authFailed || this.stopping || this.limited()) return;
+    if (this.stopping || this.held()) return;
     // the design queue first: the goal loop below returns early when the workers are at the cap
     this.designs.kick();
     for (const goal of this.fm.goals().filter((g) => g.status === 'active')) {
@@ -993,7 +1108,7 @@ export class ClaudeBackend implements Backend {
   }
 
   private pump(agentId: string): void {
-    if (this.stopping || this.authFailed || this.limited()) return;
+    if (this.stopping || this.held()) return;
     if (this.running.has(agentId)) return;
     const a = this.fm.agent(agentId);
     if (!a || a.paused || !a.active || this.isStopped(agentId)) return;
@@ -1361,7 +1476,7 @@ export class ClaudeBackend implements Backend {
         const msg = (e as Error).message ?? String(e);
         this.fm.log.error(`${agentId} ${job.kind} failed: ${msg}`);
         this.fm.agentLog(agentId, 'error', `session error: ${truncate(msg, 400)}`);
-        if (/auth|login|credential|401/i.test(msg)) this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
+        if (isAuthText(msg)) this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
         stats = { isError: true, errors: [msg] };
         const l = limitFromText(msg);
         if (l.limited) {
@@ -1558,7 +1673,7 @@ export class ClaudeBackend implements Backend {
         const msg = (e as Error).message ?? String(e);
         this.fm.log.error(`${logId} ${spec.sessionKey} failed: ${msg}`);
         this.fm.agentLog(logId, 'error', `session error: ${truncate(msg, 400)}`);
-        if (/auth|login|credential|401/i.test(msg)) {
+        if (isAuthText(msg)) {
           stats.authFailed = truncate(msg, 160);
           this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
         }

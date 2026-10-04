@@ -210,6 +210,8 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'claude.prPollSeconds', group: 'prs', type: 'int', min: 15, max: 3600, label: 'Poll pull requests every (seconds)', help: 'How often watched pull requests are checked.', live: true, flags: ['pr-poll-seconds'], def: 180, get: g('claude.prPollSeconds') },
     // usage
     { key: 'claude.maxBudgetUsdPerTurn', group: 'usage', type: 'int', min: 0, max: 1000, label: 'Budget per turn (USD)', help: 'Stop an agent turn that costs more than this many dollars. 0: no cap. From the next turn.', live: true, flags: ['max-budget'], def: 0, get: (cfg) => cfg.claude.maxBudgetUsdPerTurn ?? 0, normalize: (v) => ({ value: v === 0 ? undefined : v }) },
+    { key: 'claude.usageReserve.fiveHourPct', group: 'usage', type: 'int', min: 0, max: 100, label: 'Reserve: 5-hour window (%)', help: 'With your claude.ai login: no new agent turn starts while the 5-hour usage window is at or above this, until it resets, so some is left for you. 0: no reserve.', live: true, def: 85, get: g('claude.usageReserve.fiveHourPct') },
+    { key: 'claude.usageReserve.sevenDayPct', group: 'usage', type: 'int', min: 0, max: 100, label: 'Reserve: 7-day window (%)', help: 'Same for the 7-day window. 0: no reserve.', live: true, def: 80, get: g('claude.usageReserve.sevenDayPct') },
     { key: 'claude.useClaudeLogin', group: 'usage', type: 'bool', label: 'Use your claude.ai login', help: 'Run the agents on your local claude CLI login (your plan) instead of an API key. Personal use only. After a restart.', live: false, flags: ['use-claude-login'], envs: ['AGENTCRAFT_USE_CLAUDE_LOGIN'], def: false, get: g('claude.useClaudeLogin') },
   ];
   // per agent: role title, specialty prompt, model, effort
@@ -623,6 +625,7 @@ export function applyLive(running: Config, next: Config): void {
   c.leadReview = n.leadReview;
   c.prWatch = n.prWatch;
   c.prPollSeconds = n.prPollSeconds;
+  Object.assign(c.usageReserve, n.usageReserve);
   if (n.maxConcurrentTurns) c.maxConcurrentTurns = n.maxConcurrentTurns;
   else delete c.maxConcurrentTurns;
   if (n.maxBudgetUsdPerTurn) c.maxBudgetUsdPerTurn = n.maxBudgetUsdPerTurn;

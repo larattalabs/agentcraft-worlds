@@ -81,6 +81,25 @@ export interface ClaudeConfig {
   prWatch: 'off' | 'observe' | 'on';
   /** how often watched PRs are polled (seconds, default 180) */
   prPollSeconds: number;
+  /**
+   * claude.ai login: keep part of the plan for the user's own Claude use. No new agent turn starts
+   * while a usage window is at or above its percentage (0 = no reserve for that window), until the
+   * window resets. Default 85 (5-hour) / 80 (7-day).
+   */
+  usageReserve: UsageReserve;
+}
+
+export interface UsageReserve {
+  fiveHourPct: number;
+  sevenDayPct: number;
+}
+
+export const DEFAULT_USAGE_RESERVE: UsageReserve = { fiveHourPct: 85, sevenDayPct: 80 };
+
+function usageReserve(v: unknown): UsageReserve {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const pct = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(0, Math.min(100, x)) : d);
+  return { fiveHourPct: pct(o.fiveHourPct, DEFAULT_USAGE_RESERVE.fiveHourPct), sevenDayPct: pct(o.sevenDayPct, DEFAULT_USAGE_RESERVE.sevenDayPct) };
 }
 
 /**
@@ -549,6 +568,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       subagents: subagentsConfig(fileClaude.subagents),
       prWatch: prWatchMode(flags['pr-watch'] ?? env.AGENTCRAFT_PR_WATCH ?? fileClaude.prWatch),
       prPollSeconds: Math.max(15, num(flags['pr-poll-seconds'] ?? fileClaude.prPollSeconds, 180)),
+      usageReserve: usageReserve(fileClaude.usageReserve),
     },
     sim: {
       speed: Math.max(0.05, num(flags.speed ?? env.AGENTCRAFT_SIM_SPEED ?? fileSim.speed, 1)),

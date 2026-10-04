@@ -337,6 +337,13 @@ export const PlanUsage = z.object({
 });
 export type PlanUsage = z.infer<typeof PlanUsage>;
 
+export const ForemanHold = z.object({
+  reason: z.enum(['usage', 'auth', 'offline']).describe('usage: a usage limit was hit, or usage is above claude.usageReserve; auth: the login / API key failed (until a restart); offline: Claude could not be reached (retried with backoff)'),
+  until: Ts.optional().describe('when the hold is expected to end (usage: the window resets; offline: the next retry)'),
+  message: z.string().describe('one line for a persistent HUD line'),
+});
+export type ForemanHold = z.infer<typeof ForemanHold>;
+
 export const ForemanStatus = z.object({
   version: z.string(),
   backend: BackendName,
@@ -349,6 +356,7 @@ export const ForemanStatus = z.object({
   userName: z.string().optional().describe('the person the team works for, as the agents address them (UI: "<name> answered")'),
   usage: PlanUsage.optional().describe('claude.ai login: how much of the plan\'s usage windows is used (from the agents\' sessions)'),
   restartRequired: z.array(z.string()).optional().describe('config keys changed (config.set) that take effect only after a restart (`foreman.restart`); omitted when none'),
+  hold: ForemanHold.optional().describe('claude: the backend is holding new agent turns (usage limit or reserve, auth failure, offline); absent when nothing holds them. Running turns finish; queued work starts when the hold ends'),
 });
 export type ForemanStatus = z.infer<typeof ForemanStatus>;
 

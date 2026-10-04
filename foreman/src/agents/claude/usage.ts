@@ -72,3 +72,28 @@ export async function readPlanUsage(q: object, prev: PlanUsage | undefined, time
 export function usageLine(u: PlanUsage | undefined): string {
   return (u?.windows ?? []).map((w) => `${w.label} ${w.pct}%`).join(' · ');
 }
+
+/** How long a reserve hold lasts when its window has no reset time (one turn then refreshes the data). */
+export const RESERVE_STALE_MS = 30 * 60_000;
+
+/**
+ * claude.usageReserve: the window that holds new turns (at or above its reserve percentage), and
+ * until when. A window whose reset time passed no longer holds; one without a reset time holds for
+ * RESERVE_STALE_MS after the data was read (no turn runs while held, so nothing would refresh it).
+ */
+export function reserveHold(
+  usage: PlanUsage | undefined,
+  reserve: { fiveHourPct: number; sevenDayPct: number },
+  now = Date.now(),
+): { window: UsageWindow; limit: number; until: number } | undefined {
+  if (!usage) return undefined;
+  let hit: { window: UsageWindow; limit: number; until: number } | undefined;
+  for (const w of usage.windows) {
+    const limit = w.id === 'five_hour' ? reserve.fiveHourPct : w.id === 'seven_day' ? reserve.sevenDayPct : 0;
+    if (!limit || w.pct < limit) continue;
+    const until = w.resetsAt ?? usage.updatedAt + RESERVE_STALE_MS;
+    if (until <= now) continue;
+    if (!hit || until > hit.until) hit = { window: w, limit, until };
+  }
+  return hit;
+}
