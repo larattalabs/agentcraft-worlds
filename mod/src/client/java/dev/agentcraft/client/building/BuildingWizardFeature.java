@@ -1,5 +1,6 @@
 package dev.agentcraft.client.building;
 
+import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -49,7 +50,7 @@ public final class BuildingWizardFeature {
 	public static void init() {
 		Keys.ensureRegistered();
 		BuildingCommands.wizardOpener = player -> Minecraft.getInstance().execute(BuildingWizardFeature::open);
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("wizard.tick", () -> {
 			while (Keys.build.consumeClick()) {
 				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active() && !PlotMarker.active()) {
 					open();
@@ -57,15 +58,15 @@ public final class BuildingWizardFeature {
 			}
 			BuildPlacement.tick(mc);
 			PlotMarker.tick(mc);
-		});
+		}));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(() -> {
 			BuildPlacement.cancel();
 			PlotMarker.cancelQuietly();
 		}));
-		LevelRenderEvents.COLLECT_SUBMITS.register(GhostRenderer::submit);
-		LevelRenderEvents.COLLECT_SUBMITS.register(GhostRenderer::submitPlot);
-		HudElementRegistry.addLast(AgentCraft.id("hud/building_wizard"), new PlacementHud());
-		HudElementRegistry.addLast(AgentCraft.id("hud/plot_marker"), new PlotHud());
+		LevelRenderEvents.COLLECT_SUBMITS.register(ctx -> Guard.run("wizard.ghost", () -> GhostRenderer.submit(ctx)));
+		LevelRenderEvents.COLLECT_SUBMITS.register(ctx -> Guard.run("wizard.plot", () -> GhostRenderer.submitPlot(ctx)));
+		HudElementRegistry.addLast(AgentCraft.id("hud/building_wizard"), dev.agentcraft.client.ui.GuardedHud.of("hud.building_wizard", new PlacementHud()));
+		HudElementRegistry.addLast(AgentCraft.id("hud/plot_marker"), dev.agentcraft.client.ui.GuardedHud.of("hud.plot_marker", new PlotHud()));
 		DevBridge.registerScreen("build_repos", mc -> new RepoPickScreen(List.of()));
 		DevBridge.registerScreen("build_blueprints", mc -> new BlueprintPickScreen(defaultRepos(1)));
 		registerDev();

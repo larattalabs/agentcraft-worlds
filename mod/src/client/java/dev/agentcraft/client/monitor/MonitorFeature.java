@@ -1,5 +1,6 @@
 package dev.agentcraft.client.monitor;
 
+import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.entity.ModBlockEntities;
@@ -87,7 +88,7 @@ public final class MonitorFeature {
 			}
 		});
 		// forget screens whose panel has not been drawn for a while (broken, unloaded, re-shaped)
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("monitor.sweep", () -> {
 			if (mc.level == null || (mc.level.getGameTime() % 200) != 0) {
 				return;
 			}
@@ -98,7 +99,7 @@ public final class MonitorFeature {
 					it.remove();
 				}
 			}
-		});
+		}));
 		DevBridge.register("dev.displays", 10_000, "{look?: paper|dark|split, reset?: bool} -> monitor look, laid-out monitor screens, "
 			+ "display CPU cost per frame since the last reset", (req, mc) -> {
 			Fields f = Fields.of(req);

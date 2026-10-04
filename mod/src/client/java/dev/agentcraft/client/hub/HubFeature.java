@@ -1,5 +1,6 @@
 package dev.agentcraft.client.hub;
 
+import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -45,13 +46,13 @@ public final class HubFeature {
 
 	public static void init() {
 		Keys.ensureRegistered();
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hub.tick", () -> {
 			while (Keys.hub.consumeClick()) {
 				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active() && !dev.agentcraft.client.building.PlotMarker.active()) {
 					open(null);
 				}
 			}
-		});
+		}));
 		DevBridge.registerScreen("hub", mc -> new HubScreen(HubTab.BUILDINGS));
 		for (HubTab t : HubTab.values()) {
 			DevBridge.registerScreen("hub_" + t.id, mc -> new HubScreen(t));

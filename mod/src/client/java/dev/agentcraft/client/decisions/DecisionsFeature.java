@@ -1,5 +1,6 @@
 package dev.agentcraft.client.decisions;
 
+import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.DecisionPodiumBlock;
@@ -60,7 +61,7 @@ public final class DecisionsFeature {
 				AgentsFeature.registerDecisionScreen(kind, (mc, d, parent) -> new DecisionScreen(d.id(), parent));
 			}
 		}
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("decisions.tick", () -> {
 			if (mc.player == null) {
 				return;
 			}
@@ -69,7 +70,7 @@ public final class DecisionsFeature {
 					openQueue(null, null);
 				}
 			}
-		});
+		}));
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onDecision(@Nullable Decision previous, Decision decision) {
