@@ -214,7 +214,11 @@ final class BlueprintPickScreen extends WizardScreen {
 		int contentW = panelW - Kit.padding("panel_paper").left() - Kit.padding("panel_paper").right();
 		int rw = Math.max(100, Math.min(DETAIL_MAX, contentW - 150));
 		Blueprint cur = current();
-		List<String> facts = cur == null ? List.of() : TextUtil.wrapPlain(font, "Entrance at the bottom \u2193 \u00b7 ground row " + cur.groundY(), rw);
+		String fact = cur == null ? "" : "Entrance at the bottom \u2193 \u00b7 ground row " + cur.groundY();
+		if (cur != null && font.width(fact) > rw) {
+			fact = "Entrance \u2193 \u00b7 ground row " + cur.groundY(); // a lone number on its own line read oddly
+		}
+		List<String> facts = cur == null ? List.of() : TextUtil.wrapPlain(font, fact, rw);
 		List<String> desc = cur == null ? List.of()
 			: TextUtil.wrapPlain(font, cur.description().isEmpty() ? cur.id() : cur.description(), rw - 8);
 		int factsH = facts.size() * 10 + 3;
