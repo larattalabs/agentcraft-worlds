@@ -359,6 +359,11 @@ final class SettingsForm {
 		if (!d.help().isBlank()) {
 			if (compact) {
 				g.text(font(), TextUtil.ellipsize(font(), d.help(), w), x, y, muted, false);
+				// cut to one line here: the whole text as a tooltip on hover (426x240, the 4K auto scale)
+				if (font().width(d.help()) > w && area != null && mx >= x && mx < x + w && my >= y - 1 && my < y + 9 && my >= area[1]
+					&& my < area[1] + area[3]) {
+					g.setTooltipForNextFrame(font(), font().split(net.minecraft.network.chat.Component.literal(d.help()), Math.max(120, w * 2 / 3)), mx, my);
+				}
 				y += 10;
 			} else {
 				y += text(g, d.help(), muted, x, y, w);
