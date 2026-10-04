@@ -29,9 +29,20 @@ class AlertLineTest {
 	void visibleAndNeedsYou() {
 		assertFalse(AlertLine.NONE.visible());
 		assertTrue(new AlertLine(0, 0, 0, "auth", null, null).visible(), "a hold alone shows");
-		assertEquals(0, new AlertLine(0, 0, 0, "auth", null, null).needsYou(), "holds are not counted");
+		assertEquals(1, new AlertLine(0, 0, 0, "auth", null, null).needsYou(), "a hold is one Inbox item, like InboxModel.Counts");
 		assertEquals(6, new AlertLine(2, 1, 3, null, null, null).needsYou());
 		assertFalse(new AlertLine(-1, 0, 0, " ", null, null).visible(), "negative counts and blank reasons are nothing");
+	}
+
+	/** Regression (wave 2 merge): PRs needing attention are in the Inbox's Needs you, so the line and badge count them. */
+	@Test
+	void prsAreCountedAndShown() {
+		AlertLine a = new AlertLine(1, 0, 0, 2, "usage", AT_1420, null);
+		assertTrue(new AlertLine(0, 0, 0, 1, null, null, null).visible());
+		assertEquals(4, a.needsYou(), "1 decision + 2 PRs + the hold = the Inbox's Needs you");
+		assertEquals("1 decision · 2 PRs · usage paused until 14:20", a.text(AlertLine.Level.FULL, UTC, NOW));
+		assertEquals("1 PR", new AlertLine(0, 0, 0, 1, null, null, null).text(AlertLine.Level.FULL, UTC, NOW));
+		assertEquals("1 dec · 2 PR · paused → 14:20", a.text(AlertLine.Level.SHORT, UTC, NOW));
 	}
 
 	@Test

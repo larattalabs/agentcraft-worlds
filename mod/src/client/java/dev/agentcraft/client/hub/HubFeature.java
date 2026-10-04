@@ -68,6 +68,11 @@ public final class HubFeature {
 				}
 
 				@Override
+				public int prs() {
+					return c.prs();
+				}
+
+				@Override
 				public dev.agentcraft.client.foreman.Protocol.ForemanHold hold() {
 					return hold;
 				}

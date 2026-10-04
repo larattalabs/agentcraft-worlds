@@ -19,6 +19,11 @@ public interface AlertCounts {
 	/** Agent replies to the user not seen yet. */
 	int replies();
 
+	/** PRs needing attention (new review threads, failing checks); the Inbox's count. */
+	default int prs() {
+		return 0;
+	}
+
 	/** The backend's hold (contract C9), or null. */
 	Protocol.@Nullable ForemanHold hold();
 }

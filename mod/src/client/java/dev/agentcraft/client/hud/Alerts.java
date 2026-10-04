@@ -46,7 +46,7 @@ public final class Alerts {
 		cachedRev = Long.MIN_VALUE;
 	}
 
-	/** The current line (decisions, blocked, replies, hold). */
+	/** The current line (decisions, blocked, replies, PRs, hold). */
 	public static AlertLine line() {
 		ForemanState s = Foreman.state();
 		long rev = s == null ? -1 : s.revision();
@@ -54,7 +54,7 @@ public final class Alerts {
 		if (rev != cachedRev || now - cachedAt > MAX_AGE_MS) {
 			AlertCounts c = source.get();
 			Protocol.ForemanHold h = c.hold();
-			cached = new AlertLine(c.decisions(), c.blocked(), c.replies(), h == null ? null : h.reason(), h == null ? null : h.until(),
+			cached = new AlertLine(c.decisions(), c.blocked(), c.replies(), c.prs(), h == null ? null : h.reason(), h == null ? null : h.until(),
 				h == null ? null : h.message());
 			cachedRev = rev;
 			cachedAt = now;
@@ -72,6 +72,7 @@ public final class Alerts {
 		o.addProperty("decisions", a.decisions());
 		o.addProperty("blocked", a.blocked());
 		o.addProperty("replies", a.replies());
+		o.addProperty("prs", a.prs());
 		o.addProperty("needsYou", a.needsYou());
 		o.addProperty("hold", a.holdReason());
 		o.addProperty("holdUntil", a.holdUntil());
