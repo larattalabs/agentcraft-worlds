@@ -225,15 +225,18 @@ explicit interior air, bindings, and C5:
 - shell: the outside (padded template box above the ground row; unwritten cells there count as open)
   is flood-filled through everything a mob could pass (air, carpet, buttons, lanterns and other small
   blocks; not cubes, glass, panes, closed doors, slabs, stairs), once with the AgentCraft blocks and
-  once with them as air; walk cells reached only without them are an error naming the AgentCraft
-  block in the shell. Walk cells reached with them are a warning (an open door, gap or courtyard);
+  once with them as air; any cell (walk, attic, cavity) reached only without them is an error naming
+  the AgentCraft block in the shell. A pass that cannot rise above `walk.maxY` finds openings in the
+  walls: walk cells it reaches are an error (a doorway without a closed door, a gap); walk cells
+  reached only from above are a warning (open to the sky: a courtyard);
 - light: vanilla block light from vanilla emitters only, -1 per step, opaque cubes stop it, glass and
   panes pass it, slabs and stairs block it through their full faces (2x2x2 voxel faces, vanilla's
   shape occlusion); run with AgentCraft blocks as opaque non-emitters and again as air; every walk
   cell with no collision (air, carpet, buttons) needs level >= 1;
   dark spots in enclosed space outside walk (an attic) where a mob could spawn are a warning;
 - doors: written closed; a door next to an outside cell is iron; every iron door has a stone button
-  on each side on a full, opaque (conductive) block touching one of its halves;
+  on each side on a full, opaque, redstone-conductive block (not glowstone or a sea lantern) touching one of its
+  halves;
 - `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block.
 
 ## Verify loop (tools)
