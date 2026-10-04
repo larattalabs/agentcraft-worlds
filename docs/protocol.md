@@ -1278,7 +1278,7 @@ First message after connecting. The Foreman replies with `snapshot`, then stream
 | `modVersion` | string | yes |  |
 | `protocol` | 1 | yes |  |
 | `client` | string | no | "mod" \| "cli" \| ... (informational) |
-| `token` | string | no | the client token: the contents of the file the run file names in `tokenFile` (`<dataDir>/client.token`, new on every Foreman start). Without a valid token the connection is read-only: snapshot and events, and only `hello`, `diff.request` and `goal.digest`; every other message is refused (`ack.ok` false, "read-only connection: no client token") |
+| `token` | string | no | the client token: the contents of the file the run file names in `tokenFile` (`<dataDir>/client.token`, new on every Foreman start). Without a valid token the connection is read-only: snapshot and events, and only `hello`, `diff.request`, `goal.digest` and `agent.logs.request`; every other message is refused (`ack.ok` false, "read-only connection: no client token") |
 
 ```json
 {
@@ -1742,6 +1742,28 @@ Restart the Foreman with the same arguments, environment and working directory (
   "v": 1,
   "type": "foreman.restart",
   "id": "c33"
+}
+```
+
+### `agent.logs.request`
+
+Older entries of an agent's log (the full history the Foreman stored, across one rotation: `logs/<agent>.jsonl` and `<agent>.1.jsonl`), for a scrollable log view; read-only (allowed without the client token). Acked with `{agentId, entries: LogEntry[], more}`: `entries` oldest first, all older than `before`; `more` = older entries exist (ask again with `before` = the first entry's `ts`). An unknown agent is refused.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `agentId` | string | yes |  |
+| `before` | integer | no | only entries older than this (the `ts` of the oldest entry the client has); omitted = the newest |
+| `limit` | integer | no | at most this many entries (default 200); entries sharing the oldest one's `ts` are never split, so a page can be slightly longer |
+
+```json
+{
+  "v": 1,
+  "type": "agent.logs.request",
+  "id": "c36",
+  "agentId": "kit",
+  "before": 1790850000000,
+  "limit": 200
 }
 ```
 

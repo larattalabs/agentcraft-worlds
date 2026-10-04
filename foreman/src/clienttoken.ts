@@ -4,7 +4,7 @@
 // Foreman writes a random token to <dataDir>/client.token (mode 0600, a new one on every start) and
 // lists that path in its run file (RunInfo.tokenFile). A client that sends it in `hello` may do
 // everything; any other connection is read-only (snapshot and events, plus hello / diff.request /
-// goal.digest). The mod and the tools read the run file to find it; the agent policy denies agents
+// goal.digest / agent.logs.request). The mod and the tools read the run file to find it; the agent policy denies agents
 // the file (policy.ts, foremanPrivateVerdict). `--no-client-token` (dev only) turns this off.
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ import { writeFileAtomic } from './util/fsx.js';
 export const CLIENT_TOKEN_FILE = 'client.token';
 
 /** Client messages a connection without the token may send. */
-export const READ_ONLY_TYPES: ReadonlySet<string> = new Set(['hello', 'diff.request', 'goal.digest']);
+export const READ_ONLY_TYPES: ReadonlySet<string> = new Set(['hello', 'diff.request', 'goal.digest', 'agent.logs.request']);
 
 export const READ_ONLY_ERROR = 'read-only connection: no client token';
 

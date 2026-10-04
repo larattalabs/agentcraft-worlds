@@ -294,6 +294,7 @@ export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
   },
   'foreman.restart': { v: 1, type: 'foreman.restart', id: 'c33' },
   'repo.agents': { v: 1, type: 'repo.agents', id: 'c34', repoId: 'demo-app' },
+  'agent.logs.request': { v: 1, type: 'agent.logs.request', id: 'c36', agentId: 'kit', before: ts, limit: 200 },
   'user.message': { v: 1, type: 'user.message', id: 'c13', to: 'all', text: '@kit please also cover #tags with emoji' },
   'decision.answer': { v: 1, type: 'decision.answer', id: 'c14', decisionId: 'd2', option: 'Request changes', text: 'Export TAG_RE so format.ts can reuse it.' },
   'task.action': { v: 1, type: 'task.action', id: 'c15', taskId: 't5', action: 'reassign', arg: 'wren' },

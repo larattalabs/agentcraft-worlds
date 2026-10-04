@@ -289,7 +289,78 @@ export class Store {
     return tail;
   }
 
+  /**
+   * A page of an agent's stored log, newest last (agent.logs.request): up to `limit` entries older than
+   * `before` (all when absent), read backwards from the end of the current file and then the rotated one
+   * (`<agent>.1.jsonl`), so paging walks across a rotation. Entries sharing the timestamp of the page's
+   * oldest entry are kept together (a page may exceed `limit` by that group, never splits it, so paging by
+   * `before = page[0].ts` loses nothing). `more`: older entries exist.
+   */
+  readLog(agentId: string, before: number | undefined, limit: number): { entries: LogEntry[]; more: boolean } {
+    const out: LogEntry[] = []; // newest first while collecting
+    let more = false;
+    let cut: number | undefined; // ts of the last entry taken once the limit was reached
+    outer: for (const file of [this.logFile(agentId), this.rotatedLogFile(agentId)]) {
+      for (const line of readLinesBackward(file)) {
+        let e: LogEntry;
+        try {
+          e = JSON.parse(line) as LogEntry;
+        } catch {
+          continue; // torn line
+        }
+        if (typeof e?.ts !== 'number') continue;
+        if (before !== undefined && e.ts >= before) continue;
+        if (cut !== undefined) {
+          if (e.ts === cut && out.length < limit * 2) {
+            out.push(e);
+            continue;
+          }
+          more = true;
+          break outer;
+        }
+        out.push(e);
+        if (out.length >= limit) cut = e.ts;
+      }
+    }
+    return { entries: out.reverse(), more };
+  }
+
   close(): void {
     this.flush();
+  }
+}
+
+/** The complete lines of a file, last first, read in chunks from the end (a missing file yields nothing). */
+function* readLinesBackward(file: string, chunk = 64 * 1024): Generator<string> {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return;
+  }
+  try {
+    let pos = fs.fstatSync(fd).size;
+    let rest = Buffer.alloc(0); // bytes after the last newline seen so far (the start of a line)
+    while (pos > 0) {
+      const len = Math.min(chunk, pos);
+      pos -= len;
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, pos);
+      let data = Buffer.concat([buf, rest]);
+      let end = data.length;
+      for (let i = data.length - 1; i >= 0; i--) {
+        if (data[i] === 0x0a) {
+          const line = data.subarray(i + 1, end).toString('utf8');
+          if (line.trim()) yield line;
+          end = i;
+        }
+      }
+      rest = Buffer.from(data.subarray(0, end));
+      data = Buffer.alloc(0);
+    }
+    const first = rest.toString('utf8');
+    if (first.trim()) yield first;
+  } finally {
+    fs.closeSync(fd);
   }
 }

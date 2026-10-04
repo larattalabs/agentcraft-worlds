@@ -104,6 +104,37 @@ describe('persistence', () => {
     expect(tail[0]!.ts).toBe(400);
   });
 
+  it('pages through the full agent log across the rotation (agent.logs.request)', () => {
+    const dir = tempDir();
+    dirs.push(dir);
+    const s = new Store(dir, { debounceMs: 1, logMaxBytes: 20_000 });
+    // two entries share every timestamp: a page never splits such a pair
+    for (let i = 0; i < 300; i++) s.appendLog('kit', [{ ts: 1000 + i, kind: 'text', text: `a ${i} ${'x'.repeat(40)}` }, { ts: 1000 + i, kind: 'tool', text: `b ${i}` }]);
+    expect(fs.existsSync(path.join(dir, 'logs', 'kit.1.jsonl'))).toBe(true);
+    const first = s.readLog('kit', undefined, 7);
+    expect(first.more).toBe(true);
+    expect(first.entries.map((e) => e.ts)).toEqual([1296, 1296, 1297, 1297, 1298, 1298, 1299, 1299]); // 7 + the rest of 1296's pair
+    expect(first.entries.at(-1)!.text).toBe('b 299'); // oldest first, file order kept
+    // walk back to the start of what is stored; nothing repeats, nothing is lost
+    const seen = [...first.entries];
+    let before = first.entries[0]!.ts;
+    for (let guard = 0; guard < 1000; guard++) {
+      const page = s.readLog('kit', before, 50);
+      expect(page.entries.every((e) => e.ts < before)).toBe(true);
+      seen.unshift(...page.entries);
+      if (!page.more) break;
+      before = page.entries[0]!.ts;
+    }
+    const ts = seen.map((e) => e.ts);
+    expect(ts).toEqual([...ts].sort((a, b) => a - b));
+    expect(new Set(seen.map((e) => e.text)).size).toBe(seen.length);
+    // everything both files hold, i.e. more than the in-memory tail
+    const stored = ['kit.1.jsonl', 'kit.jsonl'].map((f) => fs.readFileSync(path.join(dir, 'logs', f), 'utf8').split('\n').filter(Boolean).length).reduce((a, b) => a + b);
+    expect(seen).toHaveLength(stored);
+    expect(seen.length).toBeGreaterThan(200);
+    expect(s.readLog('nobody', undefined, 10)).toEqual({ entries: [], more: false });
+  });
+
   it('run files: one per profile; a live owner keeps <home>/foreman.json; release hands it over', async () => {
     const home = tempDir();
     dirs.push(home);

@@ -324,7 +324,7 @@ decisions, and with config.set loosen its own permissions). From now on:
 - The Foreman writes a random token to `<dataDir>/client.token` (mode 0600, new per start) and lists
   its path in the run file.
 - `hello` takes `token?`. Without a valid token a connection is **read-only**: snapshot and events, and
-  only `hello`/`diff.request`/`goal.digest`. Every other client message is refused (`ok:false`,
+  only `hello`/`diff.request`/`goal.digest`/`agent.logs.request`. Every other client message is refused (`ok:false`,
   "read-only connection: no client token").
 - The mod (it reads the run file's token path), `tools/foremancli.mjs` and the dev tools send it.
 - The agent policy denies agents: reading `client.token` or anything under the Foreman home's profile

@@ -1213,6 +1213,11 @@ export class Foreman {
       case 'agent.action':
         await this.agentAction(msg.agentId, msg.action, msg.arg);
         return { agentId: msg.agentId };
+      case 'agent.logs.request': {
+        const id = this.resolveAgentId(msg.agentId);
+        if (!id) throw new ClientError(`no agent named "${msg.agentId}"`);
+        return { agentId: id, ...this.store.readLog(id, msg.before, msg.limit ?? 200) };
+      }
       case 'diff.request': {
         try {
           const d = await this.repos.diff(msg.repoId, msg.worktree);
