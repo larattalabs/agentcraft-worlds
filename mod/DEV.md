@@ -83,6 +83,7 @@ Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world.
 | `AGENTCRAFT_MUTE` | 1 | Forces master and music volume to 0 at startup. **Set `0` for real use** (for example in launch.ps1) to keep your own volume |
 | `AGENTCRAFT_FOCUS` | 0 | `0`: the window is shown **without activating it**, so it never steals focus. `1`: normal "come to front" |
 | `AGENTCRAFT_AUTOWORLD` | 1 | `0`: stay on the title screen |
+| `AGENTCRAFT_PAUSE` | (dev run or DevBridge: 0, else 1) | Whether AgentCraft screens pause a singleplayer game (contract C6). Everyday play pauses like vanilla menus; dev runs and clients with the DevBridge on keep the world running for QA. `dev.ui.pause {on}` changes it at runtime |
 | `AGENTCRAFT_SHOTS_DIR` | `<repo>/artifacts/shots` | Where `dev.screenshot` writes |
 | `AGENTCRAFT_DEV_ALLOW_ORIGIN` | 0 | `1` lets browser pages (which send an Origin header) connect. They are refused by default |
 | `AGENTCRAFT_DEV_TEST` | 0 | `1` registers test-only commands (`dev.test.stall`, which blocks the render thread to simulate a hung game; `dev.test.foremanMessage`). Never set it for real use |
@@ -146,7 +147,7 @@ treated the same, other binary frames get an `ok:false` reply).
 |---|---|---|
 | `dev.ping` | (none) | `{pong, frame, msSinceLastFrame, stalled, quitting}`. Answered on the socket thread, so it answers while the game loads **and while it is hung**. `stalled:true` = the render thread has not finished a frame for 5 s (QA: relaunch) |
 | `dev.help` | (none) | All commands with help text, plus registered screens |
-| `dev.state` | (none) | `inWorld`, **`ready`** (in a world with no loading screen or overlay: safe to shoot), `paused` (a pausing screen is open, so the integrated server is stopped), `screen{class,title}` or null, `fps`, `frame`, `window{width,height,framebufferWidth/Height,renderWidth/Height,guiScale,focused,osForeground,iconified}`, `hudHidden`, `fov` (what the last frame was rendered with), `fovOption` (the player's setting), `fovPin` (dev camera pin, null = none), `cameraType`, `audio{master,music}`, `player{name,x,y,z,eyeY,yaw,pitch,flying,gameMode}`, `camera{x,y,z,yaw,pitch,fov}`, `world{name,dimension,time,raining,thundering}`, `chunks{renderedAll,lightQueue,loadedAll,renderDistance}` (player/camera/world/chunks are null outside a world), `foreman{link, connected, url, attempt, lastError, phaseForMs, everSynced, snapshots, messages, lastMessageAgoMs, stale, backend, auth, message, version, counts{agents, activeAgents, tasks, openTasks, decisions, openDecisions, repos, memory, goals, feed}, goal?, oldestOpenDecision}`, `agents{count, moving, pathFailures, plates, plateOverlaps, plateLayoutUs}` (plates = nameplates laid out last frame, plateOverlaps = pairs of drawn plates overlapping on screen last frame, 0 when settled; plateLayoutUs = mean cost of the declutter pass) |
+| `dev.state` | (none) | `inWorld`, **`ready`** (in a world with no loading screen or overlay: safe to shoot), `paused` (a pausing screen is open, so the integrated server is stopped), `screen{class,title}` or null, `fps`, `frame`, `window{width,height,framebufferWidth/Height,renderWidth/Height,guiScale,focused,osForeground,iconified}`, `hudHidden`, `fov` (what the last frame was rendered with), `fovOption` (the player's setting), `fovPin` (dev camera pin, null = none), `cameraType`, `audio{master,music}`, `player{name,x,y,z,eyeY,yaw,pitch,flying,gameMode}`, `camera{x,y,z,yaw,pitch,fov}`, `world{name,dimension,time,raining,thundering}`, `chunks{renderedAll,lightQueue,loadedAll,renderDistance}` (player/camera/world/chunks are null outside a world), `foreman{link, connected, url, attempt, lastError, phaseForMs, everSynced, snapshots, messages, lastMessageAgoMs, stale, backend, auth, message, version, counts{agents, activeAgents, tasks, openTasks, decisions, openDecisions, repos, memory, goals, feed}, goal?, oldestOpenDecision}`, `agents{count, moving, pathFailures, plates, plateOverlaps, plateLayoutUs}` (plates = nameplates laid out last frame, plateOverlaps = pairs of drawn plates overlapping on screen last frame, 0 when settled; plateLayoutUs = mean cost of the declutter pass), `ui{screensPause, screen, screenPauses, gamePaused, parent, guards{kind: failures}}` (C6 pausing, the open screen's parent = where Esc returns, crash-guard counts) |
 | `dev.camera` | `anchor?` (fills x/y/z/yaw/pitch from the published layout, see `dev.anchors`; `cam_*` anchors are eye positions, other anchors feet positions; explicit fields win), `x,y,z` + (`yaw,pitch` **or** `lookAt:{x,y,z}`, lookAt wins), `fov?` (30-110, may be fractional; **default: the player's FOV option**), `mode?` = `spectator` (default) / `creative` (flying) / `keep`, `feet?` (default false: x,y,z is the **eye** position), `hideHud?`, `closePause?` (default true: closes a vanilla pause menu first) | Validates first: all numbers finite; `pitch` in [-90, 90]; `yaw` any finite value (wrapped to [-180, 180)); `y` in [-20000000, 19999999] (vanilla `/tp`'s limit); x/z inside the **world border** (±29999984); lookAt not equal to the eye. Then forces first person, stops spectating other entities, teleports on the server thread, waits until the client has the exact position, pins position and rotation with no interpolation, and **only replies ok once a rendered frame used exactly the requested eye position (±0.01), rotation (±0.05°) and FOV**; otherwise `ok:false` with wanted vs got (`mode:keep` skips that check, since walking players fall). Returns the actual `camera{x,y,z,yaw,pitch,fov}`. Yaw: 0 = +Z (south), 90 = -X (west), -90 = +X (east). Pitch: positive looks down. **FOV pin:** each call renders with exactly its `fov` (or the option), ignoring vanilla's dynamic FOV (flying widens it by 1.1x, so before this pin a "70" shot really rendered at 77). Nothing carries over between calls and `options.txt` is never touched |
 | `dev.release` | `mode?` = `creative` (default) / `keep` | Hands the view back to the player: clears the FOV pin (vanilla FOV again), shows the HUD, spectator -> creative (flying, so you don't fall) |
 | `dev.screenshot` | `name` (letters, digits, `_ - . /`; `.png` added), `hideHud?` (default true), `frames?` (3, 1-600), `waitChunks?` (true), `chunkRadius?` (whole render distance, 0-64), `chunkTimeoutMs?` (30000, 0-600000) | Hides the HUD, waits until all chunks within the render distance are loaded and meshed and the light queue is empty for 5 consecutive frames, waits N more frames, then copies the **main render target** (the framebuffer, so it doesn't depend on window focus or overlap). Writes the PNG and restores the HUD. Returns `{path, width, height, ms, chunksTimedOut, paused, stats{meanLuma,stdLuma,darkFraction}}`. Use the stats to catch black frames. Open screens are included in the capture. `width`/`height` are **not supported** (the shot is the window framebuffer size, 1920x1080). The default request timeout grows with `chunkTimeoutMs` and `frames` |
@@ -172,7 +173,12 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.agents` | `settle?` (false) | Every agent NPC: `id, entityId, x,y,z, yaw, station, anchor, target{x,y,z,yaw}, walking, path[[x,y,z]...], state, activity, stale, model, skin`, and `plate{mode full\|compact, lift, target, rank, nudge, scale, depth, weight, focused, capped, rect[x0,y0,x1,y1] in screen px}` when its nameplate was laid out last frame; top level also has `plates, plateOverlaps`; `dev.state.agents` also has `plateOverlapPairs` ("rowan/wren": which plates overlapped last frame) and `exclaims`. `settle:true` snaps walking agents to their targets and the nameplates to their final layout on the next frame (no one mid-walk, no plate mid-slide in a shot) |
 | `dev.anchors` | `prefix?` | The published layout: `{layout, revision, bounds, anchors:{name:{x,y,z,yaw,pitch}}, count}` |
 | `dev.agents.look` | `agent?` | Agent life per agent: `{id, family, awaitingUser, awaitingDecision, needsYou, paused, posture, seated, sit, seat{x,z,top,drop,deskTop}?, bodyYaw, headYaw, headPitch, bubble, particles}`; top level `exclaims` (agents showing the "!"), `card{agent, input}` while an agent card is open (`input` = its message line, null when closed), `textInputActive` (SDL text input on: typed characters are delivered) |
-| `dev.agents.card` | `agent` | Opens the agent card for that agent (like right-clicking it) |
+| `dev.agents.card` | `agent`, `press?` = `message`/`pause`/`stop`/`review` | Opens the agent card for that agent (like an empty-hand sneak + right-click), or presses a button on its open card (Stop needs two presses: `stopArmed`); returns `stopArmed`, `status`, `screen` (after `review`: the decision's screen) |
+| `dev.ui.pause` | `on?` (bool; omit = the environment's default) | Forces AgentCraft screens to pause (or not) in singleplayer for this session; returns the `ui` state |
+| `dev.guard.inject` | `kind` (`agents.tick`, `agents.plates`, `hq.tick`, `wizard.tick`, `wizard.ghost`, `hub.tick`, `console.tick`, `decisions.tick`, `hud.toasts`, ...) | The next run of that guarded client handler throws: it must be logged once, counted in `dev.state` `ui.guards`, and the game keeps running |
+| `dev.library.lectern` | `x`, `y`, `z` | Whether a right-click on the lectern there opens the library (`opensLibrary`, the `building` holding it) or is left to vanilla |
+| `dev.team.card` | `agent` | The hub Team tab's Card button: the agent card with the hub as its parent (Esc returns to the hub) |
+| `dev.team.release` | `world` | The Team tab's Release for a world holding leads (`lead.releaseWorld {world}`; the hub must be open); returns the note |
 | `dev.agents.fx` | `agent`, `fx` = `confetti`/`puff`/`sparkle`/`say`, `text?`, `to?` | Plays an agent effect now (QA preview; `say` shows a local speech bubble, nothing is sent) |
 | `dev.agents.keys` | `keys` (comma-separated: key names `space return escape back tab left right`, or text typed letter by letter, a-z 0-9 space) | **Test only** (`AGENTCRAFT_DEV_TEST=1`): presses keys as SDL reports a keyboard (SDL events queued for the game window, one key every 3 frames, through Minecraft's SDL event loop; printable keys produce text events only while SDL text input is on). Returns `{pressed, textEvents, screen, input?, textInputActive}`. `tools/agents-typing.mjs` uses it to check the agent card's message line |
 | `dev.test.foremanMessage` | `message:{type, ...}` | **Test only** (`AGENTCRAFT_DEV_TEST=1`): applies a Foreman message to the state model as if received (e.g. `foreman.status` with `auth:"failed"` to see the auth banner) |
@@ -872,6 +878,43 @@ name on the screen).
   arrived as `C:/Program Files/Git/agentcraft hq`). Use `devcli cmd "agentcraft hq"`; the slash is optional.
 - A Foreman profile can only run once at a time. Parallel specialists must use their own `--profile`
   (and port).
+
+## Interaction rules (fix wave 1, stream ui)
+
+docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraft.ui.UiRules` (unit-tested,
+`UiRulesTest`); the crash guard in `dev.agentcraft.ui.Guard` (`GuardTest`).
+
+- **Pause (C6)**: every AgentCraft screen's `isPauseScreen()` is `ScreenPause.pauses()`: true for a jar in a
+  normal launcher (singleplayer pauses like a vanilla menu), false in dev runs and with the DevBridge on
+  (`AGENTCRAFT_PAUSE`, `dev.ui.pause`). Server tasks (hub actions) still run while paused.
+- **Agent NPCs**: targetable only while the player sneaks with an empty main hand
+  (`ClientAgentEntity#isPickable`); that sneak + right-click opens the card, anything else is the item's
+  use, and swings/mining go through to the block behind. Attacks on agents stay cancelled.
+- **Lecterns**: `StationInteractions.onUse(block, filter, handler)`; the library takes a lectern only
+  inside a recorded building box (or the dev HQ), without a book and with no book in hand.
+- **Diff**: `DiffFeature` installs `DiffLink`'s opener (exact decision/worktree, parent); there is no
+  fallback to the DevBridge `diff` screen (it reviews the oldest merge). `DiffScreen` answers only its own
+  open merge on the shown repo/worktree, through `DecisionsFeature.answer`; Ctrl+Enter arms the same
+  confirm as the Merge button.
+- **Parents**: `DiffScreen`, `ConsoleScreen`, `AgentCardScreen`, `DecisionScreen` and `TaskScreen` take a
+  parent (`withParent`, `HasParent`): Esc and a finished answer return there.
+- **Agent card**: Review/Answer/Decide for any open decision of the agent (factories registered for every
+  decision kind: merges -> `DiffScreen`, others -> `DecisionScreen`), "filed for you" lines open theirs,
+  answers go through `DecisionsFeature.answer`, Message opens the console returning to the card, Stop
+  asks for a second press. `AgentsFeature.openCard(id, parent)` opens it from the Team tab, a task's
+  assignee and the console roster.
+- **Free text (C1)**: `Decision.textAllowed` (absent = true; always true without options) hides the text
+  box in the decision screen and the goal thread's "Answer with text"; `/answer` refuses text for them.
+- **Crash guards**: client tick, level-render (nameplates, ghost/plot, card outline) and HUD handlers run
+  through `Guard.run(kind, ...)`: a failure is logged once per kind, counted, and the game keeps running.
+- **Teleport (C7)**: `HubActions.teleportAllowed` (commands allowed, or creative/spectator), checked by the
+  hub button and on the server.
+- **Keys**: the building wizard key is unbound by default (B clashed with Xaero); the hub's Place new
+  stays. An existing `options.txt` keeps whatever it saved.
+- **Enter**: single-line inputs send on Enter (Ctrl+Enter too; Shift+Enter = new line); multi-line inputs
+  make Enter a new line and send on Ctrl+Enter (`TextKeys.enter`).
+- **Console**: plain text asks "Create a goal …? Enter again" (the second Enter creates it; `/goal`
+  skips); a console opened at a terminal sends goals to its building's repo.
 
 ## Tools (repo `tools/`, Node 22, local `ws` dependency: run `npm install` in tools/ once)
 
