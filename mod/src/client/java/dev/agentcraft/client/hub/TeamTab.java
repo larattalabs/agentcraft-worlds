@@ -301,6 +301,11 @@ final class TeamTab implements HubPane {
 
 	/** {@code lead.releaseWorld {world}}: the Foreman drops that world's assignments (they come back if it is loaded again). */
 	java.util.concurrent.CompletableFuture<String> releaseWorld(String world) {
+		if (Buildings.worldId() == null) {
+			releaseNote = "Load your singleplayer world first (then the other worlds are known)";
+			releaseError = true;
+			return java.util.concurrent.CompletableFuture.completedFuture(releaseNote);
+		}
 		if (!Foreman.connected()) {
 			releaseNote = "The Foreman is not connected";
 			releaseError = true;
@@ -345,7 +350,9 @@ final class TeamTab implements HubPane {
 			o.leads().forEach(l -> names.add(UiBits.agentName(l)));
 			String line = o.world() + ": " + String.join(", ", names) + (o.lastSync() > 0 ? " · synced " + UiBits.ago(o.lastSync()) : "");
 			g.text(hub.font(), TextUtil.ellipsize(hub.font(), line, w - rw - 6), x, y + 6, UiBits.ink(), false);
-			hub.button(g, "team_release:" + o.world(), rel, x + w - rw, y, rw, false, !Foreman.connected(), false, mx, my, () -> releaseWorld(o.world()));
+			// with no singleplayer world loaded every world reads as "other": no Release then (it could free this world's own leads)
+			hub.button(g, "team_release:" + o.world(), rel, x + w - rw, y, rw, false, !Foreman.connected() || Buildings.worldId() == null, false, mx, my,
+				() -> releaseWorld(o.world()));
 			y += 22;
 		}
 		if (releaseNote != null) {

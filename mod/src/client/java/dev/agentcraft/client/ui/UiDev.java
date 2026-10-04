@@ -28,6 +28,18 @@ public final class UiDev {
 					return state(mc);
 				});
 			});
+		DevBridge.register("dev.player.sneak", 5_000, "{on: bool} - hold (or release) the sneak key, as a held Shift would (agents are targetable only"
+			+ " while sneaking with an empty main hand)", (req, mc) -> {
+				boolean on = Fields.of(req).bool("on");
+				return DevBridge.onClient(mc, () -> {
+					mc.options.keyShift.setDown(on);
+					JsonObject o = new JsonObject();
+					o.addProperty("sneakKeyDown", mc.options.keyShift.isDown());
+					o.addProperty("sneaking", mc.player != null && mc.player.isShiftKeyDown());
+					o.addProperty("mainHandEmpty", mc.player != null && mc.player.getMainHandItem().isEmpty());
+					return o;
+				});
+			});
 		DevBridge.register("dev.guard.inject", 5_000,
 			"{kind} - the next run of that guarded client handler throws (agents.tick, agents.plates, hq.tick, wizard.tick, ...); see dev.state ui.guards",
 			(req, mc) -> {

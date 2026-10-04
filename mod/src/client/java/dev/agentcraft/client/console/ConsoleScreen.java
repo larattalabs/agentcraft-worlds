@@ -339,8 +339,9 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 		}
 		String raw = input.value();
 		Intent in = ConsoleCommands.parse(raw, s, preferRepo());
-		if (pendingGoal == null && in instanceof Goal g && g.plain() && !UiRules.plainGoalConfirmed(armedGoal, raw)) {
-			// plain text never silently creates a goal: the first Enter asks, the second (same text) creates it
+		if (pendingGoal == null && in instanceof Goal g && g.plain() && g.choices().isEmpty() && !UiRules.plainGoalConfirmed(armedGoal, raw)) {
+			// plain text never silently creates a goal: the first Enter asks, the second (same text) creates it (with
+			// several repos the repo chooser below is that confirm)
 			armedGoal = raw;
 			return;
 		}

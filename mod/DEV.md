@@ -174,6 +174,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.anchors` | `prefix?` | The published layout: `{layout, revision, bounds, anchors:{name:{x,y,z,yaw,pitch}}, count}` |
 | `dev.agents.look` | `agent?` | Agent life per agent: `{id, family, awaitingUser, awaitingDecision, needsYou, paused, posture, seated, sit, seat{x,z,top,drop,deskTop}?, bodyYaw, headYaw, headPitch, bubble, particles}`; top level `exclaims` (agents showing the "!"), `card{agent, input}` while an agent card is open (`input` = its message line, null when closed), `textInputActive` (SDL text input on: typed characters are delivered) |
 | `dev.agents.card` | `agent`, `press?` = `message`/`pause`/`stop`/`review` | Opens the agent card for that agent (like an empty-hand sneak + right-click), or presses a button on its open card (Stop needs two presses: `stopArmed`); returns `stopArmed`, `status`, `screen` (after `review`: the decision's screen) |
+| `dev.player.sneak` | `on` (bool) | Holds (or releases) the sneak key mapping, like a held Shift; returns `sneaking`, `mainHandEmpty` (agents are targetable, `dev.agents.look` `pickable`, only both) |
 | `dev.ui.pause` | `on?` (bool; omit = the environment's default) | Forces AgentCraft screens to pause (or not) in singleplayer for this session; returns the `ui` state |
 | `dev.guard.inject` | `kind` (`agents.tick`, `agents.plates`, `hq.tick`, `wizard.tick`, `wizard.ghost`, `hub.tick`, `console.tick`, `decisions.tick`, `hud.toasts`, ...) | The next run of that guarded client handler throws: it must be logged once, counted in `dev.state` `ui.guards`, and the game keeps running |
 | `dev.library.lectern` | `x`, `y`, `z` | Whether a right-click on the lectern there opens the library (`opensLibrary`, the `building` holding it) or is left to vanilla |
@@ -886,7 +887,10 @@ docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraf
 
 - **Pause (C6)**: every AgentCraft screen's `isPauseScreen()` is `ScreenPause.pauses()`: true for a jar in a
   normal launcher (singleplayer pauses like a vanilla menu), false in dev runs and with the DevBridge on
-  (`AGENTCRAFT_PAUSE`, `dev.ui.pause`). Server tasks (hub actions) still run while paused.
+  (`AGENTCRAFT_PAUSE`, `dev.ui.pause`). While paused the integrated server still runs queued tasks and its
+  connections (`IntegratedServer.tickPaused` -> `tickConnection`), so hub actions get their reply and a
+  teleport moves the player at once, but block changes (Remove, podium state) are broadcast by the chunk tick
+  and show only after the screen closes.
 - **Agent NPCs**: targetable only while the player sneaks with an empty main hand
   (`ClientAgentEntity#isPickable`); that sneak + right-click opens the card, anything else is the item's
   use, and swings/mining go through to the block behind. Attacks on agents stay cancelled.
@@ -914,7 +918,8 @@ docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraf
 - **Enter**: single-line inputs send on Enter (Ctrl+Enter too; Shift+Enter = new line); multi-line inputs
   make Enter a new line and send on Ctrl+Enter (`TextKeys.enter`).
 - **Console**: plain text asks "Create a goal …? Enter again" (the second Enter creates it; `/goal`
-  skips); a console opened at a terminal sends goals to its building's repo.
+  skips; with several repos the repo chooser is the confirm); a console opened at a terminal sends goals to
+  its building's repo.
 
 ## Tools (repo `tools/`, Node 22, local `ws` dependency: run `npm install` in tools/ once)
 
