@@ -14,7 +14,8 @@ package dev.agentcraft.walk;
  *       stand in, on or under it;</li>
  *   <li>{@link #DOOR}: doors, fence gates and trapdoors: agents pass through them (client-only entities open
  *       nothing in the world; they walk through the closed door like a ghost), never stand on them;</li>
- *   <li>{@link #LEAVES}: solid, but not a floor (routes never cross tree canopies); a head may brush through them;</li>
+ *   <li>{@link #LEAVES}: leaves and natural (unstripped) logs: solid, but not a floor (routes never cross tree canopies or
+ *       trunk tops); a head may brush through leaves;</li>
  *   <li>{@link #UNLOADED}: the chunk is not loaded on the client;</li>
  *   <li>{@link #BLOCKED}: below the world (solid, not a floor);</li>
  *   <li>{@link #SOLID}: a collision shape with that top (16 = a full block, 8 = a slab, 24 = a fence).</li>
