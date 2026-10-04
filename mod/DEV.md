@@ -644,7 +644,9 @@ queue, cache, setting, stats, dev commands), `agents/LevelTerrain` (block states
 - `agentcraft:village_board` (`VillageBoardBlock`/`VillageBoardBlockEntity`, a `PanelBlock` like the task board, models
   borrowed from the task board) drawn by `client.village.VillageBoardRenderer` from a `BoardView` (prepared per panel origin,
   rebuilt only when the content, page, size or density changes; swept after 30 s unseen). Content: `village.VillageBoard`
-  (pure). The trophy ledger is copied from the server thread every 5 s (`Trophies.hung()`) while a board is in use.
+  (pure), rebuilt when buildings, world, hung trophies, the Inbox or the link change, every 30 s, and on a Foreman revision
+  change at most once a second (`VillageBoard.rebuildDue`: the revision moves on every log line); an equal rebuild keeps the old
+  instance so the views do not redraw. The trophy ledger is copied from the server thread every 5 s (`Trophies.hung()`) while a board is in use.
 - Hub: Buildings > **Fixtures** (`HubScreen.Sub.FIXTURES`: list + Teleport (cheats), Remove (twice), Move, Undo move; top right
   **Place village board…** / "Place board…" when narrow). A fixture blueprint's **Place** in the Blueprints list skips the
   repo step. `selectBuilding(id)` with a fixture id switches to the Fixtures list; `selectedSite()` is what the list on show acts on.

@@ -142,4 +142,21 @@ class VillageBoardTest {
 		assertEquals("3 days ago", VillageBoard.ago(NOW - 3 * DAY, NOW));
 		assertEquals("just now", VillageBoard.ago(NOW + 10_000, NOW)); // clock skew: never negative
 	}
+
+	@Test
+	void foremanRevisionAloneRebuildsAtMostOnceASecond() {
+		long built = 10_000;
+		// first build and other inputs: at once
+		assertTrue(VillageBoard.rebuildDue(false, false, true, built, 0));
+		assertTrue(VillageBoard.rebuildDue(true, false, false, built + 1, built));
+		assertTrue(VillageBoard.rebuildDue(true, true, false, built + 1, built));
+		// streaming output: the revision moves every frame, the board waits
+		assertFalse(VillageBoard.rebuildDue(false, true, false, built + 16, built));
+		assertFalse(VillageBoard.rebuildDue(false, true, false, built + 999, built));
+		assertTrue(VillageBoard.rebuildDue(false, true, false, built + 1000, built));
+		// nothing changed: never
+		assertFalse(VillageBoard.rebuildDue(false, false, false, built + 60_000, built));
+		// a clock that went back does not freeze the board
+		assertTrue(VillageBoard.rebuildDue(false, true, false, built - 5, built));
+	}
 }

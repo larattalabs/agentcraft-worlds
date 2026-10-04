@@ -81,6 +81,8 @@ public final class VillageBoardFeature {
 	private static long keyInbox;
 	private static boolean keyConnected;
 	private static long keyBucket;
+	/** When the content was last built (ms): Foreman revisions alone rebuild at most once a second. */
+	private static long builtAt;
 	private static volatile List<Trophies.Hung> hung = List.of();
 	private static long hungVersion;
 	private static int ticks;
@@ -97,6 +99,7 @@ public final class VillageBoardFeature {
 			hung = List.of();
 			content = VillageBoard.Content.EMPTY;
 			keyRevision = Long.MIN_VALUE;
+			builtAt = 0;
 		}));
 		DevBridge.registerScreen("hub_fixtures", mc -> {
 			HubScreen s = new HubScreen(HubTab.BUILDINGS);
@@ -161,7 +164,12 @@ public final class VillageBoardFeature {
 		return v;
 	}
 
-	/** The board content, rebuilt when its inputs changed (and every 30 s, for "5 min ago" and the week's start). */
+	/**
+	 * The board content, rebuilt when its inputs changed (and every 30 s, for "5 min ago" and the week's start). The Foreman
+	 * revision moves on every log line, say and agent event while agents stream output, so a revision change alone rebuilds at
+	 * most once a second ({@link VillageBoard#rebuildDue}); and a rebuild that comes out equal keeps the old instance, so the
+	 * board views (which compare by identity) do not redraw.
+	 */
 	static VillageBoard.Content content() {
 		ForemanState st = Foreman.state();
 		long now = System.currentTimeMillis();
@@ -171,8 +179,9 @@ public final class VillageBoardFeature {
 		long inbox = Inbox.revision();
 		boolean connected = Foreman.connected();
 		long bucket = now / 30_000;
-		if (rev == keyRevision && sites == keySites && Objects.equals(world, keyWorld) && hungVersion == keyHung && inbox == keyInbox
-			&& connected == keyConnected && bucket == keyBucket) {
+		boolean other = !(sites == keySites && Objects.equals(world, keyWorld) && hungVersion == keyHung && inbox == keyInbox
+			&& connected == keyConnected && bucket == keyBucket);
+		if (!VillageBoard.rebuildDue(other, rev != keyRevision, keyRevision == Long.MIN_VALUE, now, builtAt)) {
 			return content;
 		}
 		keyRevision = rev;
@@ -182,7 +191,11 @@ public final class VillageBoardFeature {
 		keyInbox = inbox;
 		keyConnected = connected;
 		keyBucket = bucket;
-		content = VillageBoard.build(input(st, now));
+		builtAt = now;
+		VillageBoard.Content next = VillageBoard.build(input(st, now));
+		if (!next.equals(content)) {
+			content = next;
+		}
 		return content;
 	}
 

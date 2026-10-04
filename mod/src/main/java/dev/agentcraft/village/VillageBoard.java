@@ -142,6 +142,21 @@ public final class VillageBoard {
 		public static final Content EMPTY = new Content(List.of(), List.of(), null, 0, "", 0, 0, 0);
 	}
 
+	/** The least time between two rebuilds caused only by a Foreman revision change (it moves on every log line). */
+	public static final long REVISION_THROTTLE_MS = 1000;
+
+	/**
+	 * Whether the board content must be rebuilt now. A change of anything but the Foreman revision (buildings, world, hung
+	 * trophies, the Inbox, the link, the 30 s bucket) or a first build rebuilds at once; a revision change alone waits until
+	 * {@link #REVISION_THROTTLE_MS} have passed since the last build (it is still pending then, so the last change is never lost).
+	 */
+	public static boolean rebuildDue(boolean otherChanged, boolean revisionChanged, boolean never, long nowMs, long builtAtMs) {
+		if (never || otherChanged) {
+			return true;
+		}
+		return revisionChanged && (nowMs - builtAtMs >= REVISION_THROTTLE_MS || nowMs < builtAtMs);
+	}
+
 	/** Builds the content. */
 	public static Content build(Input in) {
 		long week = weekStart(in.now(), in.zone());
