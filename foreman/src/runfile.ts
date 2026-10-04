@@ -19,6 +19,8 @@ export interface RunInfo {
   profile: string;
   version: string;
   startedAt: string;
+  /** absolute path of the client token file (clienttoken.ts); absent with --no-client-token */
+  tokenFile?: string;
 }
 
 export function profileRunFile(dataDir: string): string {
@@ -66,6 +68,33 @@ export async function liveOwner(file: string): Promise<RunInfo | undefined> {
   const r = read(file);
   if (!r || r.pid === process.pid || !pidAlive(r.pid)) return undefined;
   return (await portAnswers(r.host || '127.0.0.1', r.port)) ? r : undefined;
+}
+
+/**
+ * The client token of the Foreman listening on `port` (clienttoken.ts), for local tools: the
+ * AGENTCRAFT_CLIENT_TOKEN variable, else the token file named by the run file (<home>/foreman.json or
+ * <home>/<profile>/foreman.json) whose port matches (any run file when `port` is not given).
+ */
+export function readClientToken(home: string, port?: number, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const fromEnv = env.AGENTCRAFT_CLIENT_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  const files = [homeRunFile(home)];
+  try {
+    for (const d of fs.readdirSync(home, { withFileTypes: true })) if (d.isDirectory()) files.push(profileRunFile(path.join(home, d.name)));
+  } catch {
+    return undefined;
+  }
+  for (const f of files) {
+    const r = read(f);
+    if (!r?.tokenFile || (port !== undefined && r.port !== port)) continue;
+    try {
+      const t = fs.readFileSync(r.tokenFile, 'utf8').trim();
+      if (t) return t;
+    } catch {
+      /* stale run file */
+    }
+  }
+  return undefined;
 }
 
 /** Record this Foreman: always in its profile; in <home> unless another live Foreman holds it. */

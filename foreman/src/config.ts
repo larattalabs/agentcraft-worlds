@@ -2,6 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isSecretEnvVar } from './util/env.js';
 import { readJson } from './util/fsx.js';
 import type { BackendName } from './protocol.js';
 import { defaultUserName } from './user.js';
@@ -160,6 +161,12 @@ export interface Config {
   /** the person the team works for (prompts, feed, UI); default: the OS user name */
   userName: string;
   home: string;
+  /** <home>/config.json */
+  configFile: string;
+  /** the command-line arguments this configuration came from (foreman.restart starts with them again) */
+  argv: string[];
+  /** the flags given and the AGENTCRAFT_* variables set (names only): they win over config.json */
+  overrides: { flags: string[]; env: string[] };
   profile: string;
   /** profile directory: <home>/<profile> */
   dataDir: string;
@@ -178,6 +185,8 @@ export interface Config {
   projectRoot: string;
   /** reject WebSocket upgrades that carry a browser Origin (CSRF-style protection) */
   allowBrowserOrigins: boolean;
+  /** require the client token (clienttoken.ts) for anything but read-only use; --no-client-token (dev) turns it off */
+  clientToken: boolean;
   /** how often the main checkouts are polled for head/dirty changes (ms) */
   repoPollMs: number;
   /** approved merges: a merge commit (keeps the agents' commits) or one squashed commit */
@@ -277,7 +286,7 @@ function agentProfiles(v: unknown): Record<string, AgentProfile> {
   const out: Record<string, AgentProfile> = {};
   if (!v || typeof v !== 'object') return out;
   for (const [id, raw] of Object.entries(v as Record<string, unknown>)) {
-    if (!/^[a-z0-9_-]+$/i.test(id) || !raw || typeof raw !== 'object') continue;
+    if (!isAgentId(id.toLowerCase()) || !raw || typeof raw !== 'object') continue;
     const o = raw as Record<string, unknown>;
     const p: AgentProfile = {};
     if (str(o.title)) p.title = (o.title as string).trim().slice(0, 40);
@@ -320,6 +329,14 @@ function subagentsConfig(v: unknown): SubagentsConfig {
 
 export const DEFAULT_LEADS = ['marlow', 'ines', 'bram', 'cass'];
 
+/** Object keys that would reach Object.prototype: never an id or a config path segment. */
+export const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** An agent / lead id: lowercase letters, digits, - and _ (and not a reserved object key). */
+export function isAgentId(id: string): boolean {
+  return /^[a-z0-9_-]+$/.test(id) && !RESERVED_KEYS.has(id);
+}
+
 /**
  * claude.leads / --leads / AGENTCRAFT_LEADS: an id list (array or comma list). Normalized to start
  * with "marlow"; [] or a single entry means marlow alone (today's single lead).
@@ -328,7 +345,7 @@ export function leadsList(v: unknown): string[] {
   if (v === undefined) return [...DEFAULT_LEADS];
   const raw = Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : [];
   const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string').map((x) => x.trim().toLowerCase()).filter(Boolean))];
-  for (const id of ids) if (!/^[a-z0-9_-]+$/.test(id)) throw new Error(`bad lead id "${id}" (lowercase letters, digits, - and _)`);
+  for (const id of ids) if (!isAgentId(id)) throw new Error(`bad lead id "${id}" (lowercase letters, digits, - and _)`);
   if (ids.length <= 1) return ['marlow'];
   return ['marlow', ...ids.filter((x) => x !== 'marlow')];
 }
@@ -359,7 +376,7 @@ export const KNOWN_FLAGS = new Set([
   'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges',
   'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
-  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns',
+  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns', 'client-token',
 ]);
 
 /**
@@ -375,14 +392,38 @@ function checkArgs(flags: Flags, positional: string[]): void {
   if (positional.length) throw new Error(`unexpected argument "${positional[0]}" (options start with --; see --help)`);
 }
 
+/** Every environment variable loadConfig reads (only their presence is recorded: Config.overrides). */
+export const CONFIG_ENV_VARS = [
+  'AGENTCRAFT_HOME', 'AGENTCRAFT_BACKEND', 'AGENTCRAFT_PROFILE', 'AGENTCRAFT_WORKERS', 'AGENTCRAFT_USER_NAME', 'AGENTCRAFT_PORT',
+  'AGENTCRAFT_NOTIFY', 'AGENTCRAFT_TOAST_SILENT', 'AGENTCRAFT_DEBUG', 'AGENTCRAFT_MERGE_STYLE', 'AGENTCRAFT_SIGN_MERGES',
+  'AGENTCRAFT_LEAD_MODEL', 'AGENTCRAFT_WORKER_MODEL', 'AGENTCRAFT_DESIGN_MODEL', 'AGENTCRAFT_LEADS', 'AGENTCRAFT_USE_CLAUDE_LOGIN',
+  'AGENTCRAFT_PR_WATCH', 'AGENTCRAFT_SIM_SPEED',
+];
+
+/** <home>/config.json, home from --home / AGENTCRAFT_HOME / ~/.agentcraft */
+export function configFilePath(argv: string[], env: NodeJS.ProcessEnv = process.env): string {
+  const { flags } = parseFlags(argv);
+  return path.join(path.resolve(str(flags.home) ?? env.AGENTCRAFT_HOME ?? path.join(os.homedir(), '.agentcraft')), 'config.json');
+}
+
 export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env): Config {
+  return configFrom(argv, env);
+}
+
+/**
+ * The configuration from defaults < `file` (default: <home>/config.json as it is on disk) <
+ * environment < flags. config.set validates a candidate file with it before writing.
+ */
+export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?: Record<string, unknown>): Config {
   const { flags, positional } = parseFlags(argv);
   checkArgs(flags, positional);
   const home = path.resolve(str(flags.home) ?? env.AGENTCRAFT_HOME ?? path.join(os.homedir(), '.agentcraft'));
-  const file = readJson<Record<string, unknown>>(path.join(home, 'config.json')) ?? {};
+  const configFile = path.join(home, 'config.json');
+  const file = fileOverride ?? readJson<Record<string, unknown>>(configFile) ?? {};
   const fileClaude = (file.claude ?? {}) as Record<string, unknown>;
   const fileSim = (file.sim ?? {}) as Record<string, unknown>;
-  const pick = (k: string, envKey?: string): unknown => flags[k] ?? (envKey ? env[envKey] : undefined) ?? file[k];
+  // file keys: camelCase (what the Settings tab writes), or the flag's spelling
+  const pick = (k: string, envKey?: string, fileKey?: string): unknown => flags[k] ?? (envKey ? env[envKey] : undefined) ?? (fileKey ? file[fileKey] : undefined) ?? file[k];
 
   const backendRaw = String(pick('backend', 'AGENTCRAFT_BACKEND') ?? 'claude');
   if (backendRaw !== 'sim' && backendRaw !== 'claude') throw new Error(`unknown backend "${backendRaw}" (use sim or claude)`);
@@ -403,8 +444,9 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
     : typeof workersRaw === 'string'
       ? /^\d+$/.test(workersRaw)
         ? ['juniper', 'kit', 'wren', 'rowan', 'tove'].slice(0, Math.max(1, Math.min(5, Number(workersRaw))))
-        : workersRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        : workersRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
       : ['juniper', 'kit', 'wren'];
+  for (const id of workers) if (typeof id !== 'string' || !isAgentId(id)) throw new Error(`bad worker id "${String(id)}" (lowercase letters, digits, - and _)`);
 
   const repoSettings: Record<string, RepoSettings> = {};
   if (file.repoSettings && typeof file.repoSettings === 'object') {
@@ -418,7 +460,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       if (typeof o.setupTimeoutMs === 'number' && o.setupTimeoutMs > 0) s.setupTimeoutMs = o.setupTimeoutMs;
       if (o.roles && typeof o.roles === 'object') {
         const roles: Record<string, string> = {};
-        for (const [id, spec] of Object.entries(o.roles as Record<string, unknown>)) if (/^[a-z0-9_-]+$/i.test(id) && str(spec)) roles[id.toLowerCase()] = spec as string;
+        for (const [id, spec] of Object.entries(o.roles as Record<string, unknown>)) if (isAgentId(id.toLowerCase()) && str(spec)) roles[id.toLowerCase()] = spec as string;
         if (Object.keys(roles).length) s.roles = roles;
       }
       if (o.subagents === 'repo') s.subagents = 'repo';
@@ -444,7 +486,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       }
       if (o.env && typeof o.env === 'object') {
         const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && typeof v === 'string') env[k] = v;
+        for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && !isSecretEnvVar(k) && typeof v === 'string') env[k] = v;
         if (Object.keys(env).length) s.env = env;
       }
       repoSettings[path.resolve(k.replace(/^~(?=$|[\\/])/, os.homedir()))] = s;
@@ -454,8 +496,11 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const model = str(flags.model);
   const cfg: Config = {
     backend,
-    userName: (str(pick('user-name', 'AGENTCRAFT_USER_NAME')) ?? str(file.userName))?.trim().slice(0, 40) || defaultUserName(),
+    userName: (str(pick('user-name', 'AGENTCRAFT_USER_NAME', 'userName')))?.trim().slice(0, 40) || defaultUserName(),
     home,
+    configFile,
+    argv: [...argv],
+    overrides: { flags: Object.keys(flags), env: CONFIG_ENV_VARS.filter((k) => env[k] !== undefined && env[k] !== '') },
     profile,
     dataDir: path.join(home, profile),
     host: '127.0.0.1',
@@ -466,15 +511,16 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
     autostart: bool(flags.autostart, false) || !!str(flags.goal),
     reset: bool(flags.reset, false),
     notify: bool(pick('notify', 'AGENTCRAFT_NOTIFY'), backend === 'claude'),
-    toastSilent: bool(pick('toast-silent', 'AGENTCRAFT_TOAST_SILENT'), false),
+    toastSilent: bool(pick('toast-silent', 'AGENTCRAFT_TOAST_SILENT', 'toastSilent'), false),
     debug: bool(pick('debug', 'AGENTCRAFT_DEBUG'), false),
     quiet: bool(flags.quiet, false),
     projectRoot: PROJECT_ROOT,
     allowBrowserOrigins: bool(pick('allow-browser-origins'), false),
+    clientToken: bool(flags['client-token'], true),
     repoPollMs: Math.max(500, num(pick('repo-poll-ms'), 10_000)),
-    mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE')),
+    mergeStyle: mergeStyle(pick('merge-style', 'AGENTCRAFT_MERGE_STYLE', 'mergeStyle')),
     // the sim answers merges unattended (screenshot QA, --auto-answer): never sign there
-    signMerges: bool(pick('sign-merges', 'AGENTCRAFT_SIGN_MERGES'), backend === 'claude'),
+    signMerges: bool(pick('sign-merges', 'AGENTCRAFT_SIGN_MERGES', 'signMerges'), backend === 'claude'),
     claude: {
       leadModel: str(flags['lead-model']) ?? model ?? str(env.AGENTCRAFT_LEAD_MODEL) ?? str(fileClaude.leadModel) ?? 'opus',
       workerModel: str(flags['worker-model']) ?? model ?? str(env.AGENTCRAFT_WORKER_MODEL) ?? str(fileClaude.workerModel) ?? 'sonnet',
@@ -512,7 +558,19 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   };
   cfg.claude.designModel = str(flags['design-model']) ?? str(env.AGENTCRAFT_DESIGN_MODEL) ?? str(fileClaude.designModel) ?? cfg.claude.workerModel;
   if (cfg.sim.showcase) cfg.autostart = true;
+  // the AGENTCRAFT_* variables this configuration was read with, for re-reading config.json the same
+  // way later (configEnv). Not enumerable: never serialized or logged with the config.
+  const used: NodeJS.ProcessEnv = {};
+  for (const k of cfg.overrides.env) used[k] = env[k];
+  Object.defineProperty(cfg, ENV_KEY, { value: used, enumerable: false });
   return cfg;
+}
+
+const ENV_KEY = Symbol('agentcraft.configEnv');
+
+/** The AGENTCRAFT_* variables `cfg` was read with (config.set parses the new file with the same ones). */
+export function configEnv(cfg: Config): NodeJS.ProcessEnv {
+  return { ...((cfg as unknown as Record<symbol, NodeJS.ProcessEnv>)[ENV_KEY] ?? {}) };
 }
 
 export const HELP = `AgentCraft Foreman ${FOREMAN_VERSION}
@@ -536,6 +594,8 @@ usage: npm run start -- [options]
   --no-sign-merges         never sign approved merge commits (default: signed when your git
                            config has commit.gpgsign=true; claude backend only)
   --debug                  verbose logging
+  --no-client-token        (dev only) every local WebSocket client may change things, as before the
+                           client token; by default only clients that send <profile>/client.token do
 
  sim backend
   --speed <x>              speed multiplier (default 1)

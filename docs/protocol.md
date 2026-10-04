@@ -34,6 +34,8 @@
 - <a id="prstatus"></a>**PrStatus**: `open`, `changes`, `approved`, `merged`, `abandoned` - open: waiting for reviews; changes: a reviewer asked for changes (vote -5/-10, GitHub CHANGES_REQUESTED); approved: approved and nobody objects; merged / abandoned: closed on the host
 - <a id="prchecks"></a>**PrChecks**: `pending`, `passing`, `failing`, `none` - build / status checks on the PR (Azure DevOps build policies, GitHub status checks); none = the PR has no checks
 - <a id="digestlinekind"></a>**DigestLineKind**: `task_done`, `task_blocked`, `task_added`, `decision_waiting`, `decision_answered`, `merged`, `pr_opened`, `pr_merged`, `pr_comments`, `message`, `goal_done`
+- <a id="settingtype"></a>**SettingType**: `bool`, `int`, `enum`, `string`, `stringList`, `model`, `effort`, `agentList`, `map` - How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only: MCP servers by name and command, repo env by name)
+- <a id="settingsource"></a>**SettingSource**: `file`, `flag`, `env`, `default` - where the value comes from: config.json, a command-line flag, an AGENTCRAFT_* environment variable, or the built-in default
 
 Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; permission decisions use `Allow once`, `Always allow for this agent`, `Deny`. Question decisions use agent-supplied options (may be empty: free text).
 
@@ -275,6 +277,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `costUsd` | number | no | claude: estimated spend of this profile (sum over all sessions, survives restarts) |
 | `userName` | string | no | the person the team works for, as the agents address them (UI: "<name> answered") |
 | `usage` | { windows: { id: string, label: string, pct: number, resetsAt?: integer }[], updatedAt: integer } | no | claude.ai login: how much of the plan's usage windows is used (from the agents' sessions) |
+| `restartRequired` | string[] | no | config keys changed (config.set) that take effect only after a restart (`foreman.restart`); omitted when none |
 
 ### <a id="agentlogs"></a>AgentLogs
 
@@ -344,6 +347,25 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `error` | string | no | failed: what went wrong (tail of the checker output) |
 | `createdAt` | integer | yes | epoch milliseconds |
 | `updatedAt` | integer | yes | epoch milliseconds |
+
+### <a id="settingdef"></a>SettingDef
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | the config.json path, e.g. "claude.prWatch", "claude.agents.kit.model"; for a repository relative to its repoSettings entry, e.g. "land", "pr.draft", "roles.kit" |
+| `label` | string | yes |  |
+| `help` | string | yes | one or two sentences for the user |
+| `group` | string | yes | global: team, models, general, permissions, context, subagents, prs, usage; repository: landing, worktrees, agents, review |
+| `type` | [SettingType](#settingtype) | yes | How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only: MCP servers by name and command, repo env by name) |
+| `options` | string[] | no | enum / model / effort / agentList / stringList choices (model: the Opus and Sonnet models in use and "default"; "default" clears the setting) |
+| `min` | number | no |  |
+| `max` | number | no |  |
+| `value` | any | yes | the configured value (what config.json, a flag or the environment says now; may differ from what the running Foreman uses until a restart, see restartRequired) |
+| `default` | any | yes | the value when nothing is configured |
+| `source` | [SettingSource](#settingsource) | yes | where the value comes from: config.json, a command-line flag, an AGENTCRAFT_* environment variable, or the built-in default |
+| `live` | boolean | yes | true: a change applies from the next turn / poll without a restart; false: after foreman.restart |
+| `overriddenBy` | string | no | the flag or variable that wins over config.json, e.g. "--lead-model" or "AGENTCRAFT_PR_WATCH": a change is written but has no effect while it is given |
+| `readOnly` | boolean | no | shown, never changed through config.set (MCP servers, repo env) |
 
 ## Foreman -> Mod
 
@@ -1169,6 +1191,30 @@ Lead assignments changed (lead.assign / lead.release / lead.sync, or the Foreman
 }
 ```
 
+### `config.changed`
+
+config.set changed config.json (any client). Clients showing settings fetch them again (`config.get`).
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `keys` | string[] | yes | the keys config.set changed (repository keys as "repo:<repoId>:<key>") |
+| `restartRequired` | string[] | yes | every changed key still waiting for a restart (the full list, same as foreman.status.restartRequired) |
+
+```json
+{
+  "v": 1,
+  "type": "config.changed",
+  "keys": [
+    "claude.workerModel",
+    "claude.leads"
+  ],
+  "restartRequired": [
+    "claude.leads"
+  ]
+}
+```
+
 ### `ack`
 
 Reply to any client message that carried an `id`.
@@ -1224,6 +1270,7 @@ First message after connecting. The Foreman replies with `snapshot`, then stream
 | `modVersion` | string | yes |  |
 | `protocol` | 1 | yes |  |
 | `client` | string | no | "mod" \| "cli" \| ... (informational) |
+| `token` | string | no | the client token: the contents of the file the run file names in `tokenFile` (`<dataDir>/client.token`, new on every Foreman start). Without a valid token the connection is read-only: snapshot and events, and only `hello`, `diff.request` and `goal.digest`; every other message is refused (`ack.ok` false, "read-only connection: no client token") |
 
 ```json
 {
@@ -1231,7 +1278,8 @@ First message after connecting. The Foreman replies with `snapshot`, then stream
   "type": "hello",
   "modVersion": "0.1.0",
   "protocol": 1,
-  "client": "mod"
+  "client": "mod",
+  "token": "EXAMPLE-not-a-real-token-0123456789abcdef"
 }
 ```
 
@@ -1618,6 +1666,92 @@ The building was removed. Acked with `{}` (also for a building that has no lead)
   "type": "lead.release",
   "id": "c23",
   "building": "New World/b7"
+}
+```
+
+### `config.get`
+
+The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository's repoSettings. Never contains secret values (environment values, tokens, MCP server env or arguments).
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `repoId` | string | no | that repository's repoSettings instead of the global settings |
+
+```json
+{
+  "v": 1,
+  "type": "config.get",
+  "id": "c31"
+}
+```
+
+### `config.set`
+
+Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo's path as config.json spells it, else its absolute path>]`.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `repoId` | string | no | change that repository's repoSettings |
+| `changes` | { key: string, value: any }[] | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "config.set",
+  "id": "c32",
+  "changes": [
+    {
+      "key": "claude.workerModel",
+      "value": "sonnet"
+    },
+    {
+      "key": "claude.agents.kit.effort",
+      "value": "high"
+    },
+    {
+      "key": "claude.leads",
+      "value": [
+        "marlow",
+        "ines"
+      ]
+    }
+  ]
+}
+```
+
+### `foreman.restart`
+
+Restart the Foreman with the same arguments, environment and working directory (except `--reset`, `--goal` and `--autostart`). Acked with `{}` first; then the server closes (clients see the connection drop and reconnect), running turns are interrupted and resumed on start (`resumeOnStart`), and a new Foreman process (new pid, new client token: read the run file again) takes over the same port.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+
+```json
+{
+  "v": 1,
+  "type": "foreman.restart",
+  "id": "c33"
+}
+```
+
+### `repo.agents`
+
+The repository's Claude Code agent files (`.claude/agents/*.md` in its checkout), for the roles picker. Acked with `{agents: [{id, name, path, description?, model?}]}`: `id` is the file name without `.md` (the value to store in `roles.<agent>`), `name` the front matter name (else the id), `path` repo-relative.
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `id` | string | no | client correlation id; the Foreman answers with `ack` {re: id} |
+| `repoId` | string | yes |  |
+
+```json
+{
+  "v": 1,
+  "type": "repo.agents",
+  "id": "c34",
+  "repoId": "demo-app"
 }
 ```
 

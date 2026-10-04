@@ -6,6 +6,7 @@
 //    inside the window are summarised in the next toast
 //  - disabled with config.notify=false / AGENTCRAFT_NOTIFY=0; tests inject a fake `spawnToast`
 import { spawn } from 'node:child_process';
+import { scrubEnv } from './util/env.js';
 import type { Logger } from './context.js';
 import { truncate } from './util/text.js';
 
@@ -48,6 +49,7 @@ export function showWindowsToast(title: string, body: string, silent: boolean): 
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   return new Promise((resolve) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
+      env: scrubEnv(process.env),
       windowsHide: true,
       stdio: 'ignore',
     });
@@ -70,7 +72,7 @@ export function showMacNotification(title: string, body: string, silent: boolean
     ? 'display notification (item 2 of argv) with title (item 1 of argv)'
     : 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"';
   return new Promise((resolve) => {
-    const child = spawn('osascript', ['-e', 'on run argv', '-e', script, '-e', 'end run', '--', title, body], { stdio: 'ignore' });
+    const child = spawn('osascript', ['-e', 'on run argv', '-e', script, '-e', 'end run', '--', title, body], { stdio: 'ignore', env: scrubEnv(process.env) });
     const timer = setTimeout(() => child.kill(), 15_000);
     child.on('error', () => {
       clearTimeout(timer);
@@ -108,6 +110,10 @@ export class Notifier {
 
   setEnabled(on: boolean): void {
     this.opts.enabled = on;
+  }
+
+  setSilent(silent: boolean): void {
+    this.opts.silent = silent;
   }
 
   /** Queue a "you are needed" notification. */

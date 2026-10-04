@@ -95,6 +95,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--pr-watch off\|observe\|on` | `observe` | pull requests of tasks landed as PRs (`land: "pr"`): observe = poll + Marlow's triage, nothing posted or started; on = fold-ins and approved replies too; off = a PR finishes its task (config `claude.prWatch`) |
 | `--pr-poll-seconds` | `180` | how often watched PRs are polled (config `claude.prPollSeconds`) |
 | `--repo-poll-ms` | `10000` | how often checkouts are checked for head/dirty changes |
+| `--no-client-token` | | dev only: every local WebSocket client may change things (see Client token) |
 | `--merge-style merge\|squash` / `AGENTCRAFT_MERGE_STYLE` | `merge` | approved merges: a merge commit that keeps the agents' commits, or one squashed commit (see Safety guarantees) |
 | `--no-sign-merges` / `AGENTCRAFT_SIGN_MERGES=0` | signed if your git config signs (claude) | never sign approved merge commits; the sim never signs |
 | sim: `--speed`, `--seed`, `--autostart`, `--showcase [late]`, `--auto-answer`, `--no-ambient` | | |
@@ -411,6 +412,55 @@ pool every lead assigns from.
 - The sim backend does all of this too: its script tags its feed and decisions with the goal,
   records its plan note, answers goal messages from the goal's lead, and stops on `goal.cancel`.
 
+### Client token, settings and restart (Team and Settings tabs, docs/HUB.md)
+
+**Client token.** Any local process can open the Foreman's WebSocket, an agent's Bash command
+included. So every start writes a new random token to `<home>/<profile>/client.token` (mode 0600)
+and names it in the run file (`foreman.json`, field `tokenFile`). A client that sends it in
+`hello` (`token`) may do everything; any other connection is **read-only**: it gets the snapshot
+and the events and may send `hello`, `diff.request` and `goal.digest`; everything else is refused
+(`ack.ok: false`, "read-only connection: no client token"). Tokens are compared in constant time,
+never logged, and the file is removed on a clean exit. The mod reads the run file;
+`tools/foremancli.mjs`, the tools' `ForemanClient`, `npm run tui`, `qa.mjs` and `shoot.mjs` find it
+the same way (`--home` when the Foreman runs with another home; `AGENTCRAFT_CLIENT_TOKEN`
+overrides; it is removed from the final environment of every process the Foreman starts (agents,
+CI, setup, gh/az, git, notifications, a restarted Foreman), and a repository's `env` can neither set
+it nor copy it in with `$AGENTCRAFT_CLIENT_TOKEN`). `--no-client-token`
+restores the old behaviour for development.
+
+**Settings (`config.get` / `config.set`, src/settings.ts).** The hub's Team and Settings tabs (and
+the Repos tab's "Edit settings") edit `config.json` through the Foreman. `config.get` returns a
+`SettingDef` per editable key (label, help, group, type, options, the configured value, default,
+source `file`/`flag`/`env`/`default`, `overriddenBy`, `live`). It never returns secrets:
+environment values are never read (only which `AGENTCRAFT_*` variables are set), MCP servers are
+listed by name and command only (no arguments, env or headers), a repository's `env` by variable
+name. `config.set` validates every change first (types, enums, ranges, agent ids of the cast,
+model names; all or nothing), then the whole new file the way the Foreman loads it, writes it
+atomically with the previous file kept as `config.json.bak` (unknown keys, other sections, key
+order and an existing key's spelling such as `merge-style` kept), applies the live keys and
+broadcasts `config.changed`. `null` (or `"default"` for a model or per-agent effort, `0` for the
+optional caps) removes a key. A key a flag or `AGENTCRAFT_*` variable also sets is written but
+stays overridden while that flag is given (the ack lists it under `overridden`). Repository
+settings are written under the key `config.json` already uses for that repository (e.g.
+`~/code/app`), else its absolute path. `repo.agents` lists a repository's `.claude/agents/*.md`
+for the roles picker.
+
+| applies | settings |
+| --- | --- |
+| live (from the next turn, tick or poll) | `claude.leadModel`, `leadEffort`, `workerModel`, `effort`, `designModel`, `taskModels.*`, `agents.<id>.{title,prompt,model,effort}` (a title change updates the nameplate at once), `maxConcurrent`, `throttleConcurrent`, `maxConcurrentTurns`, `leadReview`, `maxBudgetUsdPerTurn`, `prWatch` / `prPollSeconds` (the watcher switches over at once), `permissions.{mode,allow,deny,webTools,protectCheckouts}`, `context.{userInstructions,maxChars,mcpAllow,connectors}`; `userName`, `notify`, `toastSilent`, `mergeStyle`, `signMerges`; every repository setting (`baseBranch` at the repository's next refresh) |
+| after a restart | `claude.workers`, `claude.leads`, `claude.context.skills`, `claude.context.sessionHistory.{enabled,days}`, `claude.subagents.{enabled,agents}`, `claude.useClaudeLogin` |
+| read-only | `claude.context.mcpServers`, a repository's `env` |
+
+Changes that wait for a restart are listed in `foreman.status.restartRequired` until the Foreman
+restarts (or they are set back).
+
+**Restart (`foreman.restart`).** Acked first; then the server closes, the Foreman saves its state
+(running turns are interrupted and resumed on start), and the same command (node, its flags, the
+script, the arguments, environment and working directory; without the one-shot `--reset`, `--goal`
+and `--autostart`) starts again detached, with a new pid and a new client token, on the same port.
+The profile's run file names the new process right away, so `node tools/mac.mjs stop` finds it
+(`launch` reuses it too). Its output goes where the old process's went.
+
 ### Steering
 
 | | |
@@ -428,7 +478,7 @@ pool every lead assigns from.
 | --- | --- |
 | allowed | reads/edits inside the agent's worktree; safe dev commands (`npm test`, `node src/x.ts`, `git status/diff/add/commit/merge`, `ls`, `grep`, ...); `npx <tool>` for dev tools the worktree has installed (`node_modules/.bin`); scratch files in the OS temp dir |
 | asks you (permission decision) | anything outside the worktree (absolute paths, `..`, `~`, `$HOME`, `%USERPROFILE%`, brace expansion like `{~,x}`, `cd` out of the worktree, redirections like `>C:/x`, paths from `$VARS` or `$(...)`, links that lead out, Glob patterns like `../../x/*`), network (`curl`, `npm install`/`view`/`outdated`, `npx` of a tool that is not installed, WebFetch, `git fetch`), dev servers (`vite`, `webpack serve`), git commands that change the repo shared with your checkout (`git config` writes, `git branch -f/-D/<new>`, `git tag`, `git stash`, `git update-ref`, `git checkout <branch>`, `git rebase <upstream> <other-branch>`, `--update-refs`, `--ignore-other-worktrees`, `git submodule update`, `filter-branch`), git pointed at another repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, ... in any form: prefix, `export`, `env`, `read`, `for`; `--git-dir`; git run after `cd`/`-C` out of the worktree), writing, moving or deleting a `.git` entry inside the worktree (its link to the repository), destructive commands (`rm -r`, `find -delete`, `git reset --hard`, `git clean`, `xargs rm`), env vars that make commands run code (`GIT_PAGER=...`, `NODE_OPTIONS=...`, `git -c core.pager=...`), inline code that writes/spawns/uses the network (`node -e`, `python -c`), process/system commands (`taskkill`, `reg`, `sudo`), GUIs and the browser (`git citool`, `git gui`, `git <sub> --help` on Windows), unknown binaries |
-| always denied | `git push` however it is spelled, wrapped or hidden, when the policy can see it: `env`/`xargs`/`timeout`/`sudo`/`bash -c`/`cmd /c`/`eval`, inside `$(...)`, backticks or `<(...)`, `find -exec`, commands git runs for us (`rebase -x`, `bisect run`, `submodule foreach`, `filter-branch --tree-filter`, `difftool -x`), `echo "git push" \| bash`, here-docs/strings fed to a shell, `node -e "...execSync('git push')"`, a git subcommand from a variable or substitution (`git $x`), `git -c alias.p=push`, `git lfs push`, `git subtree push`; signing with your key (`git commit -S`, `git tag -s`, `-c commit.gpgsign=true`); changing or clearing the git safety variables (`env -i`, `GIT_CEILING_DIRECTORIES`); file edits by the lead; subagents. Where the policy cannot see a push (a test script, a node script), git itself refuses it (below). |
+| always denied | `git push` however it is spelled, wrapped or hidden, when the policy can see it: `env`/`xargs`/`timeout`/`sudo`/`bash -c`/`cmd /c`/`eval`, inside `$(...)`, backticks or `<(...)`, `find -exec`, commands git runs for us (`rebase -x`, `bisect run`, `submodule foreach`, `filter-branch --tree-filter`, `difftool -x`), `echo "git push" \| bash`, here-docs/strings fed to a shell, `node -e "...execSync('git push')"`, a git subcommand from a variable or substitution (`git $x`), `git -c alias.p=push`, `git lfs push`, `git subtree push`; signing with your key (`git commit -S`, `git tag -s`, `-c commit.gpgsign=true`); changing or clearing the git safety variables (`env -i`, `GIT_CEILING_DIRECTORIES`); file edits by the lead; subagents; the Foreman's own files, token and port (below). Where the policy cannot see a push (a test script, a node script), git itself refuses it (below). |
 
 The Bash classifier is a small shell parser (quotes, redirections, heredocs and here-strings,
 brace expansion, a virtual `cd`, wrapper commands, nested shells, `eval`). Every command
@@ -460,6 +510,39 @@ agent" covers: ...`):
 `git push` is never allowed, whatever is stored. Keys from older versions of the Foreman
 (`Bash:subst`, `Bash:find -exec`, `Bash:xargs rm`, `lead:<prefix>`, `Bash:git fetch`,
 `Bash:git submodule`, `Bash:git lfs`, `Bash:git checkout`, `Write:.git`, ...) no longer match anything.
+
+**The Foreman's own files and port** (`foremanPrivateVerdict`): agents may not read or change the
+Foreman's settings and state, nor talk to it directly. Denied with a reason saying so, checked before
+everything else (no "Always allow" covers it) and again by a PreToolUse hook on every turn (so your
+`claude.permissions.allow` rules and subagents cannot skip it, in both permission modes):
+
+- Read / Grep / Glob / LS / Edit / Write / NotebookEdit of anything under the Foreman home
+  (`config.json`, `config.json.bak`, `foreman.json`, every profile's `state.json`, logs,
+  `client.token`, ...) except the folders agents work in (`<profile>/worktrees`, `memory`,
+  `agent-plugin`, `designs`); of any `client.token`; through a link as well (the real path is
+  checked); Grep over a folder that contains the home (e.g. `~`); Glob patterns that reach them.
+- Bash / PowerShell commands that mention such a path (absolute, `~`, `$HOME`, `${HOME}` or
+  relative to the agent's directory, e.g. `cat ../../../state.json`), `client.token`, `foremancli`,
+  `$AGENTCRAFT_HOME` / `_CLIENT_TOKEN` / `_PROFILE`, or the Foreman's port together with a loopback
+  host or a `ws://` URL (`curl localhost:7878`, `websocat ws://127.0.0.1:7878`). Shell quoting and
+  escapes are undone first (`cat ~/.agent'craft'/config.json` is caught).
+- Recursive searches, listings, copies and archives (`rg`, `grep -r`, `find`, `ls -R`, `tree`, `du`,
+  `tar`, `cp -r`, `rsync`, `zip -r`, ...) rooted at the Foreman home or a folder above it (`/`, `~`,
+  `/Users`, ...), also after a `cd` in the same command.
+- Instruction files: a CLAUDE.md / AGENTS.md (or a configured instruction file) that is, or links
+  to, one of these files is skipped, and an `@import` of one is replaced by a note
+  (`(import @... skipped: AgentCraft's own files are off limits)`), so an agent cannot get the
+  token into its next prompt by writing an import into its worktree.
+
+**The Bash guard is best effort, by design.** It reads the command the way a shell would (quotes and
+escapes undone, `cd` followed, a `( )` subshell's `cd` left inside it, redirections, the option
+values of rg/grep/find that are patterns rather than paths), but a text check cannot see a path a
+program assembles at run time, a glob that expands to the home, or a script the agent wrote and
+runs (`npm test` runs the agent's own code, as do worktree setup and the Foreman's CI, all as your
+user). The real boundary is the client token file plus the read-only socket: they stop a
+*prompt* (a CLAUDE.md, a PR comment, a web page) from talking an agent into driving the Foreman
+through its own tool calls. They do not stop code an agent writes and then runs from reading a file
+your user can read; that is accepted, and the docs say so rather than promise more.
 
 ### Push, signing and other repositories are blocked at the git level too (src/gitsafety.ts)
 
@@ -523,9 +606,14 @@ spawns git with an empty environment); the policy refuses every command it can s
 ## State layout
 
 ```
+<AGENTCRAFT_HOME>/
+  config.json            your settings (hand-editable; the hub's Settings tab writes it too)
+  config.json.bak        the previous config.json, kept by every config.set
+  foreman.json           the primary Foreman's run file
 <AGENTCRAFT_HOME>/<profile>/
   state.json             agents, tasks, decisions, repos, goals, feed, messages, sessions, leads (atomic writes)
-  foreman.json           pid/port of the Foreman running this profile
+  foreman.json           pid/port of the Foreman running this profile, and tokenFile
+  client.token           the client token (0600, new on every start, removed on exit)
   logs/<agent>.jsonl     agent logs (snapshots carry the last 60 lines per agent); rotated at 8 MB
                          into <agent>.1.jsonl (one old file kept); start-up reads only their ends
   memory/shared/*.md     shared notes (hand-editable)
@@ -621,6 +709,7 @@ npm run check       # all of the above + protocol doc freshness
 
 - **`port 7878 is already in use`**: another Foreman is running (`~/.agentcraft/foreman.json` and `~/.agentcraft/<profile>/foreman.json` have its pid) - or use `--port`.
 - **`profile "claude" is in use by the Foreman pid N`**: that profile already has a running Foreman; stop it or use `--profile`.
+- **`read-only connection: no client token`**: the client did not send this start's client token. Tools find it through the run file under the Foreman's home: pass `--home` (or set `AGENTCRAFT_HOME`) when the Foreman runs with another home. After a restart the token is new: reconnect.
 - **`... is not a repository root`**: `/repo add` the repository's top folder (the message names it).
 - **Banner says auth failed**: set `ANTHROPIC_API_KEY` (or a cloud provider switch) and restart the Foreman. With `--use-claude-login`: run `claude` and `/login`. The sim backend works without auth. Why the claude.ai login is opt-in: Anthropic does not allow third-party tools to offer it ([Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)); see `src/agents/claude/auth.ts`.
 - **Merge refused: uncommitted changes**: commit or stash in your checkout, then choose Merge again (the decision re-opened).

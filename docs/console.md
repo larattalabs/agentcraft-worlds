@@ -47,6 +47,11 @@ and worktrees; repeated Tab cycles, Up/Down move in the popup. Up/Down otherwise
 (kept in `<game dir>/agentcraft/console-history.txt`). Shift+Enter adds a line; a multi-line
 paste grows the bar (up to 6 lines, then it scrolls).
 
+Everything except reading needs the Foreman's client token (foreman/README.md "Client token"): a
+refusal saying "read-only connection: no client token" means the mod connected without this
+Foreman start's token (it reads the token file the Foreman's run file names; after a Foreman
+restart it is new).
+
 ## Decision screen
 
 One decision at a time, in queue order: permission prompts first (an agent is blocked mid

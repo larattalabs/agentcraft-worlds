@@ -165,7 +165,7 @@ describe('session options', () => {
     try {
       const w = options[1]!;
       expect(w.permissionMode).toBe('default');
-      expect(w.hooks).toBeUndefined();
+      expect(w.hooks?.PreToolUse).toHaveLength(1); // only the Foreman guard (its own files, token and port)
       expect(w.settings).toBeUndefined();
       expect(w.tools).toEqual(['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'TodoWrite']);
       expect(w.disallowedTools).toEqual(['Bash(git push:*)', 'Task', 'Agent', 'WebSearch', 'WebFetch']);
@@ -187,7 +187,7 @@ describe('session options', () => {
     try {
       for (const o of options) {
         expect(o.permissionMode).toBe('auto');
-        expect(o.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+        expect(o.hooks?.PreToolUse).toHaveLength(2); // the Foreman guard, then the guardrail
         expect(o.settings).toEqual({ permissions: { allow: ['Bash(codex exec:*)'], deny: [], ask: [] } });
         expect(o.tools).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch', 'Agent', 'Task']));
         expect(o.disallowedTools).toEqual(['Bash(git push:*)']);
@@ -237,7 +237,7 @@ describe('claude.ai connectors', () => {
     try {
       for (const o of some.options) {
         expect(o.strictMcpConfig).toBe(false);
-        expect(o.hooks?.PreToolUse).toHaveLength(1); // the connector filter (policy mode: no guardrail hook)
+        expect(o.hooks?.PreToolUse).toHaveLength(2); // the Foreman guard and the connector filter (policy mode: no guardrail hook)
       }
       expect(some.h.cfg.claude.context.connectors).toEqual(['monday.com']);
     } finally {

@@ -255,6 +255,15 @@ export class PrWatcher {
     this.timer = undefined;
   }
 
+  /** config.set changed claude.prWatch / prPollSeconds: switch over now (as start() would after a restart). */
+  configure(mode: PrWatchMode, pollSeconds: number): void {
+    if (mode === this.opts.mode && pollSeconds === this.opts.pollSeconds) return;
+    this.opts.mode = mode;
+    this.opts.pollSeconds = pollSeconds;
+    this.stop();
+    this.start();
+  }
+
   /** Tasks whose PR is watched now. */
   watched(): Task[] {
     return this.fm.tasks.list().filter((t) => t.status === 'pr' && t.pr && parsePrUrl(t.pr.url));

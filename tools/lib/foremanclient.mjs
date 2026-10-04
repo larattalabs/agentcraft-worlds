@@ -10,10 +10,49 @@
 //
 // Rules from the protocol: send no Origin header (the ws package sends none), hello first,
 // optional fields omitted, unknown fields ignored, every message with an id gets an ack.
+//
+// The client token: hello carries the Foreman's client token, or the connection is read-only
+// (snapshot, events, diff.request, goal.digest). It is AGENTCRAFT_CLIENT_TOKEN, else the file the
+// Foreman's run file names (`tokenFile` in <home>/foreman.json or <home>/<profile>/foreman.json,
+// the one whose port matches). Home: opts.home, AGENTCRAFT_HOME, else ~/.agentcraft.
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import WebSocket from 'ws';
 
 export const DEFAULT_FOREMAN_PORT = Number(process.env.AGENTCRAFT_PORT || 7878);
+
+export function defaultForemanHome(env = process.env) {
+  return path.resolve(env.AGENTCRAFT_HOME || path.join(os.homedir(), '.agentcraft'));
+}
+
+/**
+ * The client token of the Foreman on `port` (see the header), or null. Re-read on every connect
+ * attempt: a restarted Foreman writes a new one.
+ * @param {{home?:string, port?:number, env?:Record<string,string|undefined>}} opts
+ */
+export function readForemanToken({ home, port, env = process.env } = {}) {
+  const fromEnv = env.AGENTCRAFT_CLIENT_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  const root = path.resolve(home ?? defaultForemanHome(env));
+  const files = [path.join(root, 'foreman.json')];
+  try {
+    for (const d of fs.readdirSync(root, { withFileTypes: true })) if (d.isDirectory()) files.push(path.join(root, d.name, 'foreman.json'));
+  } catch {
+    return null;
+  }
+  for (const file of files) {
+    let info;
+    try { info = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+    if (!info?.tokenFile || (port != null && Number(info.port) !== Number(port))) continue;
+    try {
+      const t = fs.readFileSync(info.tokenFile, 'utf8').trim();
+      if (t) return t;
+    } catch {}
+  }
+  return null;
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class ForemanError extends Error {
@@ -66,7 +105,7 @@ export class ForemanClient {
 
   /**
    * Connect (retrying while the Foreman starts), send hello and wait for the first snapshot.
-   * @param {{port?:number, host?:string, timeoutMs?:number, retryMs?:number, client?:string, onWait?:(ms:number)=>void}} opts
+   * @param {{port?:number, host?:string, home?:string, token?:string, timeoutMs?:number, retryMs?:number, client?:string, onWait?:(ms:number)=>void}} opts
    */
   static async connect(opts = {}) {
     const port = opts.port ?? DEFAULT_FOREMAN_PORT;
@@ -80,7 +119,9 @@ export class ForemanClient {
       try {
         const ws = await ForemanClient.#open(url);
         const fm = new ForemanClient(ws, { url, client: opts.client });
-        await fm.#hello(Math.max(5_000, timeoutMs - (Date.now() - start)));
+        const token = opts.token ?? readForemanToken({ home: opts.home, port });
+        fm.readOnly = !token;
+        await fm.#hello(Math.max(5_000, timeoutMs - (Date.now() - start)), token);
         return fm;
       } catch (e) {
         lastErr = e;
@@ -113,9 +154,9 @@ export class ForemanClient {
     });
   }
 
-  async #hello(timeoutMs) {
+  async #hello(timeoutMs, token) {
     const snap = this.waitFor((m) => m.type === 'snapshot', { timeoutMs, what: 'snapshot after hello' });
-    this.#raw({ type: 'hello', modVersion: 'tools-0.1.0', protocol: 1, client: this.clientName });
+    this.#raw({ type: 'hello', modVersion: 'tools-0.1.0', protocol: 1, client: this.clientName, ...(token ? { token } : {}) });
     await snap;
   }
 

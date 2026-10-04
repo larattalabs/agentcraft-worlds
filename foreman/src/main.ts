@@ -9,8 +9,10 @@ import { FOREMAN_VERSION, HELP, loadConfig, type Config } from './config.js';
 import { consoleLogger } from './context.js';
 import { Foreman } from './foreman.js';
 import { ForemanServer } from './server.js';
-import { claimRunFiles, homeRunFile, liveOwner, profileRunFile, releaseRunFiles } from './runfile.js';
-import { isInsideOrEqual } from './util/fsx.js';
+import { createClientToken, removeClientToken } from './clienttoken.js';
+import { currentRestartCommand, spawnRestart } from './restart.js';
+import { claimRunFiles, homeRunFile, liveOwner, profileRunFile, releaseRunFiles, type RunInfo } from './runfile.js';
+import { isInsideOrEqual, writeJsonAtomic } from './util/fsx.js';
 
 async function createDemoRepo(cfg: Config, dir: string): Promise<void> {
   const mod = (await import(pathToFileURL(path.join(cfg.projectRoot, 'sandbox', 'create-demo.mjs')).href)) as {
@@ -62,7 +64,10 @@ export async function main(argv: string[]): Promise<void> {
 
   const foreman = new Foreman({ config: cfg, logger: log });
   const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : new ClaudeBackend(foreman, cfg.claude);
-  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, log });
+  // a new client token every start (after --reset wiped the profile); never logged
+  const client = cfg.clientToken ? createClientToken(cfg.dataDir) : undefined;
+  if (!client) log.warn('--no-client-token: every local WebSocket client may drive the Foreman (dev only)');
+  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, ...(client ? { token: client.token } : {}), log });
 
   try {
     await server.start();
@@ -72,26 +77,58 @@ export async function main(argv: string[]): Promise<void> {
       log.error(`port ${cfg.port} is already in use - is another Foreman running? (see ${homeRunFile(cfg.home)} and <home>/<profile>/foreman.json) Use --port or AGENTCRAFT_PORT.`);
     } else log.error(`could not listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`);
     await foreman.close();
+    if (client) removeClientToken(client.file, client.token);
     process.exitCode = 1;
     return;
   }
+  foreman.endpoint = { port: server.port, ...(client ? { tokenFile: client.file } : {}) };
 
-  await claimRunFiles(cfg.home, cfg.dataDir, { pid: process.pid, port: server.port, host: cfg.host, backend: cfg.backend, profile: cfg.profile, version: FOREMAN_VERSION, startedAt: new Date().toISOString() });
+  const runInfo: RunInfo = { pid: process.pid, port: server.port, host: cfg.host, backend: cfg.backend, profile: cfg.profile, version: FOREMAN_VERSION, startedAt: new Date().toISOString(), ...(client ? { tokenFile: client.file } : {}) };
+  await claimRunFiles(cfg.home, cfg.dataDir, runInfo);
 
   log.info(`AgentCraft Foreman ${FOREMAN_VERSION} | backend ${cfg.backend} | ws://${cfg.host}:${server.port} | state ${cfg.dataDir}`);
 
   let shuttingDown = false;
+  /** Close the server (frees the port) and the Foreman (state saved), drop our run files and token. */
+  const stopAll = async () => {
+    await server.stop();
+    await foreman.close();
+    await releaseRunFiles(cfg.home, cfg.dataDir).catch(() => undefined);
+    if (client) removeClientToken(client.file, client.token);
+  };
   const shutdown = async (sig: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info(`${sig}: shutting down (state is saved; agents resume on next start)`);
     const force = setTimeout(() => process.exit(0), 8000);
     force.unref();
-    await server.stop();
-    await foreman.close();
-    await releaseRunFiles(cfg.home, cfg.dataDir).catch(() => undefined);
+    await stopAll();
     clearTimeout(force);
     process.exit(0);
+  };
+  // foreman.restart: the same command again, detached; the new process takes over port and profile
+  foreman.restarter = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info('foreman.restart: restarting (state is saved; agents resume on start)');
+    void (async () => {
+      const force = setTimeout(() => process.exit(1), 15_000);
+      force.unref();
+      await stopAll();
+      try {
+        const pid = spawnRestart(currentRestartCommand(cfg.argv));
+        // the run file names the new process until it claims it itself (launchers find it there).
+        // tokenFile stays: the path is the same every start, and the new process writes its token
+        // there before it listens, so whoever reads this file once the port answers gets the new one
+        writeJsonAtomic(profileRunFile(cfg.dataDir), { ...runInfo, pid, startedAt: new Date().toISOString() });
+        log.info(`restarted as pid ${pid}`);
+      } catch (e) {
+        log.error(`restart failed: ${(e as Error).message}; start the Foreman again by hand`);
+        process.exitCode = 1;
+      }
+      clearTimeout(force);
+      process.exit();
+    })();
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));

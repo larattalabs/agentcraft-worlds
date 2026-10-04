@@ -48,6 +48,8 @@ const ENUMS: Record<string, AnySchema> = {
   PrStatus: P.PrStatus,
   PrChecks: P.PrChecks,
   DigestLineKind: P.DigestLineKind,
+  SettingType: P.SettingType,
+  SettingSource: P.SettingSource,
 };
 for (const [name, schema] of Object.entries(ENUMS)) NAMES.set(schema, name);
 

@@ -1,4 +1,5 @@
 // Child-process helpers. Everything is spawned with explicit argv (no shell) unless stated.
+import { scrubEnv } from './env.js';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 
 export interface RunResult {
@@ -27,7 +28,7 @@ export function killTree(child: ChildProcess): void {
   if (!pid || child.exitCode !== null) return;
   if (process.platform === 'win32') {
     // taskkill /T walks the tree of *this* PID only
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', env: scrubEnv(process.env) });
   } else {
     try {
       process.kill(-pid, 'SIGKILL'); // the child leads its own process group (detached)
@@ -132,7 +133,7 @@ export async function killSnapshot(snapshot: ProcEntry[], table?: ProcEntry[]): 
   for (const e of snapshot) {
     const cur = alive.get(e.pid);
     if (!cur || cur.created !== e.created) continue;
-    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(e.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(e.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', env: scrubEnv(process.env) });
     else {
       try {
         process.kill(e.pid, 'SIGKILL');
@@ -149,7 +150,7 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, opts.shell ? [] : args, {
       cwd: opts.cwd,
-      env: opts.env ?? process.env,
+      env: scrubEnv(opts.env ?? process.env),
       shell: opts.shell ?? false,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],

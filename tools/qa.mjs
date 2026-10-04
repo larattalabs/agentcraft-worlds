@@ -104,7 +104,7 @@ async function probeDev() {
 }
 async function probeForeman() {
   try {
-    const f = await ForemanClient.connect({ port, timeoutMs: 1500, client: 'qa-probe' });
+    const f = await ForemanClient.connect({ port, home, timeoutMs: 1500, client: 'qa-probe' });
     const st = f.state.foreman;
     f.close();
     return st ?? {};
@@ -165,7 +165,7 @@ try {
   const st = await dev.waitInWorld({ timeoutMs: 300_000 });
   env.game = { devPort, minecraft: dev.hello?.minecraft ?? st.minecraft, fps: st.fps, window: st.window ? { width: st.window.renderWidth ?? st.window.width, height: st.window.renderHeight ?? st.window.height, guiScale: st.window.guiScale } : null, foremanLink: st.foreman ?? null };
   try {
-    foreman = await ForemanClient.connect({ port: fmPort, timeoutMs: 30_000, client: 'qa' });
+    foreman = await ForemanClient.connect({ port: fmPort, home, timeoutMs: 30_000, client: 'qa' });
     await foreman.waitForState((s) => s.foreman?.showcase === true, { timeoutMs: 240_000, what: 'the showcase hold' });
     env.foreman = { port: fmPort, ...foreman.summary() };
   } catch (e) {

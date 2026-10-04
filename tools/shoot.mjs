@@ -10,6 +10,8 @@
 //   --foreman [N]   connect to the Foreman (default AGENTCRAFT_PORT or 7878) for scenes that send
 //                   Foreman messages or use {{merge.repoId}}-style templates; also implied when the
 //                   scene has "foreman": {"connect": true}
+//   --home DIR      the Foreman's home, where its run file names the client token (default
+//                   AGENTCRAFT_HOME or ~/.agentcraft); without the token Foreman messages are refused
 //   --anchors F     JSON {name:{x,y,z,yaw,pitch}} that wins over the mod's dev.anchors
 //   --release       dev.release at the end (FOV pin off, HUD on, creative) to hand the view back
 //   --strict        skipped shots count as failures (exit 1)
@@ -30,6 +32,7 @@ let manifest = null;
 let prefix = '';
 let foremanPort = null;
 let anchorsFile = null;
+let foremanHome;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--only') only = new Set(argv[++i].split(',').map((s) => s.trim()).filter(Boolean));
@@ -37,6 +40,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--manifest') manifest = argv[++i];
   else if (a === '--prefix') prefix = argv[++i];
   else if (a === '--anchors') anchorsFile = argv[++i];
+  else if (a === '--home') foremanHome = argv[++i];
   else if (a === '--foreman') foremanPort = argv[i + 1] && /^\d+$/.test(argv[i + 1]) ? Number(argv[++i]) : DEFAULT_FOREMAN_PORT;
   else if (!a.startsWith('--') && !sceneFile) sceneFile = a;
 }
@@ -64,7 +68,7 @@ try {
 let foreman = null;
 if (foremanPort !== null) {
   try {
-    foreman = await ForemanClient.connect({ port: foremanPort, timeoutMs: 20_000, client: 'shoot' });
+    foreman = await ForemanClient.connect({ port: foremanPort, ...(foremanHome ? { home: foremanHome } : {}), timeoutMs: 20_000, client: 'shoot' });
     log(`Foreman: ${foreman.url} (${foreman.state.foreman?.backend ?? '?'}${foreman.state.foreman?.showcase ? ', showcase' : ''})`);
   } catch (e) {
     log(`Foreman not connected (${e.message}); shots that need it are skipped`);

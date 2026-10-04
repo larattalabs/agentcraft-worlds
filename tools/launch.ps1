@@ -176,7 +176,7 @@ if ($live) {
     if ($Reset -or $showcaseOn -or $repoPaths.Count) {
         if ($Reset) { Write-Warn2 '-Reset ignored for a running Foreman (tools\stop.ps1 -Foreman first)' }
         foreach ($rp in $repoPaths) {
-            $r = & $node.Source (Join-Path $L.Tools 'foremancli.mjs') repo-add $rp --port $fmPort 2>$null | Out-String
+            $r = & $node.Source (Join-Path $L.Tools 'foremancli.mjs') repo-add $rp --port $fmPort --home $AgentHome 2>$null | Out-String
             if ($LASTEXITCODE -eq 0) { Write-Kv 'repo' "added $rp" } else { Write-Warn2 "repo.add $rp failed: $r" }
         }
     }

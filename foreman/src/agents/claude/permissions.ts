@@ -110,3 +110,22 @@ export function guardrailHook(
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: g.decision, permissionDecisionReason: g.reason } };
   };
 }
+
+/**
+ * PreToolUse hook (every turn, both modes): the Foreman's own files, token and port stay off
+ * limits (policy.ts foremanPrivateVerdict), also for calls the user's allow rules would let through
+ * without asking, and for subagents.
+ */
+export function foremanGuardHook(
+  check: (toolName: string, input: Record<string, unknown>) => Verdict | undefined,
+  report: (toolName: string, reason: string, subagent?: string) => void,
+): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
+    const toolInput = (input.tool_input && typeof input.tool_input === 'object' ? input.tool_input : {}) as Record<string, unknown>;
+    const v = check(input.tool_name, toolInput);
+    if (!v || v.action !== 'deny') return {};
+    report(input.tool_name, v.reason, input.agent_id);
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } };
+  };
+}

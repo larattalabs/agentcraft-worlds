@@ -1,24 +1,46 @@
 // Small filesystem helpers: atomic writes that survive crashes mid-write (and Windows AV locks).
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-
-let tmpCounter = 0;
 
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-/** Write to a temp file in the same directory, fsync, then rename over the target. */
-export function writeFileAtomic(file: string, data: string | Uint8Array): void {
+/**
+ * Write to a temp file in the same directory, fsync, then rename over the target. The temp file has
+ * an unguessable name and is created exclusively (O_CREAT|O_EXCL: an existing file or link there
+ * is never opened or followed). Its mode: `mode` (e.g. 0o600 for secrets), else the existing
+ * target's (a file the user restricted stays restricted), else the umask default. A failed write
+ * leaves no temp file behind.
+ */
+export function writeFileAtomic(file: string, data: string | Uint8Array, opts: { mode?: number } = {}): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${++tmpCounter}.tmp`;
-  const fd = fs.openSync(tmp, 'w');
+  let mode = opts.mode;
+  if (mode === undefined) {
+    try {
+      mode = fs.statSync(file).mode & 0o777;
+    } catch {
+      /* new file */
+    }
+  }
+  const tmp = `${file}.${randomBytes(12).toString('hex')}.tmp`;
+  const fd = fs.openSync(tmp, 'wx', mode ?? 0o666);
   try {
+    // exactly that mode, whatever the umask
+    if (mode !== undefined && process.platform !== 'win32') fs.fchmodSync(fd, mode);
     fs.writeSync(fd, typeof data === 'string' ? Buffer.from(data, 'utf8') : data);
     fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
+  } catch (e) {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* ignore */
+    }
+    fs.rmSync(tmp, { force: true });
+    throw e;
   }
+  fs.closeSync(fd);
   // On Windows a rename can fail transiently (EPERM/EBUSY) if a scanner holds the target open.
   for (let attempt = 0; ; attempt++) {
     try {
@@ -61,7 +83,8 @@ export function isInsideOrEqual(child: string, parent: string): boolean {
   const norm = (p: string) => {
     let r = path.resolve(p);
     if (process.platform === 'win32') r = r.toLowerCase();
-    return r.replace(/[\/]+$/, '');
+    // (a filesystem root keeps its separator: "/" stripped to "" would not contain anything)
+    return r.length > path.parse(r).root.length ? r.replace(/[\\/]+$/, '') : r;
   };
   const c = norm(child);
   const p = norm(parent);

@@ -267,12 +267,13 @@ export const SERVER_EXAMPLES: Ex<ServerMessage> = {
       { leadId: 'bram', building: 'New World/b7', repos: ['api', 'web'] },
     ],
   },
+  'config.changed': { v: 1, type: 'config.changed', keys: ['claude.workerModel', 'claude.leads'], restartRequired: ['claude.leads'] },
   ack: { v: 1, type: 'ack', re: 'c12', ok: true, result: { goalId: 'g2' } },
   error: { v: 1, type: 'error', message: 'no agent named "kitt"', re: 'c13' },
 };
 
 export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
-  hello: { v: 1, type: 'hello', modVersion: '0.1.0', protocol: 1, client: 'mod' },
+  hello: { v: 1, type: 'hello', modVersion: '0.1.0', protocol: 1, client: 'mod', token: 'EXAMPLE-not-a-real-token-0123456789abcdef' },
   'goal.submit': { v: 1, type: 'goal.submit', id: 'c12', text: 'Add a --version flag to the CLI', repoId: 'demo-app', repos: ['demo-app', 'notes-api'], branch: 'feature/version-flag', instructions: ['No new dependencies'] },
   'goal.message': { v: 1, type: 'goal.message', id: 'c25', goalId: 'g1', text: 'Is the tag parser case-insensitive?' },
   'goal.instructions': { v: 1, type: 'goal.instructions', id: 'c26', goalId: 'g1', instructions: ['No new dependencies', 'Keep the CLI output under 80 columns'] },
@@ -280,6 +281,19 @@ export const CLIENT_EXAMPLES: Ex<ClientMessage> = {
   'goal.cancel': { v: 1, type: 'goal.cancel', id: 'c28', goalId: 'g1' },
   'goal.digest': { v: 1, type: 'goal.digest', id: 'c29', since: ts },
   'repo.remove': { v: 1, type: 'repo.remove', id: 'c30', repoId: 'demo-app' },
+  'config.get': { v: 1, type: 'config.get', id: 'c31' },
+  'config.set': {
+    v: 1,
+    type: 'config.set',
+    id: 'c32',
+    changes: [
+      { key: 'claude.workerModel', value: 'sonnet' },
+      { key: 'claude.agents.kit.effort', value: 'high' },
+      { key: 'claude.leads', value: ['marlow', 'ines'] },
+    ],
+  },
+  'foreman.restart': { v: 1, type: 'foreman.restart', id: 'c33' },
+  'repo.agents': { v: 1, type: 'repo.agents', id: 'c34', repoId: 'demo-app' },
   'user.message': { v: 1, type: 'user.message', id: 'c13', to: 'all', text: '@kit please also cover #tags with emoji' },
   'decision.answer': { v: 1, type: 'decision.answer', id: 'c14', decisionId: 'd2', option: 'Request changes', text: 'Export TAG_RE so format.ts can reuse it.' },
   'task.action': { v: 1, type: 'task.action', id: 'c15', taskId: 't5', action: 'reassign', arg: 'wren' },

@@ -31,7 +31,7 @@ import { FOREMAN_VERSION } from '../../config.js';
 import { ClientError, type Backend, type Foreman } from '../../foreman.js';
 import { withGitSafety } from '../../gitsafety.js';
 import { agentGitIdentity } from '../../util/git.js';
-import { classifyToolUse, describeRuleKey, describeToolCall, type PolicyContext } from '../../policy.js';
+import { classifyToolUse, describeRuleKey, describeToolCall, foremanPrivatePath, foremanPrivateVerdict, type PolicyContext } from '../../policy.js';
 import type { Decision, Design, Goal, Task } from '../../protocol.js';
 import { MERGE_OPTIONS, PERMISSION_OPTIONS } from '../../protocol.js';
 import type { TestResult } from '../../repos.js';
@@ -41,7 +41,7 @@ import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type Pr
 import { truncate } from '../../util/text.js';
 import { buildSkillsPlugin, instructionsBlock, workspaceInstructionDirs } from './context.js';
 import { SessionHistory, sessionLine } from '../../history.js';
-import { connectorHook, guardrailHook } from './permissions.js';
+import { connectorHook, foremanGuardHook, guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
 import { type RepoRole, boardSummary, foldInPrompt, leadRepoContext, leadSystemPrompt, planPrompt, planText, RESUME_PROMPT, reviewPrompt, triagePrompt, workerSystemPrompt, workPrompt } from './prompts.js';
 import { DEFAULT_AUTO_SEVERITIES, DEFAULT_MAX_ROUNDS, PrWatcher, type TriageItem } from '../../prwatch.js';
@@ -51,6 +51,7 @@ import { pruneUsage, readPlanUsage, usageLine, withWindow } from './usage.js';
 import { limitFromText, StreamMapper, type RateLimitReport, type TurnStats } from './stream.js';
 import { buildMcpServer, MCP_SERVER, type ToolHooks, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
+import { scrubEnv } from '../../util/env.js';
 import { HOME_LEAD } from '../../leads.js';
 
 type JobKind = 'plan' | 'work' | 'review' | 'followup' | 'triage';
@@ -449,7 +450,14 @@ export class ClaudeBackend implements Backend {
       ...(this.skillsPlugin ? { skills: this.skillsPlugin.ids } : {}),
       mcpAllow: this.cfg.context.mcpAllow,
       ...(this.subagentsOn(repoId) ? { subagents: true } : {}),
+      foreman: this.foremanPrivate(),
     };
+  }
+
+  /** The Foreman's own home, port and client token: off limits for agents (policy.ts). */
+  private foremanPrivate(): NonNullable<PolicyContext['foreman']> {
+    const e = this.fm.endpoint;
+    return { home: this.fm.config.home, port: e?.port ?? this.fm.config.port, ...(e?.tokenFile ? { tokenFile: e.tokenFile } : {}) };
   }
 
   /** Auto mode's guardrails cover the user's checkouts and AgentCraft's own state. */
@@ -1013,7 +1021,7 @@ export class ClaudeBackend implements Backend {
   }
 
   private env(who: { agentId?: string; cwd?: string } = {}): Record<string, string | undefined> {
-    return withAuthMode(agentEnv(process.env, who), this.cfg.useClaudeLogin);
+    return scrubEnv(withAuthMode(agentEnv(process.env, who), this.cfg.useClaudeLogin));
   }
 
   private async cwdFor(job: Job): Promise<{ cwd: string; role: 'lead' | 'worker'; repoId: string }> {
@@ -1183,7 +1191,17 @@ export class ClaudeBackend implements Backend {
     const disallowed = ['Bash(git push:*)', ...(sub ? [] : ['Task', 'Agent']), ...(p.webTools ? [] : ['WebSearch', 'WebFetch'])];
     const rules = p.allow.length || p.deny.length || p.ask.length ? { permissions: { allow: p.allow, deny: p.deny, ask: p.ask } } : undefined;
     const connectors = this.cfg.context.connectors;
-    const hooks: HookCallbackMatcher[] = [];
+    // the Foreman's own files, token and port: denied before anything else, whatever the rules
+    const hooks: HookCallbackMatcher[] = [
+      {
+        hooks: [
+          foremanGuardHook(
+            (tool, input) => foremanPrivateVerdict(tool, input, { role, cwd, foreman: this.foremanPrivate() }),
+            (tool, reason, subagent) => this.fm.agentLog(agentId, 'error', `blocked${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
+          ),
+        ],
+      },
+    ];
     if (connectors.length) hooks.push({ hooks: [connectorHook(connectors, (tool, server) => this.fm.agentLog(agentId, 'error', `blocked ${tool}: connector "${server}" is not enabled`))] });
     if (p.mode === 'auto') {
       const guard = guardrailHook(
@@ -1259,7 +1277,8 @@ export class ClaudeBackend implements Backend {
             ? `\n\n# Earlier sessions\n${userName()}'s earlier Claude sessions in these repositories are searchable (find_sessions, read_session). When a goal refers to earlier work, find and read the relevant session before planning, then put what a worker needs, and the session id, into the task description.`
             : `\n\n# Earlier sessions\nIf your task names an earlier Claude session (an id), read it with read_session before you start; find_sessions searches others.`;
       }
-      const extra = instructionsBlock(this.cfg.context, cwd, userName(), os.homedir(), this.fm.repos.get(repoId)?.path);
+      const priv = this.foremanPrivate();
+      const extra = instructionsBlock(this.cfg.context, cwd, userName(), os.homedir(), this.fm.repos.get(repoId)?.path, (abs) => foremanPrivatePath(abs, priv));
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
       const { model, effort } = this.modelFor(agentId, role, job.taskId, role === 'worker' ? roleOf(agentId) : undefined);
       const options: Options = {
@@ -1275,7 +1294,7 @@ export class ClaudeBackend implements Backend {
         systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
         abortController: abort,
         // the repository's env (e.g. a PATH for its Node version) on top; GIT_* never comes from it
-        env: { ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) },
+        env: scrubEnv({ ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId) }),
         // we spawn the CLI ourselves (same as the SDK's local spawn) so its pid is known: a stopped
         // turn's whole process tree can then be ended before its worktree is handed on
         spawnClaudeCodeProcess: this.spawner(entry, agentId),
@@ -1417,7 +1436,7 @@ export class ClaudeBackend implements Backend {
   /** The CLI is spawned by us (same as the SDK's local spawn) so its pid is known: an aborted turn's whole process tree can be ended. */
   private spawner(entry: Running, label: string): NonNullable<Options['spawnClaudeCodeProcess']> {
     return (o) => {
-      const child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
+      const child = spawn(o.command, o.args, { cwd: o.cwd, env: scrubEnv(o.env as NodeJS.ProcessEnv), stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
       child.stderr?.setEncoding('utf8');
       child.stderr?.on('data', (s: string) => this.fm.log.debug(`[${label} stderr] ${s.trim().slice(0, 300)}`));
       child.on('error', (e) => this.fm.log.debug(`[${label}] CLI process error: ${e.message}`));
@@ -2002,6 +2021,18 @@ export class ClaudeBackend implements Backend {
   /** Withdraw an agent's open questions and permission prompts (not merge decisions: those are the user's). */
   private withdrawDecisions(agentId: string, why: string): void {
     for (const d of this.fm.decisions.open().filter((x) => x.agentId === agentId && x.kind !== 'merge' && !this.prs.owns(x.id))) this.fm.decisions.cancel(d.id, why);
+  }
+
+  /**
+   * config.set copied live settings into this.cfg (models, effort, concurrency, permissions, context
+   * lists and repo settings are read at every turn / tick anyway): PR watching switches over now,
+   * the status line shows the new models, and more turns may start.
+   */
+  onConfigChanged(): void {
+    this.prs.configure(this.cfg.prWatch, this.cfg.prPollSeconds);
+    const msg = this.fm.status.message;
+    if (this.fm.status.auth === 'ok' && msg?.startsWith('Claude (lead ')) this.fm.setStatus({ message: this.baseStatusMessage() });
+    this.tick();
   }
 
   async onAgentAction(agentId: string, action: 'pause' | 'resume' | 'stop' | 'spawn'): Promise<void> {

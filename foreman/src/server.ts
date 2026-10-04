@@ -1,8 +1,11 @@
 // WebSocket server: ws://127.0.0.1:<port>. Clients send `hello` and get a `snapshot`, then every
 // upsert. Multiple clients (the mod + CLI tools) are supported. Any browser origin (also `null`) and
-// non-loopback Host headers are rejected, so a web page cannot drive your agents.
+// non-loopback Host headers are rejected, so a web page cannot drive your agents. With a client
+// token (clienttoken.ts) only a client whose `hello` carries it may change anything; every other
+// connection is read-only.
 import type { IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { READ_ONLY_ERROR, READ_ONLY_TYPES, tokenMatches } from './clienttoken.js';
 import type { Logger } from './context.js';
 import type { Foreman } from './foreman.js';
 import { parseClientMessage, PROTOCOL_VERSION, ServerMessage, type Outbound } from './protocol.js';
@@ -13,6 +16,11 @@ export interface ServerOptions {
   allowBrowserOrigins?: boolean;
   /** validate every outbound message against the schema (tests/dev) */
   validateOutbound?: boolean;
+  /**
+   * the client token (clienttoken.ts): without it in `hello` a connection is read-only. Undefined =
+   * no token (`--no-client-token`, tests): every connection may do everything.
+   */
+  token?: string;
   log: Logger;
 }
 
@@ -39,6 +47,8 @@ interface Client {
   hello: boolean;
   name: string;
   alive: boolean;
+  /** sent the client token in hello (or no token is configured) */
+  trusted: boolean;
 }
 
 export class ForemanServer {
@@ -100,7 +110,7 @@ export class ForemanServer {
   }
 
   private onConnection(ws: WebSocket, req: IncomingMessage): void {
-    const client: Client = { ws, id: this.nextId++, hello: false, name: `client${this.nextId - 1}`, alive: true };
+    const client: Client = { ws, id: this.nextId++, hello: false, name: `client${this.nextId - 1}`, alive: true, trusted: this.opts.token === undefined };
     this.clients.add(client);
     this.opts.log.info(`client #${client.id} connected from ${req.socket.remoteAddress ?? '?'}`);
     ws.on('pong', () => {
@@ -129,10 +139,17 @@ export class ForemanServer {
       if (msg.type === 'hello') {
         client.hello = true;
         client.name = `${msg.client ?? 'client'}#${client.id} (${msg.modVersion})`;
-        this.opts.log.info(`hello from ${client.name}`);
+        if (this.opts.token !== undefined) client.trusted = tokenMatches(this.opts.token, msg.token);
+        this.opts.log.info(`hello from ${client.name}${client.trusted ? '' : msg.token ? ' (wrong client token: read-only)' : ' (no client token: read-only)'}`);
       } else if (!client.hello) {
         // be lenient: treat the first intent as an implicit hello so tools can fire-and-forget
+        // (such a connection carries no token: it stays read-only)
         client.hello = true;
+      }
+      if (!client.trusted && !READ_ONLY_TYPES.has(msg.type)) {
+        this.send(client, { type: 'error', message: READ_ONLY_ERROR, ...(msg.id ? { re: msg.id } : {}) });
+        if (msg.id) this.send(client, { type: 'ack', re: msg.id, ok: false, error: READ_ONLY_ERROR });
+        return;
       }
       void this.foreman.handle(msg, (out) => this.send(client, out));
     });

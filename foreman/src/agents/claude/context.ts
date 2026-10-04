@@ -65,6 +65,9 @@ export const DEFAULT_CONTEXT: AgentContextConfig = {
 };
 
 export const SKILLS_PLUGIN = 'agentcraft-skills';
+
+/** Why an instruction file or import must not be read (the Foreman's own files, policy.ts), or undefined. */
+export type DenyPath = (abs: string) => string | undefined;
 const MAX_IMPORT_DEPTH = 5;
 
 export function expandHome(p: string, home = os.homedir()): string {
@@ -92,11 +95,11 @@ function isFile(p: string): boolean {
  * inside code spans or fenced blocks, relative to the importing file, up to 5 levels). An import
  * that is missing, a directory, or already included stays as written.
  */
-export function readInstructions(file: string, opts: { home?: string; seen?: Set<string>; depth?: number } = {}): string {
+export function readInstructions(file: string, opts: { home?: string; seen?: Set<string>; depth?: number; deny?: DenyPath } = {}): string {
   const seen = opts.seen ?? new Set<string>();
   const depth = opts.depth ?? 0;
   const real = realOrSelf(file);
-  if (seen.has(real) || !isFile(file)) return '';
+  if (seen.has(real) || !isFile(file) || opts.deny?.(path.resolve(file))) return '';
   seen.add(real);
   const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
   if (depth >= MAX_IMPORT_DEPTH) return text;
@@ -117,6 +120,8 @@ export function readInstructions(file: string, opts: { home?: string; seen?: Set
             ? part
             : part.replace(/(^|\s)@((?:~|\.{1,2})?\/?[\w.@~+-]+(?:\/[\w.@~+-]+)*)/g, (m, lead: string, ref: string) => {
                 const target = path.resolve(path.dirname(file), expandHome(ref, opts.home));
+                // the Foreman's own files (its client token, config, state) are never inlined
+                if (opts.deny?.(target)) return `${lead}(import @${ref} skipped: AgentCraft's own files are off limits)`;
                 if (!isFile(target) || seen.has(realOrSelf(target))) return m;
                 const body = readInstructions(target, { ...opts, seen, depth: depth + 1 }).trim();
                 return body ? `${lead}${body}` : m;
@@ -165,11 +170,15 @@ export function instructionSources(cfg: AgentContextConfig, cwd: string, home = 
 }
 
 /** The block appended to an agent's system prompt ('' when there is nothing to add). */
-export function instructionsBlock(cfg: AgentContextConfig, cwd: string, userName: string, home = os.homedir(), checkout?: string): string {
+export function instructionsBlock(cfg: AgentContextConfig, cwd: string, userName: string, home = os.homedir(), checkout?: string, deny?: DenyPath): string {
   const seen = new Set<string>();
   const parts: string[] = [];
   for (const s of instructionSources(cfg, cwd, home, checkout)) {
-    const body = readInstructions(s.file, { home, seen }).trim();
+    if (deny?.(path.resolve(s.file)) && isFile(s.file)) {
+      parts.push(`## ${s.label} (${s.file})\n\n(skipped: AgentCraft's own files are off limits)`);
+      continue;
+    }
+    const body = readInstructions(s.file, { home, seen, ...(deny ? { deny } : {}) }).trim();
     if (body) parts.push(`## ${s.label} (${s.file.startsWith(cwd) ? path.relative(cwd, s.file) : s.file})\n\n${body}`);
   }
   if (!parts.length) return '';

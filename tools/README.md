@@ -95,6 +95,13 @@ node tools/record.mjs tools/shots/desk_story.json --port 7889 --hold 3000   # pl
 npm test --prefix tools
 ```
 
+The Foreman serves only reads to clients without its client token. `foremancli.mjs`,
+`lib/foremanclient.mjs`, `shoot.mjs` and `qa.mjs` find the token through the Foreman's run file
+under its home: add `--home <dir>` (or set `AGENTCRAFT_HOME`) when the Foreman runs with a home
+other than `~/.agentcraft`, e.g. `node tools/foremancli.mjs send config.get --port 27878 --home
+C:\Projects\agentcraft\.agentcraft-home`. `AGENTCRAFT_CLIENT_TOKEN` overrides
+(foreman/README.md "Client token").
+
 Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.md).
 
 | file | |
