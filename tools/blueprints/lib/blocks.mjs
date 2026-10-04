@@ -27,6 +27,7 @@ function def(name, props = {}, collision = 'full', defaults = {}) {
 // ---- AgentCraft ----
 def('agentcraft:monitor', { ...panelProps, lit: BOOL }, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false', lit: 'false' });
 def('agentcraft:task_board', panelProps, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false' });
+def('agentcraft:village_board', panelProps, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false' });
 def('agentcraft:decision_podium', { facing: H4, open: BOOL }, 'partial', { facing: 'south', open: 'false' });
 def('agentcraft:memory_archive', facing(), 'full', { facing: 'south' });
 def('agentcraft:memory_catalog', facing(), 'full', { facing: 'south' });

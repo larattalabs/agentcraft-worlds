@@ -1,0 +1,53 @@
+{
+  "id": "village_board",
+  "name": "Village board",
+  "description": "A fixture for the village square: a 5 x 3 board that shows every building (its lead, active goal and progress, open PRs and PRs merged this week), the newest milestones (goals done, PRs merged, trophies hung) and anything that holds the agents. Readable from about 8 blocks; right-click it for the hub (or the Inbox when something needs you). Takes no repos.",
+  "kind": "fixture",
+  "wings": 0,
+  "size": {
+    "x": 7,
+    "y": 7,
+    "z": 4
+  },
+  "groundY": 1,
+  "front": "south",
+  "materials": "vanilla",
+  "foundationBlock": "minecraft:stone_bricks",
+  "approach": {
+    "length": 0,
+    "width": 3,
+    "block": "minecraft:dirt_path",
+    "slab": "minecraft:stone_brick_slab"
+  },
+  "walk": {
+    "minX": 0,
+    "minY": 1,
+    "minZ": 2,
+    "maxX": 6,
+    "maxY": 2,
+    "maxZ": 3
+  },
+  "anchors": {
+    "board": {
+      "x": 3.5,
+      "y": 3.5,
+      "z": 1.127,
+      "yaw": 0,
+      "pitch": 0
+    },
+    "spawn": {
+      "x": 3.5,
+      "y": 1,
+      "z": 3.5,
+      "yaw": 180,
+      "pitch": 0
+    },
+    "cam_overview": {
+      "x": 3.5,
+      "y": 2.6,
+      "z": 3.9,
+      "yaw": -180,
+      "pitch": -18.435
+    }
+  }
+}

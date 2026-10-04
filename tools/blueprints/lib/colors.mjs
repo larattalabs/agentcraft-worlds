@@ -17,6 +17,7 @@ export const COLOR_TABLE = {
   'agentcraft:glow_strip': { c: '#ffe6a0', emissive: true, shape: 'strip' },
   'agentcraft:monitor': { c: '#1d2431', border: '#cfd6e0', lit: '#3f78b8', shape: 'panel' },
   'agentcraft:task_board': { c: '#252c36', border: '#e8e2d0', shape: 'panel' },
+  'agentcraft:village_board': { c: '#2a211b', border: '#c9a227', shape: 'panel' },
   'agentcraft:decision_podium': { c: '#7a4e2e', shape: 'small', box: [0.15, 0, 0.15, 0.85, 0.95, 0.85], border: '#d9b45a' },
   'agentcraft:memory_archive': '#5f4c80',
   'agentcraft:memory_catalog': '#7e6ba3',
