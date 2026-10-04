@@ -378,10 +378,14 @@ with `AGENTCRAFT_USER_NAME`, or with `{"userName": "Sam"}` in `~/.agentcraft/con
 
 The launchers above run a development client with the studio world. To play in a normal world
 instead, the mod goes into a launcher instance like any Fabric mod, and the Foreman runs beside the
-game. On macOS with Prism Launcher, `node tools/hardcore-setup.mjs` does it for you: it builds the
-mod from a stable checkout, installs the jar into the instance, backs everything up first, and
-makes the Foreman start whenever the game does. Run it without `--apply` first to see every change.
-Details, updating and rollback: [tools/README.md, "Playing in a Hardcore world"](tools/README.md#playing-in-a-hardcore-world-prism-launcher-macos).
+game. On macOS with Prism Launcher, `node tools/hardcore-setup.mjs` does this: it builds the mod
+from a stable checkout, installs the jar into an instance, backs everything up first, and makes the
+Foreman start whenever the game does. Its defaults (instance name, backup script and folders) are
+the fork author's own, so pass yours with `--instance`, `--backup-dir` and `--backup-script`, and
+run it without `--apply` first to see every change. `--help` lists the options; updating and
+rollback are in [tools/README.md, "Playing in a Hardcore world"](tools/README.md#playing-in-a-hardcore-world-prism-launcher-macos).
+On other launchers, build the jar with `./gradlew build` in `mod/`, add it like any Fabric mod and
+start the Foreman yourself (`npm run start` in `foreman/`).
 
 Then open the hub with <kbd>H</kbd>, register your repos in **Repos** and place their buildings.
 
@@ -529,8 +533,9 @@ features, and [docs/QA.md](docs/QA.md) for the screenshot suite.
 
 AgentCraft is young, and this fork younger. Today it is:
 
-- **macOS and Windows.** Both have desktop notifications when the agents need a decision. macOS is
-  tested on Apple Silicon; the fork's Prism setup is macOS only.
+- **macOS and Windows.** Both have desktop notifications when the agents need a decision. The
+  fork's features have been run on macOS (Apple Silicon) only, and its Prism setup is macOS only;
+  upstream covers Windows.
 - **Singleplayer,** on **Minecraft 26.3**. Buildings can be placed in any singleplayer world.
 - **Fork features tested against the sim backend.** The buildings, hub, leads and PR watching pass
   their tests and the sim runs; a long run with real agents is the next step (see
