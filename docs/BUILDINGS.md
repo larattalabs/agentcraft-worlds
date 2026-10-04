@@ -156,7 +156,9 @@ Remove refuses, listing them ("Move these out of b3 first: chest at 1,64,2 (12 i
 3 dropped item stacks. Or confirm again with force: they are lost"), when the box (foundation included)
 holds what the building did not bring: block entities at positions where the template has none (a chest,
 furnace, bed or barrel the player placed), template containers or lecterns the player filled, dropped items,
-pets, villagers, item frames, paintings and armor stands. Forcing is a further explicit confirm: the hub's
+pets, villagers, item frames, paintings and armor stands. Remove, Move and Undo move also refuse while a player stands in or
+next to the site getting its old terrain back (every path, `/agentcraft remove` included: it would bury
+them). Forcing is a further explicit confirm: the hub's
 button turns into "Remove anyway", `/agentcraft remove <id> force`. Nothing is deleted silently. Drops are
 only cleared when the placement/removal itself made them: the items and XP around the box are recorded
 before, and only new ones are removed (right after and again three ticks later), never the player's own drops
@@ -170,6 +172,7 @@ with the next world save. The snapshot is therefore kept, and the site recorded 
 queue chunk writes without waiting for them); then the snapshot is deleted. At world start every building is
 checked against the world (by block, not state: lamps, podiums, monitors and doors change states; at least
 80 % of the template's blocks must be in place):
+(a building whose blueprint or dimension is not loaded cannot be checked and is skipped)
 - a building whose template does not stand is reported in the hub (Buildings tab "Check", `/agentcraft
   buildings`): Remove restores the terrain saved before it was placed, Forget only drops the record; nothing
   is deleted automatically;

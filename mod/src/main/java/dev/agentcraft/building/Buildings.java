@@ -526,6 +526,7 @@ public final class Buildings {
 			throw new BuildingException("Snapshot " + snap.getFileName() + " is missing, so " + id + " cannot be restored; "
 				+ "/agentcraft remove " + id + " forget drops the record and leaves the blocks");
 		}
+		refusePlayerIn(level, b.restoreBox(), id, "removing it");
 		if (!force) {
 			List<String> blockers = removalBlockers(level, b);
 			if (!blockers.isEmpty()) {
@@ -550,6 +551,20 @@ public final class Buildings {
 	/** {@link #remove(ServerLevel, String, boolean)} without force. */
 	public static Building remove(ServerLevel level, String id) throws BuildingException {
 		return remove(level, id, false);
+	}
+
+	/**
+	 * Refuses when a player stands in (or next to) a box about to get its old terrain back: restoring it would bury
+	 * them (death in Hardcore). Every restore path ({@link #remove}, {@link #move}, {@link #undoMove}) checks it,
+	 * not only the hub. Server thread.
+	 */
+	static void refusePlayerIn(ServerLevel level, Anchors.Bounds box, String id, String verb) throws BuildingException {
+		for (Occupancy.Found f : Occupancy.scan(level, box, e -> false)) {
+			if (f.kind() == Occupancy.Kind.PLAYER) {
+				throw new BuildingException("Step out of " + id + " first (" + f.name() + " is in or next to it): " + verb
+					+ " puts the old terrain back there; nothing was done");
+			}
+		}
 	}
 
 	/** "Move these first: ..." for a removal (or move) that would destroy them. */
@@ -739,6 +754,7 @@ public final class Buildings {
 		if (loadFailed) {
 			throw new BuildingException(FILE + " could not be read when the world started; nothing was moved");
 		}
+		refusePlayerIn(oldLevel, b.restoreBox(), id, "moving it");
 		if (!force) {
 			List<String> blockers = removalBlockers(oldLevel, b);
 			if (!blockers.isEmpty()) {
@@ -893,8 +909,8 @@ public final class Buildings {
 		boolean changed = false;
 		for (Building b : List.copyOf(map.values())) {
 			int[] st = standing(server, b);
-			if (Reconcile.stands(st[0], st[1])) {
-				continue;
+			if (st[1] == 0 || Reconcile.stands(st[0], st[1])) {
+				continue; // standing, or cannot be checked (blueprint or dimension not loaded): nothing to say
 			}
 			Building.Pending old = null;
 			for (Building.Pending p : pending) {
@@ -903,7 +919,7 @@ public final class Buildings {
 				}
 			}
 			int[] was = old == null ? new int[] {0, 0} : standing(server, old.building());
-			if (old != null && Reconcile.stands(was[0], was[1])) {
+			if (old != null && was[1] > 0 && Reconcile.stands(was[0], was[1])) {
 				// the move never reached the disk: the building is still at its old site, with that site's snapshot
 				Path snaps = server.getWorldPath(LevelResource.ROOT).resolve(SNAPSHOT_DIR);
 				try {
@@ -929,7 +945,7 @@ public final class Buildings {
 				continue;
 			}
 			int[] st = standing(server, b);
-			if (Reconcile.stands(st[0], st[1]) && p.snapshot().equals(b.id() + ".before.nbt")) {
+			if (st[1] > 0 && Reconcile.stands(st[0], st[1]) && p.snapshot().equals(b.id() + ".before.nbt")) {
 				map.put(b.id(), b.withHome(map.isEmpty()));
 				pending.remove(p);
 				changed = true;
