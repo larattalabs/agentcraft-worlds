@@ -337,6 +337,30 @@ final class InboxDev {
 						return o;
 					}));
 			});
+		DevBridge.register("dev.monitor.open", 10_000, "{x, y, z} - a monitor's right-click: the Inbox's view of the agent that panel shows (the feed "
+			+ "monitor: the Inbox); replies {agent, inbox state}", (req, mc) -> {
+				Fields f = Fields.of(req);
+				int x = (int) f.integer("x", -30_000_000, 30_000_000);
+				int y = (int) f.integer("y", -2048, 2048);
+				int z = (int) f.integer("z", -30_000_000, 30_000_000);
+				return DevBridge.onClient(mc, () -> {
+					if (mc.level == null) {
+						throw new DevBridge.DevException("not in a world");
+					}
+					String agent = dev.agentcraft.client.monitor.MonitorFeature.agentAt(mc.level, new net.minecraft.core.BlockPos(x, y, z));
+					if (agent == null) {
+						throw new DevBridge.DevException("no monitor at " + x + " " + y + " " + z);
+					}
+					if (agent.equals("feed")) {
+						Inbox.open(null);
+					} else {
+						Inbox.openAgent(agent);
+					}
+					JsonObject o = state(mc);
+					o.addProperty("agent", agent);
+					return o;
+				});
+			});
 		DevBridge.registerScreen("hub_inbox", mc -> new HubScreen(HubTab.INBOX));
 		for (Kind k : Kind.values()) {
 			// the newest item of that kind selected (the agent view: whoever has the newest item, else the first agent)

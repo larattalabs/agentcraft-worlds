@@ -60,6 +60,16 @@ public final class MonitorFeature {
 
 	public static void init() {
 		BlockEntityRenderers.register(ModBlockEntities.MONITOR, ctx -> new MonitorRenderer());
+		// W4: a monitor's right-click opens its agent's view in the hub Inbox (card summary + full log); the feed
+		// monitor opens the Inbox itself
+		dev.agentcraft.client.world.StationInteractions.onUse(dev.agentcraft.block.ModBlocks.MONITOR, (player, pos, state, be) -> {
+			String agent = agentAt(player.level(), pos);
+			if (agent == null || agent.equals("feed")) {
+				dev.agentcraft.client.hub.Inbox.open(null);
+			} else {
+				dev.agentcraft.client.hub.Inbox.openAgent(agent);
+			}
+		});
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onSnapshot(ForemanState st) {
@@ -161,6 +171,25 @@ public final class MonitorFeature {
 
 	public static Look look() {
 		return look;
+	}
+
+	/**
+	 * The agent the monitor panel holding {@code pos} shows ("feed" = the team feed), null when there is no monitor there.
+	 * Client thread.
+	 */
+	public static @Nullable String agentAt(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
+		net.minecraft.world.level.block.state.BlockState st = level.getBlockState(pos);
+		if (!(st.getBlock() instanceof dev.agentcraft.block.PanelBlock)) {
+			return null;
+		}
+		net.minecraft.core.BlockPos origin = dev.agentcraft.block.PanelBlock.origin(level, pos, st);
+		net.minecraft.world.level.block.state.BlockState os = level.getBlockState(origin);
+		if (!(level.getBlockEntity(origin) instanceof MonitorBlockEntity be)) {
+			return null;
+		}
+		int[] wh = dev.agentcraft.block.PanelBlock.extent(level, origin, os);
+		Direction facing = os.hasProperty(dev.agentcraft.block.PanelBlock.FACING) ? os.getValue(dev.agentcraft.block.PanelBlock.FACING) : Direction.NORTH;
+		return resolveAgent(be, be.binding(), facing, wh[0], wh[1]);
 	}
 
 	/**

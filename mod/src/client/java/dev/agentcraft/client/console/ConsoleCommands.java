@@ -33,7 +33,8 @@ import org.jspecify.annotations.Nullable;
  * /task &lt;id&gt; cancel|retry|prioritize [n]|reassign @x
  * /diff [worktree|@agent]          diff review screen (or a summary)
  * /status /help /decide /clear /sound on|off
- * /hub [tab]                       the hub screen (buildings, repos, goals, team, settings, status)
+ * /hub [tab]                       the hub screen (inbox, buildings, repos, goals, team, settings, status)
+ * /inbox [@agent]                  the hub Inbox (an agent: its view, with the card summary and the full log)
  * /hub design                      the hub's design form (Buildings -> Design new…)
  * </pre>
  */
@@ -44,7 +45,7 @@ public final class ConsoleCommands {
 	// ------------------------------------------------------------------ intents
 
 	public sealed interface Intent permits Goal, Message, Answer, RepoAdd, Repos, AgentAction, TaskAction, ShowDiff, Status, Help, Decide, Clear,
-		Sound, Hub, Invalid, Empty {
+		Sound, Hub, OpenInbox, Invalid, Empty {
 	}
 
 	/**
@@ -99,6 +100,10 @@ public final class ConsoleCommands {
 	public record Hub(@Nullable String tab) implements Intent {
 	}
 
+	/** Open the hub Inbox; {@code agentId} non-null = that agent's view (card summary + full log). */
+	public record OpenInbox(@Nullable String agentId) implements Intent {
+	}
+
 	public record Invalid(String error) implements Intent {
 	}
 
@@ -113,7 +118,8 @@ public final class ConsoleCommands {
 		new Command("goal", "/goal <text>", "start a goal (plain text asks to confirm first)"),
 		new Command("answer", "/answer [d4] <n|option> [text]", "answer an open decision (n = button number)"),
 		new Command("decide", "/decide", "open the decision queue (J)"),
-		new Command("hub", "/hub [buildings|repos|goals|team|settings|status|design]", "open the hub (H); design: Design new…"),
+		new Command("inbox", "/inbox [@agent]", "the hub Inbox: decisions, replies, blocked tasks; an agent: its log"),
+		new Command("hub", "/hub [inbox|buildings|repos|goals|team|settings|status|design]", "open the hub (H); design: Design new…"),
 		new Command("diff", "/diff [worktree|@agent]", "review a worktree's diff"),
 		new Command("pause", "/pause @agent", "pause an agent (keeps its task)"),
 		new Command("resume", "/resume @agent", "resume a paused or stopped agent"),
@@ -214,13 +220,14 @@ public final class ConsoleCommands {
 			case "clear", "cls" -> new Clear();
 			case "sound", "sounds", "mute" -> parseSound(cmd, args);
 			case "hub" -> parseHub(args);
+			case "inbox", "i" -> parseInbox(args, s);
 			case "goal" -> rest.isEmpty() ? new Invalid("type the goal after /goal") : goal(rest, s, preferRepo, false);
 			default -> new Invalid("unknown command /" + cmd + " (/help lists them)");
 		};
 	}
 
 	/** Hub tab ids, in order (mirrors {@code client.hub.HubTab}; this class stays free of screen code). */
-	public static final List<String> HUB_TABS = List.of("buildings", "repos", "goals", "team", "settings", "status");
+	public static final List<String> HUB_TABS = List.of("inbox", "buildings", "repos", "goals", "team", "settings", "status");
 	/** {@code /hub design}: the design form instead of a tab. */
 	public static final String HUB_DESIGN = "design";
 
@@ -238,6 +245,15 @@ public final class ConsoleCommands {
 			}
 		}
 		return new Invalid("no hub tab " + args.get(0) + " (" + String.join(", ", HUB_TABS) + ", or design)");
+	}
+
+	private static Intent parseInbox(List<String> args, ForemanState s) {
+		if (args.isEmpty()) {
+			return new OpenInbox(null);
+		}
+		String a = args.get(0);
+		String id = resolveAgent(a.startsWith("@") ? a.substring(1) : a, s, false);
+		return id == null ? new Invalid("no agent named " + a) : new OpenInbox(id);
 	}
 
 	private static Intent parseSound(String cmd, List<String> args) {
@@ -543,6 +559,7 @@ public final class ConsoleCommands {
 			case Help h -> "show help";
 			case Decide d -> "open decisions";
 			case Hub hub -> hub.tab() == null ? "open the hub" : HUB_DESIGN.equals(hub.tab()) ? "design a new building" : "open the hub: " + hub.tab();
+			case OpenInbox oi -> oi.agentId() == null ? "open the inbox" : "open " + displayName(oi.agentId(), s) + "'s log";
 			case Clear c -> "clear console";
 			case Sound so -> so.on() == null ? "sound status" : so.on() ? "sound on" : "sound off";
 			case Invalid i -> null;
@@ -639,6 +656,11 @@ public final class ConsoleCommands {
 							}
 						}
 					}
+				}
+			}
+			case "/inbox", "/i" -> {
+				if (argIndex == 1) {
+					agentCompletions(out, ts, cursor, lower.startsWith("@") ? lower.substring(1) : lower, s, false, "");
 				}
 			}
 			case "/hub" -> {
@@ -863,6 +885,7 @@ public final class ConsoleCommands {
 			case Decide d -> m.put("decisionId", d.decisionId());
 			case Sound so -> m.put("on", so.on());
 			case Hub hub -> m.put("tab", hub.tab());
+			case OpenInbox oi -> m.put("agentId", oi.agentId());
 			case Invalid i -> m.put("error", i.error());
 			default -> {
 			}

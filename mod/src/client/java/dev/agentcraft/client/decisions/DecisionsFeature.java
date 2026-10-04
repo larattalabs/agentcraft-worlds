@@ -96,10 +96,20 @@ public final class DecisionsFeature {
 	}
 
 	/**
-	 * A podium's right-click: the queue as that podium shows it ({@link dev.agentcraft.client.leads.Leads.View#podiumFor}),
-	 * with a "show all" switch. A podium outside every building (the HQ studio) shows what the home podium shows.
+	 * A podium's right-click (W4, docs/WAVE2.md): the hub Inbox filtered to that podium's decisions
+	 * ({@link dev.agentcraft.client.leads.Leads.View#podiumFor}, the filter wave 1 gave the podium), with "All decisions"
+	 * for the full queue. A podium outside every building (the HQ studio) shows what the home podium shows.
 	 */
 	public static void openPodium(net.minecraft.world.level.Level level, BlockPos pos) {
+		String building = dev.agentcraft.client.leads.Leads.buildingAt(level, pos.getX(), pos.getY(), pos.getZ(), 0);
+		dev.agentcraft.client.hub.Inbox.openPodium(building);
+	}
+
+	/**
+	 * The podium's queue in the decision screen (before wave 2 its right-click; now the Inbox's "Decision screen" and
+	 * {@code dev.decision {podium, screen:true}}), with a "show all" switch.
+	 */
+	public static void openPodiumScreen(net.minecraft.world.level.Level level, BlockPos pos) {
 		String building = dev.agentcraft.client.leads.Leads.buildingAt(level, pos.getX(), pos.getY(), pos.getZ(), 0);
 		dev.agentcraft.client.leads.Leads.View v = dev.agentcraft.client.leads.Leads.view();
 		String label = building == null || building.equals(v.homeBuilding()) ? "home podium" : building + "'s podium";
@@ -191,21 +201,33 @@ public final class DecisionsFeature {
 	private static void registerDev() {
 		DevBridge.register("dev.decision", 10_000,
 			"{decisionId?, kind?: question|permission|merge, preview?: bool (sample permission, nothing sent), podium?: [x,y,z] (as that podium's right-click: "
-				+ "filtered), showAll?: bool} - open the decision screen at that decision (default: the queue head)", (req, mc) -> {
+				+ "the hub Inbox filtered to its decisions; with screen:true the podium-scoped decision screen instead), showAll?: bool} - open the decision "
+				+ "screen at that decision (default: the queue head)", (req, mc) -> {
 				Fields f = Fields.of(req);
 				if (f.has("podium")) {
 					com.google.gson.JsonArray a = f.json().getAsJsonArray("podium");
 					BlockPos at = new BlockPos(a.get(0).getAsInt(), a.get(1).getAsInt(), a.get(2).getAsInt());
 					boolean all = f.optBool("showAll", false);
+					boolean screen = f.optBool("screen", false);
 					return DevBridge.onClient(mc, () -> {
 						if (mc.level == null) {
 							throw new DevBridge.DevException("not in a world");
 						}
-						openPodium(mc.level, at);
-						if (all && mc.gui.screen() instanceof DecisionScreen ds) {
-							ds.toggleShowAll();
+						if (screen) {
+							openPodiumScreen(mc.level, at);
+							if (all && mc.gui.screen() instanceof DecisionScreen ds) {
+								ds.toggleShowAll();
+							}
+						} else {
+							openPodium(mc.level, at);
+							if (all) {
+								dev.agentcraft.client.hub.Inbox.open("all");
+							}
 						}
-						return state(mc);
+						JsonObject o = state(mc);
+						o.addProperty("inboxFilter", dev.agentcraft.client.hub.Inbox.filter().id());
+						o.addProperty("podiumBuilding", dev.agentcraft.client.leads.Leads.buildingAt(mc.level, at.getX(), at.getY(), at.getZ(), 0));
+						return o;
 					});
 				}
 				String id = f.has("decisionId") ? f.nonBlank("decisionId") : null;
