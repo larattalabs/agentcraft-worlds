@@ -17,6 +17,8 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
+import net.minecraft.world.entity.projectile.arrow.ThrownTrident;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 
@@ -32,8 +34,9 @@ import net.minecraft.world.phys.AABB;
  * picked up the player's gear carries it);</li>
  * <li>any other living entity (villagers, animals, armor stands) and anything else (item frames, minecarts, boats)
  * refuses, named;</li>
- * <li>dropped items and XP inside the box refuse ("pick them up first": they would be sealed into the walls);
- * stray projectiles (arrows in the ground) are removed.</li>
+ * <li>dropped items inside the box refuse ("pick them up first": they would be sealed into the walls), and so do a
+ * thrown trident and an arrow the player can pick up (an enchanted trident lost to a placement in Hardcore);
+ * arrows nobody can pick up (a skeleton's, a creative or Infinity shot) and XP are removed.</li>
  * </ul>
  * Removal is the safer UX for hostiles: the player cannot shoo a creeper out of a box, and refusing until morning
  * is worse; everything that may matter to the player refuses instead.
@@ -140,6 +143,22 @@ public final class Occupancy {
 		return out;
 	}
 
+	/**
+	 * Whether a stuck arrow or trident is the player's to pick up. A trident always counts. An arrow counts when its
+	 * {@code pickup} is {@code ALLOWED}; that field is not synced, so on the client (the ghost) an arrow counts when a
+	 * player shot it, if the client knows the shooter, so the ghost can miss an arrow the server then refuses (tridents
+	 * count on both sides).
+	 */
+	static boolean pickable(AbstractArrow arrow) {
+		if (arrow instanceof ThrownTrident) {
+			return true;
+		}
+		if (arrow.level().isClientSide()) {
+			return arrow.getOwner() instanceof Player;
+		}
+		return arrow.pickup == AbstractArrow.Pickup.ALLOWED;
+	}
+
 	/** One entity's kind and name. */
 	public static Found classify(Entity e) {
 		String type = e.getType().getDescription().getString().toLowerCase(Locale.ROOT);
@@ -155,6 +174,9 @@ public final class Occupancy {
 		}
 		if (e instanceof ExperienceOrb) {
 			return new Found(Kind.PROJECTILE, "experience", false); // harmless: XP is removed, it never matters
+		}
+		if (e instanceof AbstractArrow arrow && pickable(arrow)) {
+			return new Found(Kind.ITEM, name, true); // the player's: "pick them up first", never discarded
 		}
 		if (e instanceof Projectile) {
 			return new Found(Kind.PROJECTILE, type, false);
