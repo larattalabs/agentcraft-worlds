@@ -72,3 +72,13 @@ API for the **hud** stream (client thread; all pure parts unit-tested in `InboxM
 - Read state: `hub-seen.json` worlds gain `"inbox": {"all": ts, "items": {key: ts}, "agents": {id: ts}}`
   (version 2; version 1 files load unchanged). A reply is read when its ts <= the newest of: Mark all read, its
   own mark (viewed in the Inbox), its agent's mark (agent card), its goal's own mark (opened in the goal thread).
+- W2 `client/decisions/AnswerPanel` (Host + Options): `Options.SCREEN` (DecisionScreen: numbered, Review diff, **no merge
+  confirm**: 1-9 behind the 350 ms arm as before, so `J` behaves exactly as in wave 1), `Options.EMBEDDED` (Inbox, goal
+  thread: Merge and Reject ask twice), the card uses `(confirmMerge, diff, no numbers, 2 lines)`. Held-key / OS-repeat
+  detection stays in each host. The goal thread keeps its hub button ids (`answer:<id>:<opt|text|open>`).
+- W3 Foreman: `agent.logs.request {agentId, before?, limit? (1..500, default 200)}` -> ack `{agentId, entries, more}`,
+  read backwards through `logs/<agent>.jsonl` then `<agent>.1.jsonl`; entries sharing the oldest entry's `ts` are never
+  split across pages (page by `before = entries[0].ts`); unknown agent refused; allowed without the client token.
+- W4: podium right-click -> `Inbox.openPodium(building)` (`dev.decision {podium}` follows the right-click; `screen:true`
+  keeps the old scoped DecisionScreen); monitor right-click -> `Inbox.openAgent` (feed monitor: the Inbox); `/inbox
+  [@agent]`. Task board cards still open the TaskScreen.

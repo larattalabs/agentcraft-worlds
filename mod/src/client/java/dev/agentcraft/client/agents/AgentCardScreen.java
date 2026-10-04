@@ -945,6 +945,7 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 	}
 
 	private void openField(Mode m, @Nullable String decisionId) {
+		panel.focusText(false); // one text box at a time
 		if (field == null) {
 			EditBox f = new EditBox(this.font, x0 + 60, y0, W - 80, 10, Component.literal(m == Mode.FEEDBACK ? "Requested changes" : "Message"));
 			f.setBordered(false);

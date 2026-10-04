@@ -18,6 +18,8 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
 - Opened with a key (default `H`, rebindable, AgentCraft category; vanilla binds H only as F3+H) and
   from the console (`/hub [tab]`). *(done)*
 - Tabs, in this order (later waves fill the ones marked *later*):
+  0. **Inbox** *(wave 2, branch `wave2/inbox`, see "Inbox" below)*: the first tab: decisions, agent replies,
+     blocked tasks, the Foreman's hold and PRs that need you, in one list with a detail per item.
   1. **Buildings** *(done)*: the world's buildings (blueprint, repos, home marker, box, rotation),
      actions: place new (opens the existing wizard), make home, remove (two-step confirm), teleport to
      (the entrance anchor, same dimension, a free spot with a floor); a blueprint browser (bundled +
@@ -493,3 +495,48 @@ the mod fills gaps in this contract (the Foreman side was built in parallel; ali
   until the link is synced with a newer snapshot.- DevBridge names: the task's "set {key, value}", "apply", "revert", "confirm", "restart" are `dev.hub.action`
   aliases of `settings_set`, `settings_apply`, `settings_revert`, `settings_confirm`, `foreman_restart`; "select
   agent" is `team_select {agentId}` (`select` is the Buildings tab's).
+
+## Inbox (wave 2, docs/WAVE2.md W1-W4; branch `wave2/inbox`)
+
+The first hub tab: everything that needs the player or happened for them, in one list. Code:
+`client/hub/{Inbox,InboxTab,AgentLogView,InboxDev}`, `client/decisions/AnswerPanel`, the pure
+`dev.agentcraft.hub.InboxModel` (unit-tested in `InboxModelTest`) and the read state in `HubSeen`.
+
+- **Items**, grouped **Needs you** (the hold pinned on top, then newest first) and **Updates** (newest first):
+  - decisions (all kinds) with the agent, the goal and the building whose podium shows them; open ones need
+    you, answered / withdrawn ones are updates (the last 30);
+  - agent replies to the player (feed `message` items from an agent `to: "user"`, goal replies included): unread
+    ones need you, read ones are updates (the last 60). Read = viewed in the Inbox for a moment, the goal opened in
+    its thread, the agent's card opened, or "Mark all read";
+  - blocked tasks (reason, assignee, goal);
+  - the hold (`foreman.status.hold`, C9): usage / auth / offline, what it means and when it lifts;
+  - PRs needing attention: tasks in status `pr` whose PR has changes requested, failing checks or new threads.
+- **Filters** (chips): All · Needs you n · Building ▾ (cycles the world's buildings) · Agent ▾ (cycles the agents:
+  the agent view). A podium's right-click opens the Inbox on **Podium: b3 ×** (the decisions that podium shows,
+  wave 1's `podiumFor` / `LeadRouting.podiumShowsTarget`) with **All decisions** next to it for the full queue.
+  The filter is kept between visits. "Mark all read" on the right.
+- **Detail** per kind (the body scrolls; the answer / reply area stays at the bottom):
+  - decision: the question and its context, the **AnswerPanel** (options, the text box when the decision takes
+    text, Review diff for merges; Merge and Reject ask twice, Request changes opens the feedback box), Open
+    thread (its goal) and Decision screen (the full decision screen, Esc back to the hub);
+  - reply: the whole message, a reply box (Ctrl+Enter or Send: `goal.message` to the goal's lead when the reply
+    is about a goal, so it lands in that goal's thread, else `user.message` to the agent), Open thread, Open card;
+  - blocked task: the reason in red, assignee, repo, branch; **Retry** (`task.action retry`), Open task (the task
+    screen, Esc back), Open card;
+  - hold: the line ("usage paused until 14:20"), what it means and when it lifts (`InboxModel.holdExplain`), Usage
+    settings / Status tab;
+  - PR: why it needs you, state, checks, threads, branch, link; Goal's tasks (the Goals tab's Tasks view of its
+    goal), Refresh PRs, Open task.
+- **Agent view** (Agent filter, a monitor's right-click, `/inbox @agent`): a pinned first row with the card's
+  summary (portrait, title · role, state, activity, task, building) and the agent's **full log**: pages of the
+  Foreman's stored log (`agent.logs.request`, 200 per page, both rotation files) joined with the live tail;
+  scrolling up at the top loads the page before (the view keeps its place), "Load older" does the same; a message
+  box (`user.message`) and Open card. An older Foreman shows the live tail with "older lines need a newer Foreman".
+- **Deep links** (W4): podium right-click -> Inbox on that podium's decisions; monitor right-click -> the Inbox
+  view of the agent that panel shows (the feed monitor: the Inbox); console `/inbox [@agent]`; `J` still opens
+  the decision screen (the fast path), which hosts the same AnswerPanel.
+- **Layout**: compact under 470 × 200 GUI px (GUI scale 4 at 1080p, 4K with auto scale ~426 × 240): the list or
+  the detail with "‹ Inbox", shorter chip and button labels; `dev.inbox.state` `layout` = `{guiWidth, guiHeight,
+  guiScale, compact, width, needed, available, overflow, tabStrip{needed, available, overflow}}` (the tab strip's
+  seven labels are measured too: the hud stream adds badges to them).
+

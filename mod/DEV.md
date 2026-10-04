@@ -173,7 +173,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.agents` | `settle?` (false) | Every agent NPC: `id, entityId, x,y,z, yaw, station, anchor, target{x,y,z,yaw}, walking, path[[x,y,z]...], state, activity, stale, model, skin`, and `plate{mode full\|compact, lift, target, rank, nudge, scale, depth, weight, focused, capped, rect[x0,y0,x1,y1] in screen px}` when its nameplate was laid out last frame; top level also has `plates, plateOverlaps`; `dev.state.agents` also has `plateOverlapPairs` ("rowan/wren": which plates overlapped last frame) and `exclaims`. `settle:true` snaps walking agents to their targets and the nameplates to their final layout on the next frame (no one mid-walk, no plate mid-slide in a shot) |
 | `dev.anchors` | `prefix?` | The published layout: `{layout, revision, bounds, anchors:{name:{x,y,z,yaw,pitch}}, count}` |
 | `dev.agents.look` | `agent?` | Agent life per agent: `{id, family, awaitingUser, awaitingDecision, needsYou, paused, posture, seated, sit, seat{x,z,top,drop,deskTop}?, bodyYaw, headYaw, headPitch, bubble, particles}`; top level `exclaims` (agents showing the "!"), `card{agent, input}` while an agent card is open (`input` = its message line, null when closed), `textInputActive` (SDL text input on: typed characters are delivered) |
-| `dev.agents.card` | `agent`, `press?` = `message`/`pause`/`stop`/`review` | Opens the agent card for that agent (like an empty-hand sneak + right-click), or presses a button on its open card (Stop needs two presses: `stopArmed`); returns `stopArmed`, `status`, `screen` (after `review`: the decision's screen) |
+| `dev.agents.card` | `agent`, `press?` = `message`/`pause`/`stop`/`review`, `answer?` = `opt:<option>`/`send`/`diff`/`cancel`, `text?` | Opens the agent card for that agent (like an empty-hand sneak + right-click), or presses a button on its open card (Stop needs two presses: `stopArmed`); `answer` drives the card's AnswerPanel for the decision it waits on (Merge / Reject need two calls; no arm delay through the DevBridge); returns `stopArmed`, `status`, `review` (the decision), `panel` (AnswerPanel state), `screen` (after `review`: the decision's screen) |
 | `dev.player.sneak` | `on` (bool) | Holds (or releases) the sneak key mapping, like a held Shift; returns `sneaking`, `mainHandEmpty` (agents are targetable, `dev.agents.look` `pickable`, only both) |
 | `dev.ui.pause` | `on?` (bool; omit = the environment's default) | Forces AgentCraft screens to pause (or not) in singleplayer for this session; returns the `ui` state |
 | `dev.guard.inject` | `kind` (`agents.tick`, `agents.plates`, `hq.tick`, `wizard.tick`, `wizard.ghost`, `hub.tick`, `console.tick`, `decisions.tick`, `hud.toasts`, ...) | The next run of that guarded client handler throws: it must be logged once, counted in `dev.state` `ui.guards`, and the game keeps running |
@@ -581,7 +581,7 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
 
 ### Hub (`H`, `/hub [tab]`)
 The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
-- `HubScreen` (not pausing): tabs from `HubTab` (Buildings, Repos, Goals, Team, Settings, Status). Repos, Goals,
+- `HubScreen` (not pausing): tabs from `HubTab` (Inbox, Buildings, Repos, Goals, Team, Settings, Status). Repos, Goals,
   Team and Settings are `HubPane`s
   (`ReposTab`, `GoalsTab`) with their own state: the hub hands them keys, typed characters, clicks and the
   wheel first; while one of their text fields has focus every key goes to it (typing "h" never closes the hub;
@@ -911,6 +911,65 @@ name on the screen).
   arrived as `C:/Program Files/Git/agentcraft hq`). Use `devcli cmd "agentcraft hq"`; the slash is optional.
 - A Foreman profile can only run once at a time. Parallel specialists must use their own `--profile`
   (and port).
+
+#### Inbox (wave 2, stream inbox)
+The contract is docs/WAVE2.md W1-W4 (and its "As implemented: inbox stream"), the screen docs/HUB.md "Inbox"; code in
+`client.hub` (`Inbox` = items, cache, read state and the public API, `InboxTab` = the pane, `AgentLogView` = the paged
+agent log, `InboxDev` = DevBridge), `client.decisions.AnswerPanel` and the pure `dev.agentcraft.hub.InboxModel` +
+`HubSeen` inbox marks (unit-tested in `InboxModelTest`).
+- `Inbox.counts()` (the hud stream's HUD line and badges): `InboxModel.Counts(decisions, blocked, replies, prs, hold)`,
+  `needsYou()`, `line(zone)`. Cached per Foreman revision, read-mark changes, buildings, world and second (answering
+  marks expire on time); `decisions` equals `DecisionsFeature.waitingCount()`.
+- Read state: `hub-seen.json` version 2, per world `inbox: {all, items{key: ts}, agents{id: ts}}`; an item is read
+  when shown in the detail for 1.2 s; replies also by their agent's card (`Inbox.markAgentSeen`, the card's init and
+  close) and their goal's own mark (the goal thread). `dev.goals.seen {reset}` keeps the Inbox marks;
+  `inbox_reset_read` forgets them.
+- **AnswerPanel** (W2): `DecisionScreen` (Options.SCREEN: numbered, Review diff, no merge confirm: 1-9 + the 350 ms
+  arm guard it as before), the Inbox (Options.EMBEDDED: Merge and Reject ask twice), the goal thread (EMBEDDED with
+  the message box as its text: button ids `answer:<id>:<opt|text|open>` unchanged) and the agent card (Merge/Reject
+  twice, 2-line box; R still opens the full review screen; the old "press a row twice" option rows are gone). Held
+  keys and OS repeats stay the host's (DecisionScreen passes `repeat`); hosts own SDL text input (`Host.textFocus`).
+- Deep links: `DecisionsFeature.openPodium` (podium right-click) -> `Inbox.openPodium(building)`; the old scoped
+  decision screen is `openPodiumScreen` (`dev.decision {podium, screen:true}`); `MonitorFeature.agentAt(level, pos)` +
+  a `StationInteractions` handler on the monitor (sneak keeps vanilla use) -> `Inbox.openAgent`; console `/inbox
+  [@agent]` (`ConsoleCommands.OpenInbox`), `/hub inbox`.
+- DevBridge:
+  - `dev.hub.open {tab:"inbox", filter?: all|needs_you|building:<id>|agent:<id>|podium:<id|home>, item?: key | decision
+    id | task id, agentId?: id (the agent view)}`.
+  - `dev.inbox.state` (no screen needed): `counts{decisions, blocked, replies, prs, hold, needsYou, line}`, `revision`,
+    `filter`, `items[{key, kind, group, unread, ts, agentId, goalId, buildingId, title, detail, ref, open, podium,
+    subKind, until}]`, and with the Inbox open `selected`, `mode` (list|detail|list+detail), `detailOpen`, `focus`,
+    `note`, `reply`, `groups{needs_you, updates}`, `item`, `panel` (AnswerPanel: decisionId, armed, highlight,
+    textFocused, requestChanges, text, confirmReject, confirmMerge, sending, note, buttons[]), `log` (agent view:
+    entries, fetched, pages, more, loading, error, unsupported, oldestTs, newestTs, scrollRow, viewRows, last[]),
+    `chips[]`, `layout`. `dev.hub.state` has the same under `inboxTab`.
+  - `dev.hub.action`: `inbox_filter {filter}`, `inbox_select {item}`, `inbox_back`, `inbox_mark_all_read`,
+    `inbox_reset_read`, `inbox_answer {item?, option, text?}` (the panel's guards: Merge / Reject need a second call;
+    Request changes with text sends), `inbox_answer_text {item?, text}`, `inbox_answer_press {item?, button:
+    opt:<option>|diff|send|cancel}` (a button drawn last frame), `inbox_reply {item?, text?}` (reply / agent view; replies
+    after the ack), `inbox_retry {item?}`, `inbox_open_task`, `inbox_open_card`, `inbox_open_thread`, `inbox_open_tasks`,
+    `inbox_open_diff`, `inbox_open_decision`, `inbox_refresh_prs`, `inbox_log_older {item?}` (replies once the page is in),
+    `inbox_log_scroll {rows}` (negative = up; up at the top loads older), `inbox_focus {field: reply|answer}`; `press
+    {button}` also presses the Inbox's chips (`filter:all`, `filter:needs_you`, `filter:building`, `filter:agent`,
+    `filter:podium`) and hub buttons (`inbox_mark_all_read`, `inbox_back`, `inbox_retry`, `inbox_reply_send`, ...).
+  - `dev.agent.log {agentId, older?}`: opens the agent view and replies once the first (or the older) page is in.
+  - `dev.monitor.open {x, y, z}`: a monitor's right-click (the agent it shows, else the Inbox).
+  - `dev.decision {podium:[x,y,z]}` now opens the Inbox on that podium (as the right-click); `screen:true` = the
+    podium-scoped decision screen as before; `showAll` = the "All decisions" chip.
+  - Screens: `hub_inbox`, `hub_inbox_<decision|reply|blocked|hold|pr|agent>` (the newest item of that kind; agent =
+    the first agent's view).
+- Making each kind with the sim (`node tools/mac.mjs launch --backend sim --dev`, then `dev.foreman.hold {on:true}`
+  so nothing moves under the shot):
+  - hold: `dev.foreman.inject {message:{type:"foreman.status", status:{version:"x", backend:"claude", auth:"ok",
+    hold:{reason:"usage", until:<now+3600000>, message:"5h window at 100%"}}}}`;
+  - blocked: `dev.foreman.inject {patch:{task:"t3", set:{status:"blocked", blockedReason:"npm test fails: 2 tests"}}}`;
+  - reply: `dev.foreman.inject {message:{type:"feed.add", item:{ts:<now>, kind:"message", text:"Done: the parser is in.",
+    agentId:"kit", to:"user", goalId:"g1"}}}`;
+  - PR: `dev.foreman.inject {patch:{task:"t4", set:{status:"pr", pr:{url:"https://x/pr/4", id:4, status:"changes",
+    checks:"failing", threads:{open:2, new:1}, updatedAt:<now>}}}}`;
+  - decision: the sim script asks some; or `dev.foreman.inject {message:{type:"decision.upsert", decision:{id:"d90",
+    agentId:"marlow", kind:"question", question:"Use a set or a list?", options:["Set","List"], status:"open",
+    createdAt:<now>}}}`.
 
 ## Interaction rules (fix wave 1, stream ui)
 
