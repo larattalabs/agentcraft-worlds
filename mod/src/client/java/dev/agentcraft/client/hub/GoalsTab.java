@@ -1220,7 +1220,7 @@ final class GoalsTab implements HubPane {
 				for (int i = 0; i < dl.size(); i++) {
 					g.text(font(), TextUtil.ellipsize(font(), dl.get(i), w - 22), x + 5, y + 3 + i * 10, i == 0 ? UiStyle.CLAY_DARK : UiBits.muted(), false);
 				}
-				chip(g, "goal_digest_dismiss", "×", x + w - 16, y + 1, false, mx, my, () -> gd.dismissed = true);
+				chip(g, "goal_digest_dismiss", "×", x + w - font().width("×") - 14, y + 1, false, mx, my, () -> gd.dismissed = true);
 				y += dh + 5;
 			}
 		}
