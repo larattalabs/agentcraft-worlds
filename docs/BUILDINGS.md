@@ -376,6 +376,19 @@ A repo's building gets a plaque when one of its PRs merges, a task merges locall
 - A player can still break a trophy sign (it drops one dark-oak sign, as any sign does); the slot then holds air
   and is reused like any other.
 
+Client side (`client.trophy.TrophyFeature`; pure `trophy.TrophyEvents` and `TrophySettings`; no protocol change):
+- **What earns one**: a goal's `status` turning `done` (`goal:<goalId>:<createdAt>`; repo = `Goal.repoId`; the text's first
+  line; the count of its non-cancelled tasks; date = `updatedAt`), a task's `pr.status` turning `merged` (`pr:<repo>:<prId>`;
+  repo = the task's, else its goal's), a task without a PR turning `done` (`merge:<taskId>:<createdAt>`).
+- **When**: live on each goal/task update (the transition only), and a **catch-up** of everything done or merged that has no
+  key yet, oldest first, on every Foreman snapshot, when a building is placed or its repo list changes, and when the toggle
+  is switched on. A repo without a building, or a building without slots, awards nothing and is retried by the next
+  catch-up. A catch-up awards only each repo's newest N (N = its wing's slot count), oldest first, so a long history does not rewrite the wall hundreds of times; older ones are never hung. The ledger's `at` is strictly increasing per building (`TrophySlots.nextAt`), so awards within one millisecond still replace in award order.
+- **Toggle**: hub > Buildings, under "Agents walk between buildings": "Trophies for merges and finished goals: On/Off", per
+  world, `<gameDir>/agentcraft/trophies.json` (default on). Off hangs nothing (signs already hung stay).
+- Singleplayer only (the integrated server hangs them); DevBridge `dev.trophies.award`, `dev.trophies.list`,
+  `dev.trophies.toggle` (mod/DEV.md).
+
 API (server thread): `Trophies.award(level | server, Trophy, key) -> Result{outcome PLACED | KNOWN | NO_BUILDING |
 NO_SLOTS | NO_ROOM | UNAVAILABLE, building, slot, replaced, message}`, `Trophies.known(key)`, `Trophies.slotsFor(repo)`,
 `Trophies.list(server)` (JSON for the DevBridge).

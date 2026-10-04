@@ -192,6 +192,9 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.walk.plan` | `from`, `to` (building id or `home`), `fresh?` (false), `show?` (true) | Plans entrance to entrance with the agents' planner and cache (replies when the incremental job finishes): `{decision, key, status found\|no_path\|unloaded\|budget\|too_far\|no_start\|no_goal, cached, nodes, micros, ticks, length, cells, from, to, points[[x,y,z]]}` or `reason`; `show` draws the route with end-rod particles for 20 s (screenshots) |
 | `dev.walk.send` | `agent`, `to` (building id, `home`, or null) | QA: routes that agent to that building regardless of its work (sticky until `to:null` or a level change), so it changes building by the normal rules (walks or teleports); returns `{agent, to, canHost, note?, sends}` (`canHost` false: the building has no desk, station or lounge for it, it stays home) |
 | `dev.walk.toggle` | `on?` (bool; omit = flip) | "Agents walk between buildings" for this world (`walking.json`); returns `{enabled, world}` |
+| `dev.trophies.award` | `repo`, `kind` = `pr`/`merge`/`goal`, `title`, `pr?` (PR number, or the task number for `merge`; default 1), `tasks?` (goal task count, default 1), `force?` (false) | QA trigger: hangs a trophy in that repo's building now, with a **fresh key** (no dedupe), so it still follows slots (lowest free, else replaces the oldest) and the world's toggle (`outcome:"DISABLED"` when off unless `force:true`). Returns `{enabled, lines[4], outcome PLACED\|NO_BUILDING\|NO_SLOTS\|NO_ROOM\|UNAVAILABLE\|DISABLED, building, slot, replaced, message}`. Singleplayer only |
+| `dev.trophies.list` | - | The world's trophy ledger (`Trophies.list`): `{enabled, world, loaded, awarded[keys], buildings[{id, blueprint, repos, slots[{slot, wing, k, x, y, z, key?, lines?, at?}]}]}` |
+| `dev.trophies.toggle` | `on?` (bool; omit = flip) | "Trophies for merges and finished goals" for this world (`trophies.json`); returns `{enabled, world}` |
 | `dev.test.foremanMessage` | `message:{type, ...}` | **Test only** (`AGENTCRAFT_DEV_TEST=1`): applies a Foreman message to the state model as if received (e.g. `foreman.status` with `auth:"failed"` to see the auth banner) |
 | `dev.displays` | `look?` = `paper` / `dark` / `split`, `reset?` | Monitor look (default dark; split alternates per monitor for comparisons), every laid-out monitor screen `{pos, agent, mode, style, size, ppb, rows, ageMs}`, and `stats` = display CPU cost per frame since the last reset (`monitor`/`board`: `usPerFrame`, `callsPerFrame`, `rebuilds`) |
 | `dev.taskwall` | `open?` (task id), `press?` (button id), `aim?` (task id), `board?` ("x y z" origin for `aim`), `lightFloor?` (0-15), `ppb?` (0-256, 0 = auto), `relayout?` | Task Wall boards and their cards (column counts, widths and cards per row, hidden ids, card positions, size full/brief/compact, title lines, state dot, glowing, `layoutUs` of the last re-plan). `lightFloor`/`ppb` override the block-light floor and the pixel density for A/B shots, `relayout` forces a re-plan. `open` opens that task's screen, `press` presses a button in the open task screen (`prev next retry prioritize reassign cancel to:<agent>`), `aim` returns the world point of a card and an eye 2.5 blocks in front (then `dev.camera` + `dev.key {mapping:"key.use"}` clicks it the real way; use `mode:"creative"`, spectators cannot click) |
@@ -446,6 +449,18 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   file with the game closed (the signs stay; a slot only takes air or a sign the ledger knows, so break them by hand
   or Remove and re-place the building). Pure tests: `TrophyTest` (text widths, slot order, ledger, removal exemption,
   the bundled blueprints' 6 slots per wing at every rotation).
+- Trophies client side (`client.trophy.TrophyFeature`, pure `trophy.TrophyEvents`/`TrophySettings`): the Foreman's
+  goal/task updates become awards (keys as in BUILDINGS.md), catch-up on snapshot / building placed / repos changed /
+  toggle on, `Trophies.award` on the integrated server. **QA** (dev client, own ports so you do not hit another run:
+  `node tools/mac.mjs launch --backend sim --dev --world "Trophy QA" --profile me --port 7981 --dev-port 7982`):
+  `/agentcraft place workshop <repo>` (`dev.foreman` counts show the sim repo), then
+  `dev.trophies.award {repo, kind:"pr", title:"Rolling text", pr:612}`: a sign hangs on the trophy wall (`dev.camera`
+  from inside + `shot`; `dev.trophies.list` has the cells); 7 awards on a 6-slot wing replace the oldest (the reply's
+  `replaced`); `dev.trophies.toggle {on:false}` then another award gives `DISABLED` and hangs nothing; Remove the building
+  (hub or `/agentcraft remove b1`): not refused because of the signs, the site is restored (the sign cells are air again).
+  The live path: launch with `AGENTCRAFT_DEV_TEST=1`, `dev.test.foremanMessage {message:{type:"goal.upsert", goal:{id, text,
+  status:"active"|"done", repoId, createdAt, updatedAt, progress}}}` (active, then done) hangs a "Goal done" sign. Catch-up cap:
+  toggle off, inject 10 done `task.upsert`s, toggle on: only the newest 6 hang.
 - Placement math is `BlueprintTransform` (pure; unit tests in `src/test/java`, `gradlew test`, also
   run by `build`). Vanilla rotates about the template's origin cell (clockwise_90 puts the footprint
   at x-(sizeZ-1)..x), so `place` shifts the position by the rotated box's minimum: the `origin` is

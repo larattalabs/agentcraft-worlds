@@ -264,6 +264,25 @@ class TrophyTest {
 	}
 
 	@Test
+	void sameMillisecondAwardsReplaceInAwardOrder() {
+		List<TrophySlots.Slot> w1 = TrophySlots.forWing(pinAnchors(), 1, BOX);
+		int n = w1.size();
+		Map<String, TrophyLedger.Entry> taken = new LinkedHashMap<>();
+		for (int i = 1; i <= 3 * n + 1; i++) { // all "at" the same millisecond
+			TrophySlots.Slot s = TrophySlots.choose(w1, taken);
+			taken.put(s.name(), e("k" + i, TrophySlots.nextAt(1000, taken)));
+		}
+		List<String> keys = taken.values().stream().map(TrophyLedger.Entry::key).sorted().toList();
+		List<String> newest = new java.util.ArrayList<>();
+		for (int i = 2 * n + 2; i <= 3 * n + 1; i++) {
+			newest.add("k" + i);
+		}
+		assertEquals(newest.stream().sorted().toList(), keys, "the wall holds exactly the newest awards");
+		assertEquals(1000, TrophySlots.nextAt(1000, Map.of()));
+		assertEquals(5001, TrophySlots.nextAt(1000, Map.of("a", e("a", 5000))));
+	}
+
+	@Test
 	void wingsDoNotShareSlots() {
 		Map<String, TrophyLedger.Entry> taken = new LinkedHashMap<>();
 		taken.put("trophy@1", e("a", 1));

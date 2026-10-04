@@ -873,6 +873,27 @@ public final class HubScreen extends Screen {
 		return 24;
 	}
 
+	/**
+	 * "Trophies for merges and finished goals" for this world (docs/BUILDINGS.md "Trophies", trophies.json): a toggle
+	 * under the walking one; "Trophies: On" when the full label does not fit. Returns the height it takes.
+	 */
+	private int drawTrophyToggle(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
+		boolean on = dev.agentcraft.client.trophy.TrophyFeature.enabled();
+		String state = on ? "On" : "Off";
+		String full = "Trophies for merges and finished goals: " + state;
+		boolean compact = bw(full) > w;
+		String label = compact ? "Trophies: " + state : full;
+		int needed = bw(label);
+		button(g, "trophy_toggle", label, x, y, Math.min(w, needed), on, false, false, mx, my,
+			() -> dev.agentcraft.client.trophy.TrophyFeature.setEnabled(!dev.agentcraft.client.trophy.TrophyFeature.enabled()));
+		String note = on ? "signs on the trophy wall" : "no signs are hung";
+		int nx = x + needed + 5;
+		if (compact && x + w - nx >= font.width(note)) {
+			g.text(font, note, nx, y + 6, UiBits.muted(), false);
+		}
+		return 24;
+	}
+
 	void drawList(GuiGraphicsExtractor g, int x, int y, int w, int h, int count, int selected, int mx, int my, RowDrawer drawer) {
 		listX = x;
 		listY = y;
@@ -931,7 +952,8 @@ public final class HubScreen extends Screen {
 		}
 		int lw = Math.max(150, Math.min(220, w * 2 / 5));
 		// under the list column: "Agents walk between buildings" (per world, W8)
-		int toggleH = drawWalkToggle(g, x, y + h - 20, lw, mx, my);
+		int trophyH = drawTrophyToggle(g, x, y + h - 20, lw, mx, my);
+		int toggleH = drawWalkToggle(g, x, y + h - 20 - trophyH, lw, mx, my) + trophyH;
 		drawList(g, x, y, lw, h - toggleH, bs.size(), bs.indexOf(cur), mx, my, (i, rx, ry, rw) -> {
 			Building b = bs.get(i);
 			Blueprint bp = Blueprints.get(b.blueprint());
