@@ -112,4 +112,13 @@ class BuildingLifecycleTest {
 		assertTrue(Occupancy.refusals(List.of(found.get(2), found.get(6))).isEmpty());
 		assertNull(Occupancy.removalNote(List.of(found.get(6))));
 	}
+
+	@Test
+	void tooFewWingsSplitsInTwo() {
+		assertEquals(3, BlueprintTransform.splitAt(5, 4, true)); // 5 repos with a 4-wing campus: 3 now, 2 after
+		assertEquals(2, BlueprintTransform.splitAt(9, 2, true));
+		assertEquals(1, BlueprintTransform.splitAt(3, 0, true)); // only single blueprints
+		assertEquals(0, BlueprintTransform.splitAt(3, 0, false));
+		assertEquals(0, BlueprintTransform.splitAt(1, 4, true));
+	}
 }

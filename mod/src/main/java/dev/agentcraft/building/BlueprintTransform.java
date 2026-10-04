@@ -283,6 +283,19 @@ public final class BlueprintTransform {
 		};
 	}
 
+	/**
+	 * When no blueprint takes {@code n} repos (docs/BUILDINGS.md "Too few wings"): how many to place in the first of
+	 * two buildings: half, rounded up, but no more than any blueprint takes ({@code maxWings}, 1 with only single
+	 * blueprints); 0 when nothing fits even one repo or there is nothing to split.
+	 */
+	public static int splitAt(int n, int maxWings, boolean anySingle) {
+		int fits = Math.max(maxWings, anySingle ? 1 : 0);
+		if (fits == 0 || n <= 1) {
+			return 0;
+		}
+		return Math.min(fits, (n + 1) / 2);
+	}
+
 	/** Splits a comma list of repo ids, trimming blanks; keeps order, drops duplicates. */
 	public static List<String> parseRepos(String list) {
 		List<String> out = new ArrayList<>();

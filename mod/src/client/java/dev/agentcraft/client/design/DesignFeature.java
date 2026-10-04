@@ -115,6 +115,18 @@ public final class DesignFeature {
 		return s;
 	}
 
+	/**
+	 * Opens the form for a group of {@code wings} wings (the wizard's "too few wings": no blueprint takes that many
+	 * repos), clamped to what the generator makes; {@code back} is where Esc goes.
+	 */
+	public static DesignScreen openFor(int wings, @Nullable Screen back) {
+		if (wings > 1) {
+			form.kind = dev.agentcraft.building.DesignSpec.GROUP;
+			form.groupWings = Math.max(dev.agentcraft.building.DesignSpec.MIN_WINGS_GROUP, Math.min(dev.agentcraft.building.DesignSpec.MAX_WINGS, wings));
+		}
+		return open(back);
+	}
+
 	static @Nullable Screen parent() {
 		return parent;
 	}

@@ -416,6 +416,26 @@ public final class BuildingWizardFeature {
 					return o;
 				}));
 			});
+		DevBridge.register("dev.build.pick", 10_000, "{action: split|design_new} - on the blueprint step when no blueprint has enough wings: "
+			+ "Split (a building for the first part now) or Design new (the generator form with that many wings)", (req, mc) -> {
+				String action = Fields.of(req).nonBlank("action");
+				return DevBridge.onClient(mc, () -> {
+					if (!(mc.gui.screen() instanceof BlueprintPickScreen bs)) {
+						throw new DevBridge.DevException("the blueprint step is not open (dev.build.open {step: blueprints, repos})");
+					}
+					if (bs.tooFewWings() == null) {
+						throw new DevBridge.DevException("a blueprint fits these repos: nothing to split");
+					}
+					switch (action) {
+						case "split" -> bs.split();
+						case "design_new" -> bs.designNew();
+						default -> throw new DevBridge.DevException("action must be split or design_new");
+					}
+					JsonObject o = screenState(mc);
+					o.addProperty("screenClass", mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());
+					return o;
+				});
+			});
 		DevBridge.register("dev.build.cancel", 10_000, "{} - leave placement mode (Esc)", (req, mc) -> DevBridge.onClient(mc, () -> {
 			BuildPlacement.cancel();
 			return BuildPlacement.state();
@@ -437,6 +457,7 @@ public final class BuildingWizardFeature {
 			sc.addProperty("blueprint", rs.fixedBlueprint());
 			sc.addProperty("onPlot", rs.lockAt() != null);
 			sc.addProperty("error", rs.error());
+			sc.addProperty("editBuilding", rs.editBuilding());
 			JsonArray a = new JsonArray();
 			rs.chosen().forEach(a::add);
 			sc.add("chosen", a);
@@ -447,6 +468,8 @@ public final class BuildingWizardFeature {
 			sc.add("repos", a);
 			sc.addProperty("selected", bs.current() == null ? null : bs.current().id());
 			sc.addProperty("descriptionRows", bs.descriptionRowsShown());
+			sc.addProperty("tooFewWings", bs.tooFewWings());
+			sc.addProperty("maxWings", BlueprintPickScreen.maxWings());
 		} else {
 			sc = null;
 		}
