@@ -38,6 +38,7 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 | `client.permissions` | permissions specialist | permission decision UX |
 | `client.building` | buildings | placement wizard: repo/blueprint screens, ghost (terrain fit, entrance approach), placement keys (docs/BUILDINGS.md) |
 | `building`, `walk` (main) | buildings / walking | buildings in a world (place, move, remove, snapshots, terrain fit, approach); the pure outdoor planner |
+| `client.trophy` + `trophy` (main) | buildings | trophies: `TrophyFeature` (Foreman updates -> `Trophies.award`, hub toggle, `dev.trophies.*`); pure `TrophyEvents`, `TrophySettings` |
 | `client.hq` + `hq` (main) | HQ specialist | the real HQ builder (main), world blocks driven by state (client), `StatusLampRenderer` |
 | `client.ui` | core (additive) | kit drawing, style tokens, text utils (screens + world) |
 | `client.world` | core (additive) | `StationRenderer` base, `ServerTasks`, `StationInteractions`, dev helpers |
@@ -496,6 +497,18 @@ never on tree tops; the search box widens when a ridge needs it; spread over tic
 the other building to its spot. Routes are cached per building pair and dropped on block changes near them.
 Otherwise (walking off, too far, no route) it teleports with a puff; `dev.walk.state` says why, with the
 planner's explanation of a failed route. Per-world toggle in the hub's Buildings tab (`walking.json`).
+
+## Trophies (`client.trophy`: `TrophyFeature`; `trophy` main: `TrophyEvents`, `TrophySettings`; `building`: `Trophies`)
+
+Contract: docs/BUILDINGS.md "Trophies". When a goal turns `done`, a task's PR turns `merged`, or a task without a PR turns
+`done` (merged locally), the repo's building gets a waxed vanilla wall sign on its trophy wall ("Merged PR #612 / title /
+2026-10-04", "Goal done / text / 2026-10-04"). `TrophyEvents` (pure) maps (previous, current) goal/task to a trophy + key;
+`TrophyFeature` feeds it from `ForemanListener.onGoal/onTask`, and runs a catch-up (everything done or merged without a key,
+oldest first, so full walls keep the newest) on every snapshot, when a building is placed or its repos change, and when the
+toggle goes on. The integrated server hangs them (`Trophies.award` through `ServerTasks.run(<building's dimension>)`);
+singleplayer only. Per-world toggle in hub > Buildings, under the walking one: "Trophies for merges and finished goals: On/Off"
+(compact: "Trophies: Off" + a note), `<gameDir>/agentcraft/trophies.json`, default on. Off = nothing is hung, nothing queued
+(turning it on catches up). DevBridge: `dev.trophies.award` (QA trigger), `dev.trophies.list` (ledger), `dev.trophies.toggle`.
 
 ## Displays (`client.monitor`, `client.taskwall`)
 
