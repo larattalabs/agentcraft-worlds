@@ -10,10 +10,9 @@
 [![Minecraft 26.3](https://img.shields.io/badge/Minecraft-26.3-8fa98b)](https://www.minecraft.net)
 [![Fabric](https://img.shields.io/badge/mod%20loader-Fabric-d97757)](https://fabricmc.net)
 [![Claude Agent SDK](https://img.shields.io/badge/agents-Claude%20Agent%20SDK-2fa3a0)](https://code.claude.com/docs/en/agent-sdk/overview)
-[![Tests](https://img.shields.io/badge/tests-750%20passing-3b2a20)](foreman/test)
+[![Tests](https://img.shields.io/badge/tests-753%20passing-3b2a20)](foreman/test)
 
-<!-- SHOT: hero - a small village of AgentCraft buildings on natural terrain at golden hour -->
-<img src="docs/img/readme/hero.jpg" alt="The AgentCraft HQ at golden hour" width="100%">
+<img src="docs/img/fork/hero.jpg" alt="An AgentCraft village: a studio, a campus and two workshops on a hilltop" width="100%">
 
 </div>
 
@@ -45,7 +44,8 @@ Close the game and the agents keep working. Open it again and the studio catches
 | **Buildings for your repos** | Place a building per repository, or one campus for a group of repos (a wing each). Pick a blueprint, steer a translucent ghost into place, confirm. Remove puts the terrain back exactly. |
 | **Generated designs** | Describe a building (style, materials, features, size) or mark a plot on the ground, and a Claude design agent builds a blueprint to fit it. You review it as a ghost before anything is placed. |
 | **A lead per building** | Marlow leads home. Ines, Bram and Cass each take a building, plan its goals and review its work, sharing one pool of workers. |
-| **The hub** (<kbd>H</kbd>) | One screen for buildings, repos, goals, the team, settings and status. Works without cheats, so it runs a Hardcore world. |
+| **The hub** (<kbd>H</kbd>) | One screen for your inbox, buildings, repos, goals, the team, settings and status. Works without cheats, so it runs a Hardcore world. |
+| **Never miss a call** | One Inbox for decisions, replies, blocked tasks, usage holds and PRs; a HUD line while anything needs you; a "since you were away" catch-up when you come back. |
 | **Goal threads** | Per goal: a conversation with its lead, the plan (editable), standing instructions every task inherits, and a "since you were away" summary. |
 | **Pull requests** | Repos can land work as PRs instead of local merges. The Foreman watches each PR to completion and the lead triages review comments; nothing is posted without your approval. |
 | **Survival-safe** | Screens pause in singleplayer, buildings use vanilla materials and iron doors, placement checks for chests, mobs, fluids and slopes. A Prism Launcher setup starts the Foreman with the game. |
@@ -61,7 +61,7 @@ Close the game and the agents keep working. Open it again and the studio catches
 <tr>
 <td width="50%" valign="top">
 
-**1. You give a goal.** From the hub's Goals tab, or press <kbd>`</kbd> and type `/goal`.
+**1. You give a goal.** From the hub's Goals tab, or press <kbd>`</kbd> and type it.
 `@juniper` messages a specific agent, with Tab completion.
 
 <img src="docs/img/readme/console.jpg" alt="The command console with agent autocomplete">
@@ -119,10 +119,11 @@ agent reads, and you can too.
 
 ## Your repos as a village
 
-<!-- SHOT: village overview - 3 to 4 buildings (workshop, studio, campus) on natural terrain -->
+<img src="docs/img/fork/village.jpg" alt="Four buildings on a hilltop: a studio, two workshops and a two-wing campus" width="100%">
 
-Every registered repository can have its own building. Open the hub (<kbd>H</kbd>), go to
-**Buildings** and press **Place new…**:
+Every registered repository can have its own building. The first time you join a world with
+AgentCraft, a welcome card points the way: open the hub (<kbd>H</kbd>), go to **Buildings** and
+press **Place new…**.
 
 1. **Pick the repos.** One repo for a single building, or several for a group building where wing
    *n* belongs to the *n*-th repo you picked.
@@ -130,13 +131,22 @@ Every registered repository can have its own building. Open the hub (<kbd>H</kbd
    rendered previews.
 3. **Place the ghost.** A translucent copy of the building follows where you look, entrance facing
    you. <kbd>R</kbd> rotates, the arrow keys nudge, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> raise and lower,
-   <kbd>L</kbd> locks it so you can walk around it, <kbd>Enter</kbd> places it. Orange cells will
-   replace solid blocks; red ones are chests or spawners it refuses to overwrite.
+   <kbd>L</kbd> locks it so you can walk around it, <kbd>Enter</kbd> places it. The HUD tells you
+   what it will replace, how much foundation it adds, and why it refuses if it does.
 
-<!-- SHOT: placement ghost on a hillside, HUD verdict visible -->
+<table>
+<tr>
+<td width="50%"><img src="docs/img/fork/welcome.jpg" alt="The welcome card on first join"></td>
+<td width="50%"><img src="docs/img/fork/ghost.jpg" alt="Placing a studio: the ghost on a hillside with the HUD verdict"></td>
+</tr>
+<tr>
+<td>The welcome card, shown once per world.</td>
+<td>Placing a studio on a hilltop: replaced blocks in orange, the foundation it adds, the entrance bar.</td>
+</tr>
+</table>
 
 Before placing, whatever the building covers is saved, so **Remove** restores the ground exactly
-(it refuses while chests or beds you added are inside, until you move them or confirm twice). A
+(it stops if you have added chests or beds inside, until you move them or confirm again). A
 foundation fills any gap under the floor on a slope. Buildings can also be moved or have their repos
 changed later, from the same tab.
 
@@ -157,35 +167,73 @@ The bundled blueprints, all in vanilla materials so your world still looks right
 </tr>
 </table>
 
-**Or design your own.** **Design new…** opens a form: one repo or a group, style (modern, cabin,
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Or design your own.** **Design new…** opens a form: one repo or a group, a style (modern, cabin,
 townhouse, workshop, campus or custom), materials, features such as a porch, skylights or a
 courtyard, a size, a blueprint to remix and free notes. **Fit a plot…** lets you mark two corners on
 the ground instead, and the design is made to fit that space. A Claude design agent writes the
 blueprint in the background, checks it and renders previews; when it is done you place it as a
 ghost like any other.
 
-<!-- SHOT: design form, and a plot marked on terrain -->
+</td>
+<td width="50%"><img src="docs/img/fork/design.jpg" alt="The design form"></td>
+</tr>
+</table>
 
-Agents go to their task's building and idle at home. Each building's lead has their own podium, and
-the task walls, CI lamps and monitors in a building show that building's repo.
+Agents go to their task's building and idle at home, walking between buildings when there is an
+outdoor route (or appearing at the door when there is not). Each building's lead has their own
+podium, and the task walls, CI lamps and monitors in a building show that building's repo.
+
+<img src="docs/img/fork/desks.jpg" alt="Workers at their desks in a campus wing, monitors streaming their work" width="100%">
 
 <br>
 
 ## The hub
 
-<!-- SHOT: hub, one image per tab or a strip: Inbox, Goals (thread), Team, Settings -->
-
 Press <kbd>H</kbd>. Everything a player sets or does in AgentCraft lives here, so you never need
-cheats, chat commands or config files once the Foreman is running.
+cheats, chat commands or config files once the Foreman is running. Tabs carry badges: what needs
+you, unread goal threads, failing CI and blocked agents.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/img/fork/hub-inbox.jpg" alt="The hub Inbox with a permission prompt"></td>
+<td width="50%"><img src="docs/img/fork/hub-goals.jpg" alt="A goal thread with the since-you-were-away summary"></td>
+</tr>
+<tr>
+<td><b>Inbox.</b> A permission prompt, answered right here.</td>
+<td><b>Goals.</b> The goal's thread with its lead, under the catch-up summary.</td>
+</tr>
+<tr>
+<td><img src="docs/img/fork/hub-team.jpg" alt="The Team tab"></td>
+<td><img src="docs/img/fork/hub-settings.jpg" alt="The Settings tab, permissions"></td>
+</tr>
+<tr>
+<td><b>Team.</b> Four leads, one per building, and the workers they share.</td>
+<td><b>Settings.</b> Permission mode and rules, applied from the next turn.</td>
+</tr>
+</table>
 
 | Tab | What it holds |
 |---|---|
-| **Buildings** | Your buildings (move, edit repos, make home, remove), the blueprint browser with previews, Place new, Design new and the designs in progress |
+| **Inbox** | Everything that needs you or happened while you were busy: decisions (answer them in place, merges open the diff), agents' replies, blocked tasks, usage holds and PRs needing attention. Filter by building or agent |
+| **Buildings** | Your buildings (move, edit repos, make home, remove), the blueprint browser with previews, Place new, Design new, the designs in progress, and whether agents walk between buildings |
 | **Repos** | Registered repos, their branch, CI and open PRs, and their settings: landing mode, CI and setup commands, protected files, PR review |
 | **Goals** | New goals (on a repo, continuing a branch, or across several repos) and per goal: the thread with its lead, the plan, standing instructions, tasks and the "since you were away" summary |
 | **Team** | Every lead and worker: role, model, effort, who is on shift, how many work at once, and leads still held by other worlds |
 | **Settings** | Your name, permission mode, allow and deny rules, context files, subagents, PR watching, per-turn budget and usage reserve; applied live or after a Foreman restart the hub does for you |
-| **Status** | Foreman connection, backend and account, usage windows and spend |
+| **Status** | Foreman connection, backend and account, usage windows and spend, and **Keys & help**: every key and in-world interaction |
+
+<img src="docs/img/fork/hud.jpg" alt="The HUD: goal bar, waiting badge and the alert line" align="right" width="45%">
+
+**Out in the world**, a line under the goal bar stays up while anything needs you: `1 decision ·
+1 blocked · H open`, plus replies, PRs and usage pauses as they come. Come back after ten minutes
+away and a toast sums up what moved; <kbd>H</kbd> then opens the Inbox with the catch-up at the top.
+Otherwise <kbd>H</kbd> reopens the tab you used last.
+
+<br clear="right">
 
 <br>
 
@@ -199,8 +247,6 @@ The leads plan, split work and review. **Juniper, Kit, Wren, Rowan and Tove** bu
 their task is. They walk with real pathfinding, sit at their desks while they type, show what they
 are doing with small particles and nameplates, talk in speech bubbles, and come find you when they
 need a decision.
-
-<!-- SHOT: Ines and Cass at their buildings' podiums -->
 
 Roles are yours to shape: give an agent a role prompt, a model and an effort level in the Team tab,
 and let leads route small tasks to a cheaper model.
@@ -349,12 +395,14 @@ Then open the hub with <kbd>H</kbd>, register your repos in **Repos** and place 
 | <kbd>J</kbd> | **Answer decisions**: questions, permission prompts and merges |
 | <kbd>`</kbd> | Open the **console** |
 | <kbd>Enter</kbd> on a terminal block | Open the console for that building's repo |
-| Right click an agent | Agent card: state, task, recent log, message, pause, stop |
-| Right click the podium, merge station, archive or a task card | Decisions, diff review, memory library, task details |
+| Sneak + right click an agent (empty hand) | Agent card: state, task, recent log, message, pause, stop |
+| Right click a podium | That podium's decisions in the Inbox |
+| Right click a monitor (empty hand) | That agent's full log |
+| Right click the merge station, archive or a task card | Diff review, memory library, task details |
 | *(unbound)* | Building wizard; the hub's **Place new…** opens it too |
 
-All keys can be rebound in Options, Controls, AgentCraft. In singleplayer, AgentCraft screens pause
-the game like any vanilla menu.
+All keys can be rebound in Options, Controls, AgentCraft, and the hub's Status tab lists them all
+under **Keys & help**. In singleplayer, AgentCraft screens pause the game like any vanilla menu.
 
 **Console commands.** `/goal text` starts a goal (plain text asks first). `@name message` talks to
 an agent.
@@ -365,7 +413,7 @@ an agent.
 | `/answer [d4] <n or option> [text]` | Answer an open decision |
 | `/diff [worktree or @agent]` | Review a worktree's changes |
 | `/status` | Goals, agents, tasks, decisions and spend |
-| `/hub [tab]` | Open the hub at a tab |
+| `/hub [tab]`, `/inbox [@agent]` | Open the hub at a tab, or the Inbox |
 | `/pause @x`, `/resume @x` | Pause an agent, keeping its task |
 | `/stop @x`, `/spawn @x [task]` | Take an agent off shift, or bring one on |
 | `/repo add <path>`, `/repos` | Register and list repos |
@@ -462,7 +510,7 @@ backend is free.
 ## Development
 
 ```sh
-cd foreman && npm test                     # 750 tests
+cd foreman && npm test                     # 753 tests
 cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows)
 npm test --prefix tools                    # launcher, blueprint and QA tool tests
 node tools/qa.mjs --home .agentcraft-home  # capture the 10 shot QA gallery
