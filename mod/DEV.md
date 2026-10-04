@@ -1016,6 +1016,20 @@ name on the screen).
 - A Foreman profile can only run once at a time. Parallel specialists must use their own `--profile`
   (and port).
 
+#### Layout checks at the user's setup (wave 2, stream layout)
+4K fullscreen with GUI scale auto (= 9) is **426x240 GUI px**. The dev client reproduces it exactly with `dev.window
+{width:1278, height:720}` + `dev.review.guiScale {scale:0}` (auto picks 3 there: 1278/3 x 720/3); scales 2/3/4 at the
+default 1920x1080 window give 960x540, 640x360 and 480x270. No layout code branches on the scale value itself (only
+TaskScreen's title size), so 3 at 1278x720 lays out like 9 at 3840x2160. Put the window back with `dev.window
+{width:1920, height:1080}` + `dev.review.guiScale {scale:3}`. Overflow reports: `dev.hub.state` (`tabs`, `statusTab`,
+`inboxTab.layout`, `reposTab/goalsTab/teamTab/settingsTab.layout`), `dev.hud.state alert.layout`, `dev.walk.state.ui`,
+`dev.agents.card layout`, `dev.onboarding welcomeLayout`, `dev.design.state form.layout` (`scrolls` = the left column
+scrolls). An `overflow` on a pane that scrolls (Inbox detail with `detail.flow`, Status > Keys & help) is expected.
+Small-screen rules from that pass: the decision question shrinks to 2-5 lines (tooltip with the whole text), the
+blueprint step's preview shrinks before its buttons leave the screen, the design form's left column scrolls, the
+placement/plot panels move below the crosshair with shorter key rows, toasts never stack over the hotbar or those panels,
+the agent card drops to one log row, the Buildings tab drops minor facts so its buttons stay inside the hub.
+
 #### Inbox (wave 2, stream inbox)
 The contract is docs/WAVE2.md W1-W4 (and its "As implemented: inbox stream"), the screen docs/HUB.md "Inbox"; code in
 `client.hub` (`Inbox` = items, cache, read state and the public API, `InboxTab` = the pane, `AgentLogView` = the paged
