@@ -64,9 +64,9 @@ public final class HubScreen extends Screen {
 	static final long CONFIRM_MS = 6000;
 	private static final DateTimeFormatter RESETS = DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ROOT);
 
-	/** Buildings tab: the world's buildings, the blueprint browser or the building designs. */
+	/** Buildings tab: the world's buildings, the blueprint browser, the building designs or the roads between buildings. */
 	public enum Sub {
-		BUILDINGS, BLUEPRINTS, DESIGNS
+		BUILDINGS, BLUEPRINTS, DESIGNS, ROADS
 	}
 
 	record Btn(String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger, Runnable action) {
@@ -117,6 +117,8 @@ public final class HubScreen extends Screen {
 	final SettingsTab settings = new SettingsTab(this);
 	final InboxTab inbox = new InboxTab(this);
 	final StatusPane status = new StatusPane(this);
+	/** Buildings > Roads (docs/VILLAGE.md V1). */
+	final RoadsView roadsView = new RoadsView(this);
 	// tab strip layout last frame (dev.hub.state tabs): badges per tab id, compact = badges shrunk to dots
 	private int tabsNeeded;
 	private int tabsAvailable;
@@ -538,6 +540,8 @@ public final class HubScreen extends Screen {
 				if (!list.isEmpty()) {
 					selectBuilding(list.get(Math.max(0, Math.min(list.size() - 1, i + d))).id());
 				}
+			} else if (sub == Sub.ROADS) {
+				roadsView.move(d);
 			} else {
 				List<Blueprint> list = blueprints();
 				int i = 0;
@@ -615,6 +619,8 @@ public final class HubScreen extends Screen {
 					selectDesign(id);
 				} else if (sub == Sub.BUILDINGS) {
 					selectBuilding(id);
+				} else if (sub == Sub.ROADS) {
+					roadsView.select(id);
 				} else {
 					if (!id.equals(selectedBlueprint)) {
 						view = null;
@@ -824,6 +830,7 @@ public final class HubScreen extends Screen {
 				case BUILDINGS -> "Buildings " + bs.size();
 				case BLUEPRINTS -> "Blueprints " + bps.size();
 				case DESIGNS -> "Designs " + ds.size() + (ds.stream().anyMatch(d -> d.status().isRunning()) ? " ●" : "");
+				case ROADS -> "Roads " + dev.agentcraft.building.Roads.all().size();
 			};
 			int sw = bw(label);
 			button(g, "sub:" + s.name().toLowerCase(Locale.ROOT), label, sx, y, sw, false, false, false, mx, my, () -> setSub(s));
@@ -835,7 +842,7 @@ public final class HubScreen extends Screen {
 		if (sub == Sub.DESIGNS) {
 			String dn = "Design new…";
 			button(g, "design_new", dn, x + w - bw(dn), y, bw(dn), true, HubFeature.designNew == null, false, mx, my, this::designNew);
-		} else {
+		} else if (sub != Sub.ROADS) {
 			String place = "Place new…";
 			button(g, "place_new", place, x + w - bw(place), y, bw(place), true, minecraft.getSingleplayerServer() == null, false, mx, my,
 				this::placeNew);
@@ -846,6 +853,7 @@ public final class HubScreen extends Screen {
 			case BUILDINGS -> drawBuildings(g, bs, x, y, w, h, mx, my);
 			case BLUEPRINTS -> drawBlueprints(g, bps, x, y, w, h, mx, my);
 			case DESIGNS -> drawDesigns(g, ds, x, y, w, h, mx, my);
+			case ROADS -> roadsView.draw(g, x, y, w, h, mx, my);
 		}
 	}
 

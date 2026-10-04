@@ -165,7 +165,7 @@ public final class HubFeature {
 	}
 
 	private static void registerDev() {
-		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|blueprints|designs, buildingId?, blueprint?, designId?, "
+		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|blueprints|designs|roads, roadRow?: pair:<a>|<b> | road:<id>, buildingId?, blueprint?, designId?, "
 			+ "view?: plan|iso|top|front|cutaway (Buildings) | thread|plan|instructions|tasks (Goals) | overview|help (Status), goalId?, repoId?, form?: bool (Goals: the new goal "
 			+ "form), edit?: bool (Repos: the repoId's settings form), group?: general|permissions|context|subagents|prs|usage (Settings), agentId?: id|models "
 			+ "(Team; Inbox: the agent view), filter?: all|needs_you|building:<id>|agent:<id>|podium:<id|home> (Inbox), item?: key|decision id|task id (Inbox)} - "
@@ -185,6 +185,7 @@ public final class HubFeature {
 				String agentId = f.optStr("agentId", null);
 				String filter = f.optStr("filter", null);
 				String item = f.optStr("item", null);
+				String roadRow = f.optStr("roadRow", null);
 				HubTab tab = tabName == null ? HubTab.BUILDINGS : HubTab.parse(tabName);
 				if (tab == null) {
 					throw new DevBridge.DevException("tab must be one of " + HubTab.ids());
@@ -225,6 +226,12 @@ public final class HubFeature {
 					}
 					if (sub != null) {
 						s.setSub(parseSub(sub));
+					}
+					if (roadRow != null) {
+						s.setSub(HubScreen.Sub.ROADS);
+						if (!s.roadsView.select(roadRow)) {
+							throw new DevBridge.DevException("roadRow: no row " + roadRow + " (dev.roads.state pairs[].key as pair:<key>, or road:<id>)");
+						}
 					}
 					select(s, building, bp);
 					if (design != null) {
@@ -434,7 +441,8 @@ public final class HubFeature {
 			case "buildings" -> HubScreen.Sub.BUILDINGS;
 			case "blueprints" -> HubScreen.Sub.BLUEPRINTS;
 			case "designs" -> HubScreen.Sub.DESIGNS;
-			default -> throw new DevBridge.DevException("sub must be buildings, blueprints or designs");
+			case "roads" -> HubScreen.Sub.ROADS;
+			default -> throw new DevBridge.DevException("sub must be buildings, blueprints, designs or roads");
 		};
 	}
 
@@ -479,6 +487,7 @@ public final class HubFeature {
 		o.addProperty("forceRemoveArmed", s != null && s.armedRemove() != null && s.forceArmed(s.armedRemove()));
 		o.addProperty("busy", s != null && s.busy());
 		o.addProperty("view", s == null ? null : s.view());
+		o.add("roads", s == null ? null : s.roadsView.state());
 		o.addProperty("designNewAvailable", designNew != null);
 		HubActions.Result last = HubActions.last();
 		o.add("lastAction", last == null ? null : resultJson(last));
