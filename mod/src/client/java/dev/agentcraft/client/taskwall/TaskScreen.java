@@ -98,7 +98,7 @@ public class TaskScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	private @Nullable Task task() {

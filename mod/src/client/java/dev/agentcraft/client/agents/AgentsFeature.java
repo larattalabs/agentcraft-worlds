@@ -11,6 +11,8 @@ import dev.agentcraft.client.foreman.Protocol;
 import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
 import dev.agentcraft.entity.ModEntities;
+import dev.agentcraft.ui.Guard;
+import dev.agentcraft.ui.UiRules;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,7 +36,7 @@ import net.minecraft.world.phys.Vec3;
  * {@link AgentHooks} and this package.
  */
 public final class AgentsFeature {
-	/** Right-click on an agent (client thread). The click is never sent to the server. */
+	/** Sneak + right-click with an empty main hand on an agent (client thread). The click is never sent to the server. */
 	@FunctionalInterface
 	public interface ClickHandler {
 		void clicked(Player player, ClientAgentEntity agent);
@@ -78,9 +80,9 @@ public final class AgentsFeature {
 			AgentRenderer.provide(ctx);
 			return new NoopRenderer<>(ctx);
 		});
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> AgentManager.get().tick(mc));
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agents.tick", () -> AgentManager.get().tick(mc)));
 		// nameplate declutter: every agent's render state is extracted, nothing is submitted yet
-		LevelExtractionEvents.END_EXTRACTION.register(ctx -> PlateLayout.layout(ctx.levelState()));
+		LevelExtractionEvents.END_EXTRACTION.register(ctx -> Guard.run("agents.plates", () -> PlateLayout.layout(ctx.levelState())));
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onSnapshot(ForemanState state) {
@@ -113,15 +115,18 @@ public final class AgentsFeature {
 			}
 		});
 		UseEntityCallback.EVENT.register((player, level, hand, entity, hit) -> {
-			if (level.isClientSide() && entity instanceof ClientAgentEntity agent) {
-				if (hand == InteractionHand.MAIN_HAND) {
-					CLICK_HANDLERS.forEach(h -> h.clicked(player, agent));
-				}
-				return InteractionResult.FAIL;
+			if (!level.isClientSide() || !(entity instanceof ClientAgentEntity agent)) {
+				return InteractionResult.PASS;
 			}
-			return InteractionResult.PASS;
+			// only an empty-hand sneak+right-click opens the card; anything else is the item's use (eat, block,
+			// draw, place): the agent is not even targetable then (ClientAgentEntity#isPickable)
+			if (!UiRules.agentUseOpensCard(hand == InteractionHand.MAIN_HAND, player.isShiftKeyDown(), player.getMainHandItem().isEmpty())) {
+				return InteractionResult.PASS;
+			}
+			CLICK_HANDLERS.forEach(h -> h.clicked(player, agent));
+			return InteractionResult.FAIL;
 		});
-		// right-click an agent: its card (name, state, task, log tail, message/pause/stop)
+		// sneak + right-click an agent with an empty hand: its card (name, state, task, log tail, message/pause/stop)
 		onClick((player, agent) -> Minecraft.getInstance().gui.setScreen(new AgentCardScreen(agent.agentId())));
 		DevBridge.registerScreen("agent", mc -> {
 			String id = AgentCardScreen.defaultAgent();
@@ -184,6 +189,7 @@ public final class AgentsFeature {
 						j.addProperty("awaitingDecision", e.view().awaitingDecision);
 						j.addProperty("needsYou", e.view().needsYou());
 						j.addProperty("paused", e.view().showsPaused());
+						j.addProperty("pickable", e.isPickable());
 						j.addProperty("posture", l.posture().name());
 						j.addProperty("seated", l.seated());
 						j.addProperty("sit", round(l.sitAmount()));
@@ -206,6 +212,11 @@ public final class AgentsFeature {
 					}
 					o.add("agents", list);
 					o.addProperty("exclaims", exclaims());
+					if (mc.player != null) {
+						// agents are targetable only on an empty-hand sneak (ClientAgentEntity#isPickable)
+						o.addProperty("playerSneaking", mc.player.isShiftKeyDown());
+						o.addProperty("mainHandEmpty", mc.player.getMainHandItem().isEmpty());
+					}
 					if (mc.gui.screen() instanceof AgentCardScreen card) {
 						JsonObject cj = new JsonObject();
 						cj.addProperty("agent", card.agentId());

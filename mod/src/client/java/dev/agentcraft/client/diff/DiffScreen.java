@@ -147,7 +147,7 @@ public final class DiffScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	// ------------------------------------------------------------------ model

@@ -37,7 +37,8 @@ import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The agent card: right-click an agent to see who it is and what it is doing, and to steer it.
+ * The agent card: sneak + right-click an agent with an empty hand (or pick it in the hub's Team tab, a task's
+ * assignee, the console roster) to see who it is and what it is doing, and to steer it.
  * A compact paper card (brass frame while the agent needs you): portrait, name, title and role;
  * the state dot with a plain-words state and the activity; the current task (id, title, column,
  * branch); <b>the decision it waits on</b> with a way to act on it right there (the decision's
@@ -52,7 +53,7 @@ import org.jspecify.annotations.Nullable;
  * (real typing works; 26.x delivers typed characters only while text input is on), scrolls to the
  * caret, handles selection, clipboard and surrogate pairs.
  *
- * <p>Live: it follows the Foreman state while open, and the world keeps running behind it.
+ * <p>Live: it follows the Foreman state while open (the game pauses behind it in singleplayer, C6).
  * Shootable as {@code dev.screen {open:"agent"}} (last clicked agent, else whoever needs you first)
  * or {@code dev.agents.card {agent}}.
  */
@@ -165,7 +166,7 @@ public final class AgentCardScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	@Override

@@ -81,7 +81,7 @@ public final class LibraryScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	public String scope() {

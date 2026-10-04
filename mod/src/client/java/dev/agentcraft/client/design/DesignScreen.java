@@ -79,7 +79,7 @@ public final class DesignScreen extends Screen {
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return dev.agentcraft.client.ui.ScreenPause.pauses();
 	}
 
 	@Override
