@@ -46,6 +46,11 @@ public final class HudPrefs {
 		return worlds.computeIfAbsent(world, k -> new World());
 	}
 
+	/** Whether {@code world} has an entry yet (its first join with this file). */
+	public boolean known(String world) {
+		return worlds.containsKey(world);
+	}
+
 	public @Nullable String lastTab(String world) {
 		World x = worlds.get(world);
 		return x == null ? null : x.lastTab;

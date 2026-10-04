@@ -34,6 +34,18 @@ public final class HudMemory {
 		return prefs;
 	}
 
+	/**
+	 * The replies read mark of {@code world}; a world seen for the first time starts at now (the feed is the
+	 * Foreman's, not the world's: its history is not news here).
+	 */
+	public static long repliesBaseline(String world) {
+		HudPrefs p = prefs();
+		if (!p.known(world)) {
+			p.markRepliesSeen(world, System.currentTimeMillis());
+		}
+		return p.repliesSeen(world);
+	}
+
 	/** Saves when changed (throttled to every 2 s unless {@code now}). */
 	public static void flush(boolean now) {
 		HudPrefs p = prefs;

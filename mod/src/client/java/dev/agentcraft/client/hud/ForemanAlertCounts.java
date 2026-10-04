@@ -17,8 +17,9 @@ import org.jspecify.annotations.Nullable;
  *   <li>decisions: {@link DecisionsFeature#waitingCount()} (what the decisions badge shows);</li>
  *   <li>blocked: tasks with status {@code blocked};</li>
  *   <li>replies: feed {@code message} items from an agent to the user, newer than their read mark: a goal's
- *       ({@code hub-seen.json}, set by opening the goal in the hub) for goal-tagged ones, else the console's
- *       ({@code hub-hud.json repliesSeen}, set while the console is open);</li>
+ *       ({@code hub-seen.json}, set by opening the goal in the hub) for goal-tagged ones, and the console's
+ *       ({@code hub-hud.json repliesSeen}, set while the console is open, and to "now" the first time a world is
+ *       seen, so the Foreman's feed history never floods a new world) for all;</li>
  *   <li>hold: {@code foreman.status.hold}.</li>
  * </ul>
  */
@@ -36,11 +37,12 @@ public record ForemanAlertCounts(int decisions, int blocked, int replies, Protoc
 			}
 		}
 		String world = HudMemory.world();
-		long consoleSeen = HudMemory.prefs().repliesSeen(world);
+		long consoleSeen = HudMemory.repliesBaseline(world);
 		int replies = 0;
 		for (FeedItem f : s.feed()) {
 			if (isReply(f)) {
-				long seen = f.goalId() != null ? HubGoals.seen().goalSeen(world, f.goalId()) : consoleSeen;
+				// the console shows every reply, so its mark covers goal replies too (and is the new world's baseline)
+				long seen = f.goalId() != null ? Math.max(consoleSeen, HubGoals.seen().goalSeen(world, f.goalId())) : consoleSeen;
 				if (f.ts() > seen) {
 					replies++;
 				}

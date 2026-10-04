@@ -62,11 +62,13 @@ public final class HudWatch {
 			joinPending = false;
 			awayPending = false;
 			welcomeShown = false;
+			checking = false;
 		}));
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hud.watch", () -> tick(mc)));
 	}
 
 	static void joined() {
+		checking = false;
 		joinPending = true;
 		joinedAt = System.currentTimeMillis();
 		lastCheckAt = 0;
@@ -81,6 +83,7 @@ public final class HudWatch {
 		long now = System.currentTimeMillis();
 		HudPrefs p = HudMemory.prefs();
 		String world = HudMemory.world();
+		HudMemory.repliesBaseline(world); // first time in this world: the feed's history is not news
 		Screen screen = mc.gui.screen();
 		HubScreen hub = hubUnder(screen);
 		if (hub != null) {
@@ -98,7 +101,7 @@ public final class HudWatch {
 		// away (W6)
 		ForemanState s = Foreman.state();
 		boolean connected = Foreman.connected() && s != null && s.hasData();
-		long since = HudRules.awaySince(p.hubSeenAt(world), p.lastAwayToastAt(world));
+		long since = HudRules.awaySince(hubSeen(p, world), p.lastAwayToastAt(world));
 		if (!checking && HudRules.awayDue(now, since, joinPending, lastCheckAt, hub != null, connected)) {
 			checkAway(since, now);
 		}
@@ -117,6 +120,12 @@ public final class HudWatch {
 			}
 		}
 		HudMemory.flush(false);
+	}
+
+	/** When the hub was last on screen; before wave 2 kept that, the Goals tab's mark from hub-seen.json. */
+	private static long hubSeen(HudPrefs p, String world) {
+		long t = p.hubSeenAt(world);
+		return t > 0 ? t : HubGoals.seen().tabSeen(world);
 	}
 
 	/** Asks for the digest since {@code since}; a toast when a goal moved. Client thread. */
@@ -213,7 +222,7 @@ public final class HudWatch {
 		o.addProperty("world", world);
 		o.addProperty("hubSeenAt", p.hubSeenAt(world));
 		o.addProperty("lastAwayToastAt", p.lastAwayToastAt(world));
-		long since = HudRules.awaySince(p.hubSeenAt(world), p.lastAwayToastAt(world));
+		long since = HudRules.awaySince(hubSeen(p, world), p.lastAwayToastAt(world));
 		o.addProperty("awaySince", since);
 		o.addProperty("awayForMs", since <= 0 ? 0 : now - since);
 		o.addProperty("joinPending", joinPending);

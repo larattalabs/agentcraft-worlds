@@ -93,7 +93,11 @@ final class StatusPane implements HubPane {
 		}
 		int top = y + 18;
 		if (view == View.OVERVIEW) {
-			hub.drawStatus(g, x, top, w, h - 18);
+			// no scrolling here (the layout pass decides); the numbers say whether it fits
+			int bottom = hub.drawStatus(g, x, top, w, h - 18);
+			needed = bottom - y;
+			available = h;
+			maxScroll = 0;
 			return;
 		}
 		drawHelp(g, x, top, w, h - 18, mx, my);
@@ -240,14 +244,15 @@ final class StatusPane implements HubPane {
 	public JsonObject state() {
 		JsonObject o = new JsonObject();
 		o.addProperty("view", view.id);
+		JsonObject l = new JsonObject();
+		l.addProperty("needed", needed);
+		l.addProperty("available", available);
+		// help: needs a scroll; overview: runs past the footer (no scroll there)
+		l.addProperty("overflow", needed > available);
+		l.addProperty("scroll", scroll);
+		l.addProperty("maxScroll", maxScroll);
+		o.add("layout", l);
 		if (view == View.HELP) {
-			JsonObject l = new JsonObject();
-			l.addProperty("needed", needed);
-			l.addProperty("available", available);
-			l.addProperty("overflow", maxScroll > 0);
-			l.addProperty("scroll", scroll);
-			l.addProperty("maxScroll", maxScroll);
-			o.add("layout", l);
 			o.add("help", HelpContent.json());
 		}
 		return o;

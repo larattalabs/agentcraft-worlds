@@ -61,7 +61,10 @@ edits in `HubScreen`, `HubFeature`, `HubGoals`), pure + unit-tested `mod/src/mai
   `ForemanAlertCounts` computes them from `ForemanState`: decisions = `DecisionsFeature.waitingCount()` (what the
   badge shows), blocked = tasks with status `blocked`, replies = feed `message` items from an agent to the user newer
   than their read mark (a goal-tagged one: the goal's `hub-seen.json` mark, set by opening the goal in the hub; the rest:
-  `hub-hud.json repliesSeen`, set while the console is open), hold = `foreman.status.hold`. **Merge step**: when
+  `hub-hud.json repliesSeen`, set while the console is open, which shows every reply and so also covers goal
+  replies), hold = `foreman.status.hold`. The feed is the Foreman's, not the world's: the first time a world is seen
+  (no `hub-hud.json` entry) `repliesSeen` starts at now, so older replies never flood a new world or the first join
+  after the upgrade. **Merge step**: when
   `InboxModel` lands, call `Alerts.setSource("inbox", () -> <its Needs-you counts as an AlertCounts>)` once (e.g. in
   the inbox feature's init); the alert line, the away toast and every tab badge follow. The Inbox's read state then
   replaces the console/goal marks above.
@@ -82,7 +85,7 @@ edits in `HubScreen`, `HubFeature`, `HubGoals`), pure + unit-tested `mod/src/mai
 - **Away (W6)**: `hub-hud.json` (sibling of `hub-seen.json`, same world key) keeps `hubSeenAt` (any hub tab on screen,
   also under a task/decision screen opened from it), `lastAwayToastAt`, `lastTab`, `repliesSeen`,
   `welcomeDismissed`. The stretch starts at max(hubSeenAt, lastAwayToastAt) (unknown when the hub was never opened in
-  that world: no toast). Checked once on joining (as soon as the Foreman is connected) and every 2 minutes once the
+  that world: no toast; before `hubSeenAt` existed, the Goals tab's `hub-seen.json` mark stands in). Checked once on joining (as soon as the Foreman is connected) and every 2 minutes once the
   stretch is >= 10 minutes, never while the hub is open: `goal.digest {since}` via `HubGoals.requestAway` (so the
   Goals tab's away panel shows the same digest; `HubGoals.checkAway` no longer replaces a fresh one). A toast only
   when a goal moved: "Since you were away: 2 goals moved, 1 needs you" (needs-you = the alert counts), with the hub
@@ -106,4 +109,7 @@ edits in `HubScreen`, `HubFeature`, `HubGoals`), pure + unit-tested `mod/src/mai
   "Show the welcome card". Scrolls (wheel, ↑↓) and reports `{needed, available, overflow}`.
 - Decisions for the coordinator: decisions appear in both the badge and the line; the away toast uses a keycap hint
   instead of a literal "(H)"; `hub-hud.json` instead of extending `hub-seen.json` (no schema clash with the inbox
-  stream); monitors have no right-click today (W4 adds one: update `HelpContent.INTERACTIONS` then).
+  stream); monitors have no right-click today (W4 adds one: update `HelpContent.INTERACTIONS` then); the hold's
+  `message` is carried (`dev.hud.state alert.holdMessage`) but not drawn (the line stays one compact row); the
+  Status Overview has no scroll (18 px went to the chips): `statusTab.layout` reports whether it fits, the layout
+  stream decides.

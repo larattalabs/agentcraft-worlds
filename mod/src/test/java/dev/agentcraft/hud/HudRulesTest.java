@@ -93,6 +93,7 @@ class HudRulesTest {
 	@Test
 	void prefsRoundTripAndTolerateJunk(@TempDir Path dir) throws Exception {
 		HudPrefs p = new HudPrefs();
+		assertFalse(p.known("W"));
 		assertNull(p.lastTab("W"));
 		p.setLastTab("W", "goals");
 		p.markHubSeen("W", 500);
@@ -105,6 +106,7 @@ class HudRulesTest {
 		p.save(f);
 		assertFalse(p.dirty());
 		HudPrefs q = HudPrefs.load(f);
+		assertTrue(q.known("W"));
 		assertEquals("goals", q.lastTab("W"));
 		assertEquals(500, q.hubSeenAt("W"), "never moves back");
 		assertEquals(600, q.lastAwayToastAt("W"));

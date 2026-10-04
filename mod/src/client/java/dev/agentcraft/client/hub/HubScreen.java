@@ -1311,7 +1311,8 @@ public final class HubScreen extends Screen {
 
 	// ------------------------------------------------------------------ Status tab
 
-	void drawStatus(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+	/** The Overview; returns the bottom of the taller column (StatusPane reports the layout). */
+	int drawStatus(GuiGraphicsExtractor g, int x, int y, int w, int h) {
 		int ink = UiBits.ink();
 		int muted = UiBits.muted();
 		ForemanState s = Foreman.state();
@@ -1372,7 +1373,8 @@ public final class HubScreen extends Screen {
 		ry = fact(g, "Foreman", st == null ? "?" : st.version(), rx, ry, colW);
 		ry += 6;
 		ry = section(g, "DevBridge", rx, ry, colW);
-		fact(g, "", DevBridge.status(), rx, ry, colW);
+		ry = fact(g, "", DevBridge.status(), rx, ry, colW);
+		return Math.max(ly, ry);
 	}
 
 	/** The plan usage windows (bars, percent, reset time), as on the Status tab; returns the height. Also the Settings tab's Usage group. */
