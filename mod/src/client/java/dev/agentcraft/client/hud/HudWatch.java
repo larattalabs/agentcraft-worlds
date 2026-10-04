@@ -112,7 +112,7 @@ public final class HudWatch {
 		if (!welcomeShown && AUTO_WELCOME && now - joinedAt >= WELCOME_DELAY_MS && mc.gui.overlay() == null) {
 			boolean sp = mc.getSingleplayerServer() != null;
 			boolean hq = sp && dev.agentcraft.world.HqWorld.isHq(mc.getSingleplayerServer());
-			if (HudRules.welcomeDue(sp, hq, Buildings.loadFailed(), Buildings.all().size(), p.welcomeDismissed(world), false, screen != null)) {
+			if (HudRules.welcomeDue(sp, hq, Buildings.loadFailed(), Buildings.buildings().size(), p.welcomeDismissed(world), false, screen != null)) {
 				welcomeShown = true;
 				mc.gui.setScreen(new WelcomeScreen());
 			} else if (screen == null) {

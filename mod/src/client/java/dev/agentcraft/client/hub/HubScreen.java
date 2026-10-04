@@ -64,9 +64,9 @@ public final class HubScreen extends Screen {
 	static final long CONFIRM_MS = 6000;
 	private static final DateTimeFormatter RESETS = DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ROOT);
 
-	/** Buildings tab: the world's buildings, the blueprint browser or the building designs. */
+	/** Buildings tab: the world's buildings, its fixtures (village boards, docs/VILLAGE.md V2), the blueprint browser or the building designs. */
 	public enum Sub {
-		BUILDINGS, BLUEPRINTS, DESIGNS
+		BUILDINGS, FIXTURES, BLUEPRINTS, DESIGNS
 	}
 
 	record Btn(String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger, Runnable action) {
@@ -78,6 +78,8 @@ public final class HubScreen extends Screen {
 	private HubTab tab;
 	private Sub sub = Sub.BUILDINGS;
 	private @Nullable String selectedBuilding;
+	/** The selected fixture (Fixtures list), kept apart from the building selection. */
+	private @Nullable String selectedFixture;
 	private @Nullable String selectedBlueprint;
 	private @Nullable String selectedDesign;
 	/** The outcome of the last Cancel / Place on the plot pressed here (shown under the buttons). */
@@ -260,6 +262,15 @@ public final class HubScreen extends Screen {
 		return selectedBuilding;
 	}
 
+	public @Nullable String selectedFixture() {
+		return selectedFixture;
+	}
+
+	/** The selection the list on show acts on: the fixture on the Fixtures list, else the building. */
+	public @Nullable String selectedSite() {
+		return sub == Sub.FIXTURES ? selectedFixture : selectedBuilding;
+	}
+
 	public @Nullable String selectedBlueprint() {
 		return selectedBlueprint;
 	}
@@ -302,17 +313,22 @@ public final class HubScreen extends Screen {
 		return view;
 	}
 
-	/** Selects a building by id (false when there is none); switches to the buildings list. */
+	/** Selects a building (or a fixture) by id (false when there is none); switches to its list. */
 	public boolean selectBuilding(String id) {
-		if (Buildings.get(id) == null) {
+		Building b = Buildings.get(id);
+		if (b == null) {
 			return false;
 		}
 		setTab(HubTab.BUILDINGS);
-		setSub(Sub.BUILDINGS);
-		if (!id.equals(selectedBuilding)) {
+		setSub(b.isFixture() ? Sub.FIXTURES : Sub.BUILDINGS);
+		if (!id.equals(b.isFixture() ? selectedFixture : selectedBuilding)) {
 			disarm();
 		}
-		selectedBuilding = id;
+		if (b.isFixture()) {
+			selectedFixture = id;
+		} else {
+			selectedBuilding = id;
+		}
 		return true;
 	}
 
@@ -348,7 +364,11 @@ public final class HubScreen extends Screen {
 	}
 
 	List<Building> buildings() {
-		return Buildings.all();
+		return Buildings.buildings();
+	}
+
+	static List<Building> fixtures() {
+		return Buildings.fixtures();
 	}
 
 	static List<Blueprint> blueprints() {
@@ -368,6 +388,21 @@ public final class HubScreen extends Screen {
 		// the selected one is gone (removed): select the first, and never carry an armed remove over
 		disarm();
 		selectedBuilding = list.get(0).id();
+		return list.get(0);
+	}
+
+	private @Nullable Building currentFixture(List<Building> list) {
+		if (list.isEmpty()) {
+			selectedFixture = null;
+			return null;
+		}
+		for (Building b : list) {
+			if (b.id().equals(selectedFixture)) {
+				return b;
+			}
+		}
+		disarm();
+		selectedFixture = list.get(0).id();
 		return list.get(0);
 	}
 
@@ -457,9 +492,32 @@ public final class HubScreen extends Screen {
 		BuildingWizardFeature.open();
 	}
 
-	/** Place a blueprint: the wizard's repo step with this blueprint fixed, then straight to placement. */
+	/**
+	 * Place a blueprint: the wizard's repo step with this blueprint fixed, then straight to placement. A fixture
+	 * blueprint (no repos) goes straight to placement.
+	 */
 	public void placeBlueprint(String id) {
+		Blueprint bp = Blueprints.get(id);
+		if (bp != null && bp.isFixture()) {
+			placeFixture(id);
+			return;
+		}
 		BuildingWizardFeature.openFor(id);
+	}
+
+	/** The outcome of the last "Place village board…" that could not start (shown under the Fixtures list). */
+	private @Nullable String fixtureNote;
+
+	/** Place a fixture (docs/VILLAGE.md V2): its ghost is up at once (no repo step); null when it is, else why not. */
+	public @Nullable String placeFixture(String blueprintId) {
+		String why = BuildingWizardFeature.placeFixture(blueprintId);
+		fixtureNote = why;
+		return why;
+	}
+
+	/** "Place village board…": the bundled village board fixture. */
+	public @Nullable String placeVillageBoard() {
+		return placeFixture(dev.agentcraft.client.village.VillageBoardFeature.BLUEPRINT);
 	}
 
 	/** Cancel a queued or running design (design.cancel); the outcome shows under the buttons. */
@@ -538,6 +596,12 @@ public final class HubScreen extends Screen {
 				if (!list.isEmpty()) {
 					selectBuilding(list.get(Math.max(0, Math.min(list.size() - 1, i + d))).id());
 				}
+			} else if (sub == Sub.FIXTURES) {
+				List<Building> list = fixtures();
+				int i = indexOfBuilding(list, selectedFixture);
+				if (!list.isEmpty()) {
+					selectBuilding(list.get(Math.max(0, Math.min(list.size() - 1, i + d))).id());
+				}
 			} else {
 				List<Blueprint> list = blueprints();
 				int i = 0;
@@ -613,7 +677,7 @@ public final class HubScreen extends Screen {
 				String id = rowIds.get(i);
 				if (sub == Sub.DESIGNS) {
 					selectDesign(id);
-				} else if (sub == Sub.BUILDINGS) {
+				} else if (sub == Sub.BUILDINGS || sub == Sub.FIXTURES) {
 					selectBuilding(id);
 				} else {
 					if (!id.equals(selectedBlueprint)) {
@@ -815,16 +879,23 @@ public final class HubScreen extends Screen {
 
 	private void drawBuildingsTab(GuiGraphicsExtractor g, int x, int y, int w, int h, int mx, int my) {
 		List<Building> bs = buildings();
+		List<Building> fs = fixtures();
 		List<Blueprint> bps = blueprints();
 		List<Design> ds = designs();
+		// the right-hand button: Design new / Place village board / Place new (compact when the sub switch needs the room)
+		String right = sub == Sub.DESIGNS ? "Design new…" : sub == Sub.FIXTURES ? "Place village board…" : "Place new…";
+		int subsW = 0;
+		for (Sub s : Sub.values()) {
+			subsW += bw(subLabel(s, bs, fs, bps, ds)) + 4;
+		}
+		if (subsW + bw(right) > w) {
+			// 426x240 with two-digit counts: the right-hand button gives up words before it overlaps the sub switch
+			right = sub == Sub.DESIGNS ? "Design…" : sub == Sub.FIXTURES ? "Place board…" : "Place…";
+		}
 		// sub switch (left) and Place new / Design new (right)
 		int sx = x;
 		for (Sub s : Sub.values()) {
-			String label = switch (s) {
-				case BUILDINGS -> "Buildings " + bs.size();
-				case BLUEPRINTS -> "Blueprints " + bps.size();
-				case DESIGNS -> "Designs " + ds.size() + (ds.stream().anyMatch(d -> d.status().isRunning()) ? " ●" : "");
-			};
+			String label = subLabel(s, bs, fs, bps, ds);
 			int sw = bw(label);
 			button(g, "sub:" + s.name().toLowerCase(Locale.ROOT), label, sx, y, sw, false, false, false, mx, my, () -> setSub(s));
 			if (s == sub) {
@@ -833,20 +904,31 @@ public final class HubScreen extends Screen {
 			sx += sw + 4;
 		}
 		if (sub == Sub.DESIGNS) {
-			String dn = "Design new…";
-			button(g, "design_new", dn, x + w - bw(dn), y, bw(dn), true, HubFeature.designNew == null, false, mx, my, this::designNew);
+			button(g, "design_new", right, x + w - bw(right), y, bw(right), true, HubFeature.designNew == null, false, mx, my, this::designNew);
+		} else if (sub == Sub.FIXTURES) {
+			boolean can = minecraft.getSingleplayerServer() != null && Blueprints.get(dev.agentcraft.client.village.VillageBoardFeature.BLUEPRINT) != null;
+			button(g, "place_board", right, x + w - bw(right), y, bw(right), true, !can, false, mx, my, this::placeVillageBoard);
 		} else {
-			String place = "Place new…";
-			button(g, "place_new", place, x + w - bw(place), y, bw(place), true, minecraft.getSingleplayerServer() == null, false, mx, my,
+			button(g, "place_new", right, x + w - bw(right), y, bw(right), true, minecraft.getSingleplayerServer() == null, false, mx, my,
 				this::placeNew);
 		}
 		y += 26;
 		h -= 26;
 		switch (sub) {
 			case BUILDINGS -> drawBuildings(g, bs, x, y, w, h, mx, my);
+			case FIXTURES -> drawFixtures(g, fs, x, y, w, h, mx, my);
 			case BLUEPRINTS -> drawBlueprints(g, bps, x, y, w, h, mx, my);
 			case DESIGNS -> drawDesigns(g, ds, x, y, w, h, mx, my);
 		}
+	}
+
+	private static String subLabel(Sub s, List<Building> bs, List<Building> fs, List<Blueprint> bps, List<Design> ds) {
+		return switch (s) {
+			case BUILDINGS -> "Buildings " + bs.size();
+			case FIXTURES -> "Fixtures " + fs.size();
+			case BLUEPRINTS -> "Blueprints " + bps.size();
+			case DESIGNS -> "Designs " + ds.size() + (ds.stream().anyMatch(d -> d.status().isRunning()) ? " ●" : "");
+		};
 	}
 
 	/**
@@ -1135,6 +1217,155 @@ public final class HubScreen extends Screen {
 			note = tpAllowed ? "Teleport lands at the entrance (in the building's dimension). Remove asks twice."
 				: "No Teleport in survival without cheats: walk there (" + cur.box().minX() + ", " + cur.box().minY() + ", " + cur.box().minZ()
 					+ "). Remove asks twice.";
+		}
+		for (String line : TextUtil.wrapPlain(font, note, dw)) {
+			if (dy > y + h - 10) {
+				break;
+			}
+			g.text(font, line, dx, dy, noteColor, false);
+			dy += 10;
+		}
+	}
+
+	/**
+	 * The Fixtures list (docs/VILLAGE.md V2): placed village boards (and any fixture blueprint of the player's), each with
+	 * where it stands and Teleport (cheats only), Remove (asks twice; the terrain comes back exactly), Move and Undo move.
+	 * Fixtures take no repos, have no lead and are never home, so the building actions are not offered.
+	 */
+	private void drawFixtures(GuiGraphicsExtractor g, List<Building> fs, int x, int y, int w, int h, int mx, int my) {
+		int ink = UiBits.ink();
+		int muted = UiBits.muted();
+		Building cur = currentFixture(fs);
+		if (fs.isEmpty()) {
+			Panels.inset(g, x, y, w, h);
+			int ty = y + 10;
+			String text = "No fixtures in this world yet. A village board shows every building, its lead, active goal and PRs, the newest "
+				+ "milestones and anything that holds the agents, readable from across the square. \"Place village board…\" puts up its ghost: "
+				+ "Enter places it (the terrain is saved first; Remove puts it back exactly).";
+			for (String line : TextUtil.wrapPlain(font, text, w - 16)) {
+				g.text(font, line, x + 8, ty, muted, false);
+				ty += 10;
+			}
+			if (fixtureNote != null) {
+				for (String line : TextUtil.wrapPlain(font, fixtureNote, w - 16)) {
+					g.text(font, line, x + 8, ty + 4, UiBits.errorText(), false);
+					ty += 10;
+				}
+			}
+			return;
+		}
+		int lw = Math.max(150, Math.min(220, w * 2 / 5));
+		drawList(g, x, y, lw, h, fs.size(), fs.indexOf(cur), mx, my, (i, rx, ry, rw) -> {
+			Building b = fs.get(i);
+			Blueprint bp = Blueprints.get(b.blueprint());
+			g.text(font, TextUtil.ellipsize(font, b.id() + "  " + (bp != null ? bp.name() : b.blueprint()), rw), rx, ry, ink, false);
+			Anchors.Bounds bx = b.box();
+			g.text(font, TextUtil.ellipsize(font, bx.minX() + ", " + bx.minY() + ", " + bx.minZ() + " · " + HubActions.pretty(b.dimensionOrDefault()), rw),
+				rx, ry + 10, muted, false);
+			return b.id();
+		});
+		if (cur == null) {
+			return;
+		}
+		int dx = x + lw + 10;
+		int dw = w - lw - 10;
+		Blueprint bp = Blueprints.get(cur.blueprint());
+		int dy = y;
+		g.text(font, TextUtil.ellipsize(font, cur.id() + " · " + (bp != null ? bp.name() : cur.blueprint()), dw), dx, dy, ink, false);
+		dy += 13;
+		Anchors.Bounds box = cur.box();
+		String[][] facts = {
+			{"Kind", "fixture: no repos, no lead"},
+			{"Blueprint", cur.blueprint() + (bp == null ? " (not loaded)" : "")},
+			{"Box", box.minX() + ", " + box.minY() + ", " + box.minZ() + "  ..  " + box.maxX() + ", " + box.maxY() + ", " + box.maxZ()},
+			{"Rotation", cur.rotation().replace('_', ' ')},
+			{"Dimension", HubActions.pretty(cur.dimensionOrDefault())},
+			{"Placed", cur.placedAt() > 0 ? UiBits.ago(cur.placedAt()) : "?"},
+			{"Check", checkLine(cur)}};
+		int labelW = 0;
+		for (String[] f : facts) {
+			labelW = Math.max(labelW, font.width(f[0]));
+		}
+		// keep the buttons and the note inside the pane at 426x240: drop the least useful facts first
+		int buttonsH = 48 + 2 + 20;
+		java.util.Set<String> dropped = new java.util.HashSet<>();
+		String[] dropOrder = {"Placed", "Kind", "Rotation", "Dimension", "Blueprint"};
+		for (int di = 0; di <= dropOrder.length; di++) {
+			int fh = 0;
+			for (String[] f : facts) {
+				if (f[1] != null && !dropped.contains(f[0])) {
+					fh += TextUtil.wrapPlain(font, f[1], dw - labelW - 8).size() * 10 + 1;
+				}
+			}
+			if (dy + fh + 6 + buttonsH <= y + h || di == dropOrder.length) {
+				break;
+			}
+			dropped.add(dropOrder[di]);
+		}
+		for (String[] f : facts) {
+			if (f[1] == null || dropped.contains(f[0])) {
+				continue;
+			}
+			g.text(font, f[0], dx, dy, f[0].equals("Check") ? UiBits.errorText() : muted, false);
+			int vx = dx + labelW + 8;
+			for (String line : TextUtil.wrapPlain(font, f[1], dx + dw - vx)) {
+				g.text(font, line, vx, dy, ink, false);
+				dy += 10;
+			}
+			dy += 1;
+		}
+		dy += 6;
+		boolean sp = minecraft.getSingleplayerServer() != null;
+		String id = cur.id();
+		int bx = dx;
+		boolean tpAllowed = minecraft.player != null && HubActions.teleportAllowed(minecraft.player);
+		if (tpAllowed) {
+			String tp = "Teleport";
+			button(g, "teleport", tp, bx, dy, bw(tp), false, busy || !sp, false, mx, my, () -> teleport(id));
+			bx += bw(tp) + 4;
+		}
+		boolean armedHere = armed() && id.equals(armedRemove);
+		boolean forceHere = forceArmed(id);
+		String rm = forceHere ? "Remove anyway" : armedHere ? "Confirm remove" : "Remove…";
+		button(g, "remove", rm, bx, dy, bw(rm), armedHere, busy || !sp, !armedHere || forceHere, mx, my, () -> removeClick(id));
+		dy += 24;
+		bx = dx;
+		String mvl = "Move…";
+		button(g, "move", mvl, bx, dy, bw(mvl), false, busy || !sp || bp == null, false, mx, my, () -> move(id));
+		bx += bw(mvl) + 4;
+		if (cur.movedFrom() != null) {
+			String um = "Undo move";
+			if (bx + bw(um) > dx + dw) {
+				bx = dx;
+				dy += 24;
+			}
+			button(g, "undo_move", um, bx, dy, bw(um), false, busy || !sp, false, mx, my, () -> undoMove(id));
+		}
+		dy += 26;
+		String note;
+		int noteColor = muted;
+		HubActions.Result last = HubActions.last();
+		if (forceHere) {
+			long left = Math.max(0, (CONFIRM_MS - (System.currentTimeMillis() - armedAt) + 999) / 1000);
+			note = (last != null ? last.message() + " " : "") + "Click Remove anyway to take " + id + " down regardless: those things are lost. (" + left
+				+ " s)";
+			noteColor = UiBits.errorText();
+		} else if (armedHere) {
+			long left = Math.max(0, (CONFIRM_MS - (System.currentTimeMillis() - armedAt) + 999) / 1000);
+			note = "Click Confirm remove to take " + id + " down: the terrain that was there comes back exactly. (" + left + " s)";
+			noteColor = UiBits.errorText();
+		} else if (busy) {
+			note = "Working…";
+		} else if (!sp) {
+			note = "Singleplayer only: these act through the integrated server.";
+		} else if (fixtureNote != null) {
+			note = fixtureNote;
+			noteColor = UiBits.errorText();
+		} else if (last != null) {
+			note = last.message();
+			noteColor = last.ok() ? UiBits.okText() : UiBits.errorText();
+		} else {
+			note = "Right-click the board in the world: it opens the hub here, or the Inbox when something needs you.";
 		}
 		for (String line : TextUtil.wrapPlain(font, note, dw)) {
 			if (dy > y + h - 10) {
@@ -1434,7 +1665,7 @@ public final class HubScreen extends Screen {
 	}
 
 	static String kind(Blueprint bp) {
-		return bp.isGroup() ? "group, " + bp.wings() + " wings" : "single";
+		return bp.isFixture() ? "fixture" : bp.isGroup() ? "group, " + bp.wings() + " wings" : "single";
 	}
 
 	static String size(Blueprint bp) {

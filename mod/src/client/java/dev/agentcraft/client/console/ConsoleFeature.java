@@ -82,7 +82,7 @@ public final class ConsoleFeature {
 			return null;
 		}
 		String dim = mc.level.dimension().identifier().toString();
-		return dev.agentcraft.ui.UiRules.containing(dev.agentcraft.building.Buildings.all(), dev.agentcraft.building.Building::box,
+		return dev.agentcraft.ui.UiRules.containing(dev.agentcraft.building.Buildings.buildings(), dev.agentcraft.building.Building::box,
 			dev.agentcraft.building.Building::dimension, dim, pos.getX(), pos.getY(), pos.getZ());
 	}
 

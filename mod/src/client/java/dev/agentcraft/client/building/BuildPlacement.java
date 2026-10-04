@@ -339,9 +339,9 @@ public final class BuildPlacement {
 				} else {
 					Building placed = Buildings.place(sl, b, origin, rotation, rs, useForce);
 					String note = Buildings.lastNote();
-					r = new Result(true, placed.id(), "Placed " + placed.id() + " (" + b.name() + ") for " + String.join(", ", placed.repos())
-						+ (placed.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")") + ". Undo: hub (" + dev.agentcraft.client.hud.Keys.label(dev.agentcraft.client.hud.Keys.hub)
-						+ ") > Buildings > " + placed.id() + " > Remove");
+					r = new Result(true, placed.id(), "Placed " + placed.id() + " (" + b.name() + ")"
+						+ (placed.isFixture() ? "" : " for " + String.join(", ", placed.repos())) + (placed.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")") + ". Undo: hub (" + dev.agentcraft.client.hud.Keys.label(dev.agentcraft.client.hud.Keys.hub)
+						+ ") > Buildings > " + (placed.isFixture() ? "Fixtures > " : "") + placed.id() + " > Remove");
 				}
 			} catch (Buildings.BuildingException e) {
 				r = new Result(false, null, e.getMessage());
@@ -591,12 +591,12 @@ public final class BuildPlacement {
 		}
 		String dim = lv.dimension().identifier().toString();
 		List<String> overlaps = new ArrayList<>();
-		for (Building other : Buildings.all()) {
+		for (Building other : Buildings.all()) { // fixtures (village boards) occupy a site too
 			if (other.dimensionOrDefault().equals(dim) && Building.intersects(other.restoreBox(), snapBox)) {
 				overlaps.add(other.id().equals(moveId) ? other.id() + " where it stands now" : other.id());
 			}
 		}
-		List<String> refusals = new ArrayList<>(GhostModel.refusals(repos, b.wings(), withBuilding, snapBox.minY(), box.maxY(), lv.getMinY(),
+		List<String> refusals = new ArrayList<>(GhostModel.refusals(b.isFixture(), repos, b.wings(), withBuilding, snapBox.minY(), box.maxY(), lv.getMinY(),
 			lv.getMaxY(), overlaps, blockedCount, false));
 		String lava = TerrainFit.lavaRefusal(plan);
 		if (lava == null) {

@@ -222,9 +222,13 @@ class TrophyTest {
 		try (var s = Files.list(dir)) {
 			files = s.filter(p -> p.getFileName().toString().endsWith(".blueprint.json")).sorted().toList();
 		}
-		assertEquals(6, files.size());
+		assertEquals(7, files.size()); // 6 buildings + the village board fixture (no wings: no slots, checked below)
 		for (Path f : files) {
 			Blueprint bp = Blueprint.fromJson(JsonParser.parseString(Files.readString(f)).getAsJsonObject());
+			if (bp.isFixture()) {
+				assertEquals(0, bp.wings(), bp.id());
+				assertTrue(TrophySlots.cells(bp.anchors()).isEmpty(), bp.id() + ": a fixture has no trophy slots");
+			}
 			for (int turns = 0; turns < 4; turns++) {
 				boolean odd = turns % 2 == 1;
 				Anchors.Bounds box = new Anchors.Bounds(1000, 64, -500, 1000 + (odd ? bp.sizeZ() : bp.sizeX()) - 1, 64 + bp.sizeY() - 1,

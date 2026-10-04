@@ -117,7 +117,7 @@ public final class TrophyFeature {
 		return ZoneId.systemDefault();
 	}
 
-	private static Map<String, String> goalRepos(@Nullable ForemanState st) {
+	public static Map<String, String> goalRepos(@Nullable ForemanState st) {
 		Map<String, String> m = new HashMap<>();
 		if (st != null) {
 			st.goals().forEach((id, g) -> {
@@ -129,7 +129,7 @@ public final class TrophyFeature {
 		return m;
 	}
 
-	static TrophyEvents.GoalIn goalIn(Protocol.Goal g, @Nullable ForemanState st) {
+	public static TrophyEvents.GoalIn goalIn(Protocol.Goal g, @Nullable ForemanState st) {
 		int n = 0;
 		if (st != null) {
 			for (Protocol.Task t : st.tasks().values()) {
@@ -141,7 +141,7 @@ public final class TrophyFeature {
 		return new TrophyEvents.GoalIn(g.id(), g.text(), g.status() == Protocol.GoalStatus.DONE, g.repoId(), g.createdAt(), g.updatedAt(), n);
 	}
 
-	static TrophyEvents.TaskIn taskIn(Protocol.Task t) {
+	public static TrophyEvents.TaskIn taskIn(Protocol.Task t) {
 		Protocol.TaskPr pr = t.pr();
 		return new TrophyEvents.TaskIn(t.id(), t.title(), t.status() == Protocol.TaskStatus.DONE, t.repoId(), t.goalId(),
 			pr == null ? null : Integer.toString(pr.id()), pr != null && "merged".equals(pr.status()), pr == null ? 0 : pr.updatedAt(), t.createdAt(), t.updatedAt());

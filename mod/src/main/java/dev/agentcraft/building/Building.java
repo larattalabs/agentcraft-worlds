@@ -151,12 +151,25 @@ public record Building(String id, String blueprint, List<String> repos, boolean 
 		return repos.contains(repoId);
 	}
 
+	/**
+	 * A fixture (docs/VILLAGE.md V2: the village board): placed from a {@code fixture} blueprint, so it has no repos. It is
+	 * placed, moved and removed like a building (snapshot, ghost, Undo move) but is never home, never has a lead or
+	 * trophies, takes no repo and is no routing site: {@link Buildings#buildings()} leaves it out, {@link Buildings#fixtures()}
+	 * lists it. Every building has at least one repo, so an empty repo list is exactly "a fixture".
+	 */
+	public boolean isFixture() {
+		return repos.isEmpty();
+	}
+
 	// ------------------------------------------------------------------ JSON
 
 	public JsonObject toJson() {
 		JsonObject o = new JsonObject();
 		o.addProperty("id", id);
 		o.addProperty("blueprint", blueprint);
+		if (isFixture()) {
+			o.addProperty("kind", Blueprint.FIXTURE); // for people reading the file: the record reads back from the empty repos
+		}
 		JsonArray r = new JsonArray();
 		repos.forEach(r::add);
 		o.add("repos", r);

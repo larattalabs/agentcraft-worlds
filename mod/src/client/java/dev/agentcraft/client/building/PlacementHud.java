@@ -49,8 +49,8 @@ final class PlacementHud implements HudElement {
 		List<Line> lines = new ArrayList<>();
 		if (v != null) {
 			String mv = BuildPlacement.moving();
-			String title = (mv != null ? "Moving " + mv + " (" + v.bp().name() + ")" : "Placing " + v.bp().name()) + "  for "
-				+ String.join(", ", BuildPlacement.repos());
+			String title = (mv != null ? "Moving " + mv + " (" + v.bp().name() + ")" : "Placing " + v.bp().name())
+				+ (v.bp().isFixture() ? "" : "  for " + String.join(", ", BuildPlacement.repos()));
 			String rot = BlueprintTransform.rotationName(v.turns()).replace('_', ' ') + " · entrance " + v.front() + (v.locked() ? " · locked" : "");
 			lines.add(new Line(TextUtil.ellipsize(font, title, inner - font.width(rot) - 8), cream, rot, soft));
 			String verdict;

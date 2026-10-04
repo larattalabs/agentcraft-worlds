@@ -509,3 +509,50 @@ test('beds checker: rejects a bed anchor off a head half, a missing foot, no air
   r = run((bp) => { for (const k of bedNames(bp.anchors)) delete bp.anchors[k]; });
   assert.deepEqual(r.errors, []);
 });
+
+// ---- fixtures (docs/VILLAGE.md V2: the village board)
+test('fixture: the bundled village board passes the checker, takes no repos and keeps its shape without the mod', async () => {
+  const { default: villageBoard } = await import('../blueprints/designs/village_board.mjs');
+  const bp = villageBoard();
+  const r = checkBlueprint(bp);
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.warnings, []);
+  assert.equal(bp.kind, 'fixture');
+  assert.equal(bp.wings, 0);
+  assert.equal(bp.approach.length, 0);
+  const side = bp.sidecar();
+  assert.deepEqual(Object.keys(side.anchors).sort(), ['board', 'cam_overview', 'spawn']);
+  // the anchor is the display's centre, on the board plane, facing south
+  assert.deepEqual(side.anchors.board, { x: 3.5, y: 3.5, z: 1.127, yaw: 0, pitch: 0 });
+  const ac = [...bp.cells.values()].filter((c) => c.state.name.startsWith('agentcraft:'));
+  assert.equal(ac.length, 15); // 5 x 3 display
+  assert.ok(ac.every((c) => c.state.name === B.villageBoard && !c.nbt));
+  assert.ok(FUNCTIONAL_BLOCKS.has(B.villageBoard));
+});
+
+test('fixture: the checker wants the board anchor on the display, a backing behind it and no repo bindings or trophies', async () => {
+  const { default: villageBoard } = await import('../blueprints/designs/village_board.mjs');
+  const noBack = villageBoard();
+  noBack.set(3, 3, 0, 'minecraft:air');
+  assert.match(checkBlueprint(noBack).errors.join('\n'), /fixture: the agentcraft:village_board at 3,3,1 has no full vanilla block behind it/);
+  const bound = villageBoard();
+  bound.bind(2, 2, 1, 'repo:#1');
+  assert.match(checkBlueprint(bound).errors.join('\n'), /bound to 'repo:#1' \(a fixture takes no repos\)/);
+  const moved = villageBoard();
+  moved.anchor('board', 3.5, 1.5, 3.5, 0);
+  assert.match(checkBlueprint(moved).errors.join('\n'), /anchor board: not on an agentcraft:village_board block/);
+  const wings = villageBoard();
+  wings.wings = 1;
+  assert.match(checkBlueprint(wings).errors.join('\n'), /a fixture takes no repos: wings 0/);
+  const trophy = villageBoard();
+  trophy.anchor('trophy', 3.5, 2.5, 2.5, 180);
+  assert.match(checkBlueprint(trophy).errors.join('\n'), /a fixture has no trophy slots/);
+  const missing = villageBoard();
+  delete missing.anchors.spawn;
+  assert.match(checkBlueprint(missing).errors.join('\n'), /missing required anchor 'spawn'/);
+  // a building may not pass itself off as a fixture's shape: the building rules still apply to kind single
+  const asBuilding = villageBoard();
+  asBuilding.kind = 'single';
+  asBuilding.wings = 1;
+  assert.match(checkBlueprint(asBuilding).errors.join('\n'), /missing required anchor 'desk_juniper'/);
+});

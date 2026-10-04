@@ -198,6 +198,10 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.test.foremanMessage` | `message:{type, ...}` | **Test only** (`AGENTCRAFT_DEV_TEST=1`): applies a Foreman message to the state model as if received (e.g. `foreman.status` with `auth:"failed"` to see the auth banner) |
 | `dev.displays` | `look?` = `paper` / `dark` / `split`, `reset?` | Monitor look (default dark; split alternates per monitor for comparisons), every laid-out monitor screen `{pos, agent, mode, style, size, ppb, rows, ageMs}`, and `stats` = display CPU cost per frame since the last reset (`monitor`/`board`: `usPerFrame`, `callsPerFrame`, `rebuilds`) |
 | `dev.taskwall` | `open?` (task id), `press?` (button id), `aim?` (task id), `board?` ("x y z" origin for `aim`), `lightFloor?` (0-15), `ppb?` (0-256, 0 = auto), `relayout?` | Task Wall boards and their cards (column counts, widths and cards per row, hidden ids, card positions, size full/brief/compact, title lines, state dot, glowing, `layoutUs` of the last re-plan). `lightFloor`/`ppb` override the block-light floor and the pixel density for A/B shots, `relayout` forces a re-plan. `open` opens that task's screen, `press` presses a button in the open task screen (`prev next retry prioritize reassign cancel to:<agent>`), `aim` returns the world point of a card and an eye 2.5 blocks in front (then `dev.camera` + `dev.key {mapping:"key.use"}` clicks it the real way; use `mode:"creative"`, spectators cannot click) |
+| `dev.board.state` | - | Village board (docs/VILLAGE.md V2): the content (rows: building, lead, goal, progress, PRs open / merged this week; milestones with `trophy`; hold; `needsYou`; `clickOpens` inbox/buildings), every board drawn in the last 30 s (origin, size, `ppb`, `textHeightBlocks`, `rowsPerPage`, `twoColumns`, `milestoneSlots`, page/pages, `rowsShown`, `milestonesShown`, `texts` on it, `rebuilds`) and the placed fixtures |
+| `dev.board.set` | `page?` (1.., 0 = turn by themselves), `ppb?` (0-128, 0 = auto), `lightFloor?` (0-15) | Hold a page, force a density or the light floor (A/B shots) |
+| `dev.board.aim` | `board?` ("x y z" origin), `distance?` (blocks, default 8) | The board's centre and an eye that far in front of it (then `dev.camera {x, y, z, lookAt: point}`) |
+| `dev.board.use` | - | Does what a right-click on the board does (Inbox when something needs you, else hub > Buildings); returns `opened`, the screen, tab and sub |
 
 Registered screens (`dev.screen {open}`): `creative_agentcraft` (creative inventory on the AgentCraft tab), `agent` (agent card: last clicked agent, else whoever needs you), `task` (task detail: the last task opened, else the first doing one), `hub`, `hub_<tab>`, `hub_blueprints`, `hub_designs`, `hub_goal_{thread,plan,instructions,tasks}`, `hub_settings_<group>`, `hub_repo_settings` (see "Hub"). Phase 3 features add theirs (see mod/FEATURES.md).
 
@@ -684,6 +688,24 @@ relayout snap, a building change, a released lead leaving, the level or the link
   `dev.routines.standup {goalId, force:true}` for an existing goal. Library: `dev.routines.library {agent:"kit"}`, or
   `dev.foreman.inject {message:{type:"memory.upsert", entry:{id:"qa-note", scope:"shared", title:"QA", body:"x",
   updated:<ms>, author:"kit"}}}`, then `dev.routines.state` (`library.visits`, `agents[].book`).
+### Village board and fixtures (docs/VILLAGE.md V2)
+- Fixtures are `Building` records without repos (`Building.isFixture()`): `Buildings.buildings()` leaves them out (routing, leads,
+  trophies, Inbox, Goals, HUD), `Buildings.fixtures()` lists them, `Buildings.all()` is both (overlap checks: the ghost and
+  roads use it, so a new spatial caller is safe by default). Never home; `setHome`/`setRepos` refuse them;
+  `place` refuses repos for a fixture blueprint; `move` skips the repo checks. `/agentcraft place village_board [-] [rotation]`
+  places one in front of the player; `/agentcraft buildings` lists fixtures too; `/agentcraft remove <id>` suggests them.
+- `agentcraft:village_board` (`VillageBoardBlock`/`VillageBoardBlockEntity`, a `PanelBlock` like the task board, models
+  borrowed from the task board) drawn by `client.village.VillageBoardRenderer` from a `BoardView` (prepared per panel origin,
+  rebuilt only when the content, page, size or density changes; swept after 30 s unseen). Content: `village.VillageBoard`
+  (pure), rebuilt when buildings, world, hung trophies, the Inbox or the link change, every 30 s, and on a Foreman revision
+  change at most once a second (`VillageBoard.rebuildDue`: the revision moves on every log line); an equal rebuild keeps the old
+  instance so the views do not redraw. The trophy ledger is copied from the server thread every 5 s (`Trophies.hung()`) while a board is in use.
+- Hub: Buildings > **Fixtures** (`HubScreen.Sub.FIXTURES`: list + Teleport (cheats), Remove (twice), Move, Undo move; top right
+  **Place village board…** / "Place board…" when narrow). A fixture blueprint's **Place** in the Blueprints list skips the
+  repo step. `selectBuilding(id)` with a fixture id switches to the Fixtures list; `selectedSite()` is what the list on show acts on.
+- QA in the dev world: `dev.hub.action {action:"place_board"}` puts up the ghost; `dev.build.lock`/`dev.build.confirm` place it;
+  `dev.board.aim` + `dev.camera` frame it from 8 blocks; `dev.board.state` reads it back; `dev.board.set {page}` holds a page.
+  Screens: `hub_fixtures`.
 
 ### A lead per building (`dev.agentcraft.client.leads`)
 The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUILDINGS.md "Client (routing)".
@@ -1070,7 +1092,8 @@ limits, presets, plot geometry; unit-tested in `DesignSpecTest`).
   (origin/turns on the plot), `dev.build.confirm`.
 
 ### Blocks
-All 16 blocks of the assets-src block contract are registered (`block.ModBlocks`) with block items
+All 16 blocks of the assets-src block contract, plus `village_board` (docs/VILLAGE.md V2; mod-owned assets that reuse the
+task board's models), are registered (`block.ModBlocks`) with block items
 and the "AgentCraft Studio" creative tab (`block.ModItems`, translation key `itemGroup.agentcraft`).
 Facing blocks face the placer (vanilla lectern rule), luminance follows the contract, thin or
 shaped blocks are non-occluding with real shapes, and connectable panels compute up/down/left/right

@@ -247,7 +247,7 @@ public final class LeadsFeature {
 		}
 		o.add("assignments", raw);
 		JsonArray bs = new JsonArray();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			JsonObject j = new JsonObject();
 			j.addProperty("id", b.id());
 			j.addProperty("key", v.worldId() == null ? null : LeadRouting.key(v.worldId(), b.id()));

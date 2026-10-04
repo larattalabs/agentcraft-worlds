@@ -63,7 +63,7 @@ final class BlueprintPickScreen extends WizardScreen {
 		initialized = true;
 		int n = repos.size();
 		for (Blueprint bp : Blueprints.all()) {
-			if (n <= 1 ? !bp.isGroup() : bp.isGroup() && bp.wings() >= n) {
+			if (!bp.isFixture() && (n <= 1 ? !bp.isGroup() : bp.isGroup() && bp.wings() >= n)) {
 				list.add(bp);
 			}
 		}

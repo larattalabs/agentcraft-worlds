@@ -37,6 +37,7 @@ export const B = {
   button: 'minecraft:stone_button',
   monitor: 'agentcraft:monitor',
   taskBoard: 'agentcraft:task_board',
+  villageBoard: 'agentcraft:village_board',
   podium: 'agentcraft:decision_podium',
   archive: 'agentcraft:memory_archive',
   catalog: 'agentcraft:memory_catalog',
@@ -98,7 +99,8 @@ export class Blueprint {
     this.name = o.name ?? o.id;
     this.description = o.description ?? '';
     this.kind = o.kind ?? 'single';
-    this.wings = o.wings ?? 1;
+    // a fixture (docs/VILLAGE.md V2: the village board) takes no repos: 0 wings
+    this.wings = o.wings ?? (this.kind === 'fixture' ? 0 : 1);
     const s = Array.isArray(o.size) ? o.size : [o.size.x, o.size.y, o.size.z];
     this.size = { x: s[0], y: s[1], z: s[2] };
     this.groundY = o.groundY ?? 1;
@@ -479,6 +481,29 @@ export class Blueprint {
     const sx = f.dx !== 0 ? Math.floor(cx) + (f.dx > 0 ? off : 1 - off) : cx;
     const sz = f.dz !== 0 ? Math.floor(cz) + (f.dz > 0 ? off : 1 - off) : cz;
     this.anchor(`task_wall@${wing}`, sx, y + 1 + height / 2, sz, yawOf(facing));
+    return this;
+  }
+
+  /**
+   * A village board display (docs/VILLAGE.md V2): `agentcraft:village_board` blocks over the segment (x0,z0)-(x1,z1),
+   * rows y..y+height-1, facing `facing`, with a full vanilla block behind every cell (`backing`, so the fixture keeps
+   * its shape without the mod). Anchor `board` = the centre of the display surface (yaw = the facing).
+   */
+  villageBoard(x0, z0, x1, z1, facing, height, { y = this.feet, backing = B.walnutTrim } = {}) {
+    const f = DIR[facing];
+    const cells = cellsOf(x0, z0, x1, z1);
+    for (const [x, z] of cells) {
+      for (let h = 0; h < height; h++) {
+        this.set(x, y + h, z, B.villageBoard, { facing });
+        this.set(x - f.dx, y + h, z - f.dz, backing);
+      }
+    }
+    const cx = cells.reduce((s, c) => s + c[0] + 0.5, 0) / cells.length;
+    const cz = cells.reduce((s, c) => s + c[1] + 0.5, 0) / cells.length;
+    const off = 0.125 + 0.002; // the board plane sits 2/16 in front of the block's back (the task board's linen depth)
+    const sx = f.dx !== 0 ? Math.floor(cx) + (f.dx > 0 ? off : 1 - off) : cx;
+    const sz = f.dz !== 0 ? Math.floor(cz) + (f.dz > 0 ? off : 1 - off) : cz;
+    this.anchor('board', sx, y + height / 2, sz, yawOf(facing));
     return this;
   }
 

@@ -23,7 +23,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.Shapes;
 
 /**
- * All 16 AgentCraft blocks, registered per the block contract in assets-src/README.md
+ * All 17 AgentCraft blocks, registered per the block contract in assets-src/README.md
  * (properties, facing rule, luminance, shapes). Render layers need no registration in 26.x:
  * every baked quad picks solid/cutout/translucent from its sprite's transparency.
  */
@@ -60,6 +60,9 @@ public final class ModBlocks {
 		BlockBehaviour.Properties.of().mapColor(MapColor.TERRACOTTA_ORANGE).instrument(NoteBlockInstrument.BASEDRUM).strength(1.25f, 4.2f)
 			.sound(SoundType.DECORATED_POT));
 	public static final Block OAK_PARQUET = register("oak_parquet", Block::new, wood(MapColor.WOOD));
+	/** The village board fixture's display (docs/VILLAGE.md V2): a task-board-like panel showing the whole village. */
+	public static final Block VILLAGE_BOARD = register("village_board", VillageBoardBlock::new,
+		panel().mapColor(MapColor.COLOR_BROWN).strength(1.0f).sound(SoundType.WOOD));
 
 	private ModBlocks() {
 	}

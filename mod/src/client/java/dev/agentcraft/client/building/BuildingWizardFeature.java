@@ -144,6 +144,9 @@ public final class BuildingWizardFeature {
 		if (bp == null) {
 			return "Unknown blueprint '" + blueprintId + "'";
 		}
+		if (bp.isFixture()) {
+			return placeFixture(blueprintId);
+		}
 		if (repos.isEmpty()) {
 			return "Name at least one repo";
 		}
@@ -153,6 +156,27 @@ public final class BuildingWizardFeature {
 		}
 		try {
 			BuildPlacement.start(blueprintId, repos);
+			return null;
+		} catch (IllegalArgumentException e) {
+			return e.getMessage();
+		}
+	}
+
+	/**
+	 * Enters placement mode for a fixture blueprint (docs/VILLAGE.md V2: the village board; no repo step): the hub's
+	 * "Place village board…". Returns why it cannot (unknown or not a fixture blueprint, not singleplayer), or null when
+	 * the ghost is up. Confirm (Enter) places it like a building: snapshot first, Remove and Move from the hub.
+	 */
+	public static @Nullable String placeFixture(String blueprintId) {
+		Blueprint bp = Blueprints.get(blueprintId);
+		if (bp == null) {
+			return "Blueprint " + blueprintId + " is not loaded";
+		}
+		if (!bp.isFixture()) {
+			return bp.name() + " is a building: Place new… picks its repos";
+		}
+		try {
+			BuildPlacement.start(blueprintId, List.of());
 			return null;
 		} catch (IllegalArgumentException e) {
 			return e.getMessage();
@@ -336,14 +360,15 @@ public final class BuildingWizardFeature {
 					return screenState(mc);
 				});
 			});
-		DevBridge.register("dev.build.start", 10_000, "{blueprint, repos: [..] | \"a,b\", origin?: [x,y,z] (rotated box minimum; locks the ghost "
+		DevBridge.register("dev.build.start", 10_000, "{blueprint, repos: [..] | \"a,b\" (none for a fixture such as village_board), origin?: [x,y,z] (rotated box minimum; locks the ghost "
 			+ "there), ground?: false (origin's y replaced by the footprint's median surface, as the wizard puts it), turns?: 0-3 | rotation name} "
 			+ "- enter placement mode", (req, mc) -> {
 				Fields f = Fields.of(req);
 				String bp = f.nonBlank("blueprint");
 				List<String> repos = repoList(f, "repos");
-				if (repos.isEmpty()) {
-					throw new DevBridge.DevException("repos: name at least one repo");
+				Blueprint known = Blueprints.get(bp);
+				if (repos.isEmpty() && (known == null || !known.isFixture())) {
+					throw new DevBridge.DevException("repos: name at least one repo (only a fixture blueprint takes none)");
 				}
 				int[] origin = f.has("origin") ? xyz(f, "origin") : null;
 				boolean ground = f.optBool("ground", false);
@@ -405,7 +430,7 @@ public final class BuildingWizardFeature {
 				}
 				o.add("snapshotFiles", files);
 				JsonObject pins = new JsonObject();
-				for (Building b : Buildings.all()) {
+				for (Building b : Buildings.all()) { // fixtures carry snapshot pins too
 					pins.addProperty(b.id(), b.pin() == null ? "none" : b.pin().template() + (Buildings.ownGridMatches(b) ? "" : " (blueprint changed)"));
 				}
 				o.add("pins", pins);

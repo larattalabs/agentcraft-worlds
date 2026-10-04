@@ -165,7 +165,7 @@ public final class HubFeature {
 	}
 
 	private static void registerDev() {
-		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|blueprints|designs, buildingId?, blueprint?, designId?, "
+		DevBridge.register("dev.hub.open", 10_000, "{tab?: " + HubTab.ids() + ", sub?: buildings|fixtures|blueprints|designs, buildingId? (a building or a fixture), blueprint?, designId?, "
 			+ "view?: plan|iso|top|front|cutaway (Buildings) | thread|plan|instructions|tasks (Goals) | overview|help (Status), goalId?, repoId?, form?: bool (Goals: the new goal "
 			+ "form), edit?: bool (Repos: the repoId's settings form), group?: general|permissions|context|subagents|prs|usage (Settings), agentId?: id|models "
 			+ "(Team; Inbox: the agent view), filter?: all|needs_you|building:<id>|agent:<id>|podium:<id|home> (Inbox), item?: key|decision id|task id (Inbox)} - "
@@ -266,7 +266,7 @@ public final class HubFeature {
 					return o;
 				});
 			});
-		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|edit_repos|move|undo_move|place_new|place|place_plot|design_new|"
+		DevBridge.register("dev.hub.action", 30_000, "{action: tab|select|view|home|teleport|remove|edit_repos|move|undo_move|place_new|place_board|place|place_plot|design_new|"
 			+ "cancel_design|" + HubDev.ACTIONS + "|" + SettingsDev.ACTIONS + "|" + InboxDev.ACTIONS + ", tab?, buildingId?, blueprint?, designId?, repos?: [..] | \"a,b\", view?, confirm?: bool} - press a hub button (opens the "
 			+ "hub when closed). home/teleport/remove/cancel_design reply after the server/Foreman answered; remove without confirm arms it (a "
 			+ "second remove for the same id confirms; refused over the player's things, a third forces it); edit_repos with repos sets them "
@@ -311,7 +311,7 @@ public final class HubFeature {
 				}
 			}
 			case "home", "teleport", "remove" -> {
-				String id = building != null ? building : s.selectedBuilding();
+				String id = building != null ? building : s.selectedSite();
 				if (id == null || Buildings.get(id) == null) {
 					throw new DevBridge.DevException("buildingId: no building " + id);
 				}
@@ -336,7 +336,7 @@ public final class HubFeature {
 				return f.thenApply(HubFeature::resultJson);
 			}
 			case "edit_repos", "move", "undo_move" -> {
-				String id = building != null ? building : s.selectedBuilding();
+				String id = building != null ? building : s.selectedSite();
 				if (id == null || Buildings.get(id) == null) {
 					throw new DevBridge.DevException("buildingId: no building " + id);
 				}
@@ -364,6 +364,14 @@ public final class HubFeature {
 				}
 			}
 			case "place_new" -> s.placeNew();
+			case "place_board" -> {
+				s.setSub(HubScreen.Sub.FIXTURES);
+				String why = s.placeVillageBoard();
+				if (why != null) {
+					throw new DevBridge.DevException(why);
+				}
+				done.addProperty("placing", "village board: the ghost is up (dev.build.state / nudge / lock / confirm)");
+			}
 			case "place" -> {
 				String id = bp != null ? bp : s.selectedBlueprint();
 				if (id == null || Blueprints.get(id) == null) {
@@ -413,7 +421,7 @@ public final class HubFeature {
 					return o;
 				});
 			}
-			default -> throw new DevBridge.DevException("action must be tab|select|view|home|teleport|remove|place_new|place|place_plot|design_new|"
+			default -> throw new DevBridge.DevException("action must be tab|select|view|home|teleport|remove|place_new|place_board|place|place_plot|design_new|"
 				+ "cancel_design");
 		}
 		done.addProperty("action", action);
@@ -432,9 +440,10 @@ public final class HubFeature {
 	private static HubScreen.Sub parseSub(String s) {
 		return switch (s.toLowerCase(Locale.ROOT)) {
 			case "buildings" -> HubScreen.Sub.BUILDINGS;
+			case "fixtures" -> HubScreen.Sub.FIXTURES;
 			case "blueprints" -> HubScreen.Sub.BLUEPRINTS;
 			case "designs" -> HubScreen.Sub.DESIGNS;
-			default -> throw new DevBridge.DevException("sub must be buildings, blueprints or designs");
+			default -> throw new DevBridge.DevException("sub must be buildings, fixtures, blueprints or designs");
 		};
 	}
 
@@ -472,6 +481,7 @@ public final class HubFeature {
 		o.addProperty("tab", s == null ? null : s.tab().id);
 		o.addProperty("sub", s == null ? null : s.sub().name().toLowerCase(Locale.ROOT));
 		o.addProperty("selectedBuilding", s == null ? null : s.selectedBuilding());
+		o.addProperty("selectedFixture", s == null ? null : s.selectedFixture());
 		o.addProperty("selectedBlueprint", s == null ? null : s.selectedBlueprint());
 		o.addProperty("selectedDesign", s == null ? null : s.selectedDesign());
 		o.addProperty("designNote", s == null ? null : s.designNote());
@@ -483,7 +493,7 @@ public final class HubFeature {
 		HubActions.Result last = HubActions.last();
 		o.add("lastAction", last == null ? null : resultJson(last));
 		JsonArray bs = new JsonArray();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			JsonObject j = new JsonObject();
 			j.addProperty("id", b.id());
 			j.addProperty("blueprint", b.blueprint());
@@ -517,6 +527,21 @@ public final class HubFeature {
 			bs.add(j);
 		}
 		o.add("buildings", bs);
+		JsonArray fx = new JsonArray();
+		for (Building b : Buildings.fixtures()) {
+			JsonObject j = new JsonObject();
+			j.addProperty("id", b.id());
+			j.addProperty("blueprint", b.blueprint());
+			j.addProperty("rotation", b.rotation());
+			j.addProperty("dimension", b.dimensionOrDefault());
+			j.addProperty("box", Buildings.str(b.box()));
+			j.addProperty("snapshotBox", Buildings.str(b.restoreBox()));
+			if (b.movedFrom() != null) {
+				j.addProperty("movedFrom", b.movedFrom().x() + "," + b.movedFrom().y() + "," + b.movedFrom().z() + " " + b.movedFrom().rotation());
+			}
+			fx.add(j);
+		}
+		o.add("fixtures", fx);
 		JsonArray bps = new JsonArray();
 		for (Blueprint bp : HubScreen.blueprints()) {
 			JsonObject j = new JsonObject();

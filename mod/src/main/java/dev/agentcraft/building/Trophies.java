@@ -247,6 +247,29 @@ public final class Trophies {
 
 	// ------------------------------------------------------------------ DevBridge / persistence
 
+	/** A trophy sign hanging in a building's slot (the ledger's entry), for the village board (docs/VILLAGE.md V2). */
+	public record Hung(String building, String slot, String key, List<String> lines, long at) {
+		public Hung {
+			lines = List.copyOf(lines);
+		}
+	}
+
+	/**
+	 * Every trophy hanging now (the ledger's slots of the world's buildings), an immutable copy. Server thread: the ledger
+	 * is only changed there, so the client asks for it through the integrated server.
+	 */
+	public static List<Hung> hung() {
+		TrophyLedger l = ledger;
+		if (l == null) {
+			return List.of();
+		}
+		List<Hung> out = new java.util.ArrayList<>();
+		for (String b : List.copyOf(l.buildingIds())) {
+			l.slots(b).forEach((slot, e) -> out.add(new Hung(b, slot, e.key(), e.lines(), e.at())));
+		}
+		return List.copyOf(out);
+	}
+
 	/**
 	 * The ledger as JSON for the DevBridge ({@code dev.trophies.list}): {@code awarded} keys and per building the hung
 	 * trophies with their slot cell. Server thread.
@@ -263,7 +286,7 @@ public final class Trophies {
 		l.awardedKeys().forEach(keys::add);
 		o.add("awarded", keys);
 		JsonArray bs = new JsonArray();
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			JsonObject bo = new JsonObject();
 			bo.addProperty("id", b.id());
 			bo.addProperty("blueprint", b.blueprint());
@@ -305,7 +328,7 @@ public final class Trophies {
 			TrophyLedger l = TrophyLedger.read(f);
 			// slots of buildings that are gone (removed and settled at this start, or forgotten) leave the ledger
 			Set<String> live = new java.util.HashSet<>();
-			Buildings.all().forEach(b -> live.add(b.id()));
+			Buildings.buildings().forEach(b -> live.add(b.id()));
 			boolean pruned = false;
 			for (String id : List.copyOf(l.buildingIds())) {
 				if (!live.contains(id)) {

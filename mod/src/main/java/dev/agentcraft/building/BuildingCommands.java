@@ -73,12 +73,13 @@ public final class BuildingCommands {
 						Blueprints.ids().forEach(b::suggest);
 						return b.buildFuture();
 					})
+					.executes(BuildingCommands::place) // a fixture needs no further arguments
 					.then(Commands.argument("args", StringArgumentType.greedyString())
 						.executes(BuildingCommands::place))))
 			.then(Commands.literal("remove")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
-						Buildings.all().forEach(x -> b.suggest(x.id()));
+						Buildings.all().forEach(x -> b.suggest(x.id())); // fixtures are removed the same way
 						return b.buildFuture();
 					})
 					.executes(ctx -> remove(ctx, false, false))
@@ -87,14 +88,14 @@ public final class BuildingCommands {
 			.then(Commands.literal("repos")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
-						Buildings.all().forEach(x -> b.suggest(x.id()));
+						Buildings.buildings().forEach(x -> b.suggest(x.id()));
 						return b.buildFuture();
 					})
 					.then(Commands.argument("repos", StringArgumentType.greedyString()).executes(BuildingCommands::repos))))
 			.then(Commands.literal("home")
 				.then(Commands.argument("id", StringArgumentType.word())
 					.suggests((ctx, b) -> {
-						Buildings.all().forEach(x -> b.suggest(x.id()));
+						Buildings.buildings().forEach(x -> b.suggest(x.id()));
 						return b.buildFuture();
 					})
 					.executes(BuildingCommands::home))));
@@ -128,10 +129,12 @@ public final class BuildingCommands {
 
 	private static int listBuildings(CommandContext<CommandSourceStack> ctx) {
 		var all = Buildings.all();
-		ctx.getSource().sendSuccess(() -> Component.literal(all.size() + " building(s)" + (all.isEmpty() ? "" : ":")), false);
+		int fixtures = Buildings.fixtures().size();
+		ctx.getSource().sendSuccess(() -> Component.literal((all.size() - fixtures) + " building(s)" + (fixtures > 0 ? ", " + fixtures + " fixture(s)" : "")
+			+ (all.isEmpty() ? "" : ":")), false);
 		for (Building b : all) {
-			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s%s  %s  repos %s  %s  box %s  %d anchors",
-				b.id(), b.home() ? " (home)" : "", b.blueprint(), String.join(",", b.repos()), b.rotation(), Buildings.str(b.box()),
+			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s%s  %s  %s  %s  box %s  %d anchors",
+				b.id(), b.home() ? " (home)" : "", b.blueprint(), b.isFixture() ? "fixture" : "repos " + String.join(",", b.repos()), b.rotation(), Buildings.str(b.box()),
 				b.anchors().size())), false);
 			Buildings.Report r = Buildings.reports().get(b.id());
 			if (r != null) {
@@ -149,11 +152,23 @@ public final class BuildingCommands {
 			src.sendFailure(Component.literal("Unknown blueprint '" + bpId + "' (known: " + Blueprints.ids() + ")"));
 			return 0;
 		}
-		String[] tokens = StringArgumentType.getString(ctx, "args").trim().split("\\s+");
-		List<String> repos = BlueprintTransform.parseRepos(tokens[0]);
+		String args;
+		try {
+			args = StringArgumentType.getString(ctx, "args").trim();
+		} catch (IllegalArgumentException none) {
+			args = ""; // "/agentcraft place <blueprint>" alone
+		}
+		if (args.isEmpty() && !bp.isFixture()) {
+			src.sendFailure(Component.literal("Name the repo(s): /agentcraft place " + bpId + " <repo>[,<repo>...] [rotation] [force]"));
+			return 0;
+		}
+		String[] tokens = args.isEmpty() ? new String[] {"-"} : args.split("\\s+");
+		// a fixture (village board) takes no repos: "/agentcraft place village_board - [rotation] [force]" (or no "-")
+		boolean noRepos = bp.isFixture() && (tokens[0].equals("-") || tokens[0].equalsIgnoreCase("none"));
+		List<String> repos = bp.isFixture() ? List.of() : BlueprintTransform.parseRepos(tokens[0]);
 		int turns = -1;
 		boolean force = false;
-		for (int i = 1; i < tokens.length; i++) {
+		for (int i = bp.isFixture() && !noRepos ? 0 : 1; i < tokens.length; i++) {
 			String t = tokens[i];
 			if (t.equalsIgnoreCase("force")) {
 				force = true;
@@ -184,7 +199,8 @@ public final class BuildingCommands {
 		try {
 			Building b = Buildings.place(level, bp, new BlockPos(o[0], o[1], o[2]), Rotation.values()[turns], repos, force);
 			String note = Buildings.lastNote();
-			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ") for " + String.join(", ", b.repos()) + ", "
+			src.sendSuccess(() -> Component.literal("Placed " + b.id() + " (" + bp.name() + ")" + (b.isFixture() ? "" : " for " + String.join(", ", b.repos()))
+				+ ", "
 				+ b.rotation() + ", box " + Buildings.str(b.box()) + (b.home() ? ", home" : "") + (note == null ? "" : " (" + note + ")")
 				+ ". Undo: the hub (H) > Buildings > " + b.id() + " > Remove"), true);
 			return 1;

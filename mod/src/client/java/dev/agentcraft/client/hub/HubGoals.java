@@ -321,7 +321,7 @@ public final class HubGoals {
 	}
 
 	public static @Nullable Wing wingOf(String repoId) {
-		for (Building b : Buildings.all()) {
+		for (Building b : Buildings.buildings()) {
 			int i = b.repos().indexOf(repoId);
 			if (i >= 0) {
 				return new Wing(b, i + 1);

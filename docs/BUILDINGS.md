@@ -66,7 +66,8 @@ Where they live:
   `entrance` anchor), `block` the path block (default `minecraft:dirt_path`), `slab` the half-step slab (default
   `minecraft:stone_brick_slab`). Absent = the defaults. The bundled blueprints continue their stone porch path
   (`stone_bricks` / `stone_brick_slab`).
-- `kind`: `single` (one repo) or `group` (up to `wings` repos; wing `n` is the n-th repo chosen).
+- `kind`: `single` (one repo), `group` (up to `wings` repos; wing `n` is the n-th repo chosen) or `fixture` (`wings: 0`, no
+  repos: a placeable object such as the village board, see "Fixtures" below; the required anchors are `board` and `spawn`).
 - `walk`: the walkable region (becomes the building's layout bounds after placement).
 - `anchors`: the names and meanings of `dev.agentcraft.layout.AnchorNames` (spots = feet position,
   block anchors = centre of the surface, `cam_*` = eye position). Required in every blueprint:
@@ -88,7 +89,7 @@ Where they live:
 - Materials (contract C5): structure, floors, walls, roofs, trim and light are **vanilla blocks**, so a
   world opened without the mod keeps its buildings and only the station blocks go missing.
   AgentCraft blocks only where they are functional: `monitor`, `task_board`, `decision_podium`,
-  `console_terminal`, `status_lamp`, `merge_station`, `memory_archive`, `memory_catalog`. The
+  `console_terminal`, `status_lamp`, `merge_station`, `memory_archive`, `memory_catalog`, `village_board`. The
   decorative AgentCraft blocks (`plaster_panel`, `plaster_frame`, `walnut_panel`, `walnut_trim`,
   `terracotta_tile`, `oak_parquet`, `glow_panel`, `glow_strip`) stay registered in the mod for old
   worlds but are not used by blueprints (the checker refuses them). `materials: "agentcraft"` means
@@ -201,6 +202,16 @@ A placed blueprint is a building:
   move so agents pick up the new anchors), `movedFrom {x, y, z, rotation, dimension}` (the site before the
   last move: the hub's Undo move), `pin` (see "Blueprint versions"), and in the file `pending: [{building,
   snapshot, at, why}]` (see "Crash safety").
+
+### Fixtures
+
+A fixture (docs/VILLAGE.md V2: the village board) is placed from a `kind: "fixture"` blueprint and recorded like a building but
+with **no repos** (`Building.isFixture()`): same file, same ids, same snapshot, ghost, terrain fit, Remove, Move, Undo move,
+crash safety and world-start check. It is **not a building** for anything else: never home, no lead, no routing site, no
+trophies, no "one building per repo". `Buildings.all()` lists every site (buildings and fixtures): it is the one for overlap and
+collision (placement, the ghost and roads refuse a box overlapping a fixture as they do a building). `Buildings.buildings()`
+lists buildings only (routing, leads, trophies, the hub's building list), `Buildings.fixtures()` the fixtures. `place` refuses repos for a fixture; Make home and Edit repos refuse a fixture. The record says
+`"kind": "fixture"` for readers (it reads back from the empty `repos`). The hub lists fixtures under Buildings > Fixtures.
 
 ### Occupancy (who is in the way)
 
@@ -428,7 +439,7 @@ NO_SLOTS | NO_ROOM | UNAVAILABLE, building, slot, replaced, message}`, `Trophies
 ## Server API (mod, `dev.agentcraft.building`)
 
 - `Blueprints`: registry (bundled + user folder), `get(id)`, `all()`, `reload()`.
-- `Buildings`: `all()`, `get(id)`, `forRepo(repoId)`, `home()`, `layoutFor(repoId)` (that repo's
+- `Buildings`: `all()` (every site, fixtures included: overlap checks), `buildings()` (no fixtures: routing, leads, trophies), `fixtures()`, `get(id)` (either), `forRepo(repoId)`, `home()`, `layoutFor(repoId)` (that repo's
   building layout, else `Anchors.current()`), `place(level, blueprint, origin, rotation, repos,
   force) -> Building`, `remove(level, id)`, `forget(server, id)`, `setHome(server, id)`, persistence,
   change listeners. Errors are `Buildings.BuildingException` with a player-facing message.
@@ -560,6 +571,9 @@ explicit interior air, bindings, and C5:
 - trophy slots (`trophy*`, see "Trophy slots"): wing in range, yaw a multiple of 90, the cell inside `walk` and explicit
   air, a full opaque block behind it, one slot per cell, not an agent's feet/head cell; a wing without any slot is a
   warning. They are block anchors for `verify.mjs` (no floor/headroom check);
+- fixtures (`kind: "fixture"`, `wings: 0`): `board` (on an `agentcraft:village_board`, yaw = its facing) and `spawn` required
+  instead of the building anchors; no walk/light/doorway rules (outdoors), the no-mod shell leak check stays, a full opaque
+  vanilla block behind every AgentCraft cell, no `repo:`/`ci:` bindings, no trophy slots, a warning without a vanilla light;
 - `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block; `approach` an object or
   `false`, `length` 0..16, `width` 1..7, `block` a `minecraft:` full block, `slab` a `minecraft:` slab (when the kit
   knows them).

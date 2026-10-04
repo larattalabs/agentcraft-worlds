@@ -19,8 +19,9 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>All coordinates are template-local (origin = the template's minimum corner), unrotated.
  *
- * @param kind {@code single} or {@code group}
- * @param wings how many repos the blueprint takes (single: 1)
+ * @param kind {@code single}, {@code group} or {@code fixture} (docs/VILLAGE.md V2: a small placeable object such as the
+ *             village board; no repos, no lead, not a building for routing, leads or trophies)
+ * @param wings how many repos the blueprint takes (single: 1, fixture: 0)
  * @param front the direction the entrance faces in the unrotated template ({@code north/east/south/west})
  * @param walk the walkable region (template-local block coordinates, inclusive); null when missing
  * @param foundationBlock the vanilla block id the placement fills below the floor with (docs/BUILDINGS.md "Terrain fit",
@@ -35,6 +36,8 @@ public record Blueprint(String id, String name, String description, String kind,
 	public static final Pattern ID = Pattern.compile("[a-z0-9_]+");
 	public static final String SINGLE = "single";
 	public static final String GROUP = "group";
+	/** A placeable fixture (the village board): no repos, placed, moved and removed like a building (docs/VILLAGE.md V2). */
+	public static final String FIXTURE = "fixture";
 	/** Cast workers every blueprint needs a desk and a monitor for (docs/BUILDINGS.md). */
 	public static final List<String> CAST_WORKERS = List.of("juniper", "kit", "wren", "rowan", "tove");
 	/** What fills below a building's floor when the sidecar names no {@code foundationBlock}. */
@@ -50,6 +53,11 @@ public record Blueprint(String id, String name, String description, String kind,
 		return GROUP.equals(kind);
 	}
 
+	/** A fixture blueprint (no repos, never a building for routing, leads, trophies or "one building per repo"). */
+	public boolean isFixture() {
+		return FIXTURE.equals(kind);
+	}
+
 	/** Parses a sidecar. Throws {@link IllegalArgumentException} with a readable message when it is unusable. */
 	public static Blueprint fromJson(JsonObject o) {
 		String id = str(o, "id", null);
@@ -57,12 +65,13 @@ public record Blueprint(String id, String name, String description, String kind,
 			throw new IllegalArgumentException("missing or invalid \"id\" (expected [a-z0-9_]+): " + id);
 		}
 		String kind = str(o, "kind", SINGLE).toLowerCase(Locale.ROOT);
-		if (!kind.equals(SINGLE) && !kind.equals(GROUP)) {
-			throw new IllegalArgumentException("\"kind\" must be single or group, not " + kind);
+		if (!kind.equals(SINGLE) && !kind.equals(GROUP) && !kind.equals(FIXTURE)) {
+			throw new IllegalArgumentException("\"kind\" must be single, group or fixture, not " + kind);
 		}
-		int wings = o.has("wings") ? o.get("wings").getAsInt() : 1;
-		if (wings < 1 || (kind.equals(SINGLE) && wings != 1)) {
-			throw new IllegalArgumentException("bad \"wings\" " + wings + " for kind " + kind);
+		boolean fixture = kind.equals(FIXTURE);
+		int wings = o.has("wings") ? o.get("wings").getAsInt() : fixture ? 0 : 1;
+		if (fixture ? wings != 0 : wings < 1 || (kind.equals(SINGLE) && wings != 1)) {
+			throw new IllegalArgumentException("bad \"wings\" " + wings + " for kind " + kind + (fixture ? " (a fixture has no wings: 0)" : ""));
 		}
 		if (!o.has("size") || !o.get("size").isJsonObject()) {
 			throw new IllegalArgumentException("missing \"size\"");
@@ -88,6 +97,9 @@ public record Blueprint(String id, String name, String description, String kind,
 		Map<String, Anchor> anchors = new LinkedHashMap<>();
 		if (o.has("anchors") && o.get("anchors").isJsonObject()) {
 			for (var e : o.getAsJsonObject("anchors").entrySet()) {
+				if (fixture && e.getKey().indexOf('@') >= 0) {
+					throw new IllegalArgumentException("a fixture has no wings: anchor " + e.getKey() + " has a wing suffix");
+				}
 				JsonObject a = e.getValue().getAsJsonObject();
 				anchors.put(e.getKey(), new Anchor(e.getKey(), a.get("x").getAsDouble(), a.get("y").getAsDouble(), a.get("z").getAsDouble(),
 					a.has("yaw") ? a.get("yaw").getAsFloat() : 0f, a.has("pitch") ? a.get("pitch").getAsFloat() : 0f));
@@ -136,6 +148,18 @@ public record Blueprint(String id, String name, String description, String kind,
 	 */
 	public List<String> warnings() {
 		List<String> w = new ArrayList<>();
+		if (isFixture()) {
+			// a fixture is not a workplace: no desks, stations or task walls (docs/VILLAGE.md V2)
+			for (Anchor a : anchors.values()) {
+				if (a.x() < 0 || a.y() < 0 || a.z() < 0 || a.x() > sizeX || a.y() > sizeY + 2 || a.z() > sizeZ) {
+					w.add("anchor " + a.name() + " lies outside the template");
+				}
+			}
+			if (!isBlockId(foundationBlock)) {
+				w.add("foundationBlock '" + foundationBlock + "' is not a block id (" + DEFAULT_FOUNDATION + " is used)");
+			}
+			return w;
+		}
 		for (String req : List.of("meeting", "lounge", "library", "terminal", "testbench", "mergestation", "user", "decision_podium",
 			"goal_atrium", "entrance", "spawn", "cam_overview")) {
 			if (!anchors.containsKey(req)) {

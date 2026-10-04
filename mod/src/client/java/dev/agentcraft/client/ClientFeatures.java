@@ -17,6 +17,7 @@ import dev.agentcraft.client.monitor.MonitorFeature;
 import dev.agentcraft.client.permissions.PermissionsFeature;
 import dev.agentcraft.client.taskwall.TaskWallFeature;
 import dev.agentcraft.client.trophy.TrophyFeature;
+import dev.agentcraft.client.village.VillageBoardFeature;
 import dev.agentcraft.client.ui.UiDev;
 import dev.agentcraft.client.world.AnchorsDev;
 import dev.agentcraft.client.world.ItemsDev;
@@ -51,6 +52,7 @@ public final class ClientFeatures {
 		HubFeature.init();       // H, /hub: buildings, blueprints, status (docs/HUB.md)
 		LeadsFeature.init();     // a lead per building: lead.assign/release/sync, dev.leads.state
 		TrophyFeature.init();    // trophies for merges and finished goals, dev.trophies.*
+		VillageBoardFeature.init(); // the village board fixture's display, right-click to the hub, dev.board.*
 		DesignFeature.init();    // the hub's Design new…, /hub design, plot marking, design progress
 		AgentCraft.LOGGER.info("AgentCraft client features initialised");
 	}

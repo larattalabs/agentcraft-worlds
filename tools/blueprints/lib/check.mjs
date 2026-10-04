@@ -14,6 +14,9 @@ const SEAT_RE = /^(desk_.+|seat_.+|meeting(_\d+)?|lounge(_\d+)?)$/;
 const HORIZ = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const YAW_OF_FACING = { south: 0, west: 90, north: 180, east: -90 };
 
+/** Required anchors of a fixture (docs/VILLAGE.md V2): the display's centre and where a teleport lands. */
+export const FIXTURE_ANCHORS = ['board', 'spawn'];
+
 /** Required anchor names for a blueprint with `wings` wings. */
 export function requiredAnchors(wings = 1) {
   const names = [];
@@ -29,6 +32,7 @@ const yawDiff = (a, b) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
 export const FUNCTIONAL_BLOCKS = new Set([
   'agentcraft:monitor', 'agentcraft:task_board', 'agentcraft:decision_podium', 'agentcraft:console_terminal',
   'agentcraft:status_lamp', 'agentcraft:merge_station', 'agentcraft:memory_archive', 'agentcraft:memory_catalog',
+  'agentcraft:village_board',
 ]);
 const VANILLA_FOR = {
   'agentcraft:plaster_panel': 'minecraft:smooth_quartz (B.plaster)', 'agentcraft:plaster_frame': 'minecraft:calcite (B.plasterFrame)',
@@ -52,9 +56,10 @@ const NON_CONDUCTORS = new Set(['minecraft:glowstone', 'minecraft:sea_lantern'])
  * clears the box). Errors: walk reachable through the walls (a flood capped at walk.maxY: a doorway without
  * a closed door, a gap) and any cell that only becomes reachable without the mod (walk, attic or cavity).
  * Warning: walk cells reached only from above (open to the sky: a courtyard).
+ * `fixture` (docs/VILLAGE.md V2): an outdoor object has no inside, so only the no-mod leaks count.
  * @returns {{ errors: string[], warnings: string[], outside: Set<string> }} `outside` = cells reached with the mod
  */
-export function shellCheck(grid, size, walk, groundY) {
+export function shellCheck(grid, size, walk, groundY, { fixture = false } = {}) {
   const errors = [];
   const warnings = [];
   const [sx, sy, sz] = size;
@@ -95,13 +100,13 @@ export function shellCheck(grid, size, walk, groundY) {
     for (const k of cells) { const p = m.get(k); const [px, py, pz] = p.split(',').map(Number); if (!inWalk(px, py, pz)) entries.add(`${p} -> ${k}`); }
     return [...entries].slice(0, 4).join('; ');
   };
-  const wallWalk = reachedWalk(walls);
+  const wallWalk = fixture ? [] : reachedWalk(walls);
   if (wallWalk.length) {
     errors.push(`shell: ${wallWalk.length} walk cell(s) reachable from outside through the walls (a doorway without a closed door, a gap), entries: ${entriesOf(walls, wallWalk)}`);
   }
   const wallSet = new Set(wallWalk);
   const skyWalk = reachedWalk(withMod).filter((k) => !wallSet.has(k));
-  if (skyWalk.length) warnings.push(`shell: ${skyWalk.length} walk cell(s) open to the sky (a courtyard or an open roof), entries: ${entriesOf(withMod, skyWalk)}`);
+  if (skyWalk.length && !fixture) warnings.push(`shell: ${skyWalk.length} walk cell(s) open to the sky (a courtyard or an open roof), entries: ${entriesOf(withMod, skyWalk)}`);
   // without the mod: every cell (walk, attic, cavity) that only becomes reachable when the AgentCraft blocks are gone
   const leaks = new Map();
   for (const k of noMod.keys()) {
@@ -285,8 +290,11 @@ export function checkStructure(sidecar, structure) {
   for (const f of ['id', 'name', 'kind', 'wings', 'size', 'groundY', 'front', 'walk', 'anchors']) if (sidecar[f] === undefined) err(`sidecar: '${f}' missing`);
   if (errors.length && !sidecar.anchors) return { ok: false, errors, warnings };
   if (!/^[a-z0-9_]+$/.test(sidecar.id ?? '')) err(`sidecar: id '${sidecar.id}' must match [a-z0-9_]+`);
-  if (!['single', 'group'].includes(sidecar.kind)) err(`sidecar: kind '${sidecar.kind}' must be single|group`);
-  if (!Number.isInteger(sidecar.wings) || sidecar.wings < 1) err('sidecar: wings must be an int >= 1');
+  const fixture = sidecar.kind === 'fixture';
+  if (!['single', 'group', 'fixture'].includes(sidecar.kind)) err(`sidecar: kind '${sidecar.kind}' must be single|group|fixture`);
+  if (fixture) {
+    if (sidecar.wings !== 0) err('sidecar: a fixture takes no repos: wings 0');
+  } else if (!Number.isInteger(sidecar.wings) || sidecar.wings < 1) err('sidecar: wings must be an int >= 1');
   if (sidecar.kind === 'single' && sidecar.wings !== 1) err('sidecar: a single blueprint has wings 1');
   if (!(sidecar.front in YAW_OF_FACING)) err(`sidecar: front '${sidecar.front}' invalid`);
   if (sidecar.size && (sidecar.size.x !== size[0] || sidecar.size.y !== size[1] || sidecar.size.z !== size[2])) {
@@ -300,7 +308,7 @@ export function checkStructure(sidecar, structure) {
 
   // ---- required anchors
   const anchors = sidecar.anchors ?? {};
-  for (const n of requiredAnchors(sidecar.wings)) if (!anchors[n]) err(`missing required anchor '${n}'`);
+  for (const n of fixture ? FIXTURE_ANCHORS : requiredAnchors(sidecar.wings)) if (!anchors[n]) err(`missing required anchor '${n}'`);
   for (const [n, a] of Object.entries(anchors)) {
     for (const f of ['x', 'y', 'z', 'yaw', 'pitch']) if (typeof a[f] !== 'number' || !Number.isFinite(a[f])) err(`anchor ${n}: '${f}' must be a finite number`);
   }
@@ -434,6 +442,11 @@ export function checkStructure(sidecar, structure) {
         bedCells.set(fmt(cx, cy, cz), full);
         bedCells.set(fmt(...footAt), full);
       }
+    } else if (name === 'board') {
+      // a fixture's display: the anchor is the centre of an agentcraft:village_board surface, yaw = the board's facing
+      const c = cellAt(cx, cy, cz);
+      if (!c || c.name !== 'agentcraft:village_board') err(`anchor ${full}: not on an agentcraft:village_board block (found ${c?.name ?? 'nothing'} at ${cx},${cy},${cz})`);
+      else if (yawDiff(a.yaw, YAW_OF_FACING[c.props.facing]) > 1) err(`anchor ${full}: yaw ${a.yaw} does not match board facing ${c.props.facing}`);
     } else if (name === 'decision_podium') {
       const c = cellAt(cx, cy, cz);
       if (!c || c.name !== 'agentcraft:decision_podium') err(`anchor ${full}: not on an agentcraft:decision_podium block (found ${c?.name ?? 'nothing'})`);
@@ -449,7 +462,8 @@ export function checkStructure(sidecar, structure) {
     const k1 = fmt(Math.floor(a.x), Math.floor(a.y + 1e-6) + 1, Math.floor(a.z));
     for (const k of [k0, k1]) if (trophyCells.has(k)) err(`anchor ${trophyCells.get(k)}: sign cell ${k} is where anchor ${full} stands`);
   }
-  for (let n = 1; n <= (sidecar.wings || 1); n++) {
+  if (fixture && trophyCells.size) err('a fixture has no trophy slots (trophies hang in buildings)');
+  for (let n = 1; n <= (fixture ? 0 : sidecar.wings || 1); n++) {
     if (!trophyWings.has(n) && !(sidecar.wings === 1 && trophyWings.has(0))) warnings.push(`wing ${n} has no trophy slots (trophy@${n}): the mod hangs no trophies there`);
   }
 
@@ -464,7 +478,27 @@ export function checkStructure(sidecar, structure) {
   }
 
   // ---- C5: shell integrity without the mod, vanilla light, doors
-  if (!errors.some((e) => e.startsWith('sidecar: walk'))) {
+  if (!errors.some((e) => e.startsWith('sidecar: walk')) && fixture) {
+    // a fixture stands outdoors: no walls, no lit interior. It must keep its shape without the mod (no AgentCraft cell
+    // in the outline: a full vanilla block behind every one) and carry no repo or CI binding.
+    const shell = shellCheck(grid, size, w, sidecar.groundY, { fixture: true });
+    errors.push(...shell.errors);
+    warnings.push(...shell.warnings);
+    for (const [k, c] of grid) {
+      if (!isAC(c.name)) continue;
+      const f = c.props.facing;
+      if (H_VEC[f]) {
+        const [x, y, z] = k.split(',').map(Number);
+        const back = cellAt(x - H_VEC[f][0], y, z - H_VEC[f][1]);
+        if (!back || isAC(back.name) || collisionOf(back) !== 'full' || opticsOf(back) !== 'opaque') {
+          err(`fixture: the ${c.name} at ${k} has no full vanilla block behind it (${back ? back.name : 'nothing written'}): without the mod it leaves a hole`);
+        }
+      }
+      if (/^(repo|ci):/.test(c.nbt?.binding ?? '')) err(`fixture: the ${c.name} at ${k} is bound to '${c.nbt.binding}' (a fixture takes no repos)`);
+    }
+    if (![...grid.values()].some((c) => !isAC(c.name) && emissionOf(c) > 0)) warnings.push('fixture: no vanilla light source: it is dark at night');
+    errors.push(...doorCheck(grid, shell.outside).errors);
+  } else if (!errors.some((e) => e.startsWith('sidecar: walk'))) {
     const shell = shellCheck(grid, size, w, sidecar.groundY);
     errors.push(...shell.errors);
     warnings.push(...shell.warnings);
