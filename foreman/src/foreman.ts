@@ -205,7 +205,8 @@ export class Foreman {
       opts.notifier ??
       new Notifier({ enabled: opts.config.notify, silent: opts.config.toastSilent, log: this.log, now });
     this.leads = new LeadBook(this.ctx, opts.config.claude.leads);
-    this.discord = opts.discord ?? new DiscordNotifier(() => this.config.notifyDiscord, { log: this.log });
+    // (config.json is shared by every profile: a sim / dev run never pings the phone)
+    this.discord = opts.discord ?? new DiscordNotifier(() => (this.config.backend === 'claude' ? this.config.notifyDiscord : undefined), { log: this.log });
     const { cast, source } = loadCast(opts.config.projectRoot, opts.config.claude.leads);
     this.cast = cast;
     this.log.debug(`cast from ${source}`);

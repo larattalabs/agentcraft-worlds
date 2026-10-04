@@ -87,7 +87,7 @@ describe('DiscordNotifier', () => {
     dirs.push(home, dir);
     const { script, calls } = fakeScript(dir);
     fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ notify: { discord: { script } } }));
-    h = makeForeman(home, ['--backend', 'sim']);
+    h = makeForeman(home, ['--backend', 'claude']); // (a sim run never notifies, see below)
     const fm = h.fm;
     fm.createDecision({ agentId: 'marlow', kind: 'question', question: 'Which flag?', options: ['a', 'b'] });
     const g = fm.createGoal('a goal');
@@ -101,5 +101,17 @@ describe('DiscordNotifier', () => {
       [`🟠 AgentCraft: ${t.id} "Publish" is blocked: npm publish needs you`],
       ['🟢 AgentCraft: Goal complete: a goal'],
     ]);
+  });
+
+  it('a sim Foreman never sends (config.json is shared by every profile)', async () => {
+    const home = tempDir();
+    const dir = tempDir();
+    dirs.push(home, dir);
+    const { script, calls } = fakeScript(dir);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ notify: { discord: { script } } }));
+    h = makeForeman(home, ['--backend', 'sim']);
+    h.fm.createDecision({ agentId: 'marlow', kind: 'question', question: 'Which flag?', options: ['a', 'b'] });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(calls()).toEqual([]);
   });
 });

@@ -89,4 +89,41 @@ describe('a lead session that grew long', () => {
     expect(rec.costUsd).toBeCloseTo(3);
     expect(fm.status.costUsd).toBeCloseTo(3);
   });
+  it('a job that continues the session (a retry, a usage-limit resume) never rotates it', async () => {
+    home = tempDir();
+    repoPath = await demoRepo();
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ claude: { leadSession: { maxDays: 7, maxTurns: 2 } } }));
+    h = makeForeman(home, ['--backend', 'claude', '--repo', repoPath, '--workers', 'kit', '--no-lead-review']);
+    const fm = h.fm;
+    const lead: Array<{ prompt: string; resume?: string; session: string }> = [];
+    const queryFn = ({ prompt, options }: { prompt: string; options: Options }) => {
+      const isLead = !(options.tools as string[]).includes('Bash');
+      const s = options.resume ?? sid();
+      if (isLead) lead.push({ prompt: String(prompt), session: s, ...(options.resume ? { resume: options.resume } : {}) });
+      const nth = lead.length;
+      async function* run(): AsyncGenerator<SDKMessage> {
+        yield m({ type: 'system', subtype: 'init', session_id: s, model: 'fake' });
+        if (isLead && String(prompt).startsWith('New goal')) await callTool(options, 'create_task', { title: 'Add a flag', assignee: 'kit' });
+        if (!isLead) {
+          fs.appendFileSync(path.join(options.cwd!, 'README.md'), '\nflag\n');
+          await callTool(options, 'update_task', { task_id: 't1', status: 'review', summary: 'done' });
+        }
+        if (isLead && nth === 2) {
+          // the goal-message turn dies on the network: one automatic retry resumes it
+          yield m({ type: 'result', subtype: 'error_during_execution', is_error: true, num_turns: 1, total_cost_usd: 0, session_id: s, duration_ms: 1, duration_api_ms: 1, usage: {}, modelUsage: {}, permission_denials: [], errors: ['fetch failed'] });
+          return;
+        }
+        yield m({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 1, total_cost_usd: 0, session_id: s, duration_ms: 1, duration_api_ms: 1, usage: {}, modelUsage: {}, permission_denials: [] });
+      }
+      return Object.assign(run(), { close() {}, accountInfo: async () => ({ email: 'x' }) });
+    };
+    await fm.start(new ClaudeBackend(fm, h.cfg.claude, { queryFn: queryFn as never, skipAuthCheck: true, transientRetryMs: 50 }));
+    const g = await fm.submitGoal('add a flag');
+    await until(() => fm.goal(g.id)?.status === 'active' && lead.length === 1);
+    fm.goalMessage(g.id, 'a question');
+    await until(() => lead.length === 3, 10_000);
+    expect(fm.store.data.sessions[`marlow:${g.id}`]!.sessionTurns).toBeGreaterThanOrEqual(2);
+    expect(lead[2]!.resume).toBe(lead[0]!.session); // the retry continues the same session
+    expect(lead[2]!.prompt).toMatch(/^Your last turn ended early/);
+  });
 });

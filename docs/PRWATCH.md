@@ -167,9 +167,10 @@ and anything not tied to a repo. Workers stay one shared pool that every lead as
   Marlow that leads a building. `building` is the mod's key `"<worldId>/<buildingId>"` (worldId = the save
   folder name, so two worlds on one Foreman don't collide).
 - `leadForRepo(repoId)`: the lead whose building has that repo, else `marlow`.
-- `Goal.leadId` (protocol, optional; absent = marlow): set at submit from the goal's repo; fixed for
-  the goal's life except when its lead is released (then `marlow` takes the goal over, with a feed line
-  and the plan memory note carried in the takeover prompt).
+- `Goal.leadId` (protocol, optional; absent = marlow): set at submit from the goal's repo. It changes
+  when its lead is released (then `marlow` takes the goal over) or, while the goal is open, when a
+  building is assigned its repository (C3: that building's lead adopts it); each with a feed line and
+  the plan memory note carried in the new lead's takeover prompt.
 - Lead sessions are keyed `<leadId>:<goalId>` (was `marlow:<goalId>`; existing keys migrate on load).
 - Every lead has its own job queue (plan / review / followup / triage); leads run in parallel. The usage
   throttle and `claude.maxConcurrentTurns` (if set) count lead turns too.

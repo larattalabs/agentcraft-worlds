@@ -1401,9 +1401,11 @@ export class ClaudeBackend implements Backend {
       const roleOf = (id: string) => this.repoRole(id, repoId, roleDir);
       const session = this.fm.store.data.sessions[job.sessionKey];
       let resume = !job.fresh && session?.sessionId ? session.sessionId : undefined;
-      // a lead's long-lived session for a goal: start over once it is old or long (seeded below)
+      // a lead's long-lived session for a goal: start over once it is old or long (seeded below).
+      // Never for a job that continues the session's own work (restart, usage limit, pause, retry,
+      // an answer after a restart): its prompt only means something inside that session.
       let rotated = '';
-      if (resume && role === 'lead' && session) {
+      if (resume && role === 'lead' && session && !job.resumed) {
         session.startedAt ??= Date.now();
         const why = rotationDue(session, this.cfg.leadSession);
         if (why) {
@@ -1570,7 +1572,8 @@ export class ClaudeBackend implements Backend {
    * agentcraft tool call, or while it was off shift): start a follow-up turn for them.
    */
   private deliverPending(agentId: string): void {
-    if (this.stopping || this.isStopped(agentId) || this.running.has(agentId) || this.pausedJobs.has(agentId) || (this.queues.get(agentId)?.length ?? 0) > 0) return;
+    // (a retry waiting for its time takes the unread messages along with its prompt)
+    if (this.stopping || this.isStopped(agentId) || this.running.has(agentId) || this.pausedJobs.has(agentId) || this.delayed.has(agentId) || (this.queues.get(agentId)?.length ?? 0) > 0) return;
     const a = this.fm.agent(agentId);
     if (!a?.active || a.paused) return;
     const fromUser = this.fm.bus.inbox(agentId).filter((m) => m.from === 'user' && m.to === agentId);
@@ -1870,6 +1873,9 @@ export class ClaudeBackend implements Backend {
     if (!failed) this.retried.delete(this.retryKey(job));
     if (this.fm.isLead(job.agentId)) {
       const lead = job.agentId;
+      // a lead's follow-up (a goal message, an answer, a user message) that failed for a passing
+      // reason: one automatic resume, like a worker's turn (plans and reviews: below)
+      if (failed && job.kind === 'followup' && this.autoRetry(job, stats, 'turn')) return;
       this.fm.setAgent(lead, failed ? { state: 'error', station: 'meeting', activity: `turn failed: ${this.failure(stats)}` } : { state: 'idle', station: 'meeting', activity: 'watching the task wall' });
       if (job.goalReply && job.goalId && !failed) this.replyToGoal(lead, job, stats);
       // any lead turn for a goal that is still planning (plan, or a plan resumed after a
@@ -2125,7 +2131,7 @@ export class ClaudeBackend implements Backend {
     }
     // in a turn: delivered with its next agentcraft tool result, or right after the turn ends
     // (deliverPending). Paused mid-turn: delivered with the resumed job's prompt.
-    if (this.running.has(id) || this.pausedJobs.has(id)) return;
+    if (this.running.has(id) || this.pausedJobs.has(id) || this.delayed.has(id)) return;
     // every unread message from the user to this agent goes into one follow-up
     const mine = this.fm.bus.inbox(id).filter((m) => m.from === 'user' && (m.to === id || (to === 'all' && m.to === 'all')));
     const body = mine.length ? mine.map((m) => m.text).join('\n\n') : text;

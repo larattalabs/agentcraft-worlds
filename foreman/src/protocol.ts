@@ -264,7 +264,7 @@ export const Goal = z.object({
   progress: z.number().min(0).max(1),
   status: GoalStatus.describe('planning (lead is planning) -> active -> done (every non-cancelled task merged/done); cancelled: every task was cancelled or rejected (back to active if the lead adds a task); failed: planning failed'),
   repoId: Id.optional(),
-  leadId: Id.optional().describe('the lead running this goal (set at submit from the goal\'s repository: the lead of the building that has it). Absent = "marlow". Fixed for the goal\'s life, except when its lead is released (lead.release / lead.sync): then marlow takes the goal over'),
+  leadId: Id.optional().describe('the lead running this goal (set at submit from the goal\'s repository: the lead of the building that has it). Absent = "marlow". Changes only while the goal is open: when its lead is released (lead.release / lead.sync / lead.releaseWorld) marlow takes it over; when a building is assigned its repository (lead.assign / lead.sync) that building\'s lead adopts it'),
   repos: z.array(Id).optional().describe('every repository the goal touches: repoId first, then each task\'s repository in order of first appearance (kept up to date)'),
   instructions: z.array(z.string()).optional().describe('standing instructions (goal.instructions): in the lead\'s prompts, appended to new task descriptions, and a section of every worker prompt for its tasks'),
   planId: Id.optional().describe('memory entry id of the goal\'s plan note, once it exists'),
