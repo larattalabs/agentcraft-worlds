@@ -110,7 +110,6 @@ final class BoardView {
 		pics.clear();
 		shownRows.clear();
 		shownMilestones = 0;
-		int light = -1; // per-frame light is applied at emit time
 		int cream = UiStyle.color("palette.colors.cream", UiStyle.CREAM);
 		int brass = UiStyle.color("palette.colors.brass", UiStyle.BRASS);
 		int slate = 0xFF2A211B;
