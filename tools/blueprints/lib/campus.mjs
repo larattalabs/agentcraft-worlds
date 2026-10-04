@@ -18,7 +18,7 @@
 //
 //  Wing (14 wide incl. a shared partition wall, 25 deep): task wall (`task_wall@k`, `repo:#k`) on its far wall z4..10 with k glow
 //  pips above it, a test bench (`testbench`) + CI lamp (`ci:#k`) on the north wall, an arch gap to the next room at z13..16, a
-//  floor inlay in the wing's colour (blue, green, orange, purple) and a matching frieze on the facade, so wings read apart.
+//  floor inlay in the wing's colour (blue, green, orange, purple, yellow) and a matching frieze on the facade, so wings read apart.
 //
 //  Rows: y0 floor, y1..8 interior (everything is one 8 high floor), y9 ceiling + glow panels, y10.. gable roof (brick, half pitch,
 //  ridge east-west), hollow attic, triangular gable windows at the two ends.
@@ -31,7 +31,7 @@ const Z = D - 1;
 const CEIL = 9;
 const OX = 1;
 const OZ = 1;
-const COLORS = ['blue', 'green', 'orange', 'purple'];
+const COLORS = ['blue', 'green', 'orange', 'purple', 'yellow'];
 const STONE = 'minecraft:stone_bricks';
 
 export function campusLayout(wings) {
@@ -51,7 +51,7 @@ export function campusLayout(wings) {
 }
 
 export function buildCampus(wings) {
-  if (!Number.isInteger(wings) || wings < 2 || wings > 4) throw new Error('campus wings must be 2..4');
+  if (!Number.isInteger(wings) || wings < 2 || wings > 5) throw new Error('campus wings must be 2..5');
   const { hx0, hx1, X, wing } = campusLayout(wings);
   const H = 18;
   const bp = new Blueprint({
@@ -149,7 +149,6 @@ export function buildCampus(wings) {
   bp.awning(dx - 3, Z + 1, dx + 3, Z + 4, 5, { posts: [[dx - 3, Z + 4], [dx + 3, Z + 4], [dx - 3, Z + 1], [dx + 3, Z + 1]] });
   bp.fill([dx - 3, 5, Z + 4, dx + 3, 5, Z + 4], B.walnutTrim);
   for (const [x, z] of [[dx - 1, Z + 3], [dx + 1, Z + 3], [dx - 1, Z + 2], [dx + 1, Z + 2]]) bp.lantern(x, 4, z, true);
-  bp.glowStrip(dx, 6, Z + 1, 'south', 'x');
   bp.floor(dx - 1, Z + 5, dx + 1, Z + 8, 0, STONE);
   bp.floor(dx - 2, Z + 5, dx - 2, Z + 8, 0, 'minecraft:polished_andesite');
   bp.floor(dx + 2, Z + 5, dx + 2, Z + 8, 0, 'minecraft:polished_andesite');
@@ -218,6 +217,9 @@ export function buildCampus(wings) {
   bp.plant(h(20), 1, 23);
   bp.plant(h(30), 1, 23);
   bp.plant(h(30), 1, 17);
+  // corner lantern on a barrel: the hall's south-east corner is the farthest cell from the ceiling lights
+  bp.set(h(31), 1, Z - 1, 'minecraft:barrel', { facing: 'up', open: 'false' });
+  bp.lantern(h(31), 2, Z - 1);
 
   // ---------------------------------------------------------------- entrance
   bp.spot('entrance', dx, Z - 1, 180);
@@ -230,17 +232,15 @@ export function buildCampus(wings) {
     const far = w.isWest ? w.x0 : w.x1; // outer partition / end wall
     const boardX = w.isWest ? far + 1 : far - 1;
     const facing = w.isWest ? 'east' : 'west';
-    bp.taskWall(boardX, 4, boardX, 10, facing, 4, w.k);
-    const stripX = w.isWest ? boardX + 1 : boardX - 1;
-    for (let z = 4; z <= 10; z++) bp.glowStrip(stripX, 6, z, facing, 'z');
+    bp.taskWall(boardX, 4, boardX, 10, facing, 4, w.k, { light: false }); // dark header: the wing-number pips above it read clearly
     // k glow pips above the board = the wing's number
     for (let i = 0; i < w.k; i++) bp.glowPanel(boardX, 7, 7 - (w.k - 1) + 2 * i);
     // test bench + CI lamp on the north wall
     for (const o of [-2, -1, 1, 2]) bp.slab(cx + o, 1, 1, 'top');
-    bp.console(cx, 1, 'south', 'testbench', { slots: 2 });
+    bp.console(cx, 1, 'south', 'testbench', { slots: 2, wing: w.k }); // shared slots + testbench@k / testbench_2@k
     bp.lantern(cx - 2, 2, 1);
     bp.candle(cx + 2, 2, 1, 3);
-    bp.statusLamp(cx, 3, 0, `ci:#${w.k}`, 'idle');
+    bp.wallLamp(cx, 3, 0, 'south', `ci:#${w.k}`);
     // floor inlay in the wing colour, tile border
     bp.fill([cx - 4, 0, 8, cx + 4, 0, 20], colour);
     bp.floorRing(cx - 4, 8, cx + 4, 20, 0, B.tile);

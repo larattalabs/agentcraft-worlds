@@ -74,7 +74,7 @@ export default function build() {
   for (const [a, b] of [[1, 4], [13, 14], [16, 24]]) bp.window(0, 2, a, 0, 4, b);
   bp.window(X, 2, 1, X, 4, 4);
   bp.window(X, 2, 24, X, 4, 25);
-  // front door + transom, walnut surround
+  // front door (iron, stone buttons inside and out on the east jamb) + transom, walnut surround
   bp.door(17, 1, Z, 'south');
   bp.set(17, 3, Z, B.pane);
   bp.fill([17, 4, Z, 17, 5, Z], B.plasterFrame);
@@ -135,7 +135,6 @@ export default function build() {
   bp.lantern(18, 4, Z + 3, true);
   bp.lantern(16, 4, Z + 2, true);
   bp.lantern(18, 4, Z + 2, true);
-  bp.glowStrip(17, 6, Z + 1, 'south', 'x');
   bp.floor(16, Z + 5, 18, Z + 8, 0, 'minecraft:stone_bricks');
   bp.floor(15, Z + 5, 15, Z + 8, 0, 'minecraft:polished_andesite');
   bp.floor(19, Z + 5, 19, Z + 8, 0, 'minecraft:polished_andesite');
@@ -162,7 +161,6 @@ export default function build() {
 
   // ---------------------------------------------------------------- task wall, podium, user (east wall)
   bp.taskWall(X - 1, 10, X - 1, 16, 'west', 4, 1);
-  for (let z = 10; z <= 16; z++) bp.glowStrip(X - 2, 6, z, 'west', 'z');
   bp.podium(X - 3, 13, 'west');
   bp.spot('user', X - 4, 13, -90);
   bp.spot('user', X - 4, 11, lookYaw(X - 3.5, 11.5, X - 2.5, 13.5));
@@ -173,6 +171,8 @@ export default function build() {
   for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) if (dx || dz) bp.slab(17 + dx, 1, 12 + dz, 'bottom', 'minecraft:waxed_cut_copper_slab');
   bp.statusLamp(17, 1, 12, 'goal', 'idle');
   bp.anchor('goal_atrium', 17.5, 1, 12.5, 0);
+  // pendant lanterns under the atrium skylight (it replaces the ceiling lights there)
+  for (const [x, z] of [[15, 11], [19, 11], [15, 13], [19, 13]]) bp.lantern(x, CEIL - 1, z, true);
 
   // ---------------------------------------------------------------- test bench (east wall, north)
   for (const z of [5, 6, 8, 9]) bp.slab(X - 1, 1, z, 'top');
@@ -180,7 +180,7 @@ export default function build() {
   bp.lantern(X - 1, 2, 5);
   bp.candle(X - 1, 2, 9, 3);
   bp.plant(X - 1, 1, 4);
-  bp.statusLamp(X, 3, 7, 'ci:#1', 'idle');
+  bp.wallLamp(X, 3, 7, 'west', 'ci:#1');
 
   // ---------------------------------------------------------------- merge station (east wall, south)
   bp.fill([X, 1, 20, X, 6, 22], B.walnut);
@@ -219,6 +219,9 @@ export default function build() {
   bp.plant(21, 1, 24);
   bp.plant(31, 1, 24);
   bp.plant(21, 1, 18);
+  // corner lantern on a barrel: the south-east corner is the farthest cell from the ceiling lights (C5 light check)
+  bp.set(X - 1, 1, Z - 1, 'minecraft:barrel', { facing: 'up', open: 'false' });
+  bp.lantern(X - 1, 2, Z - 1);
 
   // ---------------------------------------------------------------- entrance + cameras
   bp.spot('entrance', 17, Z - 1, 180);

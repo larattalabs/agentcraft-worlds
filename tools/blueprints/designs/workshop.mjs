@@ -38,6 +38,7 @@ export default function build() {
     groundY: 1,
     front: 'south',
     walk: [1, 1, 1, W - 2, 6, D - 2],
+    foundationBlock: 'minecraft:cobblestone', // a rustic footing under the workshop on uneven ground
   });
   const X = W - 1;
   const Z = D - 1;
@@ -95,7 +96,6 @@ export default function build() {
   bp.fill([10, 4, Z + 4, 16, 4, Z + 4], B.walnutTrim);
   bp.lantern(12, 3, Z + 3, true);
   bp.lantern(14, 3, Z + 3, true);
-  bp.glowStrip(13, 5, Z + 1, 'south', 'x');
   bp.floor(12, Z + 5, 14, Z + 10, 0, 'minecraft:stone_bricks');
   bp.floor(11, Z + 5, 11, Z + 10, 0, 'minecraft:polished_andesite');
   bp.floor(15, Z + 5, 15, Z + 10, 0, 'minecraft:polished_andesite');
@@ -105,7 +105,6 @@ export default function build() {
 
   // ---------------------------------------------------------------- task wall, podium, user, goal
   bp.taskWall(9, 1, 17, 1, 'south', 4, 1);
-  for (let x = 9; x <= 17; x++) bp.glowStrip(x, 6, 2, 'south', 'x');
   bp.podium(13, 3, 'south');
   bp.spot('user', 13, 4, 180);
   bp.spot('user', 11, 5, lookYaw(11.5, 5.5, 13.5, 4.5));
@@ -142,7 +141,7 @@ export default function build() {
   bp.lantern(21, 2, 1);
   bp.candle(23, 2, 1, 3);
   bp.plant(X - 1, 1, 1);
-  bp.statusLamp(22, 3, 0, 'ci:#1', 'idle');
+  bp.wallLamp(22, 3, 0, 'south', 'ci:#1');
 
   // ---------------------------------------------------------------- merge station (east)
   bp.fill([X, 1, 15, X, 6, 17], B.walnut);

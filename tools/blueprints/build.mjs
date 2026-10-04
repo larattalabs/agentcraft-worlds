@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// node tools/blueprints/build.mjs [id...]
+// node tools/blueprints/build.mjs [id... | --all]   (no ids or --all: every design)
 // Builds designs/<id>.mjs (default export = () => Blueprint) into the mod's bundled resources, checks them and
 // renders the previews (render.mjs) next to the sidecar:
 //   mod/src/main/resources/data/agentcraft/structure/<id>.nbt
@@ -31,7 +31,7 @@ export async function buildDesign(name, { nbtDir = NBT_DIR, jsonDir = JSON_DIR }
 }
 
 async function main() {
-  const ids = process.argv.slice(2);
+  const ids = process.argv.slice(2).filter((a) => a !== '--all');
   const names = ids.length ? ids : listDesigns();
   let failed = false;
   for (const name of names) {
@@ -49,6 +49,7 @@ async function main() {
       // previews live next to the sidecar so the mod's hub can show them (<id>.preview-{iso,cutaway,top,front}.png)
       const r = renderStructure(out.nbtPath, { out: JSON_DIR, sidecar: out.jsonPath });
       console.log(`  previews: ${Object.keys(r.files).join(', ')} (${r.ms.toFixed(0)} ms)`);
+      if (r.unknown.length) console.log(`  render: colour guessed from the name for ${r.unknown.join(', ')} (add them to lib/colors.mjs)`);
     }
     else {
       failed = true;

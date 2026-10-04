@@ -71,6 +71,23 @@ for (const c of ['blue', 'green', 'orange', 'purple', 'cyan', 'red', 'yellow', '
   def(`minecraft:${c}_terracotta`);
   def(`minecraft:${c}_carpet`, {}, 'low');
 }
+// vanilla structure/finish blocks of the AgentCraft look (C5: docs/BUILDINGS.md "Materials")
+for (const n of ['smooth_quartz', 'quartz_bricks', 'calcite', 'terracotta', 'oak_planks', 'spruce_planks', 'cobblestone', 'polished_diorite', 'white_concrete', 'light_gray_concrete', 'mud_bricks', 'tuff_bricks', 'polished_tuff', 'deepslate_tiles']) def(`minecraft:${n}`);
+for (const wood of ['oak', 'spruce']) {
+  def(`minecraft:${wood}_stairs`, { facing: H4, half: ['bottom', 'top'], shape: STAIR_SHAPES, waterlogged: BOOL }, 'stairs', { facing: 'north', half: 'bottom', shape: 'straight', waterlogged: 'false' });
+  def(`minecraft:${wood}_slab`, { type: ['bottom', 'top', 'double'], waterlogged: BOOL }, 'slab', { type: 'bottom', waterlogged: 'false' });
+}
+def('minecraft:smooth_quartz_stairs', { facing: H4, half: ['bottom', 'top'], shape: STAIR_SHAPES, waterlogged: BOOL }, 'stairs', { facing: 'north', half: 'bottom', shape: 'straight', waterlogged: 'false' });
+def('minecraft:smooth_quartz_slab', { type: ['bottom', 'top', 'double'], waterlogged: BOOL }, 'slab', { type: 'bottom', waterlogged: 'false' });
+for (const n of ['stripped_dark_oak_wood', 'stripped_oak_log', 'stripped_oak_wood', 'stripped_spruce_log', 'quartz_pillar']) def(`minecraft:${n}`, { axis: ['x', 'y', 'z'] }, 'full', { axis: 'y' });
+// vanilla light sources (`light` = emitted block light; the checker's light pass uses it)
+for (const n of ['ochre_froglight', 'pearlescent_froglight', 'verdant_froglight']) def(`minecraft:${n}`, { axis: ['x', 'y', 'z'] }, 'full', { axis: 'y' });
+for (const n of ['sea_lantern', 'shroomlight', 'glowstone']) def(`minecraft:${n}`);
+def('minecraft:soul_lantern', { hanging: BOOL, waterlogged: BOOL }, 'partial', { hanging: 'false', waterlogged: 'false' });
+def('minecraft:end_rod', { facing: H6 }, 'partial', { facing: 'up' });
+// iron front doors (zombies cannot break them) opened by stone buttons on both sides
+def('minecraft:iron_door', { facing: H4, half: ['lower', 'upper'], hinge: ['left', 'right'], open: BOOL, powered: BOOL }, 'door', { facing: 'south', half: 'lower', hinge: 'left', open: 'false', powered: 'false' });
+def('minecraft:stone_button', { face: ['floor', 'wall', 'ceiling'], facing: H4, powered: BOOL }, 'none', { face: 'wall', facing: 'north', powered: 'false' });
 def('minecraft:glass');
 def('minecraft:glass_pane', { north: BOOL, east: BOOL, south: BOOL, west: BOOL, waterlogged: BOOL }, 'thin', { north: 'false', east: 'false', south: 'false', west: 'false', waterlogged: 'false' });
 def('minecraft:light', { level: Array.from({ length: 16 }, (_, i) => String(i)), waterlogged: BOOL }, 'none', { level: '15', waterlogged: 'false' });
@@ -86,6 +103,84 @@ def('minecraft:barrel', { facing: H6, open: BOOL }, 'full', { facing: 'north', o
 def('minecraft:moss_block');
 
 export const BLOCKS = T;
+
+/** Block light a vanilla block emits (0 when absent). AgentCraft blocks are never counted (C5). */
+const EMIT = {
+  'minecraft:sea_lantern': 15, 'minecraft:ochre_froglight': 15, 'minecraft:pearlescent_froglight': 15, 'minecraft:verdant_froglight': 15,
+  'minecraft:shroomlight': 15, 'minecraft:glowstone': 15, 'minecraft:lantern': 15, 'minecraft:soul_lantern': 10, 'minecraft:end_rod': 14,
+};
+/**
+ * Light emitted by a written state. `minecraft:light` (the invisible light block) deliberately counts as 0: the
+ * bundled designs light their rooms with visible sources only.
+ */
+export function emissionOf(state) {
+  if (state.name === 'minecraft:candle') return state.props?.lit === 'true' ? 3 * Number(state.props?.candles ?? 1) : 0;
+  return EMIT[state.name] ?? 0;
+}
+
+/** Full cubes that let light through (glass-like). */
+const CLEAR_CUBES = new Set(['minecraft:glass']);
+/**
+ * How a block treats block light: 'opaque' (stops it), 'clear' (passes, -1 per step), or 'shape' (passes, but
+ * its full faces block it: slabs, stairs). Mirrors vanilla: opacity 15 for solid-render cubes, else 1.
+ */
+export function opticsOf(state) {
+  const i = T[state.name];
+  if (!i) return 'opaque';
+  if (i.collision === 'full') return CLEAR_CUBES.has(state.name) ? 'clear' : 'opaque';
+  if (i.collision === 'slab') return state.props?.type === 'double' ? 'opaque' : 'shape';
+  if (i.collision === 'stairs') return 'shape';
+  return 'clear';
+}
+
+/**
+ * The block as 2x2x2 voxels (bit index vx + 2*vy + 4*vz) for slab/stair face occlusion. Stairs: bottom layer full,
+ * top layer = the quarters on the tall (`facing`) side; outer corners keep facing ∩ left (counter-clockwise),
+ * inner corners add that quarter on the back half. half=top mirrors vertically.
+ */
+export function voxelsOf(state) {
+  const i = T[state.name];
+  if (!i) return 0xff;
+  if (i.collision === 'slab') return state.props?.type === 'top' ? 0b11001100 : state.props?.type === 'double' ? 0xff : 0b00110011;
+  if (i.collision !== 'stairs') return opticsOf(state) === 'opaque' ? 0xff : 0;
+  const f = state.props?.facing ?? 'north';
+  const ccw = { north: 'west', west: 'south', south: 'east', east: 'north' }[f];
+  const cw = { north: 'east', east: 'south', south: 'west', west: 'north' }[f];
+  const side = (d, vx, vz) => (d === 'north' ? vz === 0 : d === 'south' ? vz === 1 : d === 'west' ? vx === 0 : vx === 1);
+  const shape = state.props?.shape ?? 'straight';
+  const top = (vx, vz) => {
+    if (shape === 'straight') return side(f, vx, vz);
+    if (shape === 'outer_left') return side(f, vx, vz) && side(ccw, vx, vz);
+    if (shape === 'outer_right') return side(f, vx, vz) && side(cw, vx, vz);
+    if (shape === 'inner_left') return side(f, vx, vz) || side(ccw, vx, vz);
+    return side(f, vx, vz) || side(cw, vx, vz); // inner_right
+  };
+  const upper = state.props?.half === 'top' ? 0 : 1;
+  let bits = 0;
+  for (let vz = 0; vz < 2; vz++) for (let vx = 0; vx < 2; vx++) {
+    bits |= 1 << (vx + 2 * (1 - upper) + 4 * vz); // the full layer
+    if (top(vx, vz)) bits |= 1 << (vx + 2 * upper + 4 * vz);
+  }
+  return bits;
+}
+
+const FACE_AXIS = { east: [0, 1], west: [0, 0], up: [1, 1], down: [1, 0], south: [2, 1], north: [2, 0] };
+/** The 4-bit mask of a voxel set's face towards `dir` (projected on the two other axes, a fixed order per axis). */
+export function faceMask(bits, dir) {
+  const [axis, sideV] = FACE_AXIS[dir];
+  let m = 0;
+  let n = 0;
+  for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) {
+    const v = [0, 0, 0];
+    v[axis] = sideV;
+    const others = [0, 1, 2].filter((q) => q !== axis);
+    v[others[0]] = a;
+    v[others[1]] = b;
+    if (bits & (1 << (v[0] + 2 * v[1] + 4 * v[2]))) m |= 1 << n;
+    n++;
+  }
+  return m;
+}
 
 /** Add `minecraft:` to bare names. */
 export function qualify(name) {

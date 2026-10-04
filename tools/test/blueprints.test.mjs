@@ -8,7 +8,7 @@ import zlib from 'node:zlib';
 import { nbt, encodeGzip, parse, plain } from '../blueprints/lib/nbt.mjs';
 import { Blueprint, B, DATA_VERSION } from '../blueprints/lib/kit.mjs';
 import { writeBlueprint } from '../blueprints/lib/write.mjs';
-import { checkBlueprint, checkFiles, checkStructure, requiredAnchors } from '../blueprints/lib/check.mjs';
+import { checkBlueprint, checkFiles, checkStructure, requiredAnchors, lightCheck, FUNCTIONAL_BLOCKS } from '../blueprints/lib/check.mjs';
 import { normalize } from '../blueprints/lib/blocks.mjs';
 import workshop from '../blueprints/designs/workshop.mjs';
 
@@ -148,7 +148,7 @@ test('kit: block states are complete; desk writes its anchors; unknown blocks/pr
 test('kit: origin offsets blocks, anchors and walk; roofGable stairs rise towards the ridge', () => {
   const bp = new Blueprint({ id: 'o', size: [9, 8, 9], origin: [1, 0, 1], walk: [0, 0, 0, 1, 1, 1] });
   bp.set(0, 0, 0, B.plaster);
-  assert.equal(bp.get(0, 0, 0).state.name, 'agentcraft:plaster_panel');
+  assert.equal(bp.get(0, 0, 0).state.name, 'minecraft:smooth_quartz');
   assert.equal(bp.cells.has('1,0,1'), true);
   bp.anchor('a', 0.5, 1, 0.5);
   assert.deepEqual([bp.anchors.a.x, bp.anchors.a.z], [1.5, 1.5]);
@@ -170,25 +170,153 @@ test('kit: roofHip builds a stair ring and a plateau; awning places slabs and po
   const bp = new Blueprint({ id: 'p', size: [12, 8, 12] });
   bp.roofHip(0, 0, 11, 11, 0, { rise: 2, skylights: [[5, 5, 6, 6]] });
   assert.equal(bp.nameAt(5, 2, 5), 'minecraft:glass');
-  assert.equal(bp.nameAt(3, 2, 3), 'agentcraft:terracotta_tile');
+  assert.equal(bp.nameAt(3, 2, 3), 'minecraft:terracotta');
   assert.equal(bp.get(5, 0, 0).state.props.facing, 'south');
   assert.equal(bp.get(0, 0, 0).state.props.shape, 'outer_left');
   assert.throws(() => bp.roofHip(0, 0, 3, 3, 0, { rise: 2 }));
   bp.awning(1, 1, 2, 2, 5, { posts: [[1, 1]], feetY: 1 });
   assert.equal(bp.get(2, 5, 2).state.props.type, 'bottom');
-  assert.equal(bp.nameAt(1, 3, 1), 'agentcraft:walnut_panel');
+  assert.equal(bp.nameAt(1, 3, 1), 'minecraft:stripped_dark_oak_log');
 });
 
-test('designs: studio and campus2..4 build and pass the checker', async () => {
+test('designs: every bundled design (studio, workshop, campus2..5) passes the checker with a sealed shell', async () => {
   const { default: studio } = await import('../blueprints/designs/studio.mjs');
   const { buildCampus } = await import('../blueprints/lib/campus.mjs');
-  assert.ok(checkBlueprint(studio()).ok);
-  for (const n of [2, 3, 4]) {
+  for (const bp of [studio(), workshop()]) {
+    const r = checkBlueprint(bp);
+    assert.deepEqual(r.errors, [], bp.id);
+    assert.deepEqual(r.warnings.filter((w) => w.startsWith('shell')), [], bp.id);
+  }
+  for (const n of [2, 3, 4, 5]) {
     const bp = buildCampus(n);
     const r = checkBlueprint(bp);
-    assert.deepEqual(r.errors, []);
+    assert.deepEqual(r.errors, [], `campus${n}`);
+    assert.deepEqual(r.warnings.filter((w) => w.startsWith('shell')), [], `campus${n}`);
     assert.equal(bp.kind, 'group');
-    for (let k = 1; k <= n; k++) assert.ok(bp.anchors[`task_wall@${k}`]);
+    for (let k = 1; k <= n; k++) {
+      assert.ok(bp.anchors[`task_wall@${k}`]);
+      // per-wing test bench spots (placement renames them testbench:<repoId>) next to the shared slots
+      assert.ok(bp.anchors[`testbench@${k}`] && bp.anchors[`testbench_2@${k}`], `testbench@${k}`);
+    }
+    assert.ok(bp.anchors.testbench && bp.anchors.testbench_2);
   }
+  assert.deepEqual(buildCampus(5).anchors['testbench@5'], buildCampus(5).anchors.testbench_9);
   assert.throws(() => buildCampus(1));
+  assert.throws(() => buildCampus(6));
+});
+
+test('C5 materials: bundled designs use AgentCraft blocks only where functional; the checker refuses decorative ones', async () => {
+  const { default: studio } = await import('../blueprints/designs/studio.mjs');
+  const { buildCampus } = await import('../blueprints/lib/campus.mjs');
+  for (const bp of [studio(), workshop(), buildCampus(5)]) {
+    const ac = new Set([...bp.cells.values()].map((c) => c.state.name).filter((n) => n.startsWith('agentcraft:')));
+    for (const n of ac) assert.ok(FUNCTIONAL_BLOCKS.has(n), `${bp.id} uses ${n}`);
+    assert.equal(bp.materials, 'agentcraft'); // = the AgentCraft look in vanilla blocks
+  }
+  const bp = workshop();
+  bp.set(5, 3, 0, 'agentcraft:plaster_panel');
+  assert.match(checkBlueprint(bp).errors.join('\n'), /decorative AgentCraft block 'agentcraft:plaster_panel'.*smooth_quartz/);
+});
+
+test('C5 shell: a functional block in the outer wall without a vanilla block behind it is a hole without the mod', () => {
+  // workshop east wall (x=26): the pilaster at z=14 has nothing outside it at y=3 (no window sill)
+  const bp = workshop();
+  bp.statusLamp(26, 3, 14, 'ci:#1');
+  const errs = checkBlueprint(bp).errors.join('\n');
+  assert.match(errs, /shell: without the mod the agentcraft:status_lamp at 27,3,15 leaves a hole/);
+  const fixed = workshop();
+  fixed.wallLamp(26, 3, 14, 'west', 'ci:#1');
+  assert.equal(fixed.nameAt(27, 3, 14), B.walnutTrim); // the backing plate outside
+  assert.deepEqual(checkBlueprint(fixed).errors, []);
+  // the same lamp on an inner partition gets no plate (the cell behind is carved air, not outside)
+  const inner = workshop();
+  inner.wallLamp(1, 3, 3, 'west', 'ci:#1');
+  assert.equal(inner.nameAt(0, 3, 3), B.plaster);
+  // the merge lamp (in the wall behind the merge station) is backed on the outside
+  assert.equal(workshop().nameAt(27, 3, 16), B.walnutTrim);
+});
+
+test('C5 light: the studio corner (34,1,26) was dark; the corner lantern fixes it (regression)', async () => {
+  const { default: studio } = await import('../blueprints/designs/studio.mjs');
+  const bp = studio();
+  assert.deepEqual(checkBlueprint(bp).errors, []);
+  bp.air(33, 2, 25); // the corner lantern
+  bp.air(33, 1, 25); // its barrel
+  assert.match(checkBlueprint(bp).errors.join('\n'), /light: \d+ walk cell\(s\) get no block light.*34,1,26/);
+});
+
+test('C5 light: vanilla propagation (decrement, opaque, glass, slab faces, no AgentCraft or invisible light)', () => {
+  const grid = new Map();
+  const put = (x, y, z, name, props = {}) => grid.set(`${x},${y},${z}`, normalize(name, props));
+  const size = [16, 4, 1];
+  for (let x = 0; x < 16; x++) for (let y = 0; y < 4; y++) put(x, y, 0, 'minecraft:air');
+  put(0, 1, 0, 'minecraft:lantern');
+  const walk = { minX: 0, minY: 1, minZ: 0, maxX: 15, maxY: 1, maxZ: 0 };
+  let r = lightCheck(grid, size, walk, 0);
+  const lv = (x, y, mode = 'nomod') => r.levels(mode)[x + 16 * y];
+  assert.equal(lv(0, 1), 15);
+  assert.equal(lv(14, 1), 1);
+  assert.equal(lv(15, 1), 0); // 15 steps away: dark
+  assert.match(r.errors.join(), /1 walk cell/);
+  put(5, 1, 0, 'minecraft:glass'); // glass passes light
+  put(5, 2, 0, 'minecraft:glass');
+  put(5, 3, 0, 'minecraft:glass');
+  put(5, 0, 0, 'minecraft:glass');
+  r = lightCheck(grid, size, walk, 0);
+  assert.equal(lv(6, 1), 9);
+  for (let y = 0; y < 4; y++) put(5, y, 0, 'minecraft:smooth_quartz'); // an opaque wall stops it
+  r = lightCheck(grid, size, walk, 0);
+  assert.equal(lv(6, 1), 0);
+  // a bottom slab's full bottom face: light from above does not reach the cell below it
+  const g2 = new Map();
+  const p2 = (x, y, z, name, props = {}) => g2.set(`${x},${y},${z}`, normalize(name, props));
+  for (let y = 0; y < 4; y++) p2(0, y, 0, 'minecraft:smooth_quartz');
+  p2(0, 3, 0, 'minecraft:sea_lantern');
+  p2(0, 2, 0, 'minecraft:oak_slab', { type: 'bottom' });
+  p2(0, 1, 0, 'minecraft:air');
+  r = lightCheck(g2, [1, 4, 1], { minX: 0, minY: 1, minZ: 0, maxX: 0, maxY: 1, maxZ: 0 }, 0);
+  assert.equal(r.levels('nomod')[2], 14); // inside the slab cell
+  assert.equal(r.levels('nomod')[1], 0); // below it
+  p2(0, 2, 0, 'minecraft:oak_slab', { type: 'top' }); // a top slab's bottom face is open... but its top face is full
+  r = lightCheck(g2, [1, 4, 1], { minX: 0, minY: 1, minZ: 0, maxX: 0, maxY: 1, maxZ: 0 }, 0);
+  assert.equal(r.levels('nomod')[2], 0);
+  // AgentCraft blocks and the invisible light block never count
+  const g3 = new Map();
+  g3.set('0,1,0', { name: 'agentcraft:status_lamp', props: { status: 'idle' } });
+  g3.set('1,1,0', normalize('minecraft:light', { level: '15' }));
+  g3.set('2,1,0', normalize('minecraft:air'));
+  r = lightCheck(g3, [3, 2, 1], { minX: 0, minY: 1, minZ: 0, maxX: 2, maxY: 1, maxZ: 0 }, 1);
+  assert.equal(r.dark.length, 3); // the lamp cell (air without the mod), the light block cell and the air cell
+});
+
+test('C5 doors: outside doors are iron, written closed, with stone buttons on both sides', () => {
+  const ok = workshop();
+  assert.equal(ok.nameAt(13, 1, 20), 'minecraft:iron_door');
+  assert.equal(ok.get(13, 1, 20).state.props.open, 'false');
+  assert.equal(ok.get(14, 2, 21).state.props.facing, 'south'); // outside button on the east jamb
+  assert.equal(ok.get(14, 2, 19).state.props.facing, 'north'); // inside button
+  const wood = workshop();
+  wood.door(13, 1, 20, 'south', { block: 'minecraft:dark_oak_door' });
+  assert.match(checkBlueprint(wood).errors.join('\n'), /outside door must be minecraft:iron_door/);
+  const noOut = workshop();
+  noOut.air(14, 2, 21);
+  assert.match(checkBlueprint(noOut).errors.join('\n'), /iron door at 14,1,21: needs a stone button on its front/);
+  const glassJamb = workshop();
+  glassJamb.set(14, 2, 20, B.pane); // a button on glass powers nothing
+  assert.match(checkBlueprint(glassJamb).errors.join('\n'), /iron door at 14,1,21: needs a stone button on both sides/);
+  const open = workshop();
+  open.door(13, 1, 20, 'south', { open: true });
+  assert.match(checkBlueprint(open).errors.join('\n'), /door at 14,1,21 is written open/);
+});
+
+test('C4 foundationBlock: sidecar default, per design, validated', async () => {
+  const { default: studio } = await import('../blueprints/designs/studio.mjs');
+  assert.equal(studio().sidecar().foundationBlock, 'minecraft:stone_bricks');
+  assert.equal(workshop().sidecar().foundationBlock, 'minecraft:cobblestone');
+  assert.equal(new Blueprint({ id: 'f', size: [1, 1, 1] }).foundationBlock, 'minecraft:stone_bricks');
+  const bp = workshop();
+  bp.foundationBlock = 'agentcraft:plaster_panel';
+  assert.match(checkBlueprint(bp).errors.join('\n'), /foundationBlock 'agentcraft:plaster_panel' must be a vanilla block id/);
+  bp.foundationBlock = 'minecraft:glass';
+  assert.match(checkBlueprint(bp).errors.join('\n'), /must be a full, opaque block/);
 });
