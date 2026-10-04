@@ -657,7 +657,8 @@ relayout snap, a building change, a released lead leaving, the level or the link
   `<bed>@lie` (the head cell centre, bed floor + 0.6875, vanilla's sleeping spot) and drawn in vanilla's sleeping pose
   (render state only: `Pose.SLEEPING`, `bedOrientation` = the bed's facing, posture `LIE`, head with the body, plate
   0.95 above it, "resting"). No bed free: the lounge slots (the plate still says "resting").
-- **Stand-ups**: `StandupTracker` sees a goal `ACTIVE` with open assigned tasks, waits 60 ticks for the rest of the
+- **Stand-ups**: `StandupTracker` sees a goal `ACTIVE` with open assigned tasks (its lead: the goal's, else the building's lead, else Marlow
+  when the goal's building is home: `Routines.standupLead`), waits 60 ticks for the rest of the
   first assignments, then the lead's building (where the lead is routed this tick, else the first routed worker)
   hosts it: `meeting` slots, else `user`. Skipped with a reason (history in `dev.routines.state`): toggle off, no
   participant routed here, no spot, the player > 64 blocks from the building box, the box's chunks not loaded. Gathered

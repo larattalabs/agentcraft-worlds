@@ -66,7 +66,7 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
   (`meeting` slots, else `user`); only participants routed to that building gather; lead line = the plan note's first
   line, else the goal text; workers say their first open task's title; 20-30 s. Skipped (recorded) when off, the player
   is > 64 blocks from the building box, its chunks are not loaded, nobody is routed there, or it has no spot; goals
-  already under way at connect never get one.
+  already under way at connect never get one. A goal without a lead (the sim's) is opened by its building's lead, else Marlow for the home building.
 - Library: `memory.upsert` with `author` = an agent; between steps only; a book in the main hand while walking, READ pose
   for 5 s at the `library` slot; cancelled by work or a stand-up; 30 s cap; notes wait at most 2 min; 1 min cooldown.
 - Toggles: hub > Buildings, a row under the trophies toggle (`Night`, `Stand-ups`, `Library`), `routines.json` per world,
