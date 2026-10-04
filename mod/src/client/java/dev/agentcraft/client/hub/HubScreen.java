@@ -116,6 +116,12 @@ public final class HubScreen extends Screen {
 	final TeamTab team = new TeamTab(this);
 	final SettingsTab settings = new SettingsTab(this);
 	final InboxTab inbox = new InboxTab(this);
+	final StatusPane status = new StatusPane(this);
+	// tab strip layout last frame (dev.hub.state tabs): badges per tab id, compact = badges shrunk to dots
+	private int tabsNeeded;
+	private int tabsAvailable;
+	private boolean tabsCompact;
+	private boolean tabsOverflow;
 	private boolean opened;
 	private boolean textInput;
 
@@ -132,6 +138,7 @@ public final class HubScreen extends Screen {
 			case GOALS -> goals;
 			case TEAM -> team;
 			case SETTINGS -> settings;
+			case STATUS -> status;
 			default -> null;
 		};
 	}
@@ -682,7 +689,7 @@ public final class HubScreen extends Screen {
 		int footerY = bottom - 12;
 		switch (tab) {
 			case BUILDINGS -> drawBuildingsTab(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
-			case STATUS -> drawStatus(g, cx, y, cw, footerY - 4 - y);
+			case STATUS -> status.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			case REPOS -> repos.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			case GOALS -> goals.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
 			case TEAM -> team.draw(g, cx, y, cw, footerY - 4 - y, mouseX, mouseY);
@@ -722,17 +729,64 @@ public final class HubScreen extends Screen {
 		tabStripW = w;
 		int edge = UiStyle.color("palette.ui.panel_edge");
 		g.fill(x0, y + TAB_H - 1, x0 + w, y + TAB_H, edge);
+		// badges (docs/WAVE2.md W5): a status dot and the count after the label; when the strip would not fit,
+		// just the dot; still too wide: the labels are cut
+		HubTab[] all = HubTab.values();
+		TabBadges.Badge[] badges = new TabBadges.Badge[all.length];
+		int full = 0;
+		int dots = 0;
+		for (int i = 0; i < all.length; i++) {
+			badges[i] = TabBadges.of(all[i]);
+			int base = font.width(all[i].label) + 16 + 2;
+			full += base + (badges[i] == null ? 0 : 3 + 9 + font.width(Integer.toString(badges[i].count())));
+			dots += base + (badges[i] == null ? 0 : 3 + 7);
+		}
+		full -= 2;
+		dots -= 2;
+		tabsNeeded = full;
+		tabsAvailable = w;
+		tabsCompact = full > w;
+		tabsOverflow = dots > w;
+		int squeeze = tabsOverflow ? (int) Math.ceil((dots - w) / (double) all.length) : 0;
 		int x = x0;
-		for (HubTab t : HubTab.values()) {
+		for (int i = 0; i < all.length; i++) {
+			HubTab t = all[i];
 			boolean active = t == tab;
-			int tw = font.width(t.label) + 16;
+			TabBadges.Badge b = badges[i];
+			String label = squeeze > 0 ? TextUtil.ellipsize(font, t.label, Math.max(12, font.width(t.label) - squeeze)) : t.label;
+			int lw = font.width(label);
+			int bw = b == null ? 0 : tabsCompact ? 3 + 7 : 3 + 9 + font.width(Integer.toString(b.count()));
+			int tw = lw + 16 + bw;
 			int ty = active ? y : y + 2;
 			Panels.sprite(g, active ? Kit.TAB_ACTIVE : Kit.TAB_INACTIVE, x, ty, tw, active ? TAB_H : TAB_H - 2);
 			int color = active ? UiBits.ink() : t.built ? UiBits.muted() : UiStyle.color("paper.disabled", 0xFFA39B8E);
-			g.text(font, t.label, x + 8, y + 7, color, false);
+			g.text(font, label, x + 8, y + 7, color, false);
+			if (b != null) {
+				int bx = x + 8 + lw + 3;
+				Panels.sprite(g, Kit.dot(b.family(), false), bx, y + 8, 7, 7);
+				if (!tabsCompact) {
+					g.text(font, Integer.toString(b.count()), bx + 9, y + 7, UiStyle.status(b.family()), false);
+				}
+			}
 			tabRects.add(new int[] {x, y, tw, TAB_H});
 			x += tw + 2;
 		}
+	}
+
+	/** dev.hub.state tabs: each tab's badge and the strip's layout. */
+	com.google.gson.JsonObject tabsState() {
+		com.google.gson.JsonObject o = new com.google.gson.JsonObject();
+		com.google.gson.JsonObject bs = new com.google.gson.JsonObject();
+		for (HubTab t : HubTab.values()) {
+			TabBadges.Badge b = TabBadges.of(t);
+			bs.addProperty(t.id, b == null ? 0 : b.count());
+		}
+		o.add("badges", bs);
+		o.addProperty("needed", tabsNeeded);
+		o.addProperty("available", tabsAvailable);
+		o.addProperty("compact", tabsCompact);
+		o.addProperty("overflow", tabsOverflow);
+		return o;
 	}
 
 	Btn button(GuiGraphicsExtractor g, String id, String label, int x, int y, int w, boolean primary, boolean disabled, boolean danger,
@@ -1276,7 +1330,8 @@ public final class HubScreen extends Screen {
 
 	// ------------------------------------------------------------------ Status tab
 
-	private void drawStatus(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+	/** The Overview; returns the bottom of the taller column (StatusPane reports the layout). */
+	int drawStatus(GuiGraphicsExtractor g, int x, int y, int w, int h) {
 		int ink = UiBits.ink();
 		int muted = UiBits.muted();
 		ForemanState s = Foreman.state();
@@ -1337,7 +1392,8 @@ public final class HubScreen extends Screen {
 		ry = fact(g, "Foreman", st == null ? "?" : st.version(), rx, ry, colW);
 		ry += 6;
 		ry = section(g, "DevBridge", rx, ry, colW);
-		fact(g, "", DevBridge.status(), rx, ry, colW);
+		ry = fact(g, "", DevBridge.status(), rx, ry, colW);
+		return Math.max(ly, ry);
 	}
 
 	/** The plan usage windows (bars, percent, reset time), as on the Status tab; returns the height. Also the Settings tab's Usage group. */

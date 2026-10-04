@@ -89,6 +89,7 @@ Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world.
 | `AGENTCRAFT_DEV_TEST` | 0 | `1` registers test-only commands (`dev.test.stall`, which blocks the render thread to simulate a hung game; `dev.test.foremanMessage`). Never set it for real use |
 | `AGENTCRAFT_PORT` | 7878 | Foreman WebSocket port the mod connects to (always 127.0.0.1) |
 | `AGENTCRAFT_FOREMAN` | 1 | `0` disables the Foreman link (the HUD says so) |
+| `AGENTCRAFT_WELCOME` | 1 | `0`: the welcome card never opens by itself on joining a world without buildings (scripted QA worlds); `dev.onboarding {show}` still opens it |
 
 The defaults (muted, no focus) suit unattended agent runs. `tools/launch.ps1` should set
 `AGENTCRAFT_MUTE=0 AGENTCRAFT_FOCUS=1` for real use (when you launch the game yourself; it does
@@ -612,6 +613,10 @@ The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
 - Status: `Foreman.link().status()` (phase, url, attempt, last error, since), `ForemanState.status()`
   (backend, auth, account, user, message, `usage.windows` with progress bars and reset times, spend,
   version), the mod version and `DevBridge.status()`.
+  Since wave 2 the Status tab is a `HubPane` (`StatusPane`) with chips **Overview** (the above) and **Keys & help**
+  (←→ switch; see "HUD check-in (wave 2)").
+- `H` opens the world's last hub tab (`hub-hud.json`), or after an away toast the Inbox (else Goals). The DevBridge
+  screens and `dev.hub.open` without a tab still open Buildings. Tabs carry badges (`TabBadges`).
 - DevBridge: `dev.hub.open {tab?, sub?: buildings|blueprints|designs, buildingId?, blueprint?, designId?,
   view?: plan|iso|top|front|cutaway}` (cancels a placement, opens, selects); `dev.hub.state` (`open, tab,
   sub, selectedBuilding, selectedBlueprint, selectedDesign, designNote, armedRemove, busy, view,
@@ -810,6 +815,43 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   repoId:"demo", edit:true}`. Against an older Foreman the forms show "needs a newer Foreman"; drive them with
   `settings_fake`. Read-only: start the Foreman with token checking and the mod with `AGENTCRAFT_CLIENT_TOKEN=wrong`.
   Shoot each at GUI scale 2, 3 and 4 and check `layout.overflow`.
+
+### HUD check-in (wave 2)
+The contract is docs/WAVE2.md W5-W7 ("As implemented: hud" there). Code in `client.hud` and `client.hub`; pure rules
+in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTest`, `HudRulesTest`).
+- **Alert line** (`GoalBar.drawAlerts`, counts from `Alerts.line()` over an `AlertCounts` source, today
+  `ForemanAlertCounts`; `Alerts.setSource` swaps in the Inbox model): under the decisions badge, full / short / dots
+  width by what fits, hub keycap at the end. The whole goal bar is skipped while the HUD is hidden (F1, `dev.hud
+  {hidden}`).
+- **Goal bar with several open goals**: urgent pinned, else 8 s turns, "+N more" (`HudRules.pickGoal`).
+- **`HudWatch`** (client tick, guarded as `hud.watch`): hub on screen (also under screens opened from it) ->
+  `hubSeenAt` + `lastTab`; console on screen -> `repliesSeen`; the away check (join + every 2 min after 10 min away,
+  `goal.digest` via `HubGoals.requestAway`, toast "Since you were away: …" with the hub key); the welcome card.
+- **Files**: `<gameDir>/agentcraft/hub-hud.json` (per world: `lastTab`, `hubSeenAt`, `lastAwayToastAt`, `repliesSeen`,
+  `welcomeDismissed`), next to `hub-seen.json` (same world key: save folder name, "multiplayer" otherwise).
+- **DevBridge**:
+  - `dev.hud.state` gains `hudHidden`, `hubKey`, `alert{source, visible, decisions, blocked, replies, needsYou, hold,
+    holdUntil, holdMessage, text, parts[{kind, family, full, short, dots}], drawn, level: full|short|dots|null,
+    layout{needed, available, overflow, x, y, w, h, guiWidth, guiHeight, guiScale}}`, `goalBar{goalId, index, open,
+    more, pinned}`, `away{world, hubSeenAt, lastAwayToastAt, awaySince, awayForMs, joinPending, lastCheckAt, checking,
+    awayPending, lastAwaySince, lastAwayGoals, lastAwayText, hubTarget, lastTab, repliesSeen, welcomeDismissed,
+    welcomeShownThisJoin}`, `lastToast`, `lastToastHint`.
+  - `dev.away {minutes}`: sets `hubSeenAt` to that long ago, clears `lastAwayToastAt` and runs the check now; replies
+    `{digest, toastShown, text, hint, away}` once the digest is in (needs the Foreman).
+  - `dev.onboarding {reset?, show?, press?: open_hub|got_it}`: reset forgets the welcome dismissal for this world; show
+    opens the card; press presses one of its buttons (a frame after show); replies
+    with the away/onboarding state, `welcomeLayout{needed, available, overflow}` and `help{keys[], interactions[],
+    foreman}`.
+  - `dev.hub.open {tab: "status", view: "overview"|"help"}`; `dev.hub.state` gains `statusTab{view, layout{needed,
+    available, overflow, scroll, maxScroll}, help}` and `tabs{badges{<tab id>: n}, needed, available, compact,
+    overflow}`; button `help_welcome` (`dev.hub.action {action:"press", button:"help_welcome"}`) shows the card.
+  - Screens: `welcome`, `hub_status_help`.
+  - Faking the inputs: a hold with `dev.foreman.inject {message:{type:"foreman.status", status:{version:"dev",
+    backend:"claude", auth:"ok", hold:{reason:"usage", until:<ms>, message:"5h limit"}}}}`; a reply with
+    `{message:{type:"feed.add", item:{ts:<now ms>, kind:"message", text:"Done, see the PR", agentId:"marlow",
+    to:"user"}}}`; a blocked task with `{patch:{task:"t1", set:{status:"blocked"}}}`; more goals with
+    `{message:{type:"goal.upsert", goal:{id:"g90", text:"…", progress:0.3, status:"active", createdAt:<ms>,
+    updatedAt:<ms>}}}`.
 
 ### Generated buildings (design form, plot marking, design progress)
 The contract is docs/HUB.md "Generated buildings"; code in `dev.agentcraft.client.design` plus
