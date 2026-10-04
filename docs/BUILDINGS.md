@@ -472,7 +472,8 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   note ("6 cells of shallow water skipped (bridge off)"). Deeper water is never on a route.
 - **Lanterns** (default on): an `oak_fence` post with a `lantern` on top just beside the walkway, the first 6 blocks
   along the road and then every 12, on natural ground within a block of the road's height; when there is no room the
-  other side, then the next route cells (up to 3 further) are tried, else it is noted.
+  other side, then the next route cells (up to 3 further) are tried, else it is noted. None along a stretch another
+  road paved (it has its own; two posts stood side by side there), and the spacing starts again where the road leaves it.
 - **Shared cells**: a cell another road already changed is left to that road (the column is skipped, noted "already
   part of another road"). Removing the first road hands the cells the other road still runs on to it (`Road.handover`:
   a changed cell in or beside a column of the other road's walker cells, from 2 below its feet to 3 above; the nearest,

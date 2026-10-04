@@ -456,6 +456,23 @@ class RoadPlanTest {
 		assertEquals(0, plan(alongX(0, 60, 65, 0), W2, Grid.flat()).lanternCount());
 	}
 
+	@Test
+	void noLanternsAlongAStretchAnotherRoadPaved() {
+		// x 0..30 is another road's (its path blocks and its own lanterns): this road's lanterns start 12 blocks after it
+		Set<Long> taken = new HashSet<>();
+		for (int x = 0; x <= 30; x++) {
+			for (int z = 0; z <= 1; z++) {
+				taken.add(WalkCell.pack(x, 64, z));
+			}
+		}
+		Plan p = RoadPlan.plan(alongX(0, 60, 65, 0), new Options(2, true, false), Grid.flat(), List.of(), taken::contains);
+		int[] l = p.lanterns();
+		assertTrue(l.length > 0);
+		for (int i = 0; i < l.length; i += 3) {
+			assertTrue(l[i] >= 42, "a lantern beside the other road's stretch at x " + l[i]);
+		}
+	}
+
 	// ------------------------------------------------------------------ buildings, other roads, snapshot box
 
 	@Test
