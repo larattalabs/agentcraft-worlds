@@ -28,6 +28,9 @@ import { openPullRequest, parseRemote, type PrHost } from './prs.js';
 import { run, runShell } from './util/proc.js';
 import { slugify, tailLines } from './util/text.js';
 
+/** How long a test (CI) run may take unless repoSettings.ciTimeoutMs says otherwise. */
+export const DEFAULT_CI_TIMEOUT_MS = 300_000;
+
 export class RepoError extends Error {
   constructor(
     message: string,
@@ -1203,9 +1206,10 @@ export class RepoManager {
     return out;
   }
 
-  /** Run the repo's test command in a worktree (or the main checkout). */
-  async runTests(repoId: string, worktreeId?: string, command?: string, timeoutMs = 300_000): Promise<TestResult> {
+  /** Run the repo's test command in a worktree (or the main checkout); timeout: repoSettings.ciTimeoutMs, else 5 min. */
+  async runTests(repoId: string, worktreeId?: string, command?: string, timeout?: number): Promise<TestResult> {
     const r = this.require(repoId);
+    const timeoutMs = timeout ?? this.settingsFor(repoId).ciTimeoutMs ?? DEFAULT_CI_TIMEOUT_MS;
     const cwd = worktreeId ? this.requireWorktree(repoId, worktreeId).path : r.path;
     const cmd = command ?? this.testCommand(repoId, cwd);
     if (!cmd) return { pass: true, code: 0, command: '(none)', output: 'no test command found', durationMs: 0, failures: [] };

@@ -110,8 +110,12 @@ in the repo, so an agent cannot change what the Foreman runs by editing its work
     "ci": "pnpm -r test",
     "setup": "pnpm install --frozen-lockfile",
     "copy": [".env", ".env.local"],
-    "setupTimeoutMs": 600000 } } }
+    "setupTimeoutMs": 600000,
+    "ciTimeoutMs": 300000 } } }
 ```
+
+`ciTimeoutMs` bounds the test run after each task (default 5 minutes; the process tree is killed and
+the run counts as failed); raise it for slow suites.
 
 A repository's own Claude Code agent files (`.claude/agents/*.md`) can be used two ways:
 

@@ -100,6 +100,8 @@ export interface RepoSettings {
   copy?: string[];
   /** setup timeout in ms (default 10 minutes) */
   setupTimeoutMs?: number;
+  /** test (CI) timeout in ms (default 5 minutes); the process tree is killed when it runs out */
+  ciTimeoutMs?: number;
   /**
    * agent id -> one of the repository's agent files (a name under .claude/agents, or a path): the
    * agent's role, prompt and model whenever it works in this repository
@@ -458,6 +460,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       if (str(o.setup)) s.setup = o.setup as string;
       if (Array.isArray(o.copy)) s.copy = o.copy.filter((x): x is string => typeof x === 'string' && x.length > 0);
       if (typeof o.setupTimeoutMs === 'number' && o.setupTimeoutMs > 0) s.setupTimeoutMs = o.setupTimeoutMs;
+      if (typeof o.ciTimeoutMs === 'number' && o.ciTimeoutMs > 0) s.ciTimeoutMs = o.ciTimeoutMs;
       if (o.roles && typeof o.roles === 'object') {
         const roles: Record<string, string> = {};
         for (const [id, spec] of Object.entries(o.roles as Record<string, unknown>)) if (isAgentId(id.toLowerCase()) && str(spec)) roles[id.toLowerCase()] = spec as string;

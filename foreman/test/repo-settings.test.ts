@@ -23,6 +23,7 @@ beforeAll(async () => {
           ci: 'node -e "process.exit(0)"',
           setup: 'node -e "require(\'fs\').appendFileSync(\'setup-ran.txt\', \'x\')"',
           copy: ['.env', 'local-config', '../outside', '/etc/hosts', 'missing.txt'],
+          ciTimeoutMs: 1500,
         },
       },
     }),
@@ -42,6 +43,15 @@ describe('repoSettings', () => {
     expect(h.cfg.repoSettings[path.resolve(repoPath)]?.ci).toBe('node -e "process.exit(0)"');
     expect(h.fm.repos.settingsFor('demo-app').copy).toContain('.env');
     expect(h.fm.repos.settingsFor('nope')).toEqual({});
+  });
+
+  it('ciTimeoutMs bounds the test run (default 5 minutes)', async () => {
+    expect(h.fm.repos.settingsFor('demo-app').ciTimeoutMs).toBe(1500);
+    const t0 = Date.now();
+    const res = await h.fm.repos.runTests('demo-app', undefined, 'node -e "setTimeout(() => {}, 20000)"');
+    expect(res.pass).toBe(false);
+    expect(res.output).toMatch(/timed out after 2s/);
+    expect(Date.now() - t0).toBeLessThan(15_000);
   });
 
   it('uses the repo ci command over --ci and detection', () => {

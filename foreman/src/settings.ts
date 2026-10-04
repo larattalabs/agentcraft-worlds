@@ -239,6 +239,7 @@ function repoSpecs(x: SpecCtx): Spec[] {
     { key: 'ci', group: 'worktrees', type: 'string', label: 'Test command', help: 'Run after each task. Empty: --ci, else detected (e.g. npm test).', live: true, def: '', get: (_c, rs) => rs.ci ?? '' },
     { key: 'setup', group: 'worktrees', type: 'string', label: 'Worktree setup command', help: 'Run once in each new worker worktree before the worker starts, e.g. npm ci.', live: true, def: '', get: (_c, rs) => rs.setup ?? '' },
     { key: 'copy', group: 'worktrees', type: 'stringList', label: 'Copy into new worktrees', help: 'Untracked files or folders copied from your checkout into each new worktree, e.g. .env.', live: true, def: [], get: (_c, rs) => rs.copy ?? [] },
+    { key: 'ciTimeoutMs', group: 'worktrees', type: 'int', min: 10_000, max: 7_200_000, label: 'Test timeout (ms)', help: 'How long the test command may run after each task before it is stopped (and counts as failed).', live: true, def: 300_000, get: (_c, rs) => rs.ciTimeoutMs ?? 300_000 },
     { key: 'setupTimeoutMs', group: 'worktrees', type: 'int', min: 1000, max: 3_600_000, label: 'Setup timeout (ms)', help: 'How long the setup command may run.', live: true, def: 600_000, get: (_c, rs) => rs.setupTimeoutMs ?? 600_000 },
     {
       key: 'protect',
