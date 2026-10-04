@@ -33,6 +33,7 @@ export const B = {
   parquet: 'minecraft:oak_planks',
   glowPanel: 'minecraft:ochre_froglight',
   seaLantern: 'minecraft:sea_lantern',
+  glowStrip: 'minecraft:end_rod', // legacy name (older designs): a strip light is an end rod now
   button: 'minecraft:stone_button',
   monitor: 'agentcraft:monitor',
   taskBoard: 'agentcraft:task_board',
