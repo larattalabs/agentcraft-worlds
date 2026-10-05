@@ -138,6 +138,12 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   Launcher section, `dev.launcher.*`, `hardcore-setup.mjs --no-prelaunch` (now the documented setup; the
   Prism hook is optional), `mac.mjs --mod-foreman`. Checked in the dev client (start, reuse, hub restart,
   Restart, crash, stale restart, foreign older one left alone, stopOnExit, port held, disabled).
+- **2026-10-05: soak passed and installed.** A throwaway copy of the 26.3 Hardcore instance ran the full smoke
+  test with every mod; it found two instance issues (LWJGL pinned at 3.4.1 while 26.3 + Sodium need 3.4.3;
+  Sodium 0.9.3-alpha broke Reese's Sodium Options -> stable Sodium 0.9.2) and one mod issue (Entity Culling's
+  tick culling froze agents -> agents now advance from the client tick; the instance also whitelists
+  agentcraft:agent). Installed with `hardcore-setup --no-prelaunch --apply` (stable checkout, mod-started
+  Foreman, profile hardcore, port 7880); verified to the title screen. Next: play, place buildings, first real goals.
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
