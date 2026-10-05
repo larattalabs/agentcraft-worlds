@@ -291,10 +291,21 @@ public final class WorldJournal {
 	 */
 	public static Journal.UndoPlan planUndo(ServerLevel level, Collection<String> ids, String group, BiPredicate<BlockState, BlockState> same)
 		throws IOException {
+		return planUndo(level, ids, group, same, Map.of(), Map.of());
+	}
+
+	/**
+	 * {@link #planUndo(ServerLevel, Collection, String, BiPredicate)} with entries changed but not committed yet
+	 * ({@code changed}, {@code more}: they stand in for what the journal holds, e.g. a road's cells handed over).
+	 */
+	public static Journal.UndoPlan planUndo(ServerLevel level, Collection<String> ids, String group, BiPredicate<BlockState, BlockState> same,
+		Map<String, Entry> changed, Map<String, Entry> more) throws IOException {
 		JournalStore s = store();
-		Map<String, Entry> loaded = new LinkedHashMap<>();
+		Map<String, Entry> over = new LinkedHashMap<>(changed);
+		over.putAll(more);
+		Map<String, Entry> loaded = new LinkedHashMap<>(over);
 		for (String id : ids) {
-			loaded.put(id, s.load(id));
+			loaded.putIfAbsent(id, s.load(id));
 		}
 		Set<String> dims = new LinkedHashSet<>();
 		for (Entry e : List.copyOf(loaded.values())) {

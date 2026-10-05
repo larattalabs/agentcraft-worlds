@@ -6,6 +6,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.agentcraft.AgentCraft;
+import dev.agentcraft.journal.Journal;
+import dev.agentcraft.journal.JournalStore;
+import dev.agentcraft.journal.WorldJournal;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
@@ -33,12 +36,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.ListTag;
-import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtUtils;
-import net.minecraft.nbt.Tag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -60,14 +58,17 @@ import org.jspecify.annotations.Nullable;
  * world ({@code <world>/agentcraft-roads.json}), laying one from a route the client planned ({@link #lay}: everything is
  * checked and planned again here on the server's own level, since the client's view can be stale) and removing one
  * ({@link #remove}: every cell that still holds what the road put there gets its old block back; cells the player
- * changed since, or that a building now covers, are left alone). Each road's snapshot is per cell, never a box, so a
- * removal never reverts anything else. Blocks are set with no side effects (no neighbour or shape updates, no drops, no
+ * changed since, or that a building now covers, are left alone). Each road is a per-cell entry of the world journal
+ * (contract J1, {@code dev.agentcraft.journal}), never a box, so a removal never reverts anything else. Blocks are set with no side effects (no neighbour or shape updates, no drops, no
  * falling), and new drops around the road are cleared anyway. Loaded when a world starts, cleared when it stops.
  * Server thread, except the read-only views ({@link #all}, {@link #feetCells}) which any thread may use.
  */
 public final class Roads {
 	public static final String FILE = "agentcraft-roads.json";
+	/** The folder the roads' snapshots were kept in before the world journal; imported names still resolve against it. */
 	public static final String SNAPSHOT_DIR = "agentcraft-roads";
+	/** The world journal kind of a road's entry (its owner is the road's id). */
+	static final String KIND = "road";
 	/** Sync to clients; no neighbour or shape updates, no drops, no block-entity side effects, no onPlace (gravel never ticks). */
 	static final int FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ALL_SIDEEFFECTS;
 	/** How far (blocks, horizontal) a route's first and last cells may be from the buildings' entrances. */
@@ -242,6 +243,7 @@ public final class Roads {
 		if (loadFailed) {
 			throw new RoadException(FILE + " could not be read (see the log): no roads are laid until it is fixed or moved away");
 		}
+		requireJournal();
 		String dim = Buildings.dimensionId(level);
 		Building ba = requireHere(a, dim);
 		Building bb = requireHere(b, dim);
@@ -304,8 +306,6 @@ public final class Roads {
 		refuseOccupied(level, ops, before, after, "laying it");
 		State s = state;
 		String id = "r" + s.next();
-		Path snap = snapshotFile(level.getServer(), id);
-		writeSnapshot(snap, ops, before, after);
 		int[] changes = new int[ops.size() * 3];
 		for (int i = 0; i < ops.size(); i++) {
 			changes[3 * i] = ops.get(i).x();
@@ -321,15 +321,32 @@ public final class Roads {
 		}
 		Road road = new Road(id, a, b, dim, o.width(), o.lanterns(), o.bridge(), System.currentTimeMillis(), plan.centre(), cells, plan.lanterns(),
 			changes, plan.notes());
+		// the journal entry (each changed cell's before and after), then the record, then the blocks
+		Journal.Entry entry;
+		try {
+			String jid = WorldJournal.newId();
+			long layer = WorldJournal.newLayer();
+			List<Journal.Cell> jc = new ArrayList<>(ops.size());
+			for (int i = 0; i < ops.size(); i++) {
+				RoadPlan.Op op = ops.get(i);
+				jc.add(new Journal.Cell(Journal.pos(op.x(), op.y(), op.z()), layer, new Journal.Value(NbtUtils.writeBlockState(before.get(i)), null),
+					new Journal.Value(NbtUtils.writeBlockState(after.get(i)), null)));
+			}
+			entry = new Journal.Entry(jid, KIND, id, dim, Journal.Policy.CELL, road.created(), Journal.Status.ACTIVE, jc, null, road.toJson());
+			WorldJournal.commit(Map.of(jid, entry), List.of());
+		} catch (IOException e) {
+			AgentCraft.LOGGER.warn("Could not save road {} in the world journal", id, e);
+			throw new RoadException("Could not save the road's snapshot (" + e.getMessage() + "); nothing was laid");
+		}
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
 		map.put(id, road);
 		try {
 			commit(level.getServer(), s, new State(Collections.unmodifiableMap(map), s.next() + 1, s.pending()));
 		} catch (RoadException e) {
 			try {
-				Files.deleteIfExists(snap);
+				WorldJournal.commit(Map.of(), List.of(entry.id()));
 			} catch (IOException ex) {
-				AgentCraft.LOGGER.warn("Could not delete {}", snap, ex);
+				AgentCraft.LOGGER.warn("Could not release journal entry {} (the next start brings road {} back from it)", entry.id(), id, ex);
 			}
 			throw new RoadException(e.getMessage() + "; nothing was laid");
 		}
@@ -584,16 +601,15 @@ public final class Roads {
 		}
 	}
 
-	/** One snapshot cell. */
-	record Entry(int x, int y, int z, BlockState before, BlockState after) {
-	}
-
 	/**
-	 * Removes road {@code id}: every cell that still holds what the road put there gets its old block back (in the order
-	 * ground first, then what stood on it); cells the player changed since and cells a building now covers are left as
-	 * they are. Cells another road still runs on ({@link Road#handover}: a newer road that shared this one's walkway left
-	 * them to it) stay, and that road takes them over (its snapshot and changes), so it keeps no holes. Refuses while a player or a pet stands where an old block comes back. The snapshot is kept (as a pending
-	 * removal) until the next world start confirms the restored cells reached the disk. Server thread.
+	 * Removes road {@code id}: the undo of its world journal entry (contract J1). Every cell on top that still holds what
+	 * the road put there gets its old block back (in the order ground first, then what stood on it); cells the player
+	 * changed since are left as they are; cells a newer change covers (a building or fixture placed over the road) are
+	 * left in the world and handed down to that change, so its own removal later restores the ground, not the road. Cells
+	 * another road still runs on ({@link Road#handover}: a newer road that shared this one's walkway left them to it) stay,
+	 * and that road's entry takes them over (keeping their layer, and its changes), so it keeps no holes. Refuses while a
+	 * player or a pet stands where an old block comes back. The undone entry is kept (as a pending removal) until the next
+	 * world start confirms the restored cells reached the disk. Server thread.
 	 */
 	public static Removed remove(ServerLevel level, String id) throws RoadException {
 		Road r = get(id);
@@ -605,133 +621,145 @@ public final class Roads {
 			throw new RoadException(id + " is in " + r.dimension() + ", not in " + dim + ": go there to remove it");
 		}
 		MinecraftServer server = level.getServer();
-		Path snap = snapshotFile(server, id);
-		if (!Files.exists(snap)) {
+		requireJournal();
+		String jid = entryOf(id);
+		if (jid == null) {
 			throw new RoadException("The snapshot of " + id + " is missing, so it cannot be restored; Forget drops the record and leaves the blocks");
 		}
-		List<Entry> entries = readSnapshot(level, snap);
-		List<Anchors.Bounds> boxes = buildingBoxes(dim);
-		List<Entry> restore = new ArrayList<>();
-		int changed = 0;
-		int covered = 0;
-		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-		for (Entry e : entries) {
-			if (inAny(boxes, e.x(), e.y(), e.z())) {
-				covered++;
-				continue;
-			}
-			if (!level.hasChunk(e.x() >> 4, e.z() >> 4)) {
-				throw new RoadException("Chunks around " + e.x() + ", " + e.z() + " are not loaded: walk closer to the road and try again");
-			}
-			BlockState now = level.getBlockState(m.set(e.x(), e.y(), e.z()));
-			if (!stillOurs(now, e.after()) || now.hasBlockEntity()) {
-				changed++;
-				continue;
-			}
-			restore.add(new Entry(e.x(), e.y(), e.z(), e.before(), now));
+		Journal.Entry entry;
+		try {
+			entry = WorldJournal.load(jid);
+		} catch (IOException e) {
+			throw new RoadException("Could not read the road's snapshot " + jid + ": " + e.getMessage());
 		}
-		// cells another road still runs on stay and become that road's
+		for (Journal.Cell c : entry.cells()) {
+			int x = Journal.x(c.pos());
+			int z = Journal.z(c.pos());
+			if (!level.hasChunk(x >> 4, z >> 4)) {
+				throw new RoadException("Chunks around " + x + ", " + z + " are not loaded: walk closer to the road and try again");
+			}
+		}
+		// what the undo would put back: the cells on top that still hold what the road put there
+		Journal.UndoPlan first;
+		try {
+			first = WorldJournal.planUndo(level, List.of(jid), jid, Roads::stillOurs);
+		} catch (IOException e) {
+			throw new RoadException("Could not read the world journal (" + e.getMessage() + "); nothing was done");
+		}
+		// cells another road still runs on stay and become that road's (Road.handover), keeping their layer
 		List<Road> others = new ArrayList<>();
 		for (Road q : state.byId().values()) {
 			if (!q.id().equals(id) && q.dimension().equals(dim)) {
 				others.add(q);
 			}
 		}
-		int[] candidates = new int[restore.size() * 3];
-		for (int i = 0; i < restore.size(); i++) {
-			Entry e = restore.get(i);
-			candidates[3 * i] = e.x();
-			candidates[3 * i + 1] = e.y();
-			candidates[3 * i + 2] = e.z();
+		List<Journal.Write> candidates = new ArrayList<>(first.writes());
+		int[] cand = new int[candidates.size() * 3];
+		for (int i = 0; i < candidates.size(); i++) {
+			long pos = candidates.get(i).pos();
+			cand[3 * i] = Journal.x(pos);
+			cand[3 * i + 1] = Journal.y(pos);
+			cand[3 * i + 2] = Journal.z(pos);
 		}
-		Map<Integer, String> handover = Road.handover(candidates, others);
-		Map<String, List<Entry>> given = new LinkedHashMap<>();
-		if (!handover.isEmpty()) {
-			List<Entry> back = new ArrayList<>();
-			for (int i = 0; i < restore.size(); i++) {
-				String to = handover.get(i);
-				if (to == null) {
-					back.add(restore.get(i));
-				} else {
-					given.computeIfAbsent(to, k -> new ArrayList<>()).add(restore.get(i));
+		Map<Integer, String> handover = Road.handover(cand, others);
+		Map<String, java.util.Set<Long>> given = new LinkedHashMap<>();
+		handover.forEach((i, to) -> given.computeIfAbsent(to, k -> new java.util.HashSet<>()).add(candidates.get(i).pos()));
+		Map<String, Journal.Entry> transferred = new LinkedHashMap<>();
+		Journal.Entry from = entry;
+		try {
+			for (var g : given.entrySet()) {
+				String qj = entryOf(g.getKey());
+				if (qj == null) {
+					throw new RoadException("The snapshot of " + g.getKey() + " is missing, so it cannot take over " + id + "'s cells");
 				}
+				Journal.Entry q = transferred.containsKey(qj) ? transferred.get(qj) : WorldJournal.load(qj);
+				Map<String, Journal.Entry> t = Journal.transfer(from, q, g.getValue());
+				from = t.get(from.id());
+				transferred.put(qj, t.get(qj));
 			}
-			restore = back;
+		} catch (IOException e) {
+			throw new RoadException("Could not read the world journal (" + e.getMessage() + "); nothing was done");
 		}
-		restore.sort(Comparator.comparingInt(Entry::y));
+		Journal.UndoPlan plan;
+		try {
+			plan = transferred.isEmpty() ? first : WorldJournal.planUndo(level, List.of(jid), jid, Roads::stillOurs, Map.of(from.id(), from), transferred);
+		} catch (IOException e) {
+			throw new RoadException("Could not read the world journal (" + e.getMessage() + "); nothing was done");
+		}
 		List<RoadPlan.Op> ops = new ArrayList<>();
-		List<BlockState> from = new ArrayList<>();
+		List<BlockState> fromStates = new ArrayList<>();
 		List<BlockState> to = new ArrayList<>();
-		for (Entry e : restore) {
-			ops.add(new RoadPlan.Op(e.x(), e.y(), e.z(), RoadPlan.Block.AIR, 0));
-			from.add(e.after());
-			to.add(e.before());
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		for (Journal.Write w : plan.writes()) {
+			ops.add(new RoadPlan.Op(Journal.x(w.pos()), Journal.y(w.pos()), Journal.z(w.pos()), RoadPlan.Block.AIR, 0));
+			fromStates.add(level.getBlockState(m.set(Journal.x(w.pos()), Journal.y(w.pos()), Journal.z(w.pos()))));
+			to.add(WorldJournal.state(level, w.value()));
 		}
-		refuseOccupied(level, ops, from, to, "removing it");
-		// the removal's snapshot (only the cells that go back: the next start settles on them, and cells handed over still
-		// show road blocks), then the receiving roads' snapshots, then the record (a pending removal naming the new file),
-		// then the old snapshot goes, then the blocks: a crash in between leaves a pending removal settled on the cells
-		Path kept = snap.resolveSibling(id + ".removed-" + System.currentTimeMillis() + ".nbt");
-		writeEntries(kept, restore);
-		Map<String, List<Entry>> previous = new LinkedHashMap<>();
+		refuseOccupied(level, ops, fromStates, to, "removing it");
+		// the journal (the undo, the cells handed over), then the record (a pending removal naming the entry), then the
+		// blocks: a crash in between leaves a pending removal settled on the cells at the next start
+		Map<String, Journal.Entry> up = new LinkedHashMap<>(plan.updated());
+		up.putAll(transferred);
+		Map<String, Journal.Entry> previous = new LinkedHashMap<>();
+		previous.put(entry.id(), entry);
+		try {
+			for (String qj : transferred.keySet()) {
+				previous.put(qj, WorldJournal.load(qj));
+			}
+			WorldJournal.commit(up, List.of());
+		} catch (IOException e) {
+			throw new RoadException("Could not save the world journal (" + e.getMessage() + "); nothing was done");
+		}
 		State s = state;
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
 		map.remove(id);
-		try {
-			for (Map.Entry<String, List<Entry>> g : given.entrySet()) {
-				Road q = s.byId().get(g.getKey());
-				Path qs = snapshotFile(server, q.id());
-				List<Entry> had = Files.exists(qs) ? readSnapshot(level, qs) : null;
-				if (had == null) {
-					throw new RoadException("The snapshot of " + q.id() + " is missing, so it cannot take over " + id + "'s cells");
-				}
-				previous.put(q.id(), had);
-				List<Entry> all = new ArrayList<>(had);
-				all.addAll(g.getValue());
-				writeEntries(qs, all);
-				int[] more = new int[g.getValue().size() * 3];
-				for (int i = 0; i < g.getValue().size(); i++) {
-					Entry e = g.getValue().get(i);
-					more[3 * i] = e.x();
-					more[3 * i + 1] = e.y();
-					more[3 * i + 2] = e.z();
-				}
-				map.put(q.id(), q.withChanges(more));
+		Map<String, Integer> handed = new LinkedHashMap<>();
+		for (var g : given.entrySet()) {
+			Road q = s.byId().get(g.getKey());
+			int[] more = new int[g.getValue().size() * 3];
+			int i = 0;
+			for (long pos : g.getValue()) {
+				more[i++] = Journal.x(pos);
+				more[i++] = Journal.y(pos);
+				more[i++] = Journal.z(pos);
 			}
-			List<Road.Pending> pending = new ArrayList<>(s.pending());
-			pending.add(new Road.Pending(r, kept.getFileName().toString(), System.currentTimeMillis()));
+			map.put(q.id(), q.withChanges(more));
+			handed.put(q.id(), g.getValue().size());
+		}
+		List<Road.Pending> pending = new ArrayList<>(s.pending());
+		pending.add(new Road.Pending(r, jid, System.currentTimeMillis()));
+		try {
 			commit(server, s, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
 		} catch (RoadException ex) {
-			for (Map.Entry<String, List<Entry>> p : previous.entrySet()) {
-				try {
-					writeEntries(snapshotFile(server, p.getKey()), p.getValue());
-				} catch (RoadException again) {
-					AgentCraft.LOGGER.warn("Could not put road {}'s snapshot back", p.getKey(), again);
-				}
-			}
 			try {
-				Files.deleteIfExists(kept);
-			} catch (IOException ignored) {
-				// a stray .removed file names no road
+				WorldJournal.commit(previous, List.of());
+			} catch (IOException again) {
+				AgentCraft.LOGGER.warn("Could not put road {}'s journal entries back (the next start settles it)", id, again);
 			}
 			throw ex;
 		}
-		try {
-			Files.deleteIfExists(snap);
-		} catch (IOException ex) {
-			AgentCraft.LOGGER.warn("Could not delete {} (the removal is recorded; it names {})", snap, kept.getFileName(), ex);
-		}
 		CellDrops drops = CellDrops.before(level, ops);
-		for (Entry e : restore) {
-			level.setBlock(m.set(e.x(), e.y(), e.z()), e.before(), FLAGS);
-		}
+		WorldJournal.apply(level, plan, Buildings.FLAGS, FLAGS);
 		drops.clearNew(level);
-		Map<String, Integer> handed = new LinkedHashMap<>();
-		given.forEach((k, v) -> handed.put(k, v.size()));
-		Removed out = new Removed(r, restore.size(), changed, covered, Collections.unmodifiableMap(handed));
-		lastNote = changed + covered + handed.size() == 0 ? null : out.message();
+		Journal.Stats st = plan.stats().get(jid);
+		Removed out = new Removed(r, plan.writes().size(), st.changed(), st.covered(), Collections.unmodifiableMap(handed));
+		lastNote = out.changed() + out.covered() + handed.size() == 0 ? null : out.message();
 		AgentCraft.LOGGER.info("{}", out.message());
 		return out;
+	}
+
+	/** The journal entry of road {@code id}'s cells (active), or null. */
+	static @Nullable String entryOf(String id) {
+		List<JournalStore.Meta> ms = WorldJournal.find(KIND, id, Journal.Status.ACTIVE);
+		return ms.isEmpty() ? null : ms.get(ms.size() - 1).id();
+	}
+
+	/** Refuses world changes while the world journal cannot be read. */
+	private static void requireJournal() throws RoadException {
+		String why = WorldJournal.unavailable();
+		if (why != null) {
+			throw new RoadException(why);
+		}
 	}
 
 	/** Drops road {@code id}'s record and leaves its blocks (its snapshot is missing or unwanted). Server thread. */
@@ -739,6 +767,17 @@ public final class Roads {
 		Road r = get(id);
 		if (r == null) {
 			throw new RoadException("No road " + id);
+		}
+		requireJournal();
+		// the journal first: a record without its entry only refuses Remove; an entry without a record would bring it back
+		List<String> release = new ArrayList<>();
+		for (JournalStore.Meta m : WorldJournal.find(KIND, id, Journal.Status.ACTIVE)) {
+			release.add(m.id());
+		}
+		try {
+			WorldJournal.commit(Map.of(), release);
+		} catch (IOException e) {
+			throw new RoadException("Could not save the world journal (" + e.getMessage() + "); " + id + " was not forgotten");
 		}
 		State s = state;
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
@@ -748,104 +787,40 @@ public final class Roads {
 		return r;
 	}
 
-	// ------------------------------------------------------------------ snapshot
-
-	static Path snapshotFile(MinecraftServer server, String id) {
-		return server.getWorldPath(LevelResource.ROOT).resolve(SNAPSHOT_DIR).resolve(id + ".before.nbt");
-	}
-
-	private static void writeSnapshot(Path file, List<RoadPlan.Op> ops, List<BlockState> before, List<BlockState> after) throws RoadException {
-		CompoundTag root = new CompoundTag();
-		root.putInt("version", 1);
-		ListTag cells = new ListTag();
-		for (int i = 0; i < ops.size(); i++) {
-			RoadPlan.Op op = ops.get(i);
-			CompoundTag c = new CompoundTag();
-			c.putInt("x", op.x());
-			c.putInt("y", op.y());
-			c.putInt("z", op.z());
-			c.put("before", NbtUtils.writeBlockState(before.get(i)));
-			c.put("after", NbtUtils.writeBlockState(after.get(i)));
-			cells.add(c);
-		}
-		root.put("cells", cells);
-		try {
-			Files.createDirectories(file.getParent());
-			Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-			NbtIo.writeCompressed(root, tmp);
-			Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-			CompoundTag back = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
-			if (back.getListOrEmpty("cells").size() != ops.size()) {
-				throw new IOException("read back " + back.getListOrEmpty("cells").size() + " of " + ops.size() + " cells");
-			}
-		} catch (IOException e) {
-			AgentCraft.LOGGER.warn("Could not write road snapshot {}", file, e);
-			throw new RoadException("Could not save the road's snapshot (" + e.getMessage() + "); nothing was laid");
-		}
-	}
-
-	/** {@link #writeSnapshot} for snapshot entries (a removal's cells, or a road's cells with ones handed over). */
-	private static void writeEntries(Path file, List<Entry> entries) throws RoadException {
-		List<RoadPlan.Op> ops = new ArrayList<>(entries.size());
-		List<BlockState> before = new ArrayList<>(entries.size());
-		List<BlockState> after = new ArrayList<>(entries.size());
-		for (Entry e : entries) {
-			ops.add(new RoadPlan.Op(e.x(), e.y(), e.z(), RoadPlan.Block.AIR, 0));
-			before.add(e.before());
-			after.add(e.after());
-		}
-		writeSnapshot(file, ops, before, after);
-	}
-
-	private static List<Entry> readSnapshot(ServerLevel level, Path file) throws RoadException {
-		CompoundTag root;
-		try {
-			root = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
-		} catch (IOException e) {
-			throw new RoadException("Could not read the road's snapshot " + file.getFileName() + ": " + e.getMessage());
-		}
-		var blocks = level.registryAccess().lookupOrThrow(Registries.BLOCK);
-		List<Entry> out = new ArrayList<>();
-		for (Tag t : root.getListOrEmpty("cells")) {
-			if (!(t instanceof CompoundTag c)) {
-				continue;
-			}
-			out.add(new Entry(c.getIntOr("x", 0), c.getIntOr("y", 0), c.getIntOr("z", 0), NbtUtils.readBlockState(blocks, c.getCompoundOrEmpty("before")),
-				NbtUtils.readBlockState(blocks, c.getCompoundOrEmpty("after"))));
-		}
-		return out;
-	}
-
 	// ------------------------------------------------------------------ crash safety
 
 	/**
-	 * World start: each removal recorded as pending is settled on the cells ({@link Road#settle}): the cells show their
-	 * old blocks (the removal reached the disk) -> the snapshot goes; the road stands (it did not) -> its record comes
-	 * back; nothing readable -> kept for the next start.
+	 * World start: first the crash windows between the journal and {@link #FILE} ({@link #repair}), then each removal
+	 * recorded as pending is settled on the cells its undo wrote ({@link Road#settle}): the cells show their old blocks
+	 * (the removal reached the disk) -> its journal entry is released; the road stands (it did not) -> its record and entry
+	 * come back; nothing readable -> kept for the next start.
 	 */
 	static void reconcile(MinecraftServer server) {
+		if (loadFailed) {
+			return;
+		}
+		repairJournal(server);
 		State s = state;
-		if (s.pending().isEmpty() || loadFailed) {
+		if (s.pending().isEmpty()) {
 			return;
 		}
 		Map<String, Road> map = new LinkedHashMap<>(s.byId());
 		List<Road.Pending> keep = new ArrayList<>();
 		for (Road.Pending p : s.pending()) {
-			Path snap = server.getWorldPath(LevelResource.ROOT).resolve(SNAPSHOT_DIR).resolve(p.snapshot());
-			if (!Files.exists(snap) && Files.exists(snapshotFile(server, p.road().id()))) {
-				// the removal's record was written but the snapshot never renamed (a crash in between): settle on the old name
-				snap = snapshotFile(server, p.road().id());
+			String jid = WorldJournal.resolve(SNAPSHOT_DIR, p.snapshot());
+			if (jid == null) {
+				continue; // nothing left to settle
 			}
 			ServerLevel level = levelOf(server, p.road().dimension());
-			if (level == null || !Files.exists(snap)) {
-				if (!Files.exists(snap)) {
-					continue; // nothing left to settle
-				}
+			if (level == null) {
 				keep.add(p);
 				continue;
 			}
 			try {
-				List<Entry> entries = readSnapshot(level, snap);
+				Journal.Entry entry = WorldJournal.load(jid);
+				if (entry.active() || entry.undo() == null) {
+					continue; // an active entry is a standing road's: nothing to settle
+				}
 				// cells a standing road changed tell nothing about this removal: a road laid over the same ground later
 				// (the pair laid again, a road sharing the walkway) shows road blocks there although the removal reached
 				// the disk, and counting them brought removed roads back
@@ -854,32 +829,45 @@ public final class Roads {
 				int atBefore = 0;
 				int telling = 0;
 				BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-				for (Entry e : entries) {
-					if (standing.contains(WalkCell.pack(e.x(), e.y(), e.z()))) {
+				for (Journal.Cell c : entry.cells()) {
+					if (c.after() == null || !entry.undo().written().containsKey(c.pos())) {
+						continue; // only the cells the removal put back tell
+					}
+					int x = Journal.x(c.pos());
+					int y = Journal.y(c.pos());
+					int z = Journal.z(c.pos());
+					if (standing.contains(WalkCell.pack(x, y, z))) {
 						continue;
 					}
 					telling++;
-					BlockState now = level.getBlockState(m.set(e.x(), e.y(), e.z()));
-					if (stillOurs(now, e.after())) {
+					BlockState now = level.getBlockState(m.set(x, y, z));
+					if (stillOurs(now, WorldJournal.state(level, c.after()))) {
 						atAfter++;
-					} else if (now == e.before()) {
+					} else if (now == WorldJournal.state(level, entry.undo().written().get(c.pos()))) {
 						atBefore++;
 					}
 				}
 				switch (Road.settle(atAfter, atBefore, telling)) {
-					case RELEASE -> Files.deleteIfExists(snap);
+					case RELEASE -> WorldJournal.commit(Map.of(), List.of(jid));
 					case RECORD_BACK -> {
 						// against the records being rebuilt here: two removed roads of one pair never both come back
 						boolean pairTaken = map.values().stream().anyMatch(q -> q.between(p.road().a(), p.road().b()));
 						if (!pairTaken && !map.containsKey(p.road().id())) {
-							Files.move(snap, snapshotFile(server, p.road().id()), StandardCopyOption.REPLACE_EXISTING);
+							Map<String, Journal.Entry> loaded = new LinkedHashMap<>();
+							loaded.put(jid, entry);
+							for (Journal.HandDown h : entry.undo().handed()) {
+								if (!loaded.containsKey(h.to()) && WorldJournal.store().meta(h.to()) != null) {
+									loaded.put(h.to(), WorldJournal.load(h.to()));
+								}
+							}
+							WorldJournal.commit(Journal.reactivate(loaded.values(), entry.undo().group()), List.of());
 							map.put(p.road().id(), p.road());
 							AgentCraft.LOGGER.warn("Road {}: its removal did not reach the disk (the road stands), so its record is back", p.road().id());
 						}
 					}
 					case KEEP -> keep.add(p);
 				}
-			} catch (IOException | RoadException e) {
+			} catch (IOException | RuntimeException e) {
 				AgentCraft.LOGGER.warn("Could not settle removed road {}", p.road().id(), e);
 				keep.add(p);
 			}
@@ -887,6 +875,107 @@ public final class Roads {
 		State next = new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(keep));
 		state = next;
 		save(server, next);
+	}
+
+	/** A road entry as {@link #repair} sees it. */
+	record RoadEntry(String id, String owner, Journal.Status status, long undoneAt) {
+	}
+
+	/** What {@link #repair} made of the records, and what it says. */
+	record Repaired(Map<String, Road> roads, List<Road.Pending> pending, List<String> notes) {
+	}
+
+	/**
+	 * The crash windows between a journal commit and {@link #FILE}'s save, pure (the journal is written first): a road
+	 * whose entry was undone with no pending removal naming it becomes a pending removal (settled on the cells); an active
+	 * road entry with no record and no pending removal (a road laid whose record was not saved) gets its record back from
+	 * the entry's meta, unless its pair has a road. {@code resolve}: a pending snapshot name -> journal id; {@code metaOf}:
+	 * an entry's road, or null.
+	 */
+	static Repaired repair(Map<String, Road> roads, List<Road.Pending> pending, List<RoadEntry> entries,
+		java.util.function.Function<String, @Nullable String> resolve, java.util.function.Function<String, @Nullable Road> metaOf) {
+		Map<String, Road> map = new LinkedHashMap<>(roads);
+		List<Road.Pending> pend = new ArrayList<>(pending);
+		List<String> notes = new ArrayList<>();
+		java.util.Set<String> referenced = new java.util.HashSet<>();
+		java.util.Set<String> pendingOwners = new java.util.HashSet<>();
+		for (Road.Pending p : pend) {
+			String id = resolve.apply(p.snapshot());
+			if (id != null) {
+				referenced.add(id);
+			}
+			pendingOwners.add(p.road().id());
+		}
+		for (Road r : List.copyOf(map.values())) {
+			boolean active = false;
+			RoadEntry undone = null;
+			for (RoadEntry e : entries) {
+				if (!e.owner().equals(r.id())) {
+					continue;
+				}
+				if (e.status() == Journal.Status.ACTIVE) {
+					active = true;
+				} else if (!referenced.contains(e.id()) && (undone == null || e.undoneAt() > undone.undoneAt())) {
+					undone = e;
+				}
+			}
+			if (!active && undone != null) {
+				map.remove(r.id());
+				pend.add(new Road.Pending(r, undone.id(), undone.undoneAt()));
+				referenced.add(undone.id());
+				notes.add(r.id() + "'s removal reached the world journal but not " + FILE + " before the game stopped: it is settled as a removal");
+			}
+		}
+		for (RoadEntry e : entries) {
+			if (e.status() != Journal.Status.ACTIVE || map.containsKey(e.owner()) || pendingOwners.contains(e.owner()) || referenced.contains(e.id())) {
+				continue;
+			}
+			Road r = metaOf.apply(e.id());
+			if (r == null || !r.id().equals(e.owner())) {
+				continue;
+			}
+			if (map.values().stream().anyMatch(q -> q.between(r.a(), r.b()))) {
+				notes.add(r.id() + " was laid before the game stopped but its record was not saved, and its pair has a road now: not added");
+				continue;
+			}
+			map.put(r.id(), r);
+			notes.add(r.id() + " was laid before the game stopped but its record was not saved: its record is back");
+		}
+		return new Repaired(map, pend, notes);
+	}
+
+	/** {@link #repair} against the open journal. Server thread, at world start. */
+	private static void repairJournal(MinecraftServer server) {
+		JournalStore js;
+		try {
+			js = WorldJournal.store();
+		} catch (IOException e) {
+			return;
+		}
+		List<RoadEntry> entries = new ArrayList<>();
+		for (JournalStore.Meta m : js.find(m -> m.kind().equals(KIND))) {
+			entries.add(new RoadEntry(m.id(), m.owner(), m.status(), m.undoneAt()));
+		}
+		State s = state;
+		Repaired r = repair(s.byId(), s.pending(), entries, snap -> WorldJournal.resolve(SNAPSHOT_DIR, snap), id -> {
+			try {
+				Journal.Entry e = js.load(id);
+				return e.meta() == null ? null : Road.fromJson(e.meta());
+			} catch (IOException | RuntimeException ex) {
+				AgentCraft.LOGGER.warn("Roads check: could not read the record in journal entry {}", id, ex);
+				return null;
+			}
+		});
+		if (r.notes().isEmpty()) {
+			return;
+		}
+		int next = s.next();
+		for (Road q : r.roads().values()) {
+			next = Math.max(next, Road.number(q.id()) + 1);
+		}
+		state = new State(Collections.unmodifiableMap(r.roads()), next, List.copyOf(r.pending()));
+		save(server, state);
+		r.notes().forEach(n -> AgentCraft.LOGGER.warn("Roads check: {}", n));
 	}
 
 	private static @Nullable ServerLevel levelOf(MinecraftServer server, String dimension) {

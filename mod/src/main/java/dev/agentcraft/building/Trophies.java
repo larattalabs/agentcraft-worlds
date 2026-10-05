@@ -3,6 +3,8 @@ package dev.agentcraft.building;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.AgentCraft;
+import dev.agentcraft.journal.Journal;
+import dev.agentcraft.journal.WorldJournal;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -40,6 +42,8 @@ public final class Trophies {
 	static final Block SIGN = Blocks.DARK_OAK_WALL_SIGN;
 	/** Sync to clients, nothing else: no neighbour updates, no shape updates around it. */
 	static final int FLAGS = Block.UPDATE_CLIENTS;
+	/** The world journal kind of a trophy's entry (its owner is the building's id). */
+	static final String KIND = "trophy";
 
 	private static volatile @Nullable TrophyLedger ledger;
 	private static volatile @Nullable Path file;
@@ -104,6 +108,10 @@ public final class Trophies {
 		if (l.awarded(key)) {
 			return new Result(Outcome.KNOWN, null, null, null, key + " was awarded before");
 		}
+		String journal = WorldJournal.unavailable();
+		if (journal != null) {
+			return new Result(Outcome.UNAVAILABLE, null, null, null, journal);
+		}
 		Building b = Buildings.forRepo(t.repo());
 		if (b == null) {
 			return new Result(Outcome.NO_BUILDING, null, null, null, t.repo() + " has no building");
@@ -121,7 +129,7 @@ public final class Trophies {
 		Map<String, TrophyLedger.Entry> taken = l.slots(b.id());
 		for (TrophySlots.Slot s : TrophySlots.order(slots, taken)) {
 			TrophyLedger.Entry was = taken.get(s.name());
-			if (!hang(level, s, lines, was != null)) {
+			if (!hangRecorded(level, b, s, lines, was != null, key)) {
 				continue;
 			}
 			l.put(b.id(), s.name(), new TrophyLedger.Entry(key, lines, TrophySlots.nextAt(System.currentTimeMillis(), taken)));
@@ -159,6 +167,53 @@ public final class Trophies {
 	/** The sign cells of every trophy slot of a building (its pin's), as {@link TrophySlots#cell} keys. Any thread. */
 	static Set<Long> cells(Building b) {
 		return b.pin() == null ? Set.of() : TrophySlots.cells(b.pin().wingAnchors());
+	}
+
+	/**
+	 * {@link #hang}, recorded in the world journal (contract J1): a CELL entry of kind {@code trophy} owned by the building
+	 * (the cell's block before and after), so Remove and Move undo it with the building's site. A sign rewritten over our
+	 * own older trophy folds that trophy's entry into the new one ({@link Journal#absorb}). A journal that cannot be
+	 * saved is logged, not fatal: the building's box restore covers the slot anyway.
+	 */
+	static boolean hangRecorded(ServerLevel level, Building b, TrophySlots.Slot s, List<String> lines, boolean ours, String key) {
+		BlockPos pos = new BlockPos(s.x(), s.y(), s.z());
+		Journal.Value before = WorldJournal.valueAt(level, pos);
+		if (!hang(level, s, lines, ours)) {
+			return false;
+		}
+		Journal.Value after = WorldJournal.valueAt(level, pos);
+		try {
+			String dim = Buildings.dimensionId(level);
+			String jid = WorldJournal.newId();
+			com.google.gson.JsonObject meta = new com.google.gson.JsonObject();
+			meta.addProperty("building", b.id());
+			meta.addProperty("slot", s.name());
+			meta.addProperty("key", key);
+			Journal.Entry e = new Journal.Entry(jid, KIND, b.id(), dim, Journal.Policy.CELL, System.currentTimeMillis(), Journal.Status.ACTIVE,
+				List.of(new Journal.Cell(pos.asLong(), WorldJournal.newLayer(), before, after)), null, meta);
+			Map<String, Journal.Entry> up = new java.util.LinkedHashMap<>();
+			up.put(jid, e);
+			List<String> release = new ArrayList<>();
+			List<Journal.Entry> here = new ArrayList<>(WorldJournal.activeTouching(dim, new int[] {s.x(), s.y(), s.z(), s.x(), s.y(), s.z()}));
+			here.add(e);
+			for (Journal.Entry older : List.copyOf(here)) {
+				if (older.kind().equals(KIND) && older.owner().equals(b.id()) && !older.id().equals(jid)) {
+					List<Journal.Entry> loaded = new ArrayList<>(here);
+					loaded.replaceAll(x -> up.getOrDefault(x.id(), x));
+					Map<String, Journal.Entry> folded = Journal.absorb(loaded, older.id());
+					if (folded != null) {
+						up.putAll(folded);
+						release.add(older.id());
+						here.remove(older);
+					}
+				}
+			}
+			WorldJournal.commit(up, release);
+		} catch (IOException | RuntimeException ex) {
+			AgentCraft.LOGGER.warn("Trophy {} in {} slot {}: the world journal could not be saved (the building's box covers the slot)", key, b.id(),
+				s.name(), ex);
+		}
+		return true;
 	}
 
 	/**
@@ -223,7 +278,7 @@ public final class Trophies {
 		int hung = 0;
 		for (var e : entries.entrySet()) {
 			TrophySlots.Slot s = byName.get(e.getKey());
-			if (level != null && s != null && hang(level, s, e.getValue().lines(), false)) {
+			if (level != null && s != null && hangRecorded(level, moved, s, e.getValue().lines(), false, e.getValue().key())) {
 				hung++;
 			} else {
 				l.clear(moved.id(), e.getKey());
