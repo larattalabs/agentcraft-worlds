@@ -323,7 +323,7 @@ function contextConfig(v: unknown): AgentContextConfig {
   if (o.mcpServers && typeof o.mcpServers === 'object') {
     for (const [name, def] of Object.entries(o.mcpServers as Record<string, unknown>)) {
       // "agentcraft" is the team tools server; nothing may replace it
-      if (name !== 'agentcraft' && /^[\w-]+$/.test(name) && def && typeof def === 'object') servers[name] = def as McpServerConfig;
+      if (name !== 'agentcraft' && /^[\w-]+$/.test(name) && !RESERVED_KEYS.has(name) && def && typeof def === 'object') servers[name] = def as McpServerConfig;
     }
   }
   return {

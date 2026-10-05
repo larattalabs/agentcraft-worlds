@@ -10,7 +10,9 @@
 // configuration in place (the backends hold references to its objects, so they see the change).
 //
 // No secret ever leaves through here: environment values are never read (only which variables are
-// set), MCP servers are shown by name and command only, a repository's env by its variable names.
+// set); secret maps (a repository's env, an MCP server's env) show variable names only and take
+// partial updates; MCP servers show no env values, no credential-looking arguments and URLs without
+// credentials or query (settings-secrets.ts). Errors, acks, broadcasts and logs name keys only.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +26,7 @@ import { samePath } from './repos.js';
 import { defaultUserName } from './user.js';
 import { writeFileAtomic } from './util/fsx.js';
 import { jsonErrorMessage } from './util/jsonpos.js';
+import { checkMcpEntries, checkSecretPatch, mcpServersFingerprint, mcpServersView, mergeMcpServers, mergeSecretMap, repoEnvRefusal, secretMapView } from './settings-secrets.js';
 
 /** A config.get / config.set problem the user can fix (refused with this message). */
 export class ConfigError extends Error {}
@@ -67,6 +70,12 @@ interface Spec {
   get: (cfg: Config, rs: RepoSettings, raw: unknown) => unknown;
   /** value for the file; undefined = remove the key (back to the default) */
   normalize?: (v: unknown, x: SpecCtx) => Checked;
+  /** secretMap / mcpServers: a partial update applied to what config.json holds now (`current`) */
+  merge?: (v: unknown, current: unknown) => Checked;
+  /** secretMap: variables that may not be set here (why) */
+  refuseKey?: (name: string) => string | undefined;
+  /** restart-only keys whose shown value hides something: what pendingRestart compares instead of the value */
+  fingerprint?: (cfg: Config) => string;
 }
 
 // ---- type checks ---------------------------------------------------------------------------------
@@ -111,6 +120,10 @@ function checkType(s: Spec, v: unknown, x: SpecCtx): Checked {
     }
     case 'map':
       return { error: 'is read-only' };
+    case 'secretMap':
+      return checkSecretPatch(v, s.refuseKey);
+    case 'mcpServers':
+      return checkMcpEntries(v);
   }
 }
 
@@ -199,13 +212,14 @@ function globalSpecs(x: SpecCtx): Spec[] {
     {
       key: 'claude.context.mcpServers',
       group: 'context',
-      type: 'map',
-      readOnly: true,
+      type: 'mcpServers',
       label: 'MCP servers',
-      help: 'The MCP servers in config.json (claude.context.mcpServers), by name and command. Edit config.json to change them.',
+      help: 'Your MCP servers the agents may use (their tools still ask unless allowed above): a command (stdio) or a URL (http, sse), with environment variables whose values are never shown. After a restart.',
       live: false,
-      def: {},
-      get: (cfg) => Object.fromEntries(Object.entries(cfg.claude.context.mcpServers).map(([name, d]) => [name, serverCommand(d)])),
+      def: [],
+      get: (cfg) => mcpServersView(cfg.claude.context.mcpServers as Record<string, unknown>),
+      merge: (v, current) => mergeMcpServers(current, v as Parameters<typeof mergeMcpServers>[1]),
+      fingerprint: (cfg) => mcpServersFingerprint(cfg.claude.context.mcpServers as Record<string, unknown>),
     },
     // subagents
     { key: 'claude.subagents.enabled', group: 'subagents', type: 'bool', label: 'Subagents', help: 'Let agents start Claude Code subagents (they work in the agent\'s worktree under the same rules). After a restart.', live: false, def: false, get: g('claude.subagents.enabled') },
@@ -265,7 +279,18 @@ function repoSpecs(x: SpecCtx): Spec[] {
         return bad.length ? { error: `${bad.join(', ')}: must be relative to the repository, without ..` } : { value: v };
       },
     },
-    { key: 'env', group: 'worktrees', type: 'map', readOnly: true, label: 'Environment', help: 'Variables set for agents, setup and tests in this repository (names only; values are never shown). Edit config.json to change them.', live: true, def: {}, get: (_c, rs) => Object.fromEntries(Object.keys(rs.env ?? {}).map((k) => [k, '(hidden)'])) },
+    {
+      key: 'env',
+      group: 'worktrees',
+      type: 'secretMap',
+      label: 'Environment',
+      help: 'Variables set for agents, setup and tests in this repository, e.g. a PATH for its Node version. Values are never shown: set a variable to replace it, clear it to remove it. git variables and the client token cannot be set.',
+      live: true,
+      def: {},
+      get: (_c, rs) => secretMapView(rs.env),
+      refuseKey: repoEnvRefusal,
+      merge: (v, current) => ({ value: mergeSecretMap(current, v as Record<string, string | null>) }),
+    },
     { key: 'subagents', group: 'agents', type: 'enum', options: ['off', 'repo'], label: 'Repository agents as subagents', help: 'repo: agents working here may use the repository\'s .claude/agents files as subagents.', live: true, def: 'off', get: (_c, rs) => rs.subagents ?? 'off', normalize: (v) => ({ value: v === 'off' ? undefined : v }) },
     { key: 'prReview.autoSeverities', group: 'review', type: 'stringList', options: SEVERITIES, label: 'Fold in automatically', help: 'Automated review findings of these severities are folded in without asking you.', live: true, def: ['critical', 'important'], get: (_c, rs) => rs.prReview?.autoSeverities ?? ['critical', 'important'] },
     { key: 'prReview.maxRounds', group: 'review', type: 'int', min: 0, max: 10, label: 'Automatic fold-in rounds', help: 'Fold-in rounds driven by automated reviews per pull request before you decide.', live: true, def: 2, get: (_c, rs) => rs.prReview?.maxRounds ?? 2 },
@@ -292,20 +317,6 @@ function repoSpecs(x: SpecCtx): Spec[] {
     });
   }
   return specs;
-}
-
-/** An MCP server for display: its command (stdio) or type and host (remote); never args, env or headers. */
-function serverCommand(d: unknown): string {
-  const o = (d && typeof d === 'object' ? d : {}) as Raw;
-  if (typeof o.command === 'string') return o.command;
-  if (typeof o.url === 'string') {
-    try {
-      return `${typeof o.type === 'string' ? o.type : 'remote'} ${new URL(o.url).host}`;
-    } catch {
-      return String(o.type ?? 'remote');
-    }
-  }
-  return String(o.type ?? '?');
 }
 
 // ---- repository agent files ----------------------------------------------------------------------
@@ -557,16 +568,18 @@ export function configSet(t: ConfigTarget, changes: Array<{ key: string; value: 
       errors.push(`${key}: is read-only (edit config.json by hand)`);
       continue;
     }
+    // write to the spelling the file already uses
+    let at = fileKeys(s).find((k) => hasPath(section, k)) ?? s.key.split('.');
+    const there = getPath(section, at);
     let checked: Checked = value === null ? { value: undefined } : checkType(s, value, x);
     if ('value' in checked && checked.value !== undefined && s.normalize) checked = s.normalize(checked.value, x);
+    // a partial update (secret maps, MCP servers) applies to what the file holds now
+    if ('value' in checked && checked.value !== undefined && s.merge) checked = s.merge(checked.value, there);
     if ('error' in checked) {
       errors.push(`${key}: ${checked.error}`);
       continue;
     }
-    // write to the spelling the file already uses
-    let at = fileKeys(s).find((k) => hasPath(section, k)) ?? s.key.split('.');
     // never replace an object with a scalar (e.g. notify: { desktop, discord })
-    const there = getPath(section, at);
     if (s.objectKey && there && typeof there === 'object' && !Array.isArray(there)) at = [...at, s.objectKey];
     writes.push({ spec: s, keys: [...sectionPath, ...at], value: checked.value });
   }
@@ -594,18 +607,23 @@ export function configSet(t: ConfigTarget, changes: Array<{ key: string; value: 
   return { applied, restartRequired, overridden, next };
 }
 
+/** What pendingRestart compares for a restart-only key: its value, or its fingerprint when the value hides something. */
+function restartValue(s: Spec, cfg: Config): string {
+  return s.fingerprint ? s.fingerprint(cfg) : JSON.stringify(s.get(cfg, {}, undefined));
+}
+
 /** The restart-only settings whose configured value differs from what the running Foreman started with. */
 export function pendingRestart(baseline: Map<string, string>, next: Config, cast: CastMember[]): string[] {
   const x: SpecCtx = { cfg: next, cast };
   return globalSpecs(x)
-    .filter((s) => !s.live && !s.readOnly && baseline.has(s.key) && baseline.get(s.key) !== JSON.stringify(s.get(next, {}, undefined)))
+    .filter((s) => !s.live && !s.readOnly && baseline.has(s.key) && baseline.get(s.key) !== restartValue(s, next))
     .map((s) => s.key);
 }
 
 /** The restart-only settings as the Foreman started (compared by pendingRestart). */
 export function restartBaseline(cfg: Config, cast: CastMember[]): Map<string, string> {
   const x: SpecCtx = { cfg, cast };
-  return new Map(globalSpecs(x).filter((s) => !s.live && !s.readOnly).map((s) => [s.key, JSON.stringify(s.get(cfg, {}, undefined))]));
+  return new Map(globalSpecs(x).filter((s) => !s.live && !s.readOnly).map((s) => [s.key, restartValue(s, cfg)]));
 }
 
 /** Replace an object's contents in place (other holders of the reference see the change). */
