@@ -1,6 +1,6 @@
 <div align="center">
 
-# AgentCraft
+# AgentCraft Worlds
 
 **Teams of Claude agents doing real work on your code, in Minecraft buildings you place in your own world.**
 
@@ -18,7 +18,7 @@
 
 <br>
 
-> **This is a fork** of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft).
+> **AgentCraft Worlds is a fork** of [AgentCraft](https://github.com/blendi-remade/agentcraft) by blendi-remade (MIT).
 > Upstream gives you one studio in a dedicated world. This fork turns it into a **village**: a
 > building per repository, placed wherever you like in any singleplayer world (Hardcore included),
 > each with its own lead, and an in-game **hub** that replaces chat commands, config files and launch
@@ -388,7 +388,7 @@ On macOS, install Java 25 with `brew install openjdk@25` (the launcher selects t
 changing your system Java), then:
 
 ```sh
-git clone https://github.com/nlaratta/agentcraft
+git clone https://github.com/larattalabs/agentcraft-worlds
 cd agentcraft
 
 node tools/mac.mjs launch --backend sim             # try it first: a simulated team, no API usage

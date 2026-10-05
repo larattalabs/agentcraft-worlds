@@ -2,10 +2,11 @@
 	"schemaVersion": 1,
 	"id": "agentcraft",
 	"version": "${version}",
-	"name": "AgentCraft",
-	"description": "Minecraft as a spatial UI for real multi-agent Claude work.",
+	"name": "AgentCraft Worlds",
+	"description": "Teams of Claude agents doing real work on your code, in Minecraft buildings you place in your own world. A fork of AgentCraft by blendi-remade.",
 	"authors": [
-		"Blendi"
+		"Blendi",
+		"Laratta Labs"
 	],
 	"license": "MIT",
 	"icon": "assets/agentcraft/icon.png",
@@ -30,5 +31,10 @@
 		"minecraft": "~26.3",
 		"java": ">=25",
 		"fabric-api": "*"
+	},
+	"contact": {
+		"homepage": "https://github.com/larattalabs/agentcraft-worlds",
+		"sources": "https://github.com/larattalabs/agentcraft-worlds",
+		"issues": "https://github.com/larattalabs/agentcraft-worlds/issues"
 	}
 }

@@ -44,7 +44,7 @@ public final class WelcomeScreen extends Screen implements dev.agentcraft.client
 
 	/** Opened from {@code parent} (the hub's Keys &amp; help): closing returns there. */
 	public WelcomeScreen(@org.jspecify.annotations.Nullable Screen parent) {
-		super(Component.literal("Welcome to AgentCraft"));
+		super(Component.literal("Welcome to AgentCraft Worlds"));
 		this.parent = parent;
 	}
 
@@ -115,7 +115,7 @@ public final class WelcomeScreen extends Screen implements dev.agentcraft.client
 		maxScroll = Math.max(0, body - view);
 		scroll = Math.max(0, Math.min(scroll, maxScroll));
 		Panels.panel(g, px, py, pw, ph);
-		Panels.header(g, font, "Welcome to AgentCraft", cx - 2, cy - 2, cw + 4);
+		Panels.header(g, font, "Welcome to AgentCraft Worlds", cx - 2, cy - 2, cw + 4);
 		int top = cy + 18;
 		g.enableScissor(cx - 2, top, cx + cw + 2, top + view);
 		int y = top - scroll;

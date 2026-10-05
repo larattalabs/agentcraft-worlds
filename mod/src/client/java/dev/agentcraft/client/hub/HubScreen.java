@@ -89,7 +89,7 @@ public final class HubScreen extends Screen {
 	private boolean textInput;
 
 	public HubScreen(HubTab tab) {
-		super(Component.literal("AgentCraft hub"));
+		super(Component.literal("AgentCraft Worlds"));
 		this.tab = tab;
 	}
 
@@ -462,7 +462,7 @@ public final class HubScreen extends Screen {
 		int cw = pw - pad.left() - pad.right();
 		int bottom = py + ph - pad.bottom();
 		Panels.panel(g, px, py, pw, ph);
-		Panels.header(g, font, "AgentCraft hub", cx - 2, cy - 2, cw + 4);
+		Panels.header(g, font, "AgentCraft Worlds", cx - 2, cy - 2, cw + 4);
 		String keyHint = Keys.label(Keys.hub);
 		int kw = UiBits.hintsWidth(font, keyHint, "close");
 		UiBits.hints(g, font, cx + cw - kw - 2, cy - 1, false, keyHint, "close");
