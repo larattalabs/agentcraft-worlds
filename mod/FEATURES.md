@@ -377,7 +377,9 @@ except the submit nodes themselves.
   screen (one that does not fit above may come down over its own head, nudged in front of it), a
   plate that cannot find a free spot on screen overlaps cleanly by rank instead of flying off screen,
   a slide never runs through a plate placed before it (it jumps), and leader lines pass behind other
-  plates and bubbles (gaps cut where they cross: `AgentRenderState.leaderGaps`).
+  plates and bubbles and the podium's reserved bubble (gaps cut where they cross: `AgentRenderState.leaderGaps`, computed
+  by the pure `ui.LeaderGaps`: sorted, merged, and more crossings than the four slots merge into one longer gap, so a
+  line never runs across a plate; `LeaderGapsTest` checks that property on random crowds).
 - **Agent card** (`AgentCardScreen`, empty-hand sneak + right-click an agent, or the Team tab / a task / the console roster): name/title/role, state, activity, task,
   **the decision it owns with a way to act on it**, decisions it filed that wait on you through
   another agent ("Filed d3 for you: merge of t4 (Wren's work)"), the last log lines, Message /
