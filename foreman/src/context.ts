@@ -15,6 +15,8 @@ export interface Ctx {
   emit(msg: Outbound): void;
   now(): number;
   log: Logger;
+  /** Cut every known secret out of a text (redact.ts); identity when absent. */
+  redact?: (text: string) => string;
 }
 
 export function consoleLogger(prefix = 'foreman', opts: { debug?: boolean; quiet?: boolean } = {}): Logger {
@@ -30,6 +32,16 @@ export function consoleLogger(prefix = 'foreman', opts: { debug?: boolean; quiet
     debug: (m) => {
       if (opts.debug) console.log(`${stamp()} [${prefix}] debug ${m}`);
     },
+  };
+}
+
+/** A logger that redacts every line before `base` sees it. */
+export function redactingLogger(base: Logger, redact: (s: string) => string): Logger {
+  return {
+    info: (m) => base.info(redact(m)),
+    warn: (m) => base.warn(redact(m)),
+    error: (m) => base.error(redact(m)),
+    debug: (m) => base.debug(redact(m)),
   };
 }
 

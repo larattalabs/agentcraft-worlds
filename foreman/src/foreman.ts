@@ -7,7 +7,8 @@ import { MessageBus } from './bus.js';
 import { LEAD_ID, loadCast, type CastMember } from './cast.js';
 import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
-import { consoleLogger, type Ctx, type Logger } from './context.js';
+import { consoleLogger, redactingLogger, type Ctx, type Logger } from './context.js';
+import { configSecrets, Redactor } from './redact.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
@@ -177,6 +178,8 @@ export class Foreman {
   restarter: (() => void) | undefined;
   /** the restart-only settings as this Foreman started (settings.ts pendingRestart) */
   private restartBase: Map<string, string>;
+  /** every secret value this Foreman knows (redact.ts): cut out of logs, feed, acks, errors and notifications */
+  readonly redactor = new Redactor();
 
   private listeners = new Set<(m: Outbound) => void>();
   private logBuffers = new Map<string, LogEntry[]>();
@@ -191,10 +194,11 @@ export class Foreman {
 
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
-    this.log = opts.logger ?? consoleLogger('foreman', { debug: opts.config.debug, quiet: opts.config.quiet });
+    this.redactor.add(configSecrets(opts.config));
+    this.log = redactingLogger(opts.logger ?? consoleLogger('foreman', { debug: opts.config.debug, quiet: opts.config.quiet }), (s) => this.redact(s));
     this.store = new Store(opts.config.dataDir);
     const now = opts.now ?? Date.now;
-    this.ctx = { store: this.store, emit: (m) => this.emit(m), now, log: this.log };
+    this.ctx = { store: this.store, emit: (m) => this.emit(m), now, log: this.log, redact: (s) => this.redact(s) };
     this.tasks = new TaskGraph(this.ctx);
     this.bus = new MessageBus(this.ctx);
     this.memory = new Memory(this.ctx, path.join(opts.config.dataDir, 'memory'));
@@ -222,6 +226,16 @@ export class Foreman {
 
   // ---- event plumbing ---------------------------------------------------------------------
 
+  /** `text` without any secret this Foreman knows (redact.ts). */
+  redact(text: string): string {
+    return this.redactor.redact(text);
+  }
+
+  /** More secret values to redact (the client token, set up after the Foreman). */
+  addSecrets(values: Iterable<string | undefined>): void {
+    this.redactor.add(values);
+  }
+
   subscribe(l: (m: Outbound) => void): () => void {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
@@ -236,6 +250,8 @@ export class Foreman {
     }
     // a building lead exists for the mod only while it is assigned
     if (m.type === 'agent.upsert' && !this.visible(m.agent)) return;
+    // what an agent says goes out as text (a copy: the store keeps its own)
+    if (m.type === 'agent.say') m = { ...m, text: this.redact(m.text) };
     for (const l of this.listeners) {
       try {
         l(m);
@@ -363,7 +379,8 @@ export class Foreman {
   /** Append a log line to an agent monitor. Batched (~30ms) into agent.log frames. */
   agentLog(agentId: string, kind: LogKind, text: string): void {
     if (this.closed) return;
-    const entry: LogEntry = { ts: this.ctx.now(), kind, text: truncate(text.replace(/\r\n/g, '\n'), LOG_TEXT_MAX) };
+    // redacted before it is cut, persisted and broadcast
+    const entry: LogEntry = { ts: this.ctx.now(), kind, text: truncate(this.redact(text.replace(/\r\n/g, '\n')), LOG_TEXT_MAX) };
     this.store.appendLog(agentId, [entry]);
     const buf = this.logBuffers.get(agentId) ?? [];
     buf.push(entry);
@@ -939,7 +956,7 @@ export class Foreman {
     this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user', goalId: d.goalId });
     this.notify('need_user', `${who}: ${truncate(d.question, 120)}`, d.id);
     this.notifyExternal('need_user', `${who}: ${truncate(d.question, 200)}`);
-    this.notifier.needUser(`${who}: ${d.question}`);
+    this.notifier.needUser(this.redact(`${who}: ${d.question}`));
   }
 
   /**
@@ -948,7 +965,7 @@ export class Foreman {
    */
   notifyExternal(kind: ExternalNotifyKind, text: string): void {
     try {
-      this.discord.send(kind, text);
+      this.discord.send(kind, this.redact(text));
     } catch (e) {
       this.log.warn(`notify.discord: ${(e as Error).message}`);
     }
@@ -958,7 +975,7 @@ export class Foreman {
     const m: Outbound = {
       type: 'notify',
       level,
-      text,
+      text: this.redact(text),
       ts: this.ctx.now(),
       ...(decisionId ? { decisionId } : {}),
     };
@@ -1170,7 +1187,8 @@ export class Foreman {
     } catch (e) {
       const known = e instanceof ClientError || e instanceof ConfigError || e instanceof TaskError || e instanceof RepoError || e instanceof DecisionError || e instanceof MemoryError;
       // a JSON.parse message can quote the text it failed on (a file with secrets): never forwarded
-      const message = known ? (e as Error).message : e instanceof SyntaxError ? 'internal error: invalid JSON' : `internal error: ${(e as Error).message}`;
+      // and whatever a message still carries of a known secret (a spawn error quoting a value) is cut
+      const message = this.redact(known ? (e as Error).message : e instanceof SyntaxError ? 'internal error: invalid JSON' : `internal error: ${(e as Error).message}`);
       if (!known) this.log.error(`${msg.type}: ${(e as Error).stack ?? e}`);
       reply({ type: 'error', message, ...(msg.id ? { re: msg.id } : {}) });
       ack(false, { error: message });
@@ -1282,6 +1300,8 @@ export class Foreman {
   setConfig(repoId: string | undefined, changes: Array<{ key: string; value: unknown }>): Record<string, unknown> {
     const repo = repoId ? this.repoTarget(repoId) : undefined;
     const res = configSet({ cfg: this.config, cast: this.cast, ...(repo ? { repo } : {}) }, changes);
+    // the new values are secrets from now on (restart-only ones too: the file holds them)
+    this.addSecrets(configSecrets(res.next));
     const before = { titles: Object.fromEntries(this.cast.map((c) => [c.id, this.config.claude.agents[c.id]?.title])) };
     applyLive(this.config, res.next);
     this.afterConfigApplied(before.titles);

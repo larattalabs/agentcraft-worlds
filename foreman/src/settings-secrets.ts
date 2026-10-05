@@ -1,67 +1,90 @@
 // Settings that hold secrets (docs/WAVE3.md contracts S1 and S2), for settings.ts.
 //
+// Secrets are write-only by design, not masked by heuristics: config.get never returns a value that
+// could be one, so there is nothing to restore and nothing that can leak through a view.
+//
 // S1 secret maps (type "secretMap": a repository's `env`, each MCP server's `env`): config.get shows
-// the variable names only, `{ NAME: "(set)" }`; config.set takes a partial update `{ NAME: "value" |
-// null }` (null removes a variable) that is merged into what config.json holds now.
+// the variable names only, as a list `["NAME", ...]`; config.set takes a partial update `{ NAME:
+// "value" | null }` (null removes a variable) merged into what config.json holds now. A value that
+// is a placeholder ("(set)", "(hidden)", "(staged)", "[redacted]") or holds control characters is
+// refused, so echoing a view can never overwrite a secret.
 //
 // S2 MCP servers (type "mcpServers": claude.context.mcpServers): config.get shows `[{ name, type,
-// command?, args?, url?, envKeys }]`; config.set takes the same entries (env in the S1 partial form,
-// under `env`) and `{ name, remove: true }`, each an upsert of that one server.
+// command?, argCount?, url?, urlHasPath?, envKeys, headerKeys? }]`: the executable only (the first
+// word of the command), how many arguments there are, the URL as scheme://host[:port]. config.set
+// takes `[{ name, type, command?, args?, url?, env? } | { name, remove: true }]`, each an upsert of
+// that one server: a field left out keeps the stored value exactly, a field sent replaces it exactly
+// (args: the complete new list). The view's read-only fields (envKeys, headerKeys, argCount,
+// urlHasPath) may be sent back and are ignored. A `url` or `command` equal to what config.get showed
+// for a longer stored one is refused (it would cut the stored value down to its view).
 //
-// Nothing secret leaves through here: env values are never shown; an argument is shown only when it
-// clearly holds nothing secret (a bare flag, a number, a path, a package or file name, a URL without
-// credentials or query) and is not the value of a credential flag (--token, -H/--header, --key, --pat,
-// ...); everything else (headers, "Bearer ...", token-shaped words, KEY=value with an unsafe value)
-// is shown as "(hidden)". When an entry comes back with the hidden or shortened form in the same
-// place, the stored original is kept, so editing a server in the hub never loses what the hub could
-// not show; one that moved is refused. Error messages name keys, never values.
+// Errors name places (server #2, env key #1), never what the caller sent.
 import { createHash } from 'node:crypto';
 import { RESERVED_KEYS } from './config.js';
+import { REDACTED } from './redact.js';
 import { isSecretEnvVar } from './util/env.js';
 
 type Raw = Record<string, unknown>;
 type Checked = { value: unknown } | { error: string };
 
-/** The value config.get shows for every variable of a secret map. */
-export const SECRET_SET = '(set)';
-/** An argument config.get does not show. */
-export const HIDDEN = '(hidden)';
+/** Values config.get or the hub show in place of a secret: never stored as one. */
+export const PLACEHOLDERS = ['(set)', '(hidden)', '(staged)', '(not shown)', REDACTED];
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_VALUE = 20_000;
 const MAX_KEYS = 200;
+/** Control characters a value may not hold (tab, newline and carriage return are fine: a PEM key has lines). */
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+// eslint-disable-next-line no-control-regex
+const ANY_CONTROL = /[\u0000-\u001f\u007f]/;
 
 const isObject = (v: unknown): v is Raw => !!v && typeof v === 'object' && !Array.isArray(v);
 const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
-// ---- S1 secret maps ----------------------------------------------------------------------------
-
-/** config.get's view: names only. */
-export function secretMapView(m: unknown): Record<string, string> {
-  return Object.fromEntries(Object.keys(isObject(m) ? m : {}).filter((k) => !RESERVED_KEYS.has(k)).map((k) => [k, SECRET_SET]));
+/** A placeholder sent back as a value (what a view showed, not a secret). */
+export function isPlaceholder(v: string): boolean {
+  const t = v.trim().toLowerCase();
+  return PLACEHOLDERS.some((p) => t === p.toLowerCase());
 }
 
-/** A partial update `{ NAME: string | null }`. `refuse` names variables that may not be set here. */
+/** Why a secret value is refused (no value is ever named), or undefined. */
+function valueProblem(v: unknown): string | undefined {
+  if (typeof v !== 'string') return 'must be text or null';
+  if (v.length > MAX_VALUE) return 'is too long';
+  if (CONTROL.test(v)) return 'must not contain control characters';
+  if (isPlaceholder(v)) return 'is a placeholder, not a value (leave the variable out to keep it)';
+  return undefined;
+}
+
+// ---- S1 secret maps ----------------------------------------------------------------------------
+
+/** config.get's view: the variable names only. */
+export function secretMapView(m: unknown): string[] {
+  return Object.keys(isObject(m) ? m : {}).filter((k) => !RESERVED_KEYS.has(k));
+}
+
+/** A partial update `{ NAME: string | null }`. `refuse` says why a variable may not be set here. */
 export function checkSecretPatch(v: unknown, refuse?: (name: string) => string | undefined): Checked {
   if (!isObject(v)) return { error: 'must be an object of variable names to text (or null to remove one)' };
   const keys = Object.keys(v);
   if (keys.length > MAX_KEYS) return { error: `at most ${MAX_KEYS} variables` };
   const problems: string[] = [];
-  for (const k of keys) {
+  for (const [i, k] of keys.entries()) {
+    const at = `env key #${i + 1}`;
     if (!ENV_NAME.test(k) || RESERVED_KEYS.has(k)) {
-      problems.push(`"${k.slice(0, 64)}" is not a variable name`);
+      problems.push(`${at} is not a valid variable name`);
       continue;
     }
     const why = refuse?.(k);
     if (why) {
-      problems.push(`${k}: ${why}`);
+      problems.push(`${at}: ${why}`);
       continue;
     }
     const val = v[k];
     if (val === null) continue;
-    if (typeof val !== 'string') problems.push(`${k}: must be text or null`);
-    else if (val.length > MAX_VALUE) problems.push(`${k}: is too long`);
-    else if (val.includes('\0')) problems.push(`${k}: must not contain a NUL character`);
+    const bad = valueProblem(val);
+    if (bad) problems.push(`${at}: the value ${bad}`);
   }
   return problems.length ? { error: problems.join(', ') } : { value: v };
 }
@@ -95,15 +118,18 @@ export type McpType = 'stdio' | 'http' | 'sse';
 export interface McpServerView {
   name: string;
   type: McpType;
+  /** the executable only (the first word of the stored command) */
   command?: string;
-  args?: string[];
+  /** stdio: how many arguments are stored (never their values) */
+  argCount?: number;
+  /** http / sse: scheme://host[:port] only (absent: the stored URL does not parse) */
   url?: string;
+  /** http / sse: the stored URL has more than scheme://host[:port] (a path, query or fragment) */
+  urlHasPath?: boolean;
   envKeys: string[];
+  /** the names of config.json's headers (values never) */
+  headerKeys?: string[];
 }
-
-const SECRET_WORD = /token|secret|passw(or)?d|passwd|pwd|api[-_]?key|apikey|auth|credential|bearer|private[-_]?key|access[-_]?key|session[-_]?key|cookie/i;
-/** Words shaped like a credential: known prefixes, or a long run of key characters. */
-const TOKEN_SHAPE = /^(sk-|sk_|pk_|rk_|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|glpat-|xox[abposr]-|AKIA|AIza|ya29\.|eyJ)[\w.-]{6,}$|^[A-Za-z0-9+/_=-]{32,}$/;
 
 function serverType(d: Raw): McpType {
   if (d.type === 'http' || d.type === 'sse') return d.type;
@@ -111,56 +137,17 @@ function serverType(d: Raw): McpType {
   return typeof d.url === 'string' ? 'http' : 'stdio';
 }
 
-/** A URL without credentials, query or fragment (undefined: not a URL). */
-function shortUrl(u: string): string | undefined {
+/** The executable of a command line (what config.get shows). */
+const executable = (command: string) => command.trim().split(/\s+/)[0] ?? '';
+
+/** scheme://host[:port] of a URL, and whether it has more; undefined: not a URL. */
+function urlView(u: string): { url: string; hasPath: boolean } | undefined {
   try {
     const p = new URL(u);
-    p.username = '';
-    p.password = '';
-    p.search = '';
-    p.hash = '';
-    return p.toString();
+    return { url: p.origin === 'null' ? `${p.protocol}//${p.host}` : p.origin, hasPath: (p.pathname !== '' && p.pathname !== '/') || !!p.search || !!p.hash || !!p.username || !!p.password };
   } catch {
     return undefined;
   }
-}
-
-/** Flags whose next argument is a value that may be a credential (a header, a key, a user:password). */
-const VALUE_FLAG = /^(-H|-u|-e|--?(env|user|cookie|header|headers)|--?[\w-]*(key|keys|pat|pats|pass))$/i;
-/** Words shown as they are: bare flags, numbers, paths and package / file names (no ':', '=', spaces, quotes, ...). */
-const SAFE_WORD = /^(--?[A-Za-z][\w-]*|-?\d+(\.\d+)?|(~|\.{1,2})?\/[\w@%+.~/-]*|@?[\w.-]+(\/[\w.-]+)*(@[\w.^~*-]+)?)$/;
-/** A long run of letters and digits mixed (no separator): likely a key, not a name. */
-const keyish = (w: string) => w.length >= 16 && /\d/.test(w) && /[A-Za-z]/.test(w);
-
-/** A value shown as it is only when it clearly holds nothing secret; a URL loses credentials and query. */
-function maskValue(a: string): string {
-  if (/\b(bearer|basic|token)\s+\S/i.test(a)) return HIDDEN;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(a) && !/\s/.test(a)) {
-    const s = shortUrl(a);
-    if (s === undefined) return HIDDEN;
-    return s !== a && s !== `${a}/` ? s : a;
-  }
-  if (a === '' || (SAFE_WORD.test(a) && a.length <= 200 && !(TOKEN_SHAPE.test(a) && !a.includes('/')) && !a.split(/[/@.-]/).some(keyish))) return a;
-  return HIDDEN;
-}
-
-/**
- * One argument as config.get shows it (`prev`: the argument before it). Hidden unless it clearly holds
- * nothing secret: the value after a credential flag (--token, -H, --header, --key, --pat, ...), a
- * header ("Authorization: Bearer ..."), anything not shaped like a flag, number, path or name.
- */
-function maskArg(a: string, prev: string | undefined): string {
-  if (prev && /^--?[\w-]+$/.test(prev) && (SECRET_WORD.test(prev) || VALUE_FLAG.test(prev)) && !/^--?[A-Za-z][\w-]*$/.test(a)) return HIDDEN;
-  const eq = /^(--?[\w-]+|[A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(a);
-  if (eq) {
-    if (SECRET_WORD.test(eq[1]!) || VALUE_FLAG.test(eq[1]!)) return `${eq[1]}=${HIDDEN}`;
-    return `${eq[1]}=${maskValue(eq[2]!)}`;
-  }
-  return maskValue(a);
-}
-
-function maskArgs(args: string[]): string[] {
-  return args.map((a, i) => maskArg(a, args[i - 1]));
 }
 
 /** config.get's view of claude.context.mcpServers (as the Foreman parsed it). */
@@ -168,16 +155,20 @@ export function mcpServersView(servers: Record<string, unknown>): McpServerView[
   return Object.entries(servers).map(([name, def]) => {
     const d = isObject(def) ? def : {};
     const type = serverType(d);
-    const args = Array.isArray(d.args) ? d.args.filter((a): a is string => typeof a === 'string') : undefined;
-    const url = typeof d.url === 'string' ? (shortUrl(d.url) ?? '(not a URL)') : undefined;
-    return {
-      name,
-      type,
-      ...(typeof d.command === 'string' ? { command: d.command } : {}),
-      ...(args ? { args: maskArgs(args) } : {}),
-      ...(url !== undefined ? { url } : {}),
-      envKeys: Object.keys(isObject(d.env) ? d.env : {}).filter((k) => !RESERVED_KEYS.has(k)),
-    };
+    const view: McpServerView = { name, type, envKeys: Object.keys(isObject(d.env) ? d.env : {}).filter((k) => !RESERVED_KEYS.has(k)) };
+    if (type === 'stdio') {
+      if (typeof d.command === 'string') view.command = executable(d.command);
+      view.argCount = Array.isArray(d.args) ? d.args.length : 0;
+    } else if (typeof d.url === 'string') {
+      const u = urlView(d.url);
+      if (u) view.url = u.url;
+      view.urlHasPath = u ? u.hasPath : true;
+    }
+    const headers = isObject(d.headers) ? Object.keys(d.headers).filter((k) => !RESERVED_KEYS.has(k)) : [];
+    if (headers.length) view.headerKeys = headers;
+    // read-only fields first, envKeys last (stable order for the hub)
+    const { envKeys, ...rest } = view;
+    return { ...rest, envKeys };
   });
 }
 
@@ -187,8 +178,11 @@ export function mcpServersFingerprint(servers: Record<string, unknown>): string 
 }
 
 const NAME_RE = /^[\w-]{1,64}$/;
+const FIELDS = ['name', 'remove', 'type', 'command', 'args', 'url', 'env', 'envKeys', 'headerKeys', 'argCount', 'urlHasPath'];
 
 interface Entry {
+  /** 1-based place in the list (errors name it, never the name the caller sent) */
+  pos: number;
   name: string;
   remove?: true;
   type?: McpType;
@@ -196,6 +190,24 @@ interface Entry {
   args?: string[];
   url?: string;
   env?: Record<string, string | null>;
+}
+
+const isStringList = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+/** An http(s) URL as stored (normalized), or why it is refused. */
+function checkUrl(v: unknown): { url: string } | { error: string } {
+  if (typeof v !== 'string' || !v || v.length > 2000) return { error: 'url must be an http(s) URL' };
+  if (ANY_CONTROL.test(v) || /\s/.test(v)) return { error: 'url must not contain spaces or control characters' };
+  let p: URL;
+  try {
+    p = new URL(v);
+  } catch {
+    return { error: 'url must be an http(s) URL' };
+  }
+  if (p.protocol !== 'https:' && p.protocol !== 'http:') return { error: 'url must be an http(s) URL' };
+  if (p.username || p.password) return { error: 'url must not contain credentials (put them into the server\'s headers in config.json)' };
+  if (p.hash) return { error: 'url must not contain a fragment' };
+  return { url: p.href };
 }
 
 /** Check the entries of a config.set value (shape only; merged with the file in mergeMcpServers). */
@@ -206,92 +218,100 @@ export function checkMcpEntries(v: unknown): Checked {
   const seen = new Set<string>();
   const entries: Entry[] = [];
   for (const [i, e] of v.entries()) {
+    const at = `server #${i + 1}`;
     if (!isObject(e)) {
-      problems.push(`entry ${i + 1}: must be an object`);
+      problems.push(`${at}: must be an object`);
       continue;
     }
     const name = typeof e.name === 'string' ? e.name.trim() : '';
-    const label = NAME_RE.test(name) ? name : `entry ${i + 1}`;
     if (!NAME_RE.test(name) || RESERVED_KEYS.has(name)) {
-      problems.push(`${label}: name must be letters, digits, _ or - (at most 64)`);
+      problems.push(`${at}: name must be letters, digits, _ or - (at most 64)`);
       continue;
     }
     if (name.toLowerCase() === 'agentcraft') {
-      problems.push(`${name}: is the team tools server's name`);
+      problems.push(`${at}: agentcraft is the team tools server's name`);
       continue;
     }
     if (seen.has(name)) {
-      problems.push(`${name}: listed twice`);
+      problems.push(`${at}: the same server is listed twice`);
       continue;
     }
     seen.add(name);
-    const unknown = Object.keys(e).filter((k) => !['name', 'remove', 'type', 'command', 'args', 'url', 'env', 'envKeys'].includes(k));
-    if (unknown.length) {
-      problems.push(`${name}: unknown field${unknown.length > 1 ? 's' : ''} ${unknown.map((k) => k.slice(0, 32)).join(', ')}`);
+    const unknown = Object.keys(e).filter((k) => !FIELDS.includes(k)).length;
+    if (unknown) {
+      problems.push(`${at}: ${unknown} unknown field${unknown > 1 ? 's' : ''} (fields: ${FIELDS.join(', ')})`);
+      continue;
+    }
+    // the view's read-only fields may come back; they are ignored, but must have the view's types
+    if ((e.envKeys !== undefined && !isStringList(e.envKeys)) || (e.headerKeys !== undefined && !isStringList(e.headerKeys))) {
+      problems.push(`${at}: envKeys and headerKeys are lists of names (read-only, ignored)`);
+      continue;
+    }
+    if ((e.argCount !== undefined && !(typeof e.argCount === 'number' && Number.isInteger(e.argCount) && e.argCount >= 0)) || (e.urlHasPath !== undefined && typeof e.urlHasPath !== 'boolean')) {
+      problems.push(`${at}: argCount is a number and urlHasPath true or false (read-only, ignored)`);
       continue;
     }
     if (e.remove !== undefined) {
-      if (e.remove !== true) problems.push(`${name}: remove must be true`);
-      else if (Object.keys(e).some((k) => k !== 'name' && k !== 'remove')) problems.push(`${name}: a removal takes only name and remove`);
-      else entries.push({ name, remove: true });
+      if (e.remove !== true) problems.push(`${at}: remove must be true`);
+      else if (Object.keys(e).some((k) => k !== 'name' && k !== 'remove')) problems.push(`${at}: a removal takes only name and remove`);
+      else entries.push({ pos: i + 1, name, remove: true });
       continue;
     }
     if (e.type !== 'stdio' && e.type !== 'http' && e.type !== 'sse') {
-      problems.push(`${name}: type must be stdio, http or sse`);
+      problems.push(`${at}: type must be stdio, http or sse`);
       continue;
     }
-    const entry: Entry = { name, type: e.type };
+    const entry: Entry = { pos: i + 1, name, type: e.type };
     if (e.type === 'stdio') {
-      if (typeof e.command !== 'string' || !e.command.trim() || e.command.length > 1000 || /[\0\r\n]/.test(e.command)) {
-        problems.push(`${name}: a stdio server needs a command (one line)`);
-        continue;
-      }
       if (e.url !== undefined) {
-        problems.push(`${name}: a stdio server has no url`);
+        problems.push(`${at}: a stdio server has no url`);
         continue;
       }
-      entry.command = e.command.trim();
+      if (e.command !== undefined) {
+        if (typeof e.command !== 'string' || !e.command.trim() || e.command.length > 1000 || ANY_CONTROL.test(e.command)) {
+          problems.push(`${at}: command must be one line of text`);
+          continue;
+        }
+        if (isPlaceholder(e.command)) {
+          problems.push(`${at}: command is a placeholder, not a value`);
+          continue;
+        }
+        entry.command = e.command.trim();
+      }
       if (e.args !== undefined) {
-        if (!Array.isArray(e.args) || e.args.length > 100 || e.args.some((a) => typeof a !== 'string' || a.length > 4000 || a.includes('\0'))) {
-          problems.push(`${name}: args must be a list of text (at most 100)`);
+        if (!Array.isArray(e.args) || e.args.length > 100 || e.args.some((a) => typeof a !== 'string' || a.length > 4000 || CONTROL.test(a))) {
+          problems.push(`${at}: args must be a list of text (at most 100, no control characters)`);
+          continue;
+        }
+        const ph = (e.args as string[]).findIndex((a) => isPlaceholder(a) || PLACEHOLDERS.some((p) => a.endsWith(`=${p}`)));
+        if (ph >= 0) {
+          problems.push(`${at}: argument #${ph + 1} is a placeholder, not a value (leave args out to keep the stored ones)`);
           continue;
         }
         entry.args = e.args as string[];
       }
     } else {
       if (e.command !== undefined || e.args !== undefined) {
-        problems.push(`${name}: an ${e.type} server has a url, not a command`);
+        problems.push(`${at}: an ${e.type} server has a url, not a command`);
         continue;
       }
-      const url = typeof e.url === 'string' ? e.url.trim() : '';
-      let parsed: URL | undefined;
-      try {
-        parsed = new URL(url);
-      } catch {
-        /* below */
+      if (e.url !== undefined) {
+        const u = checkUrl(e.url);
+        if ('error' in u) {
+          problems.push(`${at}: ${u.error}`);
+          continue;
+        }
+        entry.url = u.url;
       }
-      if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
-        problems.push(`${name}: url must be an http(s) URL`);
-        continue;
-      }
-      if (parsed.username || parsed.password) {
-        problems.push(`${name}: url must not contain credentials (put them into the server's env or config.json headers)`);
-        continue;
-      }
-      if (parsed.search || parsed.hash) {
-        problems.push(`${name}: url must not contain a query or fragment`);
-        continue;
-      }
-      entry.url = url;
     }
     if (e.env !== undefined) {
       if (e.type !== 'stdio') {
-        problems.push(`${name}: env is for stdio servers`);
+        problems.push(`${at}: env is for stdio servers`);
         continue;
       }
       const env = checkSecretPatch(e.env, mcpEnvRefusal);
       if ('error' in env) {
-        problems.push(`${name} env: ${env.error}`);
+        problems.push(`${at} env: ${env.error}`);
         continue;
       }
       entry.env = env.value as Record<string, string | null>;
@@ -307,60 +327,62 @@ export function mergeMcpServers(current: unknown, entries: Entry[]): Checked {
   if (isObject(current)) for (const [k, d] of Object.entries(current)) if (!RESERVED_KEYS.has(k)) out[k] = d;
   const problems: string[] = [];
   for (const e of entries) {
+    const at = `server #${e.pos}`;
     const before = own(out, e.name) && isObject(out[e.name]) ? (out[e.name] as Raw) : undefined;
     if (e.remove) {
-      if (!own(out, e.name)) problems.push(`${e.name}: no such MCP server`);
+      if (!own(out, e.name)) problems.push(`${at}: no such MCP server`);
       else delete out[e.name];
       continue;
     }
+    const wasType = before ? serverType(before) : undefined;
     // fields the hub does not edit (headers, timeouts, ...) stay as they are
     const next: Raw = { ...(before ?? {}) };
-    delete next.command;
-    delete next.args;
-    delete next.url;
     if (e.type === 'stdio') {
-      if (before?.type === 'http' || before?.type === 'sse') delete next.type;
-      if (before?.type === 'stdio') next.type = 'stdio';
-      next.command = e.command;
-      if (e.args) {
-        const { args, lost } = restoreArgs(e.args, Array.isArray(before?.args) ? (before.args as unknown[]).filter((a): a is string => typeof a === 'string') : []);
-        // a hidden or shortened argument that moved (one inserted or removed before it) cannot be
-        // restored: never written as "(hidden)" or without the part config.get left out
-        if (lost.length) {
-          problems.push(`${e.name}: argument${lost.length > 1 ? 's' : ''} ${lost.join(', ')} ${lost.length > 1 ? 'are' : 'is'} hidden and moved; enter ${lost.length > 1 ? 'them' : 'it'} again`);
+      const sameType = wasType === 'stdio';
+      const storedCommand = sameType && typeof before?.command === 'string' ? before.command : undefined;
+      if (e.command !== undefined) {
+        // the view of a longer stored command sent back would cut it down: refused, never "restored"
+        if (storedCommand !== undefined && e.command === executable(storedCommand) && e.command !== storedCommand.trim()) {
+          problems.push(`${at}: command is what config.get shows of the stored one; leave it out to keep it, or send the whole new command`);
           continue;
         }
-        next.args = args;
+        next.command = e.command;
+      } else if (storedCommand !== undefined) next.command = storedCommand;
+      else {
+        problems.push(`${at}: a stdio server needs a command`);
+        continue;
       }
-      const env = mergeSecretMap(before?.env, e.env ?? {});
+      if (e.args !== undefined) {
+        if (e.args.length) next.args = e.args;
+        else delete next.args;
+      } else if (!sameType) delete next.args;
+      delete next.url;
+      if (before?.type === 'http' || before?.type === 'sse') delete next.type;
+      const env = mergeSecretMap(sameType ? before?.env : undefined, e.env ?? {});
       if (env) next.env = env;
       else delete next.env;
     } else {
+      const sameType = wasType === 'http' || wasType === 'sse';
+      const storedUrl = sameType && typeof before?.url === 'string' ? before.url : undefined;
+      if (e.url !== undefined) {
+        const shown = storedUrl !== undefined ? urlView(storedUrl) : undefined;
+        if (shown?.hasPath && (e.url === shown.url || e.url === `${shown.url}/`)) {
+          problems.push(`${at}: url is what config.get shows of the stored one; leave it out to keep it, or send the whole new URL`);
+          continue;
+        }
+        next.url = e.url;
+      } else if (storedUrl !== undefined) next.url = storedUrl;
+      else {
+        problems.push(`${at}: an ${e.type} server needs a url`);
+        continue;
+      }
       next.type = e.type;
-      // the URL as shown (no credentials / query): the stored one stays
-      const stored = typeof before?.url === 'string' ? before.url : undefined;
-      next.url = stored !== undefined && shortUrl(stored) === e.url ? stored : e.url;
+      delete next.command;
+      delete next.args;
       delete next.env;
     }
     out[e.name] = next;
   }
   if (problems.length) return { error: problems.join('; ') };
   return { value: Object.keys(out).length ? out : undefined };
-}
-
-/**
- * Arguments as sent, with every hidden or shortened one that matches the stored argument's view in the
- * same place restored. `lost`: 1-based places of the ones that could not be restored (a "(hidden)"
- * value, or another stored argument's shortened view sent somewhere else).
- */
-function restoreArgs(sent: string[], stored: string[]): { args: string[]; lost: number[] } {
-  const view = maskArgs(stored);
-  const masked = new Set(view.filter((v, j) => v !== stored[j]));
-  const lost: number[] = [];
-  const args = sent.map((a, i) => {
-    if (i < stored.length && a === view[i] && view[i] !== stored[i]) return stored[i]!;
-    if (a === HIDDEN || a.endsWith(`=${HIDDEN}`) || (masked.has(a) && a !== stored[i])) lost.push(i + 1);
-    return a;
-  });
-  return { args, lost };
 }

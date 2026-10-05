@@ -328,7 +328,8 @@ function contextConfig(v: unknown): AgentContextConfig {
   if (o.mcpServers && typeof o.mcpServers === 'object') {
     for (const [name, def] of Object.entries(o.mcpServers as Record<string, unknown>)) {
       // "agentcraft" is the team tools server; nothing may replace it
-      if (name !== 'agentcraft' && /^[\w-]+$/.test(name) && !RESERVED_KEYS.has(name) && def && typeof def === 'object') servers[name] = def as McpServerConfig;
+      // a server with a NUL anywhere is left out: the CLI's spawn would refuse it, quoting the value
+      if (name !== 'agentcraft' && /^[\w-]+$/.test(name) && !RESERVED_KEYS.has(name) && def && typeof def === 'object' && !JSON.stringify(def).includes('\\u0000')) servers[name] = def as McpServerConfig;
     }
   }
   return {
@@ -559,7 +560,8 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       }
       if (o.env && typeof o.env === 'object') {
         const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && !isSecretEnvVar(k) && typeof v === 'string') env[k] = v;
+        // a value with a NUL never reaches spawn (whose error would quote it)
+        for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^GIT_/i.test(k) && !isSecretEnvVar(k) && typeof v === 'string' && !v.includes('\0')) env[k] = v;
         if (Object.keys(env).length) s.env = env;
       }
       repoSettings[path.resolve(k.replace(/^~(?=$|[\\/])/, os.homedir()))] = s;

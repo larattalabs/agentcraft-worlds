@@ -76,8 +76,8 @@ describe('config.get', () => {
     expect(mcp).toMatchObject({ type: 'mcpServers', live: false, source: 'file', default: [] });
     expect(mcp.readOnly).toBeUndefined();
     expect(mcp.value).toEqual([
-      { name: 'gh', type: 'stdio', command: 'npx', args: ['--token', '(hidden)'], envKeys: ['GH_TOKEN'] },
-      { name: 'web', type: 'http', url: 'https://mcp.example.com/x', envKeys: [] },
+      { name: 'gh', type: 'stdio', command: 'npx', argCount: 2, envKeys: ['GH_TOKEN'] },
+      { name: 'web', type: 'http', url: 'https://mcp.example.com', urlHasPath: true, headerKeys: ['Authorization'], envKeys: [] },
     ]);
     for (const d of defs) expect(d.help.length, d.key).toBeGreaterThan(10);
   });
@@ -121,9 +121,11 @@ describe('config.set', () => {
       ],
     });
     expect(ack.ok).toBe(false);
-    for (const part of ['claude.maxConcurrent: must be at least 1', 'claude.effort: must be one of', 'no such agent "nobody"', 'claude.leads: no such agent "kit"', 'claude.context.mcpServers: must be a list of servers', 'claude.secret: not an editable setting', 'claude.prPollSeconds: must be a whole number', 'is not a model name']) {
+    for (const part of ['claude.maxConcurrent: must be at least 1', 'claude.effort: must be one of', 'claude.workers: item #2 is not an agent', 'claude.leads: item #2 is not an agent', 'claude.context.mcpServers: must be a list of servers', 'change #7: not an editable setting', 'claude.prPollSeconds: must be a whole number', 'claude.agents.kit.model: is not a model name']) {
       expect(ack.error).toContain(part);
     }
+    // errors name places, never what was sent (an unknown key could be anything)
+    for (const sent of ['nobody', 'claude.secret', 'not a model!', 'turbo']) expect(ack.error).not.toContain(sent);
     expect(fs.readFileSync(h.file, 'utf8')).toBe(original);
     expect(fs.existsSync(`${h.file}.bak`)).toBe(false);
     expect(h.fm.config.claude.workerModel).toBe('sonnet');
@@ -268,13 +270,14 @@ describe('repository settings and repo.agents', () => {
     expect(byKey(defs, 'ci')).toMatchObject({ value: 'npm test', source: 'file', live: true });
     expect(byKey(defs, 'land')).toMatchObject({ value: 'merge', source: 'default', options: ['merge', 'pr'] });
     // contract S1 (docs/WAVE3.md): a secret map, names only
-    expect(byKey(defs, 'env')).toMatchObject({ type: 'secretMap', live: true, value: { API_KEY: '(set)' } });
+    expect(byKey(defs, 'env')).toMatchObject({ type: 'secretMap', live: true, value: ['API_KEY'] });
     expect(byKey(defs, 'env').readOnly).toBeUndefined();
     expect(byKey(defs, 'roles.kit')).toMatchObject({ value: '', options: ['backend-dev'] });
 
     const bad = await call(h, { type: 'config.set', repoId: repo.id, changes: [{ key: 'roles.kit', value: 'nope' }, { key: 'protect', value: ['../x'] }, { key: 'env', value: {} }] });
     expect(bad.ok).toBe(false);
-    expect(bad.error).toContain('no agent file "nope"');
+    expect(bad.error).toContain('roles.kit: is not an agent file');
+    expect(bad.error).not.toContain('nope');
     expect(bad.error).toContain('must be relative to the repository');
 
     const ok = await call(h, {

@@ -82,8 +82,9 @@ export async function main(argv: string[]): Promise<void> {
   const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : new ClaudeBackend(foreman, cfg.claude);
   // a new client token every start (after --reset wiped the profile); never logged
   const client = cfg.clientToken ? createClientToken(cfg.dataDir) : undefined;
+  if (client) foreman.addSecrets([client.token]);
   if (!client) log.warn('--no-client-token: every local WebSocket client may drive the Foreman (dev only)');
-  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, ...(client ? { token: client.token } : {}), log });
+  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, ...(client ? { token: client.token } : {}), log: foreman.log });
 
   try {
     await server.start();

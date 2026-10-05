@@ -230,7 +230,8 @@ export abstract class SessionsLayer extends TurnSetupLayer {
     } catch (e) {
       const aborted = abort.signal.aborted;
       if (!aborted) {
-        const msg = (e as Error).message ?? String(e);
+        // an exception can quote a secret (a spawn error names the environment value it refused)
+        const msg = this.fm.redact((e as Error).message ?? String(e));
         this.fm.log.error(`${agentId} ${job.kind} failed: ${msg}`);
         this.fm.agentLog(agentId, 'error', `session error: ${truncate(msg, 400)}`);
         if (isAuthText(msg)) this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
@@ -341,7 +342,7 @@ export abstract class SessionsLayer extends TurnSetupLayer {
     return (o) => {
       const child = spawn(o.command, o.args, { cwd: o.cwd, env: scrubEnv(o.env as NodeJS.ProcessEnv), stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
       child.stderr?.setEncoding('utf8');
-      child.stderr?.on('data', (s: string) => this.fm.log.debug(`[${label} stderr] ${s.trim().slice(0, 300)}`));
+      child.stderr?.on('data', (s: string) => this.fm.log.debug(`[${label} stderr] ${this.fm.redact(s).trim().slice(0, 300)}`));
       child.on('error', (e) => this.fm.log.debug(`[${label}] CLI process error: ${e.message}`));
       entry.child = child;
       entry.spawnedAt = Date.now();
