@@ -403,6 +403,19 @@ public final class Launcher {
 		long deadline = System.currentTimeMillis() + START_TIMEOUT_MS;
 		while (System.currentTimeMillis() < deadline) {
 			if (!alive(newPid)) {
+				if (probe() == Probe.FOREMAN) {
+					// another launcher (Prism's daemon, tools/mac.mjs) won the race for the port: use its Foreman
+					clearRecords(newPid);
+					ours = false;
+					startedThisSession = false;
+					Running r = readIdentity(root);
+					pid = r == null ? 0 : r.pid();
+					stale = r == null ? List.of() : LauncherPlan.staleReasons(r.root(), r.commit(), root.toString(), expectedCommit);
+					set(stale.isEmpty() ? State.RUNNING : State.RUNNING_OLDER, "another launcher started the Foreman first; reusing it ("
+						+ who() + ")");
+					watch(pid);
+					return;
+				}
 				logTail = readTail(log, 20);
 				set(State.CRASHED, "the Foreman exited during startup; last lines of " + log.getFileName());
 				return;
