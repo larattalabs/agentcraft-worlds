@@ -1399,7 +1399,8 @@ export class RepoManager {
       // git transports stay disabled (as for agents and CI); package managers may use the network
       const res = await runShell(s.setup, { cwd: w.path, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...this.envFor(repoId) }, { ceiling: path.dirname(path.resolve(w.path)) }) });
       const full = `${res.stdout}\n${res.stderr}${res.timedOut ? `\n(timed out after ${Math.round(timeoutMs / 1000)}s; process tree killed)` : ''}`;
-      out.setup = { command: s.setup, ok: res.code === 0 && !res.timedOut, output: tailLines(full, 30, 2500), durationMs: Date.now() - t0 };
+      // redacted before it is cut (tailLines drops the start without a marker)
+      out.setup = { command: s.setup, ok: res.code === 0 && !res.timedOut, output: tailLines(this.ctx.redact ? this.ctx.redact(full) : full, 30, 2500), durationMs: Date.now() - t0 };
     }
     meta.prepared = true;
     this.ctx.store.markDirty();
@@ -1418,7 +1419,7 @@ export class RepoManager {
     // (a `git push` inside a test script fails) and kill the whole process tree on timeout
     const res = await runShell(cmd, { cwd, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...this.envFor(repoId) }, { ceiling: path.dirname(path.resolve(cwd)) }) });
     const full = `${res.stdout}\n${res.stderr}${res.timedOut ? `\n(timed out after ${Math.round(timeoutMs / 1000)}s; process tree killed)` : ''}`;
-    const output = tailLines(full, 40, 3000);
+    const output = tailLines(this.ctx.redact ? this.ctx.redact(full) : full, 40, 3000);
     return { pass: res.code === 0 && !res.timedOut, code: res.code, command: cmd, output, durationMs: Date.now() - t0, ...parseTestOutput(full) };
   }
 

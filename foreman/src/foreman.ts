@@ -25,6 +25,7 @@ import type {
   ForemanStatus,
   Goal,
   GoalStatus,
+  FeedItem,
   LogEntry,
   LogKind,
   MemoryEntry,
@@ -229,6 +230,15 @@ export class Foreman {
   /** `text` without any secret this Foreman knows (redact.ts). */
   redact(text: string): string {
     return this.redactor.redact(text);
+  }
+
+  /** Copies of feed items / log entries with their text redacted (stored text may predate a secret). */
+  private redactFeed(items: FeedItem[]): FeedItem[] {
+    return items.map((f) => ({ ...f, text: this.redact(f.text) }));
+  }
+
+  private redactLog(entries: LogEntry[]): LogEntry[] {
+    return entries.map((e) => ({ ...e, text: this.redact(e.text) }));
   }
 
   /** More secret values to redact (the client token, set up after the Foreman). */
@@ -561,7 +571,7 @@ export class Foreman {
   digest(since: number, goalId?: string): Digest {
     if (goalId) this.requireGoal(goalId);
     const d = this.store.data;
-    return buildDigest({ goals: d.goals, tasks: d.tasks, decisions: d.decisions, feed: d.feed }, { since, until: this.ctx.now(), ...(goalId ? { goalId } : {}), nameOf: (id) => (id === 'user' ? userName() : this.nameOf(id)) });
+    return buildDigest({ goals: d.goals, tasks: d.tasks, decisions: d.decisions, feed: this.redactFeed(d.feed) }, { since, until: this.ctx.now(), ...(goalId ? { goalId } : {}), nameOf: (id) => (id === 'user' ? userName() : this.nameOf(id)) });
   }
 
   /** repo.remove: refused while it has open tasks or a goal still being planned. */
@@ -1167,8 +1177,9 @@ export class Foreman {
       memory: this.memory.list(),
       ...(goal ? { goal: goalCopy(goal) } : {}),
       goals: this.goals().map(goalCopy),
-      feed: this.store.data.feed.slice(-200),
-      logs: this.agents().map((a) => ({ agentId: a.id, entries: this.store.logTail(a.id).slice(-60) })),
+      // stored text is cut again on the way out: it may predate a secret the Foreman learnt later
+      feed: this.redactFeed(this.store.data.feed.slice(-200)),
+      logs: this.agents().map((a) => ({ agentId: a.id, entries: this.redactLog(this.store.logTail(a.id).slice(-60)) })),
       designs: this.designs.recent(),
       leads: this.leads.list(),
     };
@@ -1234,7 +1245,8 @@ export class Foreman {
       case 'agent.logs.request': {
         const id = this.resolveAgentId(msg.agentId);
         if (!id) throw new ClientError(`no agent named "${msg.agentId}"`);
-        return { agentId: id, ...this.store.readLog(id, msg.before, msg.limit ?? 200) };
+        const page = this.store.readLog(id, msg.before, msg.limit ?? 200);
+        return { agentId: id, ...page, entries: this.redactLog(page.entries) };
       }
       case 'diff.request': {
         try {

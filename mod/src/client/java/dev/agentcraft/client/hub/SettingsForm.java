@@ -670,49 +670,48 @@ final class SettingsForm {
 	}
 
 	/**
-	 * The MCP server form's state: a new server or an edit of {@code original} ({@code cur}: as the Foreman shows it).
-	 * Arguments and the URL are write-only: never pre-filled. Unless "Replace arguments…" / "Replace URL…" is on, the
-	 * stored ones (or the ones an earlier Done staged, {@code staged*}) are kept.
+	 * The MCP server form's state: a new server or an edit of {@code original} ({@code cur}: as the Foreman shows it,
+	 * null when not stored yet; {@code staged}: its entry from an earlier Done). Arguments and the URL are write-only:
+	 * never pre-filled. Unless "Replace arguments…" / "Replace URL…" is on, the stored ones (or the staged ones) are kept
+	 * ({@link SecretSettings#toSend}).
 	 */
 	private static final class McpDraft {
 		final String scopeKey;
 		final @Nullable String original;
 		final SecretSettings.@Nullable Server cur;
+		final @Nullable JsonObject staged;
 		String type;
 		final List<String> envKeys;
 		@Nullable JsonObject env;
 		/** the command field's starting text (the executable shown): sent only when it changed */
 		final String commandShown;
-		final @Nullable String stagedCommand;
-		final @Nullable List<String> stagedArgs;
-		final @Nullable String stagedUrl;
 		boolean replaceArgs;
 		boolean replaceUrl;
 
-		McpDraft(String scopeKey, @Nullable String original, SecretSettings.@Nullable Server cur, String type, List<String> envKeys, @Nullable JsonObject env,
-			String commandShown, @Nullable JsonObject staged) {
+		McpDraft(String scopeKey, @Nullable String original, SecretSettings.@Nullable Server cur, @Nullable JsonObject staged, String type,
+			List<String> envKeys, @Nullable JsonObject env, String commandShown) {
 			this.scopeKey = scopeKey;
 			this.original = original;
 			this.cur = cur;
+			this.staged = staged == null ? null : staged.deepCopy();
 			this.type = type;
 			this.envKeys = envKeys;
 			this.env = env;
 			this.commandShown = commandShown;
-			this.stagedCommand = staged != null && staged.has("command") ? staged.get("command").getAsString() : null;
-			List<String> args = null;
-			if (staged != null && staged.has("args") && staged.get("args").isJsonArray()) {
-				args = new ArrayList<>();
-				for (JsonElement a : staged.getAsJsonArray("args")) {
-					args.add(a.getAsString());
-				}
-			}
-			this.stagedArgs = args;
-			this.stagedUrl = staged != null && staged.has("url") ? staged.get("url").getAsString() : null;
 		}
 
-		/** A new server, or one changing between stdio and http: its command or URL must be entered. */
+		/** Not stored yet, or changing between stdio and http: there is nothing to keep. */
 		boolean fresh() {
 			return cur == null || cur.stdio() != "stdio".equals(type);
+		}
+
+		/** The arguments field is open (else: kept, with "Replace arguments…"). */
+		boolean argsOpen() {
+			return replaceArgs || fresh() && SecretSettings.stagedArgs(staged, type) == null;
+		}
+
+		boolean urlOpen() {
+			return replaceUrl || fresh() && SecretSettings.stagedUrl(staged, type) == null;
 		}
 	}
 
@@ -781,7 +780,7 @@ final class SettingsForm {
 		}
 		if (draft == null || !draft.scopeKey.equals(scopeKey)) {
 			rowChip(g, id + ":add", "Add server…", x, y, false, editable, mx, my, () -> {
-				draft = new McpDraft(scopeKey, null, null, "stdio", List.of(), null, "", null);
+				draft = new McpDraft(scopeKey, null, null, null, "stdio", List.of(), null, "");
 				for (String f : List.of("name", "command", "args", "url")) {
 					aux("mcp:" + f, f.equals("args"), "", 4000).set("");
 				}
@@ -808,7 +807,7 @@ final class SettingsForm {
 		List<String> envKeys = was == null ? List.of() : was.envKeys(); // the variables it has now (an added server: none yet)
 		JsonObject entry = SecretSettings.stagedEntry(staged, sv.name());
 		String shown = entry != null && entry.has("command") ? SecretSettings.executable(entry.get("command").getAsString()) : sv.command() == null ? "" : sv.command();
-		draft = new McpDraft(scopeKey, sv.name(), was, sv.type(), envKeys, r.envPatch() == null ? null : r.envPatch().deepCopy(), shown, entry);
+		draft = new McpDraft(scopeKey, sv.name(), was, entry, sv.type(), envKeys, r.envPatch() == null ? null : r.envPatch().deepCopy(), shown);
 		aux("mcp:name", false, "", 64).set(sv.name());
 		aux("mcp:command", false, "", 1000).set(shown);
 		aux("mcp:args", true, "", 4000).set("");
@@ -850,19 +849,20 @@ final class SettingsForm {
 			y += commandF.draw(g, font(), x + labelW, y, w - labelW, 1, commandF == focus) + 3;
 			drawn(commandF, editable, fy);
 			g.text(font(), "Args", x, y + 3, muted, false);
-			if (d.fresh() || d.replaceArgs) {
+			if (d.argsOpen()) {
 				fy = y;
 				y += argsF.draw(g, font(), x + labelW, y, w - labelW, compact ? 2 : 3, argsF == focus) + 3;
 				drawn(argsF, editable, fy);
-				if (!d.fresh()) {
+				if (d.replaceArgs) {
 					y += rowChip(g, "mcp:keepArgs", "Keep the stored arguments", x + labelW, y, false, editable, mx, my, () -> {
 						d.replaceArgs = false;
 						argsF.set("");
 					}) + 3;
 				}
 			} else {
-				int count = d.stagedArgs != null ? d.stagedArgs.size() : d.cur.argCount();
-				String what = (count == 0 ? "none" : count + (count == 1 ? " argument" : " arguments")) + (d.stagedArgs != null ? " (new, staged)" : " (kept, never shown)");
+				List<String> sa = SecretSettings.stagedArgs(d.staged, d.type);
+				int count = sa != null ? sa.size() : d.cur == null ? 0 : d.cur.argCount();
+				String what = (count == 0 ? "none" : count + (count == 1 ? " argument" : " arguments")) + (sa != null ? " (new, staged)" : " (kept, never shown)");
 				g.text(font(), what, x + labelW, y + 3, muted, false);
 				y += CHIP_H + 1;
 				y += rowChip(g, "mcp:replaceArgs", "Replace arguments…", x + labelW, y, false, editable, mx, my, () -> d.replaceArgs = true) + 3;
@@ -872,18 +872,19 @@ final class SettingsForm {
 			y += secretMap(g, "mcp:env", d.envKeys, () -> d.env, false, x, y, w, editable, mx, my, p -> d.env = p.isEmpty() ? null : p);
 		} else {
 			g.text(font(), "URL", x, y + 3, muted, false);
-			if (d.fresh() || d.replaceUrl) {
+			if (d.urlOpen()) {
 				int fy = y;
 				y += urlF.draw(g, font(), x + labelW, y, w - labelW, 1, urlF == focus) + 3;
 				drawn(urlF, editable, fy);
-				if (!d.fresh()) {
+				if (d.replaceUrl) {
 					y += rowChip(g, "mcp:keepUrl", "Keep the stored URL", x + labelW, y, false, editable, mx, my, () -> {
 						d.replaceUrl = false;
 						urlF.set("");
 					}) + 3;
 				}
 			} else {
-				String shown = d.stagedUrl != null ? SecretSettings.origin(d.stagedUrl) + "/… (new, staged)" : d.cur.target() + " (kept, the rest never shown)";
+				String su = SecretSettings.stagedUrl(d.staged, d.type);
+				String shown = su != null ? SecretSettings.origin(su) + "/… (new, staged)" : (d.cur == null ? "" : d.cur.target()) + " (kept, the rest never shown)";
 				g.text(font(), TextUtil.ellipsize(font(), shown, w - labelW), x + labelW, y + 3, muted, false);
 				y += CHIP_H + 1;
 				y += rowChip(g, "mcp:replaceUrl", "Replace URL…", x + labelW, y, false, editable, mx, my, () -> d.replaceUrl = true) + 3;
@@ -915,31 +916,23 @@ final class SettingsForm {
 		}
 		String name = d.original != null ? d.original : aux("mcp:name", false, "", 64).value().strip();
 		boolean stdio = "stdio".equals(d.type);
-		String typed = aux("mcp:command", false, "", 1000).value().strip();
-		String command = null;
-		List<String> args = null;
-		String url = null;
-		if (stdio) {
-			command = d.fresh() || !typed.equals(d.commandShown) ? typed : d.stagedCommand;
-			if (d.fresh() || d.replaceArgs) {
-				args = new ArrayList<>();
-				for (String a : aux("mcp:args", true, "", 4000).value().split("\n", -1)) {
-					if (!a.isEmpty()) {
-						args.add(a);
-					}
-				}
-			} else {
-				args = d.stagedArgs;
+		List<String> typedArgs = new ArrayList<>();
+		for (String a : aux("mcp:args", true, "", 4000).value().split("\n", -1)) {
+			if (!a.isEmpty()) {
+				typedArgs.add(a);
 			}
-		} else {
-			url = d.fresh() || d.replaceUrl ? aux("mcp:url", false, "", 2000).value().strip() : d.stagedUrl;
 		}
+		SecretSettings.Send send = SecretSettings.toSend(d.type, d.cur, d.staged, aux("mcp:command", false, "", 1000).value().strip(), d.commandShown,
+			d.replaceArgs, typedArgs, d.replaceUrl, aux("mcp:url", false, "", 2000).value().strip());
+		String command = send.command();
+		List<String> args = send.args();
+		String url = send.url();
 		List<String> others = new ArrayList<>();
 		for (SecretSettings.Row r : SecretSettings.rows(cur, stagedNow.get())) {
 			others.add(r.server().name());
 		}
 		JsonObject env = stdio ? d.env : null;
-		String why = SecretSettings.serverProblem(name, d.type, command, args, url, env, d.cur, others);
+		String why = SecretSettings.serverProblem(name, d.type, command, args, url, env, d.cur, d.original == null, others);
 		if (why == null && !stdio && d.env != null && !d.env.isEmpty()) {
 			why = "env: only stdio servers have variables";
 		}

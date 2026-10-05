@@ -71,30 +71,29 @@ export class Redactor {
   }
 
   /**
-   * `text` without any known secret. Text cut off with "…" (util/text.ts truncate, headLines) also
-   * loses a secret's start left at the cut.
+   * `text` without any known secret. Text cut off with "…" (util/text.ts truncate, headLines; the cut
+   * may sit inside a longer text, e.g. `denied: Bash (curl -H sk-…)`) also loses a secret's start left
+   * before each "…".
    */
   redact(text: string): string {
     if (!this.re || !text) return text;
-    let out = text.replace(this.re, REDACTED);
-    const m = /…\s*$/.exec(out);
-    if (m) {
-      const body = out.slice(0, m.index);
+    const out = text.replace(this.re, REDACTED);
+    if (!out.includes('…')) return out;
+    const parts = out.split('…');
+    for (let i = 0; i < parts.length - 1; i++) {
+      const body = parts[i]!;
+      let cut = 0;
       for (const v of this.variants) {
-        let cut = 0;
-        for (let n = Math.min(v.length - 1, body.length); n >= MIN_PARTIAL; n--) {
+        for (let n = Math.min(v.length - 1, body.length); n > cut && n >= MIN_PARTIAL; n--) {
           if (body.endsWith(v.slice(0, n))) {
             cut = n;
             break;
           }
         }
-        if (cut) {
-          out = `${body.slice(0, body.length - cut)}${REDACTED}${out.slice(m.index)}`;
-          break;
-        }
       }
+      if (cut) parts[i] = `${body.slice(0, body.length - cut)}${REDACTED}`;
     }
-    return out;
+    return parts.join('…');
   }
 
   /** A copy of a JSON-like value with every string redacted (objects and arrays copied, never changed in place). */

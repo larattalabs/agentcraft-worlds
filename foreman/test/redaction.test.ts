@@ -67,6 +67,9 @@ describe('Redactor', () => {
     const r = new Redactor();
     r.add(['sk-live-0123456789']);
     expect(r.redact('token: sk-live-01…')).toBe(`token: ${REDACTED}…`);
+    // a cut inside a longer text (truncate, then wrapped)
+    expect(r.redact('denied: Bash (curl -H sk-live-01…) and "sk-l…" is blocked')).toBe(`denied: Bash (curl -H ${REDACTED}…) and "${REDACTED}…" is blocked`);
+    expect(r.redact('just words…')).toBe('just words…');
     const o = { a: ['x sk-live-0123456789'], n: 1 };
     expect(r.redactDeep(o)).toEqual({ a: [`x ${REDACTED}`], n: 1 });
     expect(o.a[0]).toBe('x sk-live-0123456789');
@@ -276,5 +279,36 @@ describe('every secret shape, everywhere the Foreman speaks (WebSocket path)', (
     await fm.close();
     const everything = [c.raw.join('\n'), logs.join('\n'), otherFiles(home)].join('\n');
     expectAbsent(everything, [...known, ...refused]);
+  });
+});
+
+describe('text stored before a secret was known (snapshot, agent.logs.request, goal.digest)', () => {
+  it('is cut on the way out', async () => {
+    const home = tempDir();
+    dirs.push(home);
+    const secret = 'late-known-secret-0042';
+    // a run that did not know the value yet: its log line and feed item are stored as they were
+    const first = new Foreman({ config: testConfig(home, ['--backend', 'claude']), logger: capture().logger, notifier: new Notifier({ enabled: false, bell: false }) });
+    first.agentLog('marlow', 'error', `old stderr: ${secret}`);
+    first.bus.feed('error', `old failure: ${secret}`);
+    await first.close();
+    expect(otherFiles(home)).toContain(secret);
+    // now config.json holds it (a repository's env)
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ repoSettings: { '/nowhere/repo': { env: { LATE: secret } } } }));
+    const fm = new Foreman({ config: testConfig(home, ['--backend', 'claude']), logger: capture().logger, notifier: new Notifier({ enabled: false, bell: false }) });
+    foremen.push(fm);
+    const server = new ForemanServer(fm, { host: '127.0.0.1', port: 0, validateOutbound: true, log: fm.log });
+    const port = await server.start();
+    closers.push(() => server.stop());
+    const c = await connect(port);
+    c.send({ type: 'hello', modVersion: 'test', protocol: 1, client: 'test' });
+    await until(() => c.raw.some((r) => r.includes('"type":"snapshot"')));
+    const logs = await request(c, { type: 'agent.logs.request', agentId: 'marlow' });
+    expect(logs.ok).toBe(true);
+    expect(JSON.stringify(logs.result)).toContain('old stderr: [redacted]');
+    expect((await request(c, { type: 'goal.digest', since: 0 })).ok).toBe(true);
+    const snapshot = c.raw.find((r) => r.includes('"type":"snapshot"'))!;
+    expect(snapshot).toContain('old failure: [redacted]');
+    expectAbsent(c.raw.join('\n'), [secret]);
   });
 });

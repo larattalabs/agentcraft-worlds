@@ -479,8 +479,9 @@ decisions, and with config.set loosen its own permissions). From now on:
 - **Redaction**: every secret value the Foreman knows (repository and MCP env values, MCP arguments, URL
   paths and queries, header values, the rest of a command line, the client token; at least 6
   characters) is replaced by `[redacted]` - also URL-encoded, JSON-escaped or base64 - in agent logs,
-  the feed, `agent.say`, `notify`, desktop / Discord notifications, ack and error texts and console logs
-  (foreman/src/redact.ts).
+  the feed, `agent.say`, `notify`, desktop / Discord notifications, ack and error texts, setup / test output
+  and console logs (foreman/src/redact.ts); stored feed and log text is cut again when the snapshot,
+  `agent.logs.request` or `goal.digest` replays it (it may predate a secret).
 - **config.set ack**: a key a flag or variable overrides is listed only under `overridden`
   (`by`: the flag as given, e.g. `"--no-notify"`, or the variable name), not under `applied` or
   `restartRequired`. `config.changed.keys` are the keys as sent, repository keys as
@@ -577,7 +578,8 @@ the mod fills gaps in this contract (the Foreman side was built in parallel; ali
     pre-filled: an existing server shows "3 arguments (kept, never shown)" / "https://host/… (kept)" with
     **Replace arguments…** / **Replace URL…**, which open an empty field for the complete new value (one argument
     per line; empty clears them) and **Keep the stored …** to go back; a new server, or one changing between stdio
-    and http, gets the fields at once. Add / Done stages the server's entry with only what changed (`{name, type,
+    and http, gets the fields at once. Opening a staged change again shows its arguments / URL as "(new, staged)"
+    and keeps them (and its whole command line) unless replaced (pure `SecretSettings.toSend`). Add / Done stages the server's entry with only what changed (`{name, type,
     command?, args?, url?, env?}`, an edit that changes nothing stages nothing), Cancel drops it. Checks like the
     Foreman's: name `[\w-]{1,64}`, not `agentcraft`, free for a new server; a one-line command; no placeholder
     argument (`(hidden)`, `(set)`, `(staged)`, `[redacted]`, also after `=`); an http(s) URL without spaces,

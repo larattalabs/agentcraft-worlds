@@ -457,13 +457,66 @@ public final class SecretSettings {
 		return null;
 	}
 
+	/** The parts of a staged entry for a server of {@code type}'s kind (a staged url is no use to a stdio server). */
+	private static @Nullable JsonObject stagedOfKind(@Nullable JsonObject staged, String type) {
+		if (staged == null || staged.has("remove")) {
+			return null;
+		}
+		return "stdio".equals(str(staged, "type")) == "stdio".equals(type) ? staged : null;
+	}
+
+	/** The command an earlier Done staged for this server, or null. */
+	public static @Nullable String stagedCommand(@Nullable JsonObject staged, String type) {
+		JsonObject s = stagedOfKind(staged, type);
+		return s != null && s.has("command") ? str(s, "command") : null;
+	}
+
+	/** The arguments an earlier Done staged for this server (the complete new list), or null. */
+	public static @Nullable List<String> stagedArgs(@Nullable JsonObject staged, String type) {
+		JsonObject s = stagedOfKind(staged, type);
+		return s != null && s.has("args") && s.get("args").isJsonArray() ? strings(s, "args") : null;
+	}
+
+	/** The URL an earlier Done staged for this server, or null. */
+	public static @Nullable String stagedUrl(@Nullable JsonObject staged, String type) {
+		JsonObject s = stagedOfKind(staged, type);
+		return s != null && s.has("url") ? str(s, "url") : null;
+	}
+
+	/** What a server form sends: null = left out (the Foreman keeps the stored value). */
+	public record Send(@Nullable String command, @Nullable List<String> args, @Nullable String url) {
+	}
+
+	/**
+	 * What the server form sends on Done. {@code cur}: the server as the Foreman shows it (null: not stored yet);
+	 * {@code staged}: its entry from an earlier Done, if any; {@code typedCommand} / {@code commandShown}: the command
+	 * field and the text it started with. The command goes when edited (else the staged one, else - a server that is
+	 * new or changes between stdio and http - the field); args / url go when "Replace…" is on (the field: the complete
+	 * new value), else the staged ones, else the field for such a fresh server; otherwise nothing (kept).
+	 */
+	public static Send toSend(String type, @Nullable Server cur, @Nullable JsonObject staged, String typedCommand, String commandShown,
+		boolean replaceArgs, List<String> typedArgs, boolean replaceUrl, String typedUrl) {
+		boolean stdio = "stdio".equals(type);
+		boolean fresh = cur == null || cur.stdio() != stdio;
+		if (stdio) {
+			String sc = stagedCommand(staged, type);
+			String command = !typedCommand.equals(commandShown) ? typedCommand : sc != null ? sc : fresh ? typedCommand : null;
+			List<String> sa = stagedArgs(staged, type);
+			List<String> args = replaceArgs ? List.copyOf(typedArgs) : sa != null ? sa : fresh ? List.copyOf(typedArgs) : null;
+			return new Send(command, args, null);
+		}
+		String su = stagedUrl(staged, type);
+		return new Send(null, null, replaceUrl ? typedUrl : su != null ? su : fresh ? typedUrl : null);
+	}
+
 	/**
 	 * The mod's check of one server change before it is staged (the Foreman's rules), or null. {@code cur}: the server
-	 * as the Foreman shows it (null: a new one); a new server or one changing between stdio and http needs its command or
-	 * URL; otherwise null command / args / url keep the stored ones. {@code others}: the names of the other servers.
+	 * as the Foreman shows it (null: not stored yet); one not stored or changing between stdio and http needs its command
+	 * or URL; otherwise null command / args / url keep the stored ones. {@code isNew}: added in this form (its name must
+	 * not be one of {@code others}).
 	 */
 	public static @Nullable String serverProblem(String name, String type, @Nullable String command, @Nullable List<String> args, @Nullable String url,
-		@Nullable JsonElement envPatch, @Nullable Server cur, List<String> others) {
+		@Nullable JsonElement envPatch, @Nullable Server cur, boolean isNew, List<String> others) {
 		String n = name == null ? "" : name.strip();
 		if (!SERVER_NAME.matcher(n).matches()) {
 			return "name: letters, digits, _ or - (at most 64)";
@@ -471,7 +524,7 @@ public final class SecretSettings {
 		if (n.equalsIgnoreCase("agentcraft")) {
 			return "name: agentcraft is the team tools server";
 		}
-		if (cur == null && others.contains(n)) {
+		if (isNew && others.contains(n)) {
 			return "name: " + n + " is already a server";
 		}
 		if (!SERVER_TYPES.contains(type)) {
@@ -569,7 +622,7 @@ public final class SecretSettings {
 			}
 			String type = str(e, "type");
 			String why = type == null ? "type: stdio, http or sse" : serverProblem(name, type, e.has("command") ? str(e, "command") : null,
-				e.has("args") ? strings(e, "args") : null, e.has("url") ? str(e, "url") : null, envOf(e), cur, List.of());
+				e.has("args") ? strings(e, "args") : null, e.has("url") ? str(e, "url") : null, envOf(e), cur, false, List.of());
 			if (why != null) {
 				problems.add(name + " " + why);
 			}

@@ -185,18 +185,18 @@ class SecretSettingsTest {
 		List<Server> cur = SecretSettings.servers(j(VIEW));
 		Server fs = cur.get(0);
 		Server docs = cur.get(1);
-		assertNull(SecretSettings.serverProblem("notes", "stdio", "node server.js", null, null, null, null, names));
-		assertNotNull(SecretSettings.serverProblem("fs", "stdio", "x", null, null, null, null, names), "taken");
-		assertNull(SecretSettings.serverProblem("fs", "stdio", null, null, null, null, fs, names), "an edit keeps the command");
-		assertNotNull(SecretSettings.serverProblem("bad name", "stdio", "x", null, null, null, null, names));
-		assertNotNull(SecretSettings.serverProblem("AgentCraft", "stdio", "x", null, null, null, null, names));
-		assertNotNull(SecretSettings.serverProblem("n", "stdio", " ", null, null, null, null, names), "no command");
-		assertNotNull(SecretSettings.serverProblem("n", "stdio", null, null, null, null, null, names), "a new server needs a command");
-		assertNotNull(SecretSettings.serverProblem("docs", "stdio", null, null, null, null, docs, names), "http -> stdio needs a command");
-		assertNotNull(SecretSettings.serverProblem("fs", "http", null, null, null, null, fs, names), "stdio -> http needs a url");
-		assertNull(SecretSettings.serverProblem("docs", "sse", null, null, null, null, docs, names), "http -> sse keeps the url");
-		assertNotNull(SecretSettings.serverProblem("n", "stdio", "x", null, null, j("{\"1A\":\"v\"}"), null, names));
-		assertNull(SecretSettings.serverProblem("n", "http", null, null, "https://h.contoso.example/mcp?key=1", null, null, names), "a query is fine now");
+		assertNull(SecretSettings.serverProblem("notes", "stdio", "node server.js", null, null, null, null, true, names));
+		assertNotNull(SecretSettings.serverProblem("fs", "stdio", "x", null, null, null, null, true, names), "taken");
+		assertNull(SecretSettings.serverProblem("fs", "stdio", null, null, null, null, fs, false, names), "an edit keeps the command");
+		assertNotNull(SecretSettings.serverProblem("bad name", "stdio", "x", null, null, null, null, true, names));
+		assertNotNull(SecretSettings.serverProblem("AgentCraft", "stdio", "x", null, null, null, null, true, names));
+		assertNotNull(SecretSettings.serverProblem("n", "stdio", " ", null, null, null, null, true, names), "no command");
+		assertNotNull(SecretSettings.serverProblem("n", "stdio", null, null, null, null, null, true, names), "a new server needs a command");
+		assertNotNull(SecretSettings.serverProblem("docs", "stdio", null, null, null, null, docs, false, names), "http -> stdio needs a command");
+		assertNotNull(SecretSettings.serverProblem("fs", "http", null, null, null, null, fs, false, names), "stdio -> http needs a url");
+		assertNull(SecretSettings.serverProblem("docs", "sse", null, null, null, null, docs, false, names), "http -> sse keeps the url");
+		assertNotNull(SecretSettings.serverProblem("n", "stdio", "x", null, null, j("{\"1A\":\"v\"}"), null, true, names));
+		assertNull(SecretSettings.serverProblem("n", "http", null, null, "https://h.contoso.example/mcp?key=1", null, null, true, names), "a query is fine now");
 		assertNotNull(SecretSettings.urlProblem("https://user:pw@h.contoso.example/mcp"), "credentials");
 		assertNotNull(SecretSettings.urlProblem("https://h.contoso.example/mcp#x"), "fragment");
 		assertNotNull(SecretSettings.urlProblem("https://h.contoso.example/a b"), "space");
@@ -208,5 +208,35 @@ class SecretSettingsTest {
 		assertNotNull(SettingsLogic.validate(d, j("[{\"name\":\"fs\",\"remove\":true},{\"name\":\"fs\",\"remove\":true}]")), "twice");
 		assertNotNull(SettingsLogic.validate(d, j("[{\"name\":\"n\",\"command\":\"x\"}]")), "no type");
 		assertNull(stdio("n", "x", 0).url());
+		// an added server edited again: its own staged name is no clash
+		assertNull(SecretSettings.serverProblem("notes", "stdio", "node", null, null, null, null, false, List.of("fs", "docs", "notes")));
+	}
+
+	@Test
+	void theFormSendsOnlyWhatChangedAndKeepsWhatAnEarlierDoneStaged() {
+		List<Server> cur = SecretSettings.servers(j(VIEW));
+		Server fs = cur.get(0);
+		Server docs = cur.get(1);
+		// an untouched edit: nothing sent (all kept)
+		assertEquals(new SecretSettings.Send(null, null, null), SecretSettings.toSend("stdio", fs, null, "npx", "npx", false, List.of(), false, ""));
+		// a changed command, replaced arguments (empty clears them)
+		assertEquals(new SecretSettings.Send("uvx", null, null), SecretSettings.toSend("stdio", fs, null, "uvx", "npx", false, List.of(), false, ""));
+		assertEquals(new SecretSettings.Send(null, List.of(), null), SecretSettings.toSend("stdio", fs, null, "npx", "npx", true, List.of(), false, ""));
+		// a new server: what the fields hold
+		assertEquals(new SecretSettings.Send("node", List.of("a.js"), null), SecretSettings.toSend("stdio", null, null, "node", "", false, List.of("a.js"), false, ""));
+		// an added server opened again and Done without changes: its staged command line and args stay (the field shows only the executable)
+		JsonObject added = SecretSettings.entry("notes", "stdio", "node /srv/n.js --token t", List.of("--k", "v"), null, null);
+		assertEquals(new SecretSettings.Send("node /srv/n.js --token t", List.of("--k", "v"), null), SecretSettings.toSend("stdio", null, added, "node", "node", false,
+			List.of(), false, ""));
+		// a retyped server (http -> stdio) opened again: the same
+		JsonObject retyped = SecretSettings.entry("docs", "stdio", "docs-mcp --key x", List.of("--y"), null, null);
+		assertEquals(new SecretSettings.Send("docs-mcp --key x", List.of("--y"), null), SecretSettings.toSend("stdio", docs, retyped, "docs-mcp", "docs-mcp", false,
+			List.of(), false, ""));
+		// a staged URL stays unless replaced; switching kind ignores the other kind's staged parts
+		JsonObject url = SecretSettings.entry("docs", "http", null, null, "https://docs.contoso.example/v2/k", null);
+		assertEquals(new SecretSettings.Send(null, null, "https://docs.contoso.example/v2/k"), SecretSettings.toSend("http", docs, url, "", "", false, List.of(), false, ""));
+		assertEquals(new SecretSettings.Send(null, null, "https://n.example/x"), SecretSettings.toSend("http", docs, url, "", "", false, List.of(), true, "https://n.example/x"));
+		assertEquals(new SecretSettings.Send("", List.of(), null), SecretSettings.toSend("stdio", docs, url, "", "", false, List.of(), false, ""));
+		assertNull(SecretSettings.stagedArgs(url, "stdio"));
 	}
 }
