@@ -373,6 +373,29 @@ public final class AgentsFeature {
 			a.addProperty("exclaims", exclaims());
 			o.add("agents", a);
 		});
+		DevBridge.register("dev.agents.freezeEntityTick", 10_000,
+			"{on?} -> skip every agent's entity tick (emulates Entity Culling's tickCulling; agents must keep walking via"
+				+ " the client-tick catch-up); always returns {on, entityAdvances, catchUpAdvances, moving} summed over agents",
+			(req, mc) -> {
+				Boolean on = Fields.of(req).optBool("on");
+				return DevBridge.onClient(mc, () -> {
+					if (on != null) {
+						ClientAgentEntity.freezeEntityTick = on;
+					}
+					long byEntity = 0;
+					long byCatchUp = 0;
+					for (ClientAgentEntity e : AgentManager.get().entities().values()) {
+						byEntity += e.gate().byEntity();
+						byCatchUp += e.gate().byCatchUp();
+					}
+					JsonObject o = new JsonObject();
+					o.addProperty("on", ClientAgentEntity.freezeEntityTick);
+					o.addProperty("entityAdvances", byEntity);
+					o.addProperty("catchUpAdvances", byCatchUp);
+					o.addProperty("moving", AgentManager.get().movingCount());
+					return o;
+				});
+			});
 		DevBridge.register("dev.agents", 10_000,
 			"{settle?:false} -> {count, moving, plateOverlaps, agents:[{id, x,y,z, yaw, station, anchor, target, walking, state, activity,"
 				+ " plate:{mode full|compact, lift, rank, nudge, focused, rect:[x0,y0,x1,y1] screen px}}]};"

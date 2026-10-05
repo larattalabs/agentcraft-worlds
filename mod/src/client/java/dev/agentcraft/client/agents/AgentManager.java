@@ -190,6 +190,36 @@ public final class AgentManager {
 		return n;
 	}
 
+	/**
+	 * The tick number agents stamp their advance with ({@link TickGate}). The entity ticks of a client tick
+	 * run before {@link #tick} (END_CLIENT_TICK), which bumps it after {@link #catchUpEntityTicks}, so both
+	 * read the same value within one client tick.
+	 */
+	long clock() {
+		return ticks;
+	}
+
+	/**
+	 * Advance every agent whose entity tick did not run this client tick: Entity Culling (tickCulling, on by
+	 * default) and similar mods skip ticking entities out of view, which froze client-only agents mid-walk.
+	 * Same filters as {@code ClientLevel.tickEntities}: not while paused, removed, a passenger or tick-frozen.
+	 */
+	private void catchUpEntityTicks(Minecraft mc, ClientLevel lvl) {
+		if (mc.isPaused()) {
+			return;
+		}
+		for (ClientAgentEntity e : new ArrayList<>(entities.values())) { // a ticker may add or remove agents
+			if (e.isRemoved() || e.isPassenger() || e.level() != lvl || lvl.tickRateManager().isEntityFrozen(e)) {
+				continue;
+			}
+			try {
+				e.catchUp(ticks);
+			} catch (Throwable ex) {
+				AgentCraft.LOGGER.warn("agent catch-up tick failed", ex);
+			}
+		}
+	}
+
 	void tick(Minecraft mc) {
 		ClientLevel lvl = mc.level;
 		if (lvl != level) {
@@ -213,6 +243,7 @@ public final class AgentManager {
 		if (lvl == null) {
 			return;
 		}
+		catchUpEntityTicks(mc, lvl);
 		ticks++;
 		if (!mc.isPaused()) {
 			liveTicks++;

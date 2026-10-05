@@ -15,13 +15,16 @@ import org.jspecify.annotations.Nullable;
  * The client-only agent NPC. Created and removed by {@link AgentManager}; never exists on the
  * server. It skips all of LivingEntity's physics/AI: each tick it only advances its
  * {@link AgentMotion}, updates the vanilla walk animation from the real distance moved, and runs
- * the {@link AgentHooks} tickers.
+ * the {@link AgentHooks} tickers. That advance runs from the entity tick or, when another mod skips
+ * ticking entities out of view (Entity Culling's tickCulling), from {@link AgentManager}'s client tick
+ * ({@link TickGate}: never both in one tick).
  */
 public class ClientAgentEntity extends AgentEntity implements ClientAvatarEntity {
 	private final ClientAvatarState avatarState = new ClientAvatarState();
 	private final AgentView view;
 	private final AgentMotion motion = new AgentMotion();
 	private final AgentLife life;
+	private final TickGate gate = new TickGate();
 	private PlayerSkin skin;
 	private float headYaw;
 	private float headPitch;
@@ -76,9 +79,38 @@ public class ClientAgentEntity extends AgentEntity implements ClientAvatarEntity
 		this.setDeltaMovement(Vec3.ZERO);
 	}
 
+	/**
+	 * Dev only ({@code dev.agents.freezeEntityTick}): skip the entity tick like Entity Culling's
+	 * tickCulling does for entities out of view, so the catch-up path can be exercised without that mod.
+	 */
+	static volatile boolean freezeEntityTick;
+
+	public TickGate gate() {
+		return gate;
+	}
+
 	@Override
 	public void tick() {
 		// commonTick() already stored the previous position/rotation and counted the tick.
+		if (freezeEntityTick) {
+			return;
+		}
+		gate.fromEntityTick(AgentManager.get().clock(), this::advance);
+	}
+
+	/**
+	 * End-of-client-tick catch-up from {@link AgentManager}: advances only if the entity tick did not run
+	 * this tick (another mod culled it). Returns whether it advanced.
+	 */
+	boolean catchUp(long tick) {
+		return gate.catchUp(tick, () -> {
+			this.setOldPosAndRot(); // what commonTick() does first; a no-op if a culler already did it
+			advance();
+		});
+	}
+
+	/** One tick of walking, animation and life. Runs once per client tick via {@link #gate}. */
+	private void advance() {
 		this.yBodyRotO = this.yBodyRot;
 		this.yHeadRotO = this.yHeadRot;
 		this.xRotO = this.getXRot();

@@ -276,6 +276,9 @@ string pulling, `AgentMotion` 2.9 blocks/s, smooth turns, exact arrival + facing
 there is no route, remove agents that leave the snapshot, keep them dimmed ("Foreman offline") while
 the link is down, re-place everyone when the layout is republished. `StationAssigner` maps station ->
 anchor slot (sticky, deterministic; off-shift -> lounge).
+Agents advance once per client tick, from their entity tick or, when a culling mod skips it (Entity
+Culling's `tickCulling`), from `AgentManager`'s catch-up (`TickGate`; DEV.md "Compatibility: entity
+tick culling"). `AgentHooks` tickers therefore run even when the entity tick does not.
 
 What an agent shows lives in its `AgentView` (`entity.view()`: name, colours, state, family,
 activity, station, anchor, active, paused, stale, pose). Phase 3 hooks:
