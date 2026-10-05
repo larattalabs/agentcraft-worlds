@@ -194,6 +194,14 @@ final class ConfigScope {
 		}
 	}
 
+	/** Drops the staged edit of {@code key} (a secret setting whose update became empty). */
+	void unstage(String key) {
+		staged.remove(key);
+		parseErrors.remove(key);
+		errors.remove(key);
+		confirm = null;
+	}
+
 	/** Typed text for {@code key}: staged when it parses, else remembered as a parse problem. */
 	void setText(String key, String text) {
 		SettingDef d = def(key);
@@ -424,7 +432,8 @@ final class ConfigScope {
 				// what applied is now the current value (until the reload confirms it)
 				List<SettingDef> next = new ArrayList<>();
 				for (SettingDef d : view.settings()) {
-					next.add(staged.has(d.key()) ? d.withValue(staged.value(d.key(), d.value()), "file") : d);
+					// a secret setting's staged value is an update: its view after it (names only) becomes current
+					next.add(staged.has(d.key()) ? d.withValue(SettingsLogic.applied(d, staged.value(d.key(), d.value())), "file") : d);
 				}
 				view = new SettingDef.ConfigView(view.file(), next, view.mcpServers());
 				staged.clear();
@@ -478,7 +487,7 @@ final class ConfigScope {
 		o.addProperty("note", note);
 		o.addProperty("noteError", noteError);
 		JsonObject st = new JsonObject();
-		staged.edits().forEach((k, v) -> st.add(k, v.deepCopy()));
+		staged.edits().forEach((k, v) -> st.add(k, SettingsLogic.masked(def(k), v))); // secret values: "(staged)"
 		o.add("staged", st);
 		JsonObject er = new JsonObject();
 		errors.forEach(er::addProperty);

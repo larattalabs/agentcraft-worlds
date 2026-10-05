@@ -998,8 +998,8 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   single-line field, Ctrl+Enter applies, Esc unfocuses.
 - Settings tab: group chips General / Permissions / Context / Subagents / PRs / Usage (• = staged edits in it) and the
   config file; a group = the global settings whose `SettingsLogic.groupOf` is it (Team keys excluded; `group` from the
-  Foreman, else by key prefix). Context lists the MCP servers read-only (`mcpServers` of the ack, else a `map`
-  setting named `*mcpServers`); Usage starts with the Status tab's usage windows (`HubScreen.drawUsage`, shared).
+  Foreman, else by key prefix). Context edits the MCP servers (`mcpServers` setting, wave 3 S2; an older Foreman's
+  `mcpServers` of the ack or `map` setting named `*mcpServers` is listed read-only); Usage starts with the Status tab's usage windows (`HubScreen.drawUsage`, shared).
 - Team tab: roster (`PaneList`): "Models and limits", the leads (staged `claude.leads` order, then the cast's other
   leads "not in use"; building via `Leads.view().buildingOf`, model · effort) and the workers (cast + Foreman +
   configured; on/off = staged `claude.workers`), each with its face, state dot and a second line. Detail: framed
@@ -1008,8 +1008,8 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   per repo (one row per repo, each repo's scope). Models: lead/worker/design model + effort, task-size models,
   concurrency, then any other Team key (`claude.leadReview`, …). Apply covers the global scope and every repo scope.
 - Repos tab: **Edit settings…** opens the repo's form in place of the tab (Done / Esc back), in the Foreman's groups:
-  Landing (`land`, `baseBranch`, `pr.*`), Worktrees (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`, `env`
-  read-only), Agents (`subagents`, `roles.<agent>` for every roster agent: chips of the agent file ids), Review
+  Landing (`land`, `baseBranch`, `pr.*`), Worktrees (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`, `env` as a
+  secret map: names with "(set)", values write-only, wave 3 S1), Agents (`subagents`, `roles.<agent>` for every roster agent: chips of the agent file ids), Review
   (`prReview.*`).
 - Layout: compact under 470 × 200 GUI px like Repos/Goals (Team: list or detail with "‹ Team"); banners collapse to
   one line each; only the form scrolls. `dev.hub.state` `teamTab.layout` / `settingsTab.layout` = `{guiWidth,
@@ -1029,7 +1029,9 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
     change without confirm replies `ok:false, "confirm needed: …"`), `settings_confirm`, `settings_confirm_back`,
     `settings_revert`, `settings_group {group}`, `settings_reload {repoId?}`, `foreman_restart`, `team_select
     {agentId?}`, `team_back`, `team_on {agentId, on}`, `team_lead {agentId, inUse?, move?: -1|1}`, `repo_settings
-    {repoId?}`, `repo_settings_done`; `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
+    {repoId?}`, `repo_settings_done`, `settings_field {id, text}` (a secret editor's helper field drawn last frame:
+    `repo:env:name`, `repo:env:value`, `mcp:name`, `mcp:command`, `mcp:args`, `mcp:url`, `mcp:env:name`,
+    `mcp:env:value`; the text is never echoed); `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
     `group:<g>`, `team:on_team:<id>`, `team:lead_up:<id>`, …; see `*.form.chips`) and buttons `settings_apply`,
     `settings_revert`, `settings_confirm`, `foreman_restart`, `settings_retry`, `repo_edit_settings`. Foreman actions
     reply after the ack with `result{ok, message, unsupported, result}`.
@@ -1037,6 +1039,9 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
     loads a config.get result into a scope; `settings_fake_agents {repoId, agents:[name | {name, path, description,
     model}]}` fakes repo.agents. Apply still sends a real config.set.
   - Screens: `hub_team`, `hub_settings`, `hub_settings_<group>`, `hub_repo_settings` (the first repo).
+  - Secret editors (wave 3 S1/S2) chips: `<form>:env:replace:<NAME>`, `:remove:<NAME>`, `:undo:<NAME>`, `:set`;
+    `settings:claude.context.mcpServers:add`, `:edit:<name>`, `:remove:<name>`, `:undo:<name>`, `mcp:type:<stdio|http|sse>`,
+    `mcp:env:set`, `mcp:done`, `mcp:cancel`. Staged secret values show as `"(staged)"` in every state.
 - Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`, once the Foreman side is merged):
   `dev.hub.open {tab:"settings", group:"permissions"}` -> `settings_set {key:"claude.permissions.allow",
   value:["Bash(npm test)"]}` -> `settings_apply` (confirm bar: shoot it) -> `settings_confirm`; `settings_set

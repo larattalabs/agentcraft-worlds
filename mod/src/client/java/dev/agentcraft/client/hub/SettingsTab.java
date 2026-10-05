@@ -18,8 +18,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * The hub's Settings tab (docs/HUB.md "Settings tab (mod)"): group chips General / Permissions / Context /
  * Subagents / PRs / Usage, each a form generated from the global {@code config.get} settings of that group
- * ({@link SettingsForm}; the Team tab's keys are left to the Team tab). Context also lists the MCP servers
- * read-only (name and command); Usage also shows the Status tab's plan usage windows read-only. Edits are
+ * ({@link SettingsForm}; the Team tab's keys are left to the Team tab). Context edits the MCP servers (wave 3 S2: add,
+ * edit, remove, their env as a secret map; restart-required); an older Foreman's plain map is listed read-only. Usage also shows the Status tab's plan usage windows read-only. Edits are
  * staged until Apply (one {@code config.set}); widening changes ask a second confirm; changes that need a
  * restart show the restart banner.
  */
@@ -75,9 +75,12 @@ final class SettingsTab implements HubPane {
 			return rows;
 		}
 		boolean any = false;
+		boolean editableMcp = false;
 		for (SettingDef d : sc.view().settings()) {
-			if (SettingsLogic.groupOf(d).equals(group) && !(group.equals(SettingsLogic.CONTEXT) && d.key().toLowerCase(Locale.ROOT).endsWith(
-				"mcpservers"))) {
+			// MCP servers: the editor (type mcpServers) in the list; an older Foreman's read-only map goes to the section below
+			boolean oldMcp = d.key().toLowerCase(Locale.ROOT).endsWith("mcpservers") && !SettingDef.MCP_SERVERS.equals(d.type());
+			editableMcp |= SettingDef.MCP_SERVERS.equals(d.type());
+			if (SettingsLogic.groupOf(d).equals(group) && !(group.equals(SettingsLogic.CONTEXT) && oldMcp)) {
 				if (!any && group.equals(SettingsLogic.USAGE)) {
 					rows.add(new SettingsForm.Section("Limits"));
 				}
@@ -88,7 +91,7 @@ final class SettingsTab implements HubPane {
 		if (!any) {
 			rows.add(new SettingsForm.Text("Nothing to set in " + SettingsLogic.groupLabel(group) + " (the Foreman lists none).", false));
 		}
-		if (group.equals(SettingsLogic.CONTEXT)) {
+		if (group.equals(SettingsLogic.CONTEXT) && !editableMcp) {
 			rows.add(new SettingsForm.Section("MCP servers (read-only: edit them in " + (sc.view().file() == null ? "config.json" : sc.view().file())
 				+ ")"));
 			if (sc.view().mcpServers().isEmpty()) {
