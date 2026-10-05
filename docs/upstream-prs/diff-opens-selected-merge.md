@@ -9,11 +9,11 @@ falls back to the DevBridge `"diff"` screen factory, `new DiffScreen(defaultTarg
 `defaultTarget()` picks the **oldest** open merge decision. That affects:
 
 - `D` (Review diff) on a merge decision in the decision screen;
-- `/diff <worktree>` in the console.
+- `/diff [worktree|@agent]` in the console.
 
 With more than one merge waiting, reviewing the second merge opens the first. That screen's Merge
-button and Ctrl+Enter answer the decision it shows, so the user can approve a merge they never
-reviewed.
+button and Ctrl+Enter answer the decision it shows, so the user can approve a different merge from
+the one they selected.
 
 ## Fix
 

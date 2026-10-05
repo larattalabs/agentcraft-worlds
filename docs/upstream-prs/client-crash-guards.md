@@ -5,9 +5,8 @@ Branch: `upstream/client-crash-guards` (one commit on `upstream/main`)
 ## Problem
 
 An exception thrown out of a Fabric `END_CLIENT_TICK`, level-render/extraction or HUD element callback
-is not caught by the game. It ends in a crash report. In singleplayer that takes down the integrated
-server with the client, so the session ends mid-play, and the world is only as saved as its last
-autosave.
+is not caught by the game. It crashes the client and, in singleplayer, the integrated
+server with it.
 
 AgentCraft's handlers depend on Foreman state that arrives asynchronously: snapshots, layouts,
 decisions. One unexpected null or a state race in any of them crashes the game. The agent entity

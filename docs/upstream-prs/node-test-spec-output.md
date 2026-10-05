@@ -33,4 +33,4 @@ and one with spec output.
 
 - `cd foreman && npm ci && npm run check` (tsc, vitest, protocol-doc check):
   - Node 24.16: 22 files, 484 tests pass. On `upstream/main` the same run gives 481 passed and 1 failed.
-  - Node 22: also passes.
+  - Node 22: 484 tests pass.

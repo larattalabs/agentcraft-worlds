@@ -10,8 +10,8 @@ Branch: `upstream/claude-login-drops-api-key` (one commit on `upstream/main`)
 who also use the API, every agent CLI gets the key and authenticates with it. The result:
 
 - usage is billed to the API key instead of the login the user chose;
-- the start-up check (`checkAuth`, which uses the same environment) reports the key's account, so
-  nothing on screen shows it happened.
+- the start-up check (`checkAuth`) runs with the same environment, so it checks the key rather than
+  the login.
 
 API mode already handles the mirror case: it drops `CLAUDE_CODE_OAUTH_TOKEN`, so a login token never
 overrides the key.

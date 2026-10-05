@@ -17,7 +17,7 @@ the fork only; they are not on the `upstream/*` branches.
 
 | Branch | Commit | Area | Checks on the branch |
 |---|---|---|---|
-| `upstream/node-test-spec-output` | `4201434` Foreman: parse the node --test spec reporter's output | Foreman | `npm run check` passes on Node 24.16 (484 tests) and Node 22. Fixes the one test that fails on upstream under Node 24 |
+| `upstream/node-test-spec-output` | `4201434` Foreman: parse the node --test spec reporter's output | Foreman | `npm run check` passes on Node 24.16 and Node 22 (484 tests each). Fixes the one test that fails on upstream under Node 24 |
 | `upstream/claude-login-drops-api-key` | `5edc83d` Foreman: don't pass API keys to agents under --use-claude-login | Foreman | `npm run check` passes on Node 22 (483 tests). On Node 24 the only failure is the pre-existing Node 24 test fixed by the branch above |
 | `upstream/agent-tick-catch-up` | `02d8679` Mod: keep agents walking when another mod skips their entity tick | Mod | `gradlew build` passes; a standalone `TickGate` harness passes |
 | `upstream/diff-opens-selected-merge` | `7e32e54` Mod: open the diff of the selected merge, not the oldest one | Mod | `gradlew build` passes |

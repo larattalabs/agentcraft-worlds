@@ -41,10 +41,11 @@ stop too.
   - with the entity tick running, the catch-up never advances (10 of 10 by the entity tick);
   - with two of three entity ticks skipped, every tick still advances exactly once (6 by the entity
     tick, 4 by the catch-up).
-- Downstream, with a modpack that includes Entity Culling: before this change, a scripted in-game
-  check failed because an agent walking out of view stopped mid-route. With the same change in place,
-  that check passed.
-- Not run on this branch in the game. To check it in the dev client:
+- Downstream, with a modpack that includes Entity Culling, a scripted in-game check found the freeze:
+  an agent walking out of view stopped mid-route. The later passing run also had the
+  `tickCullingWhitelist` workaround active, so it does not isolate this change.
+- The clean test is `dev.agents.freezeEntityTick`, and it has not been run on this branch. To run it
+  in the dev client:
   1. Run `dev.agents.freezeEntityTick {on:true}`.
   2. Give an agent work so it walks to a desk.
   3. Confirm that it arrives, that `entityAdvances` stays flat, and that `catchUpAdvances` grows by
