@@ -199,6 +199,7 @@ public final class JournalStore {
 
 	static Entry read(Path f) throws IOException {
 		CompoundTag t = NbtIo.readCompressed(f, NbtAccounter.unlimitedHeap());
+		dev.agentcraft.compat.LegacyIds.remap(t); // entries written before the mod id rename name agentcraft:<x>
 		try {
 			return JournalNbt.decode(t);
 		} catch (RuntimeException e) {

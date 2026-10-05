@@ -277,6 +277,7 @@ public final class JournalMigration {
 			}
 			case BUILDING, BUILDING_PENDING -> {
 				CompoundTag tpl = NbtIo.readCompressed(it.file, NbtAccounter.unlimitedHeap());
+				dev.agentcraft.compat.LegacyIds.remap(tpl);
 				if (!JournalNbt.isTemplate(tpl)) {
 					throw new IOException(it.legacy + " is not a building snapshot");
 				}
@@ -285,7 +286,9 @@ public final class JournalMigration {
 				return it.kind == Item.Kind.BUILDING ? e : e.undone(new Undo(id, it.undoneAt, allBefore(cells), List.of()));
 			}
 			default -> {
-				List<Cell> cells = roadCells(NbtIo.readCompressed(it.file, NbtAccounter.unlimitedHeap()), layer);
+				CompoundTag road = NbtIo.readCompressed(it.file, NbtAccounter.unlimitedHeap());
+				dev.agentcraft.compat.LegacyIds.remap(road);
+				List<Cell> cells = roadCells(road, layer);
 				Entry e = new Entry(id, "road", it.owner, it.dimension, Policy.CELL, it.time, Status.ACTIVE, cells, null, it.meta);
 				return it.kind == Item.Kind.ROAD ? e : e.undone(new Undo(id, it.undoneAt, allBefore(cells), List.of()));
 			}

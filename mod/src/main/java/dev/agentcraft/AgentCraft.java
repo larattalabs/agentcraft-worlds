@@ -45,6 +45,7 @@ public class AgentCraft implements ModInitializer {
 		AgentCraftCommands.init();
 		BuildingCommands.init();
 		HqFeature.init();
+		dev.agentcraft.compat.LegacyAliases.register(); // last: aliases every entry registered above
 		LOGGER.info("AgentCraft common init done ({} blocks, cast {})", ModBlocks.all().size(), Cast.ids());
 	}
 

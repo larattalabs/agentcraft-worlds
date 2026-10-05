@@ -105,7 +105,7 @@ public record Blueprint(String id, String name, String description, String kind,
 					a.has("yaw") ? a.get("yaw").getAsFloat() : 0f, a.has("pitch") ? a.get("pitch").getAsFloat() : 0f));
 			}
 		}
-		String foundation = str(o, "foundationBlock", DEFAULT_FOUNDATION).strip().toLowerCase(Locale.ROOT);
+		String foundation = dev.agentcraft.compat.LegacyIds.id(str(o, "foundationBlock", DEFAULT_FOUNDATION).strip().toLowerCase(Locale.ROOT));
 		if (!foundation.isEmpty() && foundation.indexOf(':') < 0) {
 			foundation = "minecraft:" + foundation;
 		}

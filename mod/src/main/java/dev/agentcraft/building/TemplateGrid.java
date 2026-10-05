@@ -106,7 +106,7 @@ public record TemplateGrid(Blueprint blueprint, int[] xyz, BlockState[] states, 
 	public static String fingerprint(int[] xyz, String[] states, boolean[] blockEntity) {
 		List<String> cells = new ArrayList<>(states.length);
 		for (int i = 0; i < states.length; i++) {
-			cells.add(xyz[i * 3] + "," + xyz[i * 3 + 1] + "," + xyz[i * 3 + 2] + "=" + states[i] + (blockEntity[i] ? "+be" : ""));
+			cells.add(xyz[i * 3] + "," + xyz[i * 3 + 1] + "," + xyz[i * 3 + 2] + "=" + dev.agentcraft.compat.LegacyIds.fingerprintForm(states[i]) + (blockEntity[i] ? "+be" : ""));
 		}
 		Collections.sort(cells);
 		try {
