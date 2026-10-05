@@ -4,8 +4,10 @@
 	"compatibilityLevel": "JAVA_25",
 	"client": [
 		"BackupConfirmScreenAccessor",
+		"BossHealthOverlayAccessor",
 		"CameraAccessor",
 		"CameraMixin",
+		"ChatComponentAccessor",
 		"ClientLevelAccessor",
 		"ClientLevelBlockMixin",
 		"EntityRenderDispatcherMixin",

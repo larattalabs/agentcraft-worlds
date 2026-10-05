@@ -195,7 +195,7 @@ final class SettingsForm {
 		return area[2] > 0 && y + h > area[1] && y < area[1] + area[3];
 	}
 
-	private void hit(String id, int x, int y, int w, int h, boolean enabled, Runnable action) {
+	void hit(String id, int x, int y, int w, int h, boolean enabled, Runnable action) {
 		if (visible(y, h)) {
 			int y0 = Math.max(y, area[1]);
 			int y1 = Math.min(y + h, area[1] + area[3]);
@@ -211,7 +211,7 @@ final class SettingsForm {
 		return w;
 	}
 
-	private int rowChip(GuiGraphicsExtractor g, String id, String label, int x, int y, boolean on, boolean enabled, int mx, int my, Runnable action) {
+	int rowChip(GuiGraphicsExtractor g, String id, String label, int x, int y, boolean on, boolean enabled, int mx, int my, Runnable action) {
 		int w = chipW(label);
 		drawChip(g, label, x, y, w, on, enabled, mx, my);
 		hit(id, x, y, w, CHIP_H, enabled, action);

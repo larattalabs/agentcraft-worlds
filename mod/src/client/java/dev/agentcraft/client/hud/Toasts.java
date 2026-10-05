@@ -12,6 +12,7 @@ import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.hud.HudLayout;
 import dev.agentcraft.hud.ToastStack;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,13 +31,13 @@ import org.jspecify.annotations.Nullable;
  * about, two lines of text; "need you" toasts get a clay stripe and a key hint: the decisions key ({@code J})
  * when the toast is about a decision, else the hub key ({@code H}, e.g. a blocked task or a reply); a toast
  * can also carry its own hint ({@link #push(Notify, String, String)}, the away toast). They slide
- * in at the top right under the connection pill, stack (need-you toasts first, then newest on top, three at most,
+ * in beside the overlay ({@link HudOverlay#toastColumn}: under it, or above it when it sits at the bottom), stack (need-you toasts first, then newest on top, three at most,
  * {@link ToastStack}), and leave early once their decision is answered. Toasts that do not fit (three already, or the
  * screen is too short: 426x240) wait their turn and are counted on one "+N more" line; their time starts when they
  * show. Info toasts never push out or hide a need-you toast. Not shown while the decision screen is open.
  */
 public final class Toasts implements HudElement {
-	private static final int W = 196;
+	static final int W = 196;
 	/** A toast that never got room is dropped after this long (need-you toasts wait longer). */
 	private static final long QUEUE_MS = 30_000;
 	private static final long QUEUE_NEED_MS = 120_000;
@@ -85,6 +86,7 @@ public final class Toasts implements HudElement {
 	/** The last layout (QA, {@code dev.hud.state toasts}). */
 	private static ToastStack.Layout lastLayout = new ToastStack.Layout(List.of(), List.of(), 0, 0, -1);
 	private static List<Toast> lastOrder = List.of();
+	private static int lastX;
 
 	/** QA: the key hint of the newest toast ("J answer", "H open"), null = none. */
 	public static @Nullable String lastHint() {
@@ -108,6 +110,10 @@ public final class Toasts implements HudElement {
 					if (d.test(n)) {
 						return;
 					}
+				}
+				// hub Settings > General > HUD > Toasts: "Needs you" (default) or "All"
+				if (!dev.agentcraft.hud.HudVisibility.toastFor(HudConfig.get().toasts(), n.level() == NotifyLevel.NEED_USER)) {
+					return;
 				}
 				push(n);
 			}
@@ -215,21 +221,20 @@ public final class Toasts implements HudElement {
 		Minecraft mc = Minecraft.getInstance();
 		long now = Util.getMillis();
 		ACTIVE.removeIf(t -> t.over(now));
-		if (mc.player == null || ACTIVE.isEmpty() || mc.gui.screen() instanceof DecisionScreen) {
+		if (mc.player == null || ACTIVE.isEmpty() || mc.gui.screen() instanceof DecisionScreen || mc.gui.hud.isHidden()) {
 			return;
 		}
 		Font font = mc.font;
-		// under the connection pill (one or two lines tall)
-		int y = Math.max(40, ConnectionBanner.pillBottom + 6);
-		// stay clear of the goal bar when the screen is narrow enough for them to meet
-		if (GoalBar.right > g.guiWidth() - 6 - W - 4) {
-			y = Math.max(y, GoalBar.bottom + 6);
-		}
-		// never over the hotbar or the placement panel (426x240: the stack reached both); the rest wait their turn
+		// the column beside the overlay (HudOverlay draws first): under it at the top / right middle, above it at the bottom,
+		// clear of boss bars, effect icons, the connection pill, the hotbar with its status rows and the chat
+		HudLayout.Column col = HudOverlay.toastColumn();
+		int y = col.top();
+		int limit = col.bottom();
+		// never over the placement panel (426x240: the stack reached it); the rest wait their turn
 		int[] placing = dev.agentcraft.client.building.BuildPlacement.hudRect();
-		// survival/Hardcore: hearts, armour, hunger and air sit above the hotbar (up to ~50 px from the bottom)
-		boolean bars = mc.gameMode != null && mc.gameMode.getPlayerMode().isSurvival();
-		int limit = placing != null ? placing[1] - 4 : g.guiHeight() - (bars ? 50 : 26);
+		if (placing != null && !col.up() && placing[0] < col.x() + W && col.x() < placing[0] + placing[2]) {
+			limit = Math.min(limit, placing[1] - 4);
+		}
 		// need-you toasts first (newest first), then the rest; what does not fit waits and counts on the "+N more" line
 		List<Toast> order = new ArrayList<>();
 		List<ToastStack.Item> items = new ArrayList<>();
@@ -239,25 +244,37 @@ public final class Toasts implements HudElement {
 			items.add(new ToastStack.Item(t.need(), height(font, t)));
 		}
 		ToastStack.Layout l = ToastStack.layout(items, y, limit, 4, ToastStack.MAX_SHOWN, MORE_H);
+		if (col.up() && !l.shown().isEmpty()) {
+			// above the overlay: the stack hugs its bottom edge (the layout ran top-down, shift it)
+			int last = l.shown().size() - 1;
+			int end = l.moreY() >= 0 ? l.moreY() + MORE_H : l.ys().get(last) + items.get(l.shown().get(last)).height();
+			int dy = Math.max(0, limit - end);
+			List<Integer> ys = new ArrayList<>();
+			for (int v : l.ys()) {
+				ys.add(v + dy);
+			}
+			l = new ToastStack.Layout(l.shown(), List.copyOf(ys), l.hidden(), l.hiddenNeed(), l.moreY() >= 0 ? l.moreY() + dy : -1);
+		}
 		lastLayout = l;
+		lastX = col.x();
 		lastOrder = order;
 		for (int k = 0; k < l.shown().size(); k++) {
 			Toast t = order.get(l.shown().get(k));
 			if (t.start < 0) {
 				t.start = now; // its time and its slide start now that it has room
 			}
-			draw(g, font, t, now, l.ys().get(k));
+			draw(g, font, t, now, col.x(), l.ys().get(k));
 		}
 		if (l.moreY() >= 0) {
-			drawMore(g, font, l, l.moreY());
+			drawMore(g, font, l, col.x(), l.moreY());
 		}
 	}
 
-	/** "+2 more · 1 needs you": a small paper tab under the stack, right-aligned with the toasts. */
-	private static void drawMore(GuiGraphicsExtractor g, Font font, ToastStack.Layout l, int y) {
+	/** "+2 more · 1 needs you": a small paper tab under the stack, aligned with the toasts' outer edge. */
+	private static void drawMore(GuiGraphicsExtractor g, Font font, ToastStack.Layout l, int colX, int y) {
 		String text = ToastStack.moreText(l.hidden(), l.hiddenNeed());
 		int w = Math.min(W, font.width(text) + 12);
-		int x = g.guiWidth() - 6 - w;
+		int x = colX + W / 2 < g.guiWidth() / 2 ? colX : colX + W - w;
 		Panels.sprite(g, Kit.PANEL_PAPER, x, y, w, MORE_H, 0xFFFFFFFF);
 		g.text(font, TextUtil.ellipsize(font, text, w - 12), x + 6, y + 3, l.hiddenNeed() > 0 ? UiStyle.CLAY_DARK : UiBits.muted(), false);
 	}
@@ -300,11 +317,13 @@ public final class Toasts implements HudElement {
 		o.addProperty("moreLine", l.moreY() >= 0 ? ToastStack.moreText(l.hidden(), l.hiddenNeed()) : null);
 		o.addProperty("moreY", l.moreY());
 		o.addProperty("queued", ACTIVE.size());
+		o.addProperty("x", lastX);
+		o.addProperty("w", W);
 		return o;
 	}
 
 	/** Draws the toast at {@code y} (its place in the stack, {@link ToastStack#layout}). */
-	private static void draw(GuiGraphicsExtractor g, Font font, Toast t, long now, int y) {
+	private static void draw(GuiGraphicsExtractor g, Font font, Toast t, long now, int colX, int y) {
 		Kit.Padding p = Kit.padding("panel_paper");
 		boolean need = t.need();
 		int textX = p.left() + 26;
@@ -317,7 +336,10 @@ public final class Toasts implements HudElement {
 		slide = 1f - (1f - slide) * (1f - slide);
 		long left = t.life - age;
 		float fade = left < FADE_MS ? Math.max(0f, left / (float) FADE_MS) : 1f;
-		int x = g.guiWidth() - 6 - W + (int) ((1f - slide) * (W + 10));
+		// slides in from the nearer edge
+		boolean fromLeft = colX + W / 2 < g.guiWidth() / 2;
+		int off = (int) ((1f - slide) * (W + 10));
+		int x = fromLeft ? colX - off : colX + off;
 		int a = (int) (255 * fade);
 		if (a < 8) {
 			return;

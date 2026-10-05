@@ -13,6 +13,8 @@ import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.hub.ConnectionHints;
+import dev.agentcraft.hud.HudLayout;
+import dev.agentcraft.hud.HudSettings;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -44,13 +46,16 @@ public final class ConnectionBanner implements HudElement {
 	 */
 	public static int pillLeft = Integer.MAX_VALUE;
 	public static int pillBottom = 0;
+	/** Top edge of the pill drawn this frame (it sits under the effect icons, {@link HudLayout}). */
+	public static int pillTop = 0;
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
 		Minecraft mc = Minecraft.getInstance();
 		pillLeft = g.guiWidth();
 		pillBottom = 0;
-		if (mc.player == null || Foreman.state() == null) {
+		pillTop = 0;
+		if (mc.player == null || Foreman.state() == null || mc.gui.hud.isHidden()) {
 			return;
 		}
 		ForemanState st = Foreman.state();
@@ -116,7 +121,15 @@ public final class ConnectionBanner implements HudElement {
 		int h = p.top() + 9 + (detail == null ? 0 : 10) + p.bottom();
 		int x = g.guiWidth() - w - MARGIN;
 		int y = MARGIN;
+		// top right, under the effect icons and clear of boss bars (the overlay then stacks under it)
+		HudLayout.Rect at = HudLayout.place(HudEnv.current(Minecraft.getInstance(), g.guiWidth(), g.guiHeight()).withPill(HudLayout.Rect.NONE),
+			HudSettings.Position.TOP_RIGHT, w, h).rect();
+		if (!at.empty()) {
+			x = at.x();
+			y = at.y();
+		}
 		pillLeft = x;
+		pillTop = y;
 		pillBottom = y + h;
 		int tint = (alpha << 24) | 0xFFFFFF;
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h, tint);

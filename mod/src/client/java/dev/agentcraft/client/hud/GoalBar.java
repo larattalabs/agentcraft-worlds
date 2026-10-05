@@ -1,210 +1,127 @@
 package dev.agentcraft.client.hud;
 
-import dev.agentcraft.client.decisions.DecisionScreen;
-import dev.agentcraft.client.decisions.DecisionsFeature;
-import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.GoalStatus;
-import dev.agentcraft.client.foreman.Protocol.Task;
-import dev.agentcraft.client.foreman.Protocol.TaskStatus;
 import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
-import net.minecraft.client.DeltaTracker;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
 import dev.agentcraft.hud.AlertLine;
 import dev.agentcraft.hud.HudRules;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
- * Boss-bar style goal progress at the top centre: the goal text with its status dot and percentage,
- * a progress bar, and the task counts by column. Under it hangs the decisions badge
- * ("2 waiting · J", pulsing clay) whenever decisions are open, and under that the alert line (docs/WAVE2.md
- * W5: "2 decisions · 1 blocked · 3 replies · usage paused until 14:20 [H]") while anything needs the player.
- * With no goal yet a small hint says how to give one. Dimmed while the Foreman link is down (last known
- * state). Several open goals (parallel leads): the most urgent one is pinned (open decisions / blocked
- * tasks), else they take turns every 8 s; the title row says "+N more" ({@link HudRules#pickGoal}). Nothing
- * is drawn while the HUD is hidden (F1).
+ * The Panel overlay style (the wave 2 HUD, now placed by {@link HudOverlay} instead of the top centre): the goal with
+ * its status dot and percentage, a progress bar and the task counts by column; under it the decisions badge ("2 waiting
+ * · J", pulsing clay) while decisions are open, the alert line (docs/WAVE2.md W5: "2 decisions · 1 blocked · 3 replies ·
+ * usage paused until 14:20 [H]") while anything needs the player, and the peek. With no goal yet a small hint says how
+ * to give one. Dimmed while the Foreman link is down (last known state). Several open goals: the most urgent pinned,
+ * else 8 s turns, "+N more" ({@link HudRules#pickGoal}). The blocks stack in a column aligned to the overlay's side.
+ * Drawn in overlay px from the origin. Also keeps the QA fields {@code dev.hud.state} has always reported.
  */
-public final class GoalBar implements HudElement {
-	public static final int TOP = 6;
+public final class GoalBar {
 	private static final int MAX_W = 300;
-	/** Narrower than this and the bar moves below the connection pill instead of squeezing next to it. */
-	private static final int MIN_W = 220;
-	/** Free GUI px kept between the bar and the connection pill. */
-	private static final int PILL_GAP = 6;
 	private static final long DONE_FADE_MS = 60_000;
-
-	private long cachedRevision = -1;
-	private @org.jspecify.annotations.Nullable String cachedGoal;
-	private final int[] counts = new int[5]; // doing review todo blocked done
-	private int totalTasks;
-	private long candRevision = -1;
-	private final List<HudRules.GoalCand> cands = new ArrayList<>();
+	private static final int GAP = 2;
 
 	/** QA: the goal shown last frame and the cycle (dev.hud.state goalBar). */
 	public static volatile HudRules.@org.jspecify.annotations.Nullable Pick lastPick;
-	/** QA: the alert line drawn last frame: level (full/short/dots, null = not drawn), box and widths. */
+	/** QA: the alert line drawn last frame: level (full/short/dots, null = not drawn), box (GUI px) and widths. */
 	public static volatile @org.jspecify.annotations.Nullable String alertLevel;
 	public static volatile int[] alertBox = new int[4];
 	public static volatile int alertNeeded;
 	public static volatile int alertAvailable;
 	public static volatile boolean alertOverflow;
 
-	/** Bottom edge of what this element drew last frame (toasts / other HUD stack below it). */
+	/** Bottom edge of what the overlay drew last frame (GUI px; 0 = nothing). */
 	public static int bottom = 0;
-	/** Right edge of the widest thing it drew last frame (0 = nothing). */
+	/** Right edge of what the overlay drew last frame (0 = nothing). */
 	public static int right = 0;
 	/** QA: something drawn last frame intersected the connection pill. */
 	public static boolean pillClash;
+	/** Drawing the settings preview: leave the QA fields alone. */
+	static boolean preview;
 
-	@Override
-	public void extractRenderState(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
-		Minecraft mc = Minecraft.getInstance();
-		ForemanState s = Foreman.state();
-		bottom = 0;
-		right = 0;
-		pillClash = false;
-		alertLevel = null;
-		alertOverflow = false;
-		if (mc.player == null || s == null || !s.hasData() || mc.gui.hud.isHidden()) {
-			lastPick = null;
-			return;
-		}
-		Font font = mc.font;
-		int y = TOP + authBannerOffset(s, font, g);
-		boolean stale = s.isStale();
-		// panels stay opaque (legible over any background); offline / long-done content is dimmed instead
-		int alpha = stale ? 200 : 255;
-		HudRules.Pick pick = pick(s);
-		lastPick = pick;
-		Goal goal = pick == null ? null : s.goals().get(pick.id());
-		if (goal == null) {
-			goal = s.goal();
-		}
-		boolean decisionScreen = mc.gui.screen() instanceof DecisionScreen;
-		if (goal != null) {
-			long age = System.currentTimeMillis() - goal.updatedAt();
-			if (goal.status() == GoalStatus.DONE && age > DONE_FADE_MS) {
-				alpha = Math.min(alpha, 190);
-			}
-			y = drawGoal(g, font, s, goal, pick == null ? 0 : pick.more(), y, alpha, stale);
-		} else if (!stale) {
-			y = drawNoGoal(g, font, y);
-		}
-		int waiting = DecisionsFeature.waitingCount();
-		if (waiting > 0 && !decisionScreen) {
-			y = drawBadge(g, font, waiting, y + 2, alpha);
-		}
-		AlertLine line = Alerts.line();
-		if (line.visible()) {
-			y = drawAlerts(g, font, line, y + 2, alpha, stale);
-		}
-		bottom = y;
+	private GoalBar() {
 	}
 
-	/** The goal to show: {@link HudRules#pickGoal} over the open goals (urgency = open decisions + blocked tasks). */
-	private HudRules.@org.jspecify.annotations.Nullable Pick pick(ForemanState s) {
-		if (s.revision() != candRevision) {
-			candRevision = s.revision();
-			cands.clear();
-			Map<String, Integer> urgency = new HashMap<>();
-			for (var d : s.decisions().values()) {
-				String gid = d.isOpen() ? dev.agentcraft.client.hub.HubGoals.goalOf(d) : null;
-				if (gid != null) {
-					urgency.merge(gid, 1, Integer::sum);
-				}
-			}
-			for (Task t : s.tasks().values()) {
-				if (t.status() == TaskStatus.BLOCKED && t.goalId() != null) {
-					urgency.merge(t.goalId(), 1, Integer::sum);
-				}
-			}
-			for (Goal g : s.goals().values()) {
-				cands.add(new HudRules.GoalCand(g.id(), g.isOpen(), urgency.getOrDefault(g.id(), 0), g.updatedAt(), g.createdAt()));
-			}
-		}
-		Goal latest = s.goal();
-		return HudRules.pickGoal(cands, System.currentTimeMillis(), latest == null ? null : latest.id());
+	private enum Kind {
+		GOAL, NO_GOAL, BADGE, ALERTS, PEEK
 	}
 
-	/** The connection feature draws a loud paper banner at the top centre when auth failed: stack below it. */
-	private static int authBannerOffset(ForemanState s, Font font, GuiGraphicsExtractor g) {
-		var fs = s.status();
-		if (fs == null || fs.auth() != dev.agentcraft.client.foreman.Protocol.AuthStatus.FAILED || !s.link().synced()) {
-			return 0;
-		}
-		String msg = ConnectionBanner.authMessage(fs);
-		int maxW = Math.min(360, g.guiWidth() - 40);
-		int lines = TextUtil.wrap(font, msg, maxW - 34).size();
-		Kit.Padding p = Kit.padding("panel_paper");
-		return p.top() + 10 + lines * 10 + p.bottom() + 4;
+	private record Block(Kind kind, int w, int h) {
 	}
 
-	private void recount(ForemanState s, Goal goal) {
-		if (s.revision() == cachedRevision && java.util.Objects.equals(goal.id(), cachedGoal)) {
-			return;
+	/** The panel's blocks for {@code maxW} overlay px (the alert line's level is picked to fit). */
+	private static List<Block> blocks(HudModel m, Font font, int maxW) {
+		Kit.Padding p = Kit.padding("tooltip");
+		List<Block> out = new ArrayList<>();
+		int line = p.top() + 10 + p.bottom() + 1;
+		if (m.goal != null) {
+			out.add(new Block(Kind.GOAL, Math.min(MAX_W, maxW), p.top() + 9 + 4 + 6 + 4 + 9 + p.bottom()));
+		} else if (!m.stale) {
+			String key = Keys.console == null ? "Backtick" : Keys.label(Keys.console);
+			int w = p.left() + 11 + font.width("No goal yet · press") + 4 + UiBits.keycapWidth(font, key) + 4 + font.width("to give the team one") + p.right()
+				+ 2;
+			out.add(new Block(Kind.NO_GOAL, Math.min(w, maxW), line));
 		}
-		cachedRevision = s.revision();
-		cachedGoal = goal.id();
-		java.util.Arrays.fill(counts, 0);
-		totalTasks = 0;
-		// tasks without a goal id (an old Foreman) count only while there is a single goal
-		boolean single = s.goals().size() <= 1;
-		for (Task t : s.tasks().values()) {
-			if (t.goalId() == null ? !single : !t.goalId().equals(goal.id())) {
-				continue;
-			}
-			int i = switch (t.status()) {
-				case DOING -> 0;
-				case REVIEW -> 1;
-				case TODO -> 2;
-				case BLOCKED -> 3;
-				case DONE -> 4;
-				default -> -1;
-			};
-			if (i >= 0) {
-				counts[i]++;
-				totalTasks++;
-			}
+		if (m.waiting > 0) {
+			String key = Keys.decisions == null ? "J" : Keys.label(Keys.decisions);
+			out.add(new Block(Kind.BADGE, Math.min(maxW, p.left() + 13 + font.width(m.waiting + " waiting · press") + 4 + UiBits.keycapWidth(font, key)
+				+ p.right() + 1), line));
 		}
+		if (m.alert.visible()) {
+			out.add(new Block(Kind.ALERTS, Math.min(maxW, alertWidth(m, font, maxW)), line));
+		}
+		if (m.peek != null) {
+			out.add(new Block(Kind.PEEK, Math.min(maxW, p.left() + 12 + font.width(m.peek.text()) + p.right() + 1), line));
+		}
+		return out;
+	}
+
+	/** Overlay px: width and height of the panel. */
+	static int[] measure(HudModel m, Font font, int maxW) {
+		int w = 0;
+		int h = 0;
+		for (Block b : blocks(m, font, maxW)) {
+			w = Math.max(w, b.w());
+			h += (h > 0 ? GAP : 0) + b.h();
+		}
+		return new int[] {w, h};
 	}
 
 	/**
-	 * Where a centred element {@code wantW} wide (at most) goes at row {@code y}: beside the connection
-	 * pill (top right) when it fits there at {@code minW} or more, else below the pill. The pill's real
-	 * extent comes from this frame ({@link ConnectionBanner} draws first), so a long "Reconnecting to the
-	 * Foreman (5) / showing last known state" pill never lands on the bar. Returns x, y, w.
+	 * Draws the panel at the origin, {@code w} wide; blocks narrower than that align right when {@code alignRight}.
+	 * {@code gx, gy, k}: where the origin is in GUI px and the scale (QA boxes).
 	 */
-	private static int[] place(GuiGraphicsExtractor g, int y, int h, int wantW, int minW) {
-		int gw = g.guiWidth();
-		int w = Math.min(wantW, gw - 24);
-		int x = (gw - w) / 2;
-		int pl = ConnectionBanner.pillLeft;
-		int pb = ConnectionBanner.pillBottom;
-		boolean rowsMeet = pb > 0 && y < pb + 3 && y + h > 0;
-		if (rowsMeet && x + w > pl - PILL_GAP) {
-			int fit = 2 * (pl - PILL_GAP - gw / 2);
-			if (fit >= Math.min(minW, wantW)) {
-				w = Math.min(w, fit);
-				x = (gw - w) / 2;
-			} else {
-				y = pb + 4;
+	static void draw(GuiGraphicsExtractor g, Font font, HudModel m, int w, boolean alignRight, int gx, int gy, float k) {
+		int alpha = m.stale ? 200 : 255;
+		if (m.goal != null && m.goal.status() == GoalStatus.DONE && System.currentTimeMillis() - m.goal.updatedAt() > DONE_FADE_MS) {
+			alpha = Math.min(alpha, 190);
+		}
+		int y = 0;
+		for (Block b : blocks(m, font, w)) {
+			int x = alignRight ? w - b.w() : 0;
+			switch (b.kind()) {
+				case GOAL -> drawGoal(g, font, m, x, y, b.w(), b.h(), alpha);
+				case NO_GOAL -> drawNoGoal(g, font, x, y, b.w(), b.h());
+				case BADGE -> drawBadge(g, font, m, x, y, b.w(), b.h(), alpha);
+				case ALERTS -> {
+					drawAlerts(g, font, m, x, y, b.w(), b.h(), alpha);
+					if (preview) {
+						break;
+					}
+					alertBox = new int[] {gx + (int) Math.floor(x * k), gy + (int) Math.floor(y * k), dev.agentcraft.hud.HudLayout.scaled(b.w(), k),
+						dev.agentcraft.hud.HudLayout.scaled(b.h(), k)};
+				}
+				case PEEK -> drawPeek(g, font, m, x, y, b.w(), b.h(), alpha);
 			}
+			y += b.h() + GAP;
 		}
-		if (pb > 0 && x + w > pl && y < pb) {
-			pillClash = true;
-		}
-		return new int[] {x, y, w};
 	}
 
 	/** While planning: the lead is planning, unless it is waiting on your answer (a question before the plan). */
@@ -219,15 +136,10 @@ public final class GoalBar implements HudElement {
 		return "Marlow is planning the tasks…";
 	}
 
-	private int drawGoal(GuiGraphicsExtractor g, Font font, ForemanState s, Goal goal, int more, int y0, int alpha, boolean stale) {
-		recount(s, goal);
+	private static void drawGoal(GuiGraphicsExtractor g, Font font, HudModel m, int x, int y, int w, int h, int alpha) {
+		HudModel.GoalView goal = m.goal;
+		boolean stale = m.stale;
 		Kit.Padding p = Kit.padding("tooltip");
-		int h = p.top() + 9 + 4 + 6 + 4 + 9 + p.bottom();
-		int[] at = place(g, y0, h, MAX_W, MIN_W);
-		int x = at[0];
-		int y = at[1];
-		int w = at[2];
-		right = Math.max(right, x + w);
 		int tint = (alpha << 24) | 0xFFFFFF;
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h);
 		int ix = x + p.left() + 1;
@@ -268,9 +180,9 @@ public final class GoalBar implements HudElement {
 			family = "idle";
 		}
 		Panels.sprite(g, Kit.dot(family, false), ix, ty + 1, 7, 7, tint);
-		int pct = (int) Math.round(Math.max(0, Math.min(1, goal.progress())) * 100);
-		String pctS = pct + "%";
+		String pctS = goal.pct() + "%";
 		int pctW = font.width(pctS);
+		int more = m.more;
 		// several open goals: "+2 more" before the percentage (the bar takes turns, or pins the urgent one)
 		String moreS = more > 0 ? "+" + more + " more" : "";
 		int moreW = more > 0 ? font.width(moreS) + 6 : 0;
@@ -278,7 +190,7 @@ public final class GoalBar implements HudElement {
 			moreS = "+" + more;
 			moreW = font.width(moreS) + 6;
 		}
-		String text = prefix + UiBits.oneLine(goal.text());
+		String text = prefix + goal.text();
 		int textColor = stale ? UiBits.activityOnInk() : UiBits.cream();
 		g.text(font, TextUtil.ellipsize(font, text, iw - 11 - pctW - 8 - moreW), ix + 11, ty, UiStyle.withAlpha(textColor, alpha), false);
 		if (more > 0) {
@@ -299,16 +211,17 @@ public final class GoalBar implements HudElement {
 		String[] fams = {"working", "thinking", "idle", "error", "done"};
 		int cx = ix;
 		int act = UiStyle.withAlpha(UiBits.activityOnInk(), alpha);
-		if (totalTasks == 0) {
-			g.text(font, goal.status() == GoalStatus.PLANNING ? planningLine(s) : "no tasks yet", cx, cy, act, false);
+		int[] counts = m.counts;
+		if (m.totalTasks == 0) {
+			g.text(font, goal.status() == GoalStatus.PLANNING ? m.planningLine : "no tasks yet", cx, cy, act, false);
 		} else {
 			// done count on the right ("2/9 done"), the open columns on the left with labels when they fit
-			String done = counts[4] + "/" + totalTasks + " done";
+			String done = counts[4] + "/" + m.totalTasks + " done";
 			int doneW = font.width(done);
 			Panels.sprite(g, Kit.dot("done", false), ix + iw - doneW - 9, cy + 1, 7, 7, tint);
 			g.text(font, done, ix + iw - doneW, cy, act, false);
 			int room = iw - doneW - 9 - 10;
-			boolean withLabels = countsWidth(font, labels, true) <= room;
+			boolean withLabels = countsWidth(font, counts, labels, true) <= room;
 			int open = counts[0] + counts[1] + counts[2] + counts[3];
 			if (open == 0) {
 				String all = goal.status() == GoalStatus.DONE ? "finished " + UiBits.ago(goal.updatedAt()) : "nothing open right now";
@@ -328,10 +241,9 @@ public final class GoalBar implements HudElement {
 				cx += 9 + font.width(c) + 8;
 			}
 		}
-		return y + h;
 	}
 
-	private int countsWidth(Font font, String[] labels, boolean withLabels) {
+	private static int countsWidth(Font font, int[] counts, String[] labels, boolean withLabels) {
 		int w = 0;
 		for (int i = 0; i < 4; i++) {
 			if (counts[i] == 0) {
@@ -342,18 +254,12 @@ public final class GoalBar implements HudElement {
 		return Math.max(0, w - 8);
 	}
 
-	private int drawNoGoal(GuiGraphicsExtractor g, Font font, int y0) {
+	private static void drawNoGoal(GuiGraphicsExtractor g, Font font, int x, int y, int w, int h) {
 		String key = Keys.console == null ? "Backtick" : Keys.label(Keys.console);
 		String a = "No goal yet · press";
 		String b = "to give the team one";
 		Kit.Padding p = Kit.padding("tooltip");
 		int kw = UiBits.keycapWidth(font, key);
-		int w = p.left() + 11 + font.width(a) + 4 + kw + 4 + font.width(b) + p.right() + 2;
-		int h = p.top() + 10 + p.bottom() + 1;
-		int[] at = place(g, y0, h, w, w);
-		int x = at[0];
-		int y = at[1];
-		right = Math.max(right, x + w);
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h, 0xE6FFFFFF);
 		int cx = x + p.left() + 1;
 		int ty = y + p.top() + 1;
@@ -364,58 +270,59 @@ public final class GoalBar implements HudElement {
 		UiBits.keycap(g, font, key, cx, ty - 2);
 		cx += kw + 4;
 		g.text(font, b, cx, ty, UiBits.activityOnInk(), false);
-		return y + h;
 	}
 
-	private int drawBadge(GuiGraphicsExtractor g, Font font, int waiting, int y0, int alpha) {
+	private static void drawBadge(GuiGraphicsExtractor g, Font font, HudModel m, int x, int y, int w, int h, int alpha) {
 		String key = Keys.decisions == null ? "J" : Keys.label(Keys.decisions);
-		String text = waiting + " waiting · press";
+		String text = m.waiting + " waiting · press";
 		Kit.Padding p = Kit.padding("tooltip");
-		int kw = UiBits.keycapWidth(font, key);
-		int w = p.left() + 13 + font.width(text) + 4 + kw + p.right() + 1;
-		int h = p.top() + 10 + p.bottom() + 1;
-		int[] at = place(g, y0, h, w, w);
-		int x = at[0];
-		int y = at[1];
-		right = Math.max(right, x + w);
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h);
 		int cx = x + p.left() + 2;
 		int ty = y + p.top() + 1;
-		boolean stale = Foreman.state() != null && Foreman.state().isStale();
-		if (stale) {
+		if (m.stale) {
 			// can't be answered until the Foreman is back: no pulse, no clay
 			Panels.sprite(g, Kit.dot("idle", false), cx, ty, 7, 7);
 		} else {
 			UiBits.pulsingDot(g, "waiting", cx, ty);
 		}
 		cx += 11;
-		g.text(font, text, cx, ty, UiStyle.withAlpha(stale ? UiBits.activityOnInk() : UiStyle.CLAY, alpha), false);
+		g.text(font, text, cx, ty, UiStyle.withAlpha(m.stale ? UiBits.activityOnInk() : UiStyle.CLAY, alpha), false);
 		cx += font.width(text) + 4;
 		UiBits.keycap(g, font, key, cx, ty - 2);
-		return y + h;
 	}
 
-	/**
-	 * The alert line (W5): each non-zero part with its status dot, separated by " · ", then the hub key's
-	 * keycap. Widest of full / short / dots that fits the HUD; even the dots too wide (a tiny window): the row
-	 * is cut at the edge and {@link #alertOverflow} says so.
-	 */
-	private int drawAlerts(GuiGraphicsExtractor g, Font font, AlertLine line, int y0, int alpha, boolean stale) {
+	private static void drawPeek(GuiGraphicsExtractor g, Font font, HudModel m, int x, int y, int w, int h, int alpha) {
+		Kit.Padding p = Kit.padding("tooltip");
+		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h);
+		int cx = x + p.left() + 2;
+		int ty = y + p.top() + 1;
+		Panels.sprite(g, Kit.dot(HudPeeks.family(m.peek.kind()), false), cx, ty, 7, 7, (alpha << 24) | 0xFFFFFF);
+		g.text(font, TextUtil.ellipsize(font, m.peek.text(), w - p.left() - p.right() - 13), cx + 10, ty, UiStyle.withAlpha(UiBits.cream(), alpha), false);
+	}
+
+	private static int alertWidth(HudModel m, Font font, int maxW) {
+		return alertFit(m, font, maxW).w;
+	}
+
+	private record AlertFit(AlertLine.Level level, boolean withVerb, boolean overflow, int rowW, int w, int needed, int available) {
+	}
+
+	/** Widest of full / short / dots that fits {@code maxW}; even the dots too wide: cut at the edge (overflow). */
+	private static AlertFit alertFit(HudModel m, Font font, int maxW) {
 		long now = System.currentTimeMillis();
 		ZoneId zone = ZoneId.systemDefault();
+		AlertLine line = m.alert;
 		List<AlertLine.Part> parts = line.parts(zone, now);
 		String key = Keys.hub == null ? "H" : Keys.label(Keys.hub);
-		String verb = "open";
 		Kit.Padding p = Kit.padding("tooltip");
 		int dotW = 10;
 		int sepW = font.width(AlertLine.SEP);
 		int kw = UiBits.keycapWidth(font, key);
 		int frame = p.left() + p.right() + 3;
-		int avail = g.guiWidth() - 24 - frame;
-		int fullTail = 6 + kw + 3 + font.width(verb);
+		int avail = maxW - frame;
+		int fullTail = 6 + kw + 3 + font.width("open");
 		int tail = 6 + kw;
-		alertNeeded = AlertLine.rowWidth(parts, AlertLine.Level.FULL, font::width, dotW, sepW) + fullTail + frame;
-		alertAvailable = avail + frame;
+		int needed = AlertLine.rowWidth(parts, AlertLine.Level.FULL, font::width, dotW, sepW) + fullTail + frame;
 		AlertLine.Level level = line.fit(font::width, avail, dotW, sepW, fullTail, zone, now);
 		boolean withVerb = level == AlertLine.Level.FULL;
 		if (level == null) {
@@ -427,16 +334,33 @@ public final class GoalBar implements HudElement {
 		}
 		int sep = level == AlertLine.Level.DOTS ? font.width("  ") : sepW;
 		int rowW = AlertLine.rowWidth(parts, level, font::width, dotW, sep) + (withVerb ? fullTail : tail);
-		int w = Math.min(rowW + frame, g.guiWidth() - 24);
-		int h = p.top() + 10 + p.bottom() + 1;
-		int[] at = place(g, y0, h, w, w);
-		int x = at[0];
-		int y = at[1];
-		w = at[2];
-		right = Math.max(right, x + w);
-		alertLevel = level.name().toLowerCase(java.util.Locale.ROOT);
-		alertOverflow = overflow || rowW + frame > w;
-		alertBox = new int[] {x, y, w, h};
+		int w = Math.min(rowW + frame, maxW);
+		return new AlertFit(level, withVerb, overflow || rowW + frame > w, rowW, w, needed, avail + frame);
+	}
+
+	/**
+	 * The alert line (W5): each non-zero part with its status dot, separated by " · ", then the hub key's keycap. Widest
+	 * of full / short / dots that fits; even the dots too wide (a tiny window): the row is cut at the edge and
+	 * {@link #alertOverflow} says so.
+	 */
+	private static void drawAlerts(GuiGraphicsExtractor g, Font font, HudModel m, int x, int y, int w, int h, int alpha) {
+		long now = System.currentTimeMillis();
+		ZoneId zone = ZoneId.systemDefault();
+		AlertFit fit = alertFit(m, font, w);
+		AlertLine.Level level = fit.level();
+		boolean stale = m.stale;
+		List<AlertLine.Part> parts = m.alert.parts(zone, now);
+		String key = Keys.hub == null ? "H" : Keys.label(Keys.hub);
+		Kit.Padding p = Kit.padding("tooltip");
+		int dotW = 10;
+		int kw = UiBits.keycapWidth(font, key);
+		int sep = level == AlertLine.Level.DOTS ? font.width("  ") : font.width(AlertLine.SEP);
+		if (!preview) {
+			alertNeeded = fit.needed();
+			alertAvailable = fit.available();
+			alertLevel = level.name().toLowerCase(java.util.Locale.ROOT);
+			alertOverflow = fit.overflow();
+		}
 		int tint = (alpha << 24) | 0xFFFFFF;
 		Panels.sprite(g, Kit.TOOLTIP, x, y, w, h);
 		int cx = x + p.left() + 2;
@@ -464,10 +388,18 @@ public final class GoalBar implements HudElement {
 		cx += 6;
 		if (cx + kw <= limit + 1) {
 			UiBits.keycap(g, font, key, cx, ty - 2);
-			if (withVerb) {
-				g.text(font, verb, cx + kw + 3, ty, sepColor, false);
+			if (fit.withVerb()) {
+				g.text(font, "open", cx + kw + 3, ty, sepColor, false);
 			}
 		}
-		return y + h;
+	}
+
+	/** Resets the per-frame QA fields (the overlay calls it before drawing). */
+	static void beginFrame() {
+		bottom = 0;
+		right = 0;
+		pillClash = false;
+		alertLevel = null;
+		alertOverflow = false;
 	}
 }

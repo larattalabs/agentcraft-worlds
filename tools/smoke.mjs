@@ -20,8 +20,9 @@
 // restored), goals for both repos and a stand-up, the Inbox with a simulated PR (automated review -> triage
 // decision), answering a decision, a merge through the diff screen's confirm (a real merge commit), a goal done ->
 // trophy, removing a building that holds trophies (exact restore), the Settings MCP editor with a fake secret (stored,
-// never shown or logged), layout at 426x240 GUI px with toast priority, placement HUD shots (ready, server refusal,
-// too far).
+// never shown or logged), layout at 426x240 GUI px with toast priority, the HUD overlay styles at 426x240 (every
+// style, position and size with two boss bars and both effect rows: shown, no overlaps; a peek; Off; F1), placement
+// HUD shots (ready, server refusal, too far).
 
 import { spawnSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -31,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { DevClient } from './lib/devclient.mjs';
 import { contactSheet } from './lib/contactsheet.mjs';
 import { checkMorning, checkNight, bedsOf } from './lib/routinesqa.mjs';
+import { POSITIONS, SCENE, SCENE_UNDO, SIZES, STYLES, hudProblems, restorePayload, sceneProblems } from './lib/hudstyles.mjs';
 import {
   SmokeRunner, boxCentre, boxText, boxesOverlap, countStates, diffDumps, fakeSecret, findSecret, growBox, layoutProblem,
   parseBox, pollUntil, redact, scanFiles, selector, summaryLines,
@@ -892,7 +894,7 @@ async function main() {
     ctx.require('426x240 GUI px', sc.guiWidth === 426 && sc.guiHeight === 240, sc);
     try {
       const problems = [];
-      const tabs = [['inbox', {}], ['buildings', {}], ['buildings', { sub: 'roads' }], ['buildings', { sub: 'fixtures' }], ['repos', {}], ['goals', {}], ['team', {}], ['settings', { group: 'context' }], ['status', {}]];
+      const tabs = [['inbox', {}], ['buildings', {}], ['buildings', { sub: 'roads' }], ['buildings', { sub: 'fixtures' }], ['repos', {}], ['goals', {}], ['team', {}], ['settings', { group: 'general' }], ['settings', { group: 'context' }], ['status', {}]];
       for (const [tab, extra] of tabs) {
         await call('dev.hub.open', { tab, ...extra });
         await sleep(250);
@@ -908,7 +910,8 @@ async function main() {
           if (r.ui?.overflow) problems.push(`${label}: roads pane overflow`);
           if (r.ui?.strip?.overflow) problems.push(`${label}: list strip overflow`);
         }
-        await shot(ctx, `small_${label.replace('/', '_')}`, { waitChunks: false, frames: 2 });
+        const shotLabel = extra.sub ? `${label.replace('/', '_')}` : extra.group ? `${tab}_${extra.group}` : label;
+        await shot(ctx, `small_${shotLabel}`, { waitChunks: false, frames: 2 });
       }
       await closeScreens();
       const walk = await call('dev.walk.state');
@@ -927,6 +930,70 @@ async function main() {
       await shot(ctx, 'small_toasts_hud', { hud: true, waitChunks: false, frames: 2 });
       ctx.check('no layout overflows at 426x240', problems.length === 0, problems);
     } finally {
+      await call('dev.window', { width: 1920, height: 1080 });
+      await call('dev.review.guiScale', { scale: 3 });
+    }
+  });
+
+  // ---- HUD overlay styles at 426x240: every style and position clear of boss bars, effects, hotbar, chat --------------
+  await runner.step('hud_styles_426x240', { needs: ['preflight'], timeoutMs: 180_000 }, async (ctx) => {
+    await closeScreens();
+    await vantage();
+    const before = (await call('dev.hud.state')).overlay?.settings;
+    ctx.require('dev.hud.state reports the overlay settings', !!before, before);
+    await call('dev.window', { width: 1278, height: 720 });
+    const sc = await call('dev.review.guiScale', { scale: 0 });
+    ctx.require('426x240 GUI px', sc.guiWidth === 426 && sc.guiHeight === 240, sc);
+    try {
+      for (const cmd of SCENE) {
+        const r = await call('dev.command', { cmd });
+        ctx.check(`/${cmd}`, r.success !== false, r.messages);
+      }
+      // auto-hide off so every combination must show (no empty rectangle passes for free), no peeks, no chat lines
+      await call('dev.hud.set', { autoHide: false, peek: false, hideInCombat: false, clearPeek: true, clearChat: true });
+      await sleep(400);
+      const scene = await call('dev.hud.state');
+      ctx.require('the scene shows two boss bars and both effect rows', sceneProblems(scene).length === 0, sceneProblems(scene));
+      const problems = [];
+      let checked = 0;
+      for (const style of STYLES) {
+        for (const position of POSITIONS) {
+          for (const size of SIZES) {
+            await call('dev.hud.set', { style, position, size });
+            await sleep(120);
+            const h = await call('dev.hud.state');
+            problems.push(...hudProblems(`${style}/${position}/${size}`, h));
+            checked++;
+            if (size === 'm') await shot(ctx, `hud_${style}_${position}`, { hud: true, waitChunks: false, frames: 2 });
+          }
+        }
+      }
+      ctx.data('combinations', checked);
+      ctx.check(`all ${checked} style/position/size combinations show, clear of everything`, problems.length === 0, problems);
+      // a peek widens the pill for a few seconds
+      await call('dev.hud.set', { style: 'pill', position: 'top_right', size: 'm' });
+      await sleep(150);
+      const narrow = (await call('dev.hud.state')).rect;
+      const peek = await call('dev.hud.peek', { text: 'Done: Parse the tag list', kind: 'task_done' });
+      await sleep(150);
+      const wide = await call('dev.hud.state');
+      ctx.check('a peek shows', wide.peek?.active === true && wide.peek?.text === 'Done: Parse the tag list', peek.peek);
+      ctx.check('the peek widens the pill', (wide.rect?.w ?? 0) > (narrow?.w ?? 0), { narrow, wide: wide.rect });
+      ctx.check('the peeking pill stays clear', hudProblems('pill peek', wide).length === 0, hudProblems('pill peek', wide));
+      await shot(ctx, 'hud_pill_peek', { hud: true, waitChunks: false, frames: 2 });
+      // Off draws nothing; F1 hides everything
+      const off = await call('dev.hud.set', { style: 'off', clearPeek: true });
+      ctx.check('Off: hidden, no rectangle', off.hidden === 'off' && !off.rect, { hidden: off.hidden, rect: off.rect });
+      await call('dev.hud.set', { style: 'pill' });
+      await call('dev.hud', { hidden: true });
+      await sleep(150);
+      const f1 = await call('dev.hud.state');
+      ctx.check('F1 hides the overlay', f1.hidden === 'f1' && !f1.rect, { hidden: f1.hidden });
+      await call('dev.hud', { hidden: false });
+    } finally {
+      await call('dev.hud', { hidden: false }).catch(() => {});
+      await call('dev.hud.set', { ...restorePayload(before), clearPeek: true }).catch(() => {});
+      for (const cmd of SCENE_UNDO) await call('dev.command', { cmd }).catch(() => {});
       await call('dev.window', { width: 1920, height: 1080 });
       await call('dev.review.guiScale', { scale: 3 });
     }

@@ -1,0 +1,372 @@
+package dev.agentcraft.hud;
+
+import dev.agentcraft.hud.HudSettings.Position;
+import dev.agentcraft.hud.HudSettings.Size;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Where the in-game overlay goes (pure, unit-tested in {@code HudLayoutTest}): the overlay's rectangle for a position,
+ * kept clear of what vanilla (and the connection pill, and a top-left minimap) draws, the toast column next to it,
+ * the overlap check the DevBridge reports, and the size steps. All in GUI px.
+ *
+ * <p>Vanilla geometry (Minecraft 26.3 {@code Hud}, {@code BossHealthOverlay}, {@code ChatComponent}):
+ * <ul>
+ *   <li>boss bars: 182 px wide at the top centre, the first bar at y 12 (its title at y 3), one every 19 px while the
+ *   next would start above a third of the screen height; a title wider than the bar widens the column;</li>
+ *   <li>effect icons: 24 px squares from the top right edge, 25 px apart, beneficial at y 1, harmful at y 27 (15 px
+ *   lower in the demo);</li>
+ *   <li>hotbar: 182 px at the bottom centre plus the 29 px offhand slot on either side; in survival the hearts,
+ *   armour, hunger (AppleSkin draws on it) and air rows and the held item's name reach about 62 px up, in creative the
+ *   item name about 48 px;</li>
+ *   <li>chat: from the left edge, its bottom 40 px above the screen's bottom, as wide and tall as the chat options
+ *   say (unfocused height).</li>
+ * </ul>
+ */
+public final class HudLayout {
+	/** From the screen edges. */
+	public static final int MARGIN = 4;
+	/** Between the overlay (or the toasts) and anything else. */
+	public static final int GAP = 3;
+	/** Half the boss bar column (182 px bar). */
+	static final int BOSS_HALF = 91;
+	/** Half the hotbar plus the offhand slot. */
+	static final int HOTBAR_HALF = 91 + 29;
+
+	private HudLayout() {
+	}
+
+	/** A rectangle; empty when its width or height is not positive. */
+	public record Rect(int x, int y, int w, int h) {
+		public static final Rect NONE = new Rect(0, 0, 0, 0);
+
+		public boolean empty() {
+			return w <= 0 || h <= 0;
+		}
+
+		public int right() {
+			return x + w;
+		}
+
+		public int bottom() {
+			return y + h;
+		}
+
+		public boolean intersects(Rect o) {
+			return !empty() && !o.empty() && x < o.right() && o.x < right() && y < o.bottom() && o.y < bottom();
+		}
+
+		public Rect grow(int d) {
+			return empty() ? this : new Rect(x - d, y - d, w + 2 * d, h + 2 * d);
+		}
+
+		public boolean within(int guiW, int guiH) {
+			return x >= 0 && y >= 0 && right() <= guiW && bottom() <= guiH;
+		}
+	}
+
+	/**
+	 * What else is on screen this frame: the GUI size and scale, the effect icons (beneficial / harmful counts with an
+	 * icon), the boss bars (count and widest title), whether the survival status bars are drawn, the chat area (its
+	 * width and unfocused height in GUI px, 0 = no chat), the connection pill drawn this frame (top right), the room
+	 * kept for a top-left minimap and another AgentCraft panel on screen (placement, plot or road panel).
+	 */
+	public record Env(int guiW, int guiH, int guiScale, int beneficial, int harmful, boolean demo, int bossBars, int bossTitleW, boolean statusBars,
+		int chatW, int chatH, Rect pill, int minimap, Rect panel) {
+
+		/** No effects, no boss bars, creative, the default chat (320 x 90), no pill, no minimap. */
+		public static Env of(int guiW, int guiH, int guiScale) {
+			return new Env(guiW, guiH, guiScale, 0, 0, false, 0, 0, false, 320, 90, Rect.NONE, 0, Rect.NONE);
+		}
+
+		public Env effects(int beneficialIcons, int harmfulIcons) {
+			return new Env(guiW, guiH, guiScale, beneficialIcons, harmfulIcons, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel);
+		}
+
+		public Env boss(int bars, int widestTitle) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bars, widestTitle, statusBars, chatW, chatH, pill, minimap, panel);
+		}
+
+		public Env survival(boolean bars) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, bars, chatW, chatH, pill, minimap, panel);
+		}
+
+		public Env chat(int w, int h) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, w, h, pill, minimap, panel);
+		}
+
+		public Env withPill(Rect r) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, r, minimap, panel);
+		}
+
+		public Env withMinimap(int px) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, px, panel);
+		}
+
+		/** Another AgentCraft panel on screen (the placement, plot or road panel), NONE = none. */
+		public Env withPanel(Rect r) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, r);
+		}
+
+		public Env withDemo(boolean on) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, on, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel);
+		}
+	}
+
+	// ------------------------------------------------------------------ what vanilla draws
+
+	/** How many of {@code bars} boss bars vanilla draws on a screen {@code guiH} tall (it stops at a third). */
+	public static int bossBarsDrawn(int bars, int guiH) {
+		int drawn = 0;
+		int y = 12;
+		for (int i = 0; i < bars; i++) {
+			drawn++;
+			y += 19;
+			if (y >= guiH / 3) {
+				break;
+			}
+		}
+		return drawn;
+	}
+
+	/** The boss bar column (titles included), NONE without boss bars. */
+	public static Rect bossBars(Env e) {
+		int n = bossBarsDrawn(e.bossBars(), e.guiH());
+		if (n <= 0) {
+			return Rect.NONE;
+		}
+		int half = Math.max(BOSS_HALF, (e.bossTitleW() + 1) / 2);
+		int x = e.guiW() / 2 - half;
+		return new Rect(x, 0, 2 * half, 12 + 19 * (n - 1) + 5);
+	}
+
+	/** The effect icons in the top right corner, NONE without any. */
+	public static Rect effects(Env e) {
+		int cols = Math.max(e.beneficial(), e.harmful());
+		if (cols <= 0) {
+			return Rect.NONE;
+		}
+		int top = 1 + (e.demo() ? 15 : 0);
+		int h = e.harmful() > 0 ? 26 + 24 : 24;
+		int x = e.guiW() - 25 * cols;
+		return new Rect(x, top, e.guiW() - x, h);
+	}
+
+	/** The hotbar with the offhand slots and (survival) the status rows above it, and the held item's name. */
+	public static Rect hotbar(Env e) {
+		int top = e.guiH() - (e.statusBars() ? 62 : 48);
+		return new Rect(e.guiW() / 2 - HOTBAR_HALF, top, 2 * HOTBAR_HALF, e.guiH() - top);
+	}
+
+	/** The chat area (unfocused), NONE when it has no size. */
+	public static Rect chat(Env e) {
+		if (e.chatW() <= 0 || e.chatH() <= 0) {
+			return Rect.NONE;
+		}
+		int bottom = e.guiH() - 40;
+		return new Rect(0, bottom - e.chatH(), e.chatW() + 8, e.chatH());
+	}
+
+	/** The room kept for a top-left minimap (a square), NONE when no offset is set. */
+	public static Rect minimap(Env e) {
+		return e.minimap() <= 0 ? Rect.NONE : new Rect(0, 0, e.minimap() + MARGIN, e.minimap());
+	}
+
+	static List<Rect> obstacles(Env e) {
+		List<Rect> out = new ArrayList<>();
+		for (Rect r : new Rect[] {bossBars(e), effects(e), hotbar(e), chat(e), e.pill(), minimap(e), e.panel()}) {
+			if (!r.empty()) {
+				out.add(r);
+			}
+		}
+		return out;
+	}
+
+	// ------------------------------------------------------------------ size
+
+	/**
+	 * Framebuffer pixels per overlay pixel for a size: M = the GUI scale, S one less, L one more, so the overlay's
+	 * font stays on whole pixels (crisp). S never goes below 2 framebuffer px (unreadable), so at GUI scale 2 or less
+	 * S is M.
+	 */
+	public static int effectivePx(Size s, int guiScale) {
+		int g = Math.max(1, guiScale);
+		int d = switch (s) {
+			case S -> -1;
+			case M -> 0;
+			case L -> 1;
+		};
+		return Math.max(g + d, Math.min(g, 2));
+	}
+
+	/** The pose scale the overlay is drawn with ({@link #effectivePx} / GUI scale). */
+	public static float scale(Size s, int guiScale) {
+		return effectivePx(s, guiScale) / (float) Math.max(1, guiScale);
+	}
+
+	/** {@code px} overlay pixels at scale {@code k}, rounded out to whole GUI px (what the rectangle must cover). */
+	public static int scaled(int px, float k) {
+		return (int) Math.ceil(px * k - 1e-4);
+	}
+
+	/** The widest the overlay may be (GUI px). */
+	public static int maxWidth(Env e) {
+		return Math.max(0, e.guiW() - 2 * MARGIN);
+	}
+
+	// ------------------------------------------------------------------ placement
+
+	/** Where the overlay went: {@code rect} (NONE = no room anywhere), the position used, and whether it fell back. */
+	public record Placement(Rect rect, Position used, boolean fallback) {
+		public boolean placed() {
+			return !rect.empty();
+		}
+	}
+
+	/**
+	 * Places a {@code w} x {@code h} overlay at {@code pos}, clear of everything in {@link Env} by {@link #GAP}:
+	 * top positions slide down past what they meet (effect icons, the connection pill, boss bars), bottom positions
+	 * slide up (above the hotbar and its status rows, above the chat), the right-edge middle tries down then up; top
+	 * left starts below the minimap room. When the position has no room (a tiny window, a tall chat) it falls back to
+	 * top right; when that has none either the rectangle is NONE (hidden as "no_room").
+	 */
+	public static Placement place(Env e, Position pos, int w, int h) {
+		if (w <= 0 || h <= 0) {
+			return new Placement(Rect.NONE, pos, false);
+		}
+		Rect r = at(e, pos, w, h);
+		if (r != null) {
+			return new Placement(r, pos, false);
+		}
+		if (pos != Position.TOP_RIGHT) {
+			r = at(e, Position.TOP_RIGHT, w, h);
+			if (r != null) {
+				return new Placement(r, Position.TOP_RIGHT, true);
+			}
+		}
+		return new Placement(Rect.NONE, pos, true);
+	}
+
+	private static Rect at(Env e, Position pos, int w, int h) {
+		if (w > maxWidth(e) || h > e.guiH() - 2 * MARGIN) {
+			return null;
+		}
+		int x = pos.left() ? MARGIN : e.guiW() - MARGIN - w;
+		List<Rect> obs = obstacles(e);
+		return switch (pos) {
+			case TOP_RIGHT -> slide(e, obs, new Rect(x, MARGIN, w, h), 1);
+			case TOP_LEFT -> slide(e, obs, new Rect(x, MARGIN + e.minimap(), w, h), 1);
+			case BOTTOM_LEFT, BOTTOM_RIGHT -> slide(e, obs, new Rect(x, e.guiH() - MARGIN - h, w, h), -1);
+			case RIGHT_MIDDLE -> {
+				Rect start = new Rect(x, (e.guiH() - h) / 2, w, h);
+				Rect down = slide(e, obs, start, 1);
+				yield down != null ? down : slide(e, obs, start, -1);
+			}
+		};
+	}
+
+	/** Moves {@code r} down (dir 1) or up (-1) past whatever it meets until it is clear; null when it leaves the screen. */
+	private static Rect slide(Env e, List<Rect> obs, Rect r, int dir) {
+		for (int guard = 0; guard < 32; guard++) {
+			if (r.y() < MARGIN && dir < 0 || r.bottom() > e.guiH() - MARGIN && dir > 0 || r.y() < 0 || r.bottom() > e.guiH()) {
+				return null;
+			}
+			int ny = r.y();
+			boolean hit = false;
+			for (Rect o : obs) {
+				if (r.intersects(o.grow(GAP))) {
+					hit = true;
+					ny = dir > 0 ? Math.max(ny, o.bottom() + GAP) : Math.min(ny, o.y() - GAP - r.h());
+				}
+			}
+			if (!hit) {
+				return r;
+			}
+			r = new Rect(r.x(), ny, r.w(), r.h());
+		}
+		return null;
+	}
+
+	// ------------------------------------------------------------------ overlaps
+
+	/** What a rectangle overlaps (no gap: touching is fine). */
+	public record Overlaps(boolean bossbar, boolean effects, boolean hotbar, boolean chat, boolean pill, boolean minimap, boolean offscreen) {
+		public boolean any() {
+			return bossbar || effects || hotbar || chat || pill || minimap || offscreen;
+		}
+	}
+
+	public static Overlaps overlaps(Env e, Rect r) {
+		if (r.empty()) {
+			return new Overlaps(false, false, false, false, false, false, false);
+		}
+		return new Overlaps(r.intersects(bossBars(e)), r.intersects(effects(e)), r.intersects(hotbar(e)), r.intersects(chat(e)), r.intersects(e.pill()),
+			r.intersects(minimap(e)), !r.within(e.guiW(), e.guiH()));
+	}
+
+	// ------------------------------------------------------------------ toasts
+
+	/**
+	 * The toast column: toasts {@code w} wide at {@code x}, within {@code top}..{@code bottom}; {@code up} = the stack
+	 * hugs the bottom (the overlay is at the bottom, so the toasts sit just above it).
+	 */
+	public record Column(int x, int top, int bottom, boolean up) {
+		public int height() {
+			return Math.max(0, bottom - top);
+		}
+	}
+
+	/**
+	 * Where toasts {@code w} wide stack for an overlay at {@code pos} drawn at {@code overlay} (NONE when the overlay
+	 * is hidden: the toasts take its place): on the overlay's side, under it (top positions, right middle) or above it
+	 * (bottom positions), clear of everything in {@link Env} by {@link #GAP}.
+	 */
+	public static Column toasts(Env e, Position pos, Rect overlay, int w) {
+		int x = pos.left() ? MARGIN : e.guiW() - MARGIN - w;
+		List<Rect> obs = obstacles(e);
+		if (pos.bottom()) {
+			int bottom;
+			if (overlay.empty()) {
+				Placement p = place(e, pos, w, 1);
+				bottom = p.placed() ? p.rect().bottom() : e.guiH() - MARGIN;
+			} else {
+				bottom = overlay.y() - GAP;
+			}
+			int top = MARGIN;
+			for (Rect o : obs) {
+				if (o.bottom() <= bottom && x < o.right() && o.x() < x + w) {
+					top = Math.max(top, o.bottom() + GAP);
+				}
+			}
+			return new Column(x, top, bottom, true);
+		}
+		int top;
+		if (overlay.empty()) {
+			Placement p = place(e, pos, w, 1);
+			top = p.placed() ? p.rect().y() : MARGIN;
+		} else {
+			top = overlay.bottom() + GAP;
+		}
+		// past anything this column meets at its top (boss bars are narrower than a wide overlay's column)
+		for (int guard = 0; guard < 16; guard++) {
+			Rect probe = new Rect(x, top, w, 1);
+			int ny = top;
+			for (Rect o : obs) {
+				if (probe.intersects(o.grow(GAP))) {
+					ny = Math.max(ny, o.bottom() + GAP);
+				}
+			}
+			if (ny == top) {
+				break;
+			}
+			top = ny;
+		}
+		int bottom = e.guiH() - MARGIN;
+		for (Rect o : obs) {
+			if (o.y() >= top && x < o.right() && o.x() < x + w) {
+				bottom = Math.min(bottom, o.y() - GAP);
+			}
+		}
+		return new Column(x, top, bottom, false);
+	}
+}
