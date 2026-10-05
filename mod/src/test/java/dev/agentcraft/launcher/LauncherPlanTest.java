@@ -250,7 +250,7 @@ class LauncherPlanTest {
 		Map<String, String> game = new HashMap<>(Map.of("PATH", "/usr/bin:/bin", "HOME", "/Users/u", "AGENTCRAFT_DEV_TOKEN", "secret",
 			"AGENTCRAFT_PORT", "7878", "JAVA_HOME", "/j"));
 		Map<String, String> login = Map.of("PATH", "/Users/u/.local/bin:/opt/homebrew/opt/dotnet@8/libexec:/usr/bin", "DOTNET_ROOT", "/d", "SHLVL",
-			"2", "__MISE_DIFF", "x", "HOME", "/elsewhere", "AGENTCRAFT_HOME", "/h");
+			"2", "__MISE_DIFF", "x", "HOME", "/elsewhere", "AGENTCRAFT_LEAD_MODEL", "opus", "AGENTCRAFT_DEV_TOKEN", "t2", "AGENTCRAFT_CLIENT_TOKEN", "t3");
 		Map<String, String> env = LauncherPlan.environment(game, login, Path.of("/Users/u/.local/share/mise/installs/node/22/bin/node"), "/Users/u", false);
 		List<String> path = List.of(env.get("PATH").split(":"));
 		assertEquals("/Users/u/.local/share/mise/installs/node/22/bin", path.get(0), "node's folder first");
@@ -262,7 +262,9 @@ class LauncherPlanTest {
 		assertEquals("/Users/u", env.get("HOME"), "the game's own variables win");
 		assertEquals("/j", env.get("JAVA_HOME"));
 		assertFalse(env.containsKey("SHLVL") || env.containsKey("__MISE_DIFF"), "shell bookkeeping dropped");
-		assertFalse(env.keySet().stream().anyMatch(k -> k.startsWith("AGENTCRAFT_")), "AGENTCRAFT_* never passed (flags and config.json decide)");
+		assertFalse(env.containsKey("AGENTCRAFT_PORT"), "the game's AGENTCRAFT_* are not passed (flags and config.json decide)");
+		assertEquals("opus", env.get("AGENTCRAFT_LEAD_MODEL"), "the user's own exports reach it, as with the daemon");
+		assertFalse(env.containsKey("AGENTCRAFT_DEV_TOKEN") || env.containsKey("AGENTCRAFT_CLIENT_TOKEN"), "never the DevBridge or client token");
 	}
 
 	@Test

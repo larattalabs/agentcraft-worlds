@@ -45,6 +45,19 @@ final class LauncherSection {
 		};
 	}
 
+	/**
+	 * A button that is clickable only while it is fully inside the Overview's visible rows (the Overview scrolls: a button
+	 * scrolled under the chips must not catch their clicks); otherwise it is only drawn (the scissor clips it).
+	 */
+	private static void button(HubScreen hub, GuiGraphicsExtractor g, String id, String label, int x, int y, boolean primary, boolean disabled,
+		int mx, int my, Runnable action) {
+		if (y >= hub.statusClipTop && y + 20 <= hub.statusClipBottom) {
+			hub.button(g, id, label, x, y, hub.bw(label), primary, disabled, false, mx, my, action);
+		} else {
+			UiBits.button(g, hub.font(), label, 0, x, y, hub.bw(label), primary, disabled ? UiBits.ButtonState.DISABLED : UiBits.ButtonState.NORMAL, false);
+		}
+	}
+
 	/** Draws the section at (x, y), {@code w} wide; returns the y below it. */
 	static int draw(HubScreen hub, GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
 		var font = hub.font();
@@ -84,17 +97,17 @@ final class LauncherSection {
 		boolean busy = Launcher.busy();
 		if (Launcher.canStart()) {
 			String l = "Start";
-			hub.button(g, "launcher_start", l, bx, y, hub.bw(l), true, busy, false, mx, my, Launcher::start);
+			button(hub, g, "launcher_start", l, bx, y, true, busy, mx, my, Launcher::start);
 			bx += hub.bw(l) + 4;
 		}
 		if (Launcher.canRestart()) {
 			String l = "Restart";
-			hub.button(g, "launcher_restart", l, bx, y, hub.bw(l), false, busy, false, mx, my, Launcher::restart);
+			button(hub, g, "launcher_restart", l, bx, y, false, busy, mx, my, Launcher::restart);
 			bx += hub.bw(l) + 4;
 		}
 		if (log != null && (Launcher.ours() || s == LauncherPlan.State.CRASHED)) {
 			String l = "Open log";
-			hub.button(g, "launcher_log", l, bx, y, hub.bw(l), false, !java.nio.file.Files.exists(log), false, mx, my, Launcher::openLog);
+			button(hub, g, "launcher_log", l, bx, y, false, !java.nio.file.Files.exists(log), mx, my, Launcher::openLog);
 			bx += hub.bw(l) + 4;
 		}
 		y = bx > x ? y + 22 : y;

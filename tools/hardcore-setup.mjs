@@ -188,6 +188,7 @@ export function parseArgs(argv, { config } = {}) {
   if (out.devbridge && (DEV_PORTS.has(out.devPort) || out.devPort === out.port)) throw new Error(`--dev-port ${out.devPort} collides with the Foreman port or dev runs`);
   if (!/^[\w-]+$/.test(out.profile)) throw new Error('profile must contain only letters, digits, _ or -');
   if (/\s/.test(out.home)) throw new Error(`--home cannot contain spaces (it goes into JvmArgs): ${out.home}`);
+  if (out.noPrelaunch && /\s/.test(out.stable)) throw new Error(`--stable cannot contain spaces with --no-prelaunch (it goes into JvmArgs as -Dagentcraft.foreman.dir): ${out.stable}. Use a path without spaces, or the daemon path (without --no-prelaunch)`);
   out.backupDir ??= path.join(HOME, 'MinecraftBackups', path.basename(out.instance));
   if (!out.source) {
     const origin = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: out.stable, encoding: 'utf8' });
@@ -531,8 +532,9 @@ export async function setup(opt, deps = realDeps) {
       'agentcraft.home': path.resolve(opt.home) === path.join(HOME, '.agentcraft') ? null : opt.home,
       'agentcraft.dev': opt.devbridge ? 1 : null,
       'agentcraft.dev.port': opt.devbridge ? opt.devPort : null,
-      // the checkout the mod's Foreman launcher runs the Foreman from (both paths start the same Foreman)
-      'agentcraft.foreman.dir': opt.stable,
+      // the checkout the mod's Foreman launcher runs the Foreman from (on the daemon path the jar's own
+      // build checkout, the stable one, already says so)
+      'agentcraft.foreman.dir': opt.noPrelaunch ? opt.stable : null,
       'agentcraft.launcher.stop.on.exit': opt.noPrelaunch && opt.stopOnExit ? 1 : null,
     }),
     OverrideCommands: 'true',

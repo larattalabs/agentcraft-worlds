@@ -598,6 +598,10 @@ public final class HubScreen extends Screen {
 	// ------------------------------------------------------------------ Status tab
 
 	/** The Overview; returns the bottom of the taller column (StatusPane reports the layout). */
+	/** The Status Overview's visible rows this frame (screen y), so buttons scrolled out of view are not clickable. */
+	int statusClipTop = Integer.MIN_VALUE;
+	int statusClipBottom = Integer.MAX_VALUE;
+
 	int drawStatus(GuiGraphicsExtractor g, int x, int y, int w, int h, int mx, int my) {
 		int ink = UiBits.ink();
 		int muted = UiBits.muted();

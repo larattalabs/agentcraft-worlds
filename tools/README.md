@@ -127,8 +127,8 @@ Homebrew, mise/volta/nvm/asdf/fnm, then your login shell), runs `npm ci` in `for
 `node_modules` is missing (log: `<stable>/artifacts/logs/foreman-launcher-npm.log`), and starts the
 daemon's command line (`node --import tsx src/main.ts --backend claude --profile hardcore --home <home>
 --port 7880`) detached through node, so the game's exit or a signal to the game never reaches it. The
-Foreman gets your login shell's environment (`$SHELL -lic`, as the daemon uses; `-lc` as the
-fallback): its PATH (node's folder first, then mise, `dotnet@8`, Homebrew's `az`/`gh`/`cargo`,
+Foreman gets your login shell's environment (`$SHELL -lic`, an interactive login shell like the daemon's
+`/bin/zsh -lic`, so `~/.zshrc` counts; `$SHELL -lc` as the fallback): its PATH (node's folder first, then mise, `dotnet@8`, Homebrew's `az`/`gh`/`cargo`,
 `~/.local/bin`) and variables such as `DOTNET_ROOT`. Nothing secret goes on the command line: the
 Foreman reads its own config (`useClaudeLogin` etc.). It records what it started in
 `<home>/<profile>/launcher.json` (pid and start time, so a reused pid is never mistaken for it) and in

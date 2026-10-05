@@ -26,6 +26,8 @@ class ConnectionHintsTest {
 		assertEquals("Starting the Foreman…", ConnectionHints.title("installing"));
 		assertEquals("The Foreman stopped", ConnectionHints.title("crashed"));
 		assertEquals("Foreman not running", ConnectionHints.title("disabled"));
+		assertEquals("Connecting to the Foreman…", ConnectionHints.title("running"), "a reused one before the link is up");
+		assertEquals("Connecting to the Foreman…", ConnectionHints.title("running-older"));
 		assertTrue(ConnectionHints.detail("crashed", false, "H").contains("Status tab (H)"));
 		assertTrue(ConnectionHints.detail("node-missing", false, "H").contains("Node.js 22+"));
 		assertEquals(ConnectionHints.notRunning(true), ConnectionHints.detail("disabled", true, "H"));

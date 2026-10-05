@@ -98,6 +98,8 @@ final class StatusPane implements HubPane {
 			int viewH = h - 18;
 			scroll = Math.max(0, Math.min(scroll, maxScroll));
 			g.enableScissor(x - 2, top, x + w + 2, top + viewH);
+			hub.statusClipTop = top;
+			hub.statusClipBottom = top + viewH;
 			int bottom = hub.drawStatus(g, x, top - scroll, w - 8, viewH, mx, my);
 			g.disableScissor();
 			int content = bottom - (top - scroll);

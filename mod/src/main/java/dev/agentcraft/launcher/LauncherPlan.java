@@ -546,6 +546,16 @@ public final class LauncherPlan {
 		return env;
 	}
 
+	/**
+	 * The game's own switches that must not reach the Foreman even from the login shell: the DevBridge's and the client
+	 * token. Other {@code AGENTCRAFT_*} the user exports in their shell profile reach it, as with the daemon (it runs the
+	 * Foreman from a login shell); the command line's flags still win over them.
+	 */
+	static boolean gameOnly(String key) {
+		String k = key.toUpperCase(Locale.ROOT);
+		return k.startsWith("AGENTCRAFT_DEV") || k.equals("AGENTCRAFT_CLIENT_TOKEN");
+	}
+
 	/** Shell bookkeeping that is not the user's environment. */
 	static boolean shellInternal(String key) {
 		return key.equals("_") || key.equals("SHLVL") || key.equals("PWD") || key.equals("OLDPWD") || key.startsWith("__") || key.equals("MISE_SHELL")
@@ -554,8 +564,9 @@ public final class LauncherPlan {
 
 	/**
 	 * The Foreman's environment. Base: the game's, without {@code AGENTCRAFT_*} (the Foreman reads those over its
-	 * config.json, and the game's carry the DevBridge token and the like). Added: the login shell's variables the game
-	 * lacks (e.g. {@code DOTNET_ROOT}, {@code GOROOT}). PATH: node's folder, the login shell's PATH, the daemon's fallbacks
+	 * config.json, and the game's carry the DevBridge token, the port and the like). Added: the login shell's variables the
+	 * game lacks (e.g. {@code DOTNET_ROOT}, {@code GOROOT}, an {@code AGENTCRAFT_LEAD_MODEL} the user exports), except
+	 * {@link #gameOnly} ones. PATH: node's folder, the login shell's PATH, the daemon's fallbacks
 	 * (mise shims, Homebrew, /usr/local/bin, ~/.local/bin), then the game's PATH, without duplicates; agents run git, gh,
 	 * dotnet, cargo and friends through it. Nothing secret is added here: the Foreman reads its own config.
 	 */
@@ -568,7 +579,7 @@ public final class LauncherPlan {
 		}
 		for (Map.Entry<String, String> e : login.entrySet()) {
 			String k = e.getKey();
-			if (!k.equalsIgnoreCase("PATH") && !shellInternal(k) && !k.toUpperCase(Locale.ROOT).startsWith("AGENTCRAFT_") && !env.containsKey(k)) {
+			if (!k.equalsIgnoreCase("PATH") && !shellInternal(k) && !gameOnly(k) && !env.containsKey(k)) {
 				env.put(k, e.getValue());
 			}
 		}

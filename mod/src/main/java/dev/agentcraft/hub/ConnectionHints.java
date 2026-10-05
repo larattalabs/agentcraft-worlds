@@ -15,6 +15,7 @@ public final class ConnectionHints {
 	public static String title(String launcherState) {
 		return switch (launcherState) {
 			case "installing", "starting" -> "Starting the Foreman…";
+			case "running", "running-older" -> "Connecting to the Foreman…";
 			case "crashed" -> "The Foreman stopped";
 			case "node-missing" -> "Foreman needs Node.js";
 			case "blocked" -> "Foreman could not start";

@@ -280,7 +280,7 @@ test('setup --apply installs the jar, backs up, edits instance.cfg; a second run
   const g = readGeneral(cfg);
   assert.deepEqual(splitCommand(g.PreLaunchCommand).slice(0, 2), [path.join(w.stable, 'tools', 'foreman-daemon.sh'), 'start']);
   assert.ok(splitCommand(g.PreLaunchCommand).includes('7880'));
-  assert.equal(g.JvmArgs, `-XX:CompileCommand=exclude,a.b.C::d -Xss2m -Dagentcraft.port=7880 -Dagentcraft.profile=hardcore -Dagentcraft.home=${w.home} -Dagentcraft.foreman.dir=${w.stable}`);
+  assert.equal(g.JvmArgs, `-XX:CompileCommand=exclude,a.b.C::d -Xss2m -Dagentcraft.port=7880 -Dagentcraft.profile=hardcore -Dagentcraft.home=${w.home}`);
   assert.equal(g.PostExitCommand, readGeneral(CFG).PostExitCommand);
   assert.ok(cfg.includes('[UI]\nmods_Page\\Columns="AAAA/wAAAAAAAAABAAAAAAAAAAEBAAAAAAAAAAAAAAANwB8AAAAHAAAADAAAAGQ="'));
   // second run: same instance.cfg, same mods
@@ -336,7 +336,14 @@ test('setup --no-prelaunch: no PreLaunchCommand (ours removed), the mod starts t
   await setup(setupArgs(w, ['--apply']), deps());
   g = readGeneral(fs.readFileSync(path.join(w.instance, 'instance.cfg'), 'utf8'));
   assert.equal(splitCommand(g.PreLaunchCommand)[1], 'start');
-  assert.doesNotMatch(g.JvmArgs, /stop\.on\.exit/);
+  assert.doesNotMatch(g.JvmArgs, /stop\.on\.exit|foreman\.dir/);
+});
+
+test('setup: a stable path with spaces works on the daemon path, and is refused with --no-prelaunch', () => {
+  const w = fakeWorld();
+  const spaced = ['--instance', w.instance, '--stable', path.join(w.dir, 'agentcraft stable'), '--home', w.home, '--skip-checkout'];
+  assert.doesNotThrow(() => parseSetupArgs(spaced));
+  assert.throws(() => parseSetupArgs([...spaced, '--no-prelaunch']), /--stable cannot contain spaces with --no-prelaunch/);
 });
 
 test('setup --no-prelaunch keeps a foreign PreLaunchCommand and needs the mod launcher in the checkout', async () => {
