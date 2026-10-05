@@ -155,6 +155,7 @@ public final class HudFeature {
 		o.addProperty("lastToastHint", Toasts.lastHint());
 		o.addProperty("toastsActive", Toasts.active());
 		o.addProperty("toastsShown", Toasts.shown());
+		o.add("toasts", Toasts.json());
 		o.addProperty("goalBarBottom", GoalBar.bottom);
 		o.addProperty("goalBarRight", GoalBar.right);
 		o.addProperty("pillLeft", ConnectionBanner.pillLeft);

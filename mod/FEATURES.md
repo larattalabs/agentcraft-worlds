@@ -440,7 +440,12 @@ hard-code colours; ask `UiStyle`. Sprites are 1 texel = 1 GUI px (GUI scale 3 at
   blocked · 3 replies · 1 PR · usage paused until 14:20" (each part only when non-zero, full / short / dots widths
   by `AlertLine.fit`) and the hub key. Counts = the Inbox's Needs you (`Alerts`, source `Inbox.counts()`); hidden
   with F1, dimmed while the Foreman is stale.
-- **Toasts** (`Toasts`): `notify` and need-you events with a key hint (`J answer`, `H open hub`); **away digest**
+- **Toasts** (`Toasts`): `notify` and need-you events with a key hint (`J answer`, `H open hub`). Stacking (wave 3,
+  pure `hud.ToastStack`, `ToastStackTest`): need-you toasts first, three at most; what does not fit (or a fourth) waits
+  and counts on one "+N more" line (clay "· 1 needs you" when a need-you toast waits), its time starting when it shows;
+  info toasts never evict or hide a need-you toast (the queue of 8 drops its oldest info toast first; after a need-you
+  toast that does not fit no info toast is drawn). `dev.hud.state toasts {shown[{level, title, y}], hidden, hiddenNeed,
+  moreLine, moreY, queued}`. **Away digest**
   (W6): after >= 10 minutes without the hub, "Since you were away: 2 goals moved, 1 needs you" (`goal.digest`),
   then `H` opens the Inbox. State per world in `hub-hud.json`.
 - **Welcome card** (`WelcomeScreen`, W7): on joining a singleplayer world without buildings: what AgentCraft is,
