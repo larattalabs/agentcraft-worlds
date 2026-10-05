@@ -39,6 +39,8 @@ final class GhostRenderer {
 	static final int WATER = 0x803C78E6;
 	static final int LAVA = 0xC8FFB000;
 	static final int PATH = 0x90C8A060;
+	/** Site warnings ({@code SiteWarnings}): water, lava, drops, cave openings in front of the door, gullies and caves under the path. */
+	static final int HAZARD = 0x90D040C8;
 	static final float INFLATE = 0.005f;
 	static final float EDGE = 0.045f;
 
@@ -163,6 +165,7 @@ final class GhostRenderer {
 		quads += cells(pose, vc, v.path(), PATH, 0.009f, cx, cy, cz);
 		quads += cells(pose, vc, v.water(), WATER, 0.01f, cx, cy, cz);
 		quads += cells(pose, vc, v.lava(), LAVA, 0.02f, cx, cy, cz);
+		quads += cells(pose, vc, v.hazards(), HAZARD, 0.015f, cx, cy, cz);
 		quads += cells(pose, vc, v.obstructed(), OBSTRUCTED, 0.012f, cx, cy, cz);
 		quads += cells(pose, vc, v.blocked(), BLOCKED, 0.03f, cx, cy, cz);
 

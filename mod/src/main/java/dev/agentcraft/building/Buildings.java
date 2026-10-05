@@ -407,16 +407,39 @@ public final class Buildings {
 		return grid != null && b.pin() != null && grid.fingerprint().equals(b.pin().template()) ? grid : null;
 	}
 
+	/** Where {@link #checkSite} reports a refusal: {@link #place} throws the first, a {@link #verdict} collects them all. */
+	@FunctionalInterface
+	private interface Refusals {
+		void add(String message) throws BuildingException;
+	}
+
+	/** Throws the first refusal (place, move): the player sees what {@link #place} always said. */
+	private static final Refusals THROW = m -> {
+		throw new BuildingException(m);
+	};
+
 	/**
-	 * Checks a site and puts the template there: snapshot to {@code snap}, template, panels, bindings, foundation,
-	 * cleared terrain, drops caused by it removed. {@code moving}: the building being moved (its own repos are
-	 * fine, its own current box is still an overlap). Restores the site and throws when anything fails.
+	 * A site that passed {@link #checkSite} (or, for a verdict, was planned as far as it could be): everything the apply
+	 * phase of {@link #build} needs, so it never looks at the world twice.
 	 */
-	private static Built build(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force,
-		@Nullable Building moving, Path snap) throws BuildingException {
+	private record SitePlan(StructureTemplate template, int turns, StructurePlaceSettings settings, BlockPos placePos, Anchors.Bounds box,
+		TemplateGrid grid, TerrainFit.Plan plan, Approach.Plan approach, Anchors.Bounds snapBox, List<Occupancy.Found> found, SiteWarnings.Result site) {
+	}
+
+	/**
+	 * The checks of a placement (place, move and the dry-run {@link #verdict}, contract S4), in place()'s order: the box
+	 * leaves the build height, overlaps another site, lava in or next to it, block entities the mod did not place (unless
+	 * {@code force}), a door cut by its edge, who is in the way ({@link Occupancy}). Each failing check goes to
+	 * {@code out} with the words place() throws. {@code dryRun}: the world is only read where its chunks are loaded (a
+	 * verdict never loads or generates a chunk; an unloaded site is a refusal of its own). Null when the site could not be
+	 * planned at all (the reason is in {@code out}). {@code moving}: the building being moved. Server thread.
+	 */
+	private static @Nullable SitePlan checkSite(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, boolean force,
+		@Nullable Building moving, Refusals out, boolean dryRun) throws BuildingException {
 		Blueprints.Entry entry = Blueprints.entry(bp.id());
 		if (entry == null) {
-			throw new BuildingException("Blueprint " + bp.id() + " has no loaded template");
+			out.add("Blueprint " + bp.id() + " has no loaded template");
+			return null;
 		}
 		StructureTemplate template = entry.template();
 		int turns = rotation.ordinal();
@@ -427,24 +450,38 @@ public final class Buildings {
 		BlockPos placePos = origin.offset(-atZero.minX(), -atZero.minY(), -atZero.minZ());
 		BoundingBox bb = template.getBoundingBox(settings, placePos);
 		if (bb.minX() != origin.getX() || bb.minY() != origin.getY() || bb.minZ() != origin.getZ()) {
-			throw new BuildingException("Internal: rotated box " + bb + " does not start at " + origin.toShortString());
+			out.add("Internal: rotated box " + bb + " does not start at " + origin.toShortString());
+			return null;
 		}
 		Anchors.Bounds box = new Anchors.Bounds(bb.minX(), bb.minY(), bb.minZ(), bb.maxX(), bb.maxY(), bb.maxZ());
 		TemplateGrid grid = TemplateGrid.of(entry);
 		GhostModel model = grid.ghost(turns);
-		TerrainFit.World world = (x, y, z) -> TerrainFit.flags(level, new BlockPos(x, y, z));
+		boolean[] unloaded = {false};
+		TerrainFit.World world = dryRun ? (x, y, z) -> {
+			if (!level.hasChunk(x >> 4, z >> 4)) {
+				unloaded[0] = true;
+				return 0; // solid: nothing is filled, cleared or found there
+			}
+			return TerrainFit.flags(level, new BlockPos(x, y, z));
+		} : (x, y, z) -> TerrainFit.flags(level, new BlockPos(x, y, z));
 		TerrainFit.Plan plan = TerrainFit.plan(model, box.minX(), box.minY(), box.minZ(), world);
 		Approach.Plan approach = Approach.forBlueprint(bp, turns, box, world);
+		SiteWarnings.Result site = SiteWarnings.forBlueprint(bp, turns, box, approach, world);
 		Anchors.Bounds snapBox = snapshotBox(box, plan, approach);
+		if (dryRun && (unloaded[0] || !loaded(level, snapBox))) {
+			out.add("the site is not loaded on the server (walk closer)");
+			return null;
+		}
 		if (snapBox.minY() < level.getMinY() || box.maxY() > level.getMaxY()) {
-			throw new BuildingException("Box " + str(snapBox) + " leaves the build height (" + level.getMinY() + ".." + level.getMaxY() + ")");
+			out.add("Box " + str(snapBox) + " leaves the build height (" + level.getMinY() + ".." + level.getMaxY() + ")");
 		}
 		String here = dimensionId(level);
 		for (Building other : state.byId().values()) {
 			if (other.dimensionOrDefault().equals(here) && Building.intersects(other.restoreBox(), snapBox)) {
-				throw new BuildingException("Box " + str(snapBox) + " overlaps " + (moving != null && other.id().equals(moving.id())
+				out.add("Box " + str(snapBox) + " overlaps " + (moving != null && other.id().equals(moving.id())
 					? "where " + other.id() + " stands now (move it further)" : "building " + other.id() + " " + str(other.box())
 					+ " (remove it first or place elsewhere)"));
+				break;
 			}
 		}
 		String lava = TerrainFit.lavaRefusal(plan);
@@ -452,26 +489,171 @@ public final class Buildings {
 			lava = Approach.lavaRefusal(approach);
 		}
 		if (lava != null) {
-			throw new BuildingException("Not here: " + lava + "; a building next to lava burns and floods");
+			out.add("Not here: " + lava + "; a building next to lava burns and floods");
 		}
 		if (!force) {
 			List<String> foreign = foreignBlockEntities(level, snapBox);
 			if (!foreign.isEmpty()) {
-				throw new BuildingException("Box " + str(snapBox) + " contains " + foreign.size() + " block entit" + (foreign.size() == 1 ? "y" : "ies")
+				out.add("Box " + str(snapBox) + " contains " + foreign.size() + " block entit" + (foreign.size() == 1 ? "y" : "ies")
 					+ " the mod did not place (" + String.join(", ", foreign.subList(0, Math.min(4, foreign.size()))) + (foreign.size() > 4 ? ", ..." : "")
 					+ "); add force to overwrite them (they come back on remove)");
 			}
 		}
 		List<String> doors = straddling(level, snapBox, true);
 		if (!doors.isEmpty()) {
-			throw new BuildingException("Not placed: a door is cut in half by the box edge (" + String.join(", ", doors.subList(0, Math.min(3, doors.size())))
+			out.add("Not placed: a door is cut in half by the box edge (" + String.join(", ", doors.subList(0, Math.min(3, doors.size())))
 				+ "); raise, lower or move the building so the door is fully in or out");
 		}
 		List<Occupancy.Found> found = Occupancy.scan(level, snapBox, e -> false);
 		List<String> occupied = Occupancy.refusals(found);
 		if (!occupied.isEmpty()) {
-			throw new BuildingException("Not placed: " + String.join("; ", occupied));
+			out.add("Not placed: " + String.join("; ", occupied));
 		}
+		return new SitePlan(template, turns, settings, placePos, box, grid, plan, approach, snapBox, found, site);
+	}
+
+	/** Whether every chunk {@code box} touches is loaded in {@code level} (nothing is loaded by asking). */
+	private static boolean loaded(ServerLevel level, Anchors.Bounds box) {
+		for (int cx = box.minX() >> 4; cx <= box.maxX() >> 4; cx++) {
+			for (int cz = box.minZ() >> 4; cz <= box.maxZ() >> 4; cz++) {
+				if (!level.hasChunk(cx, cz)) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * The server's verdict on a site (contract S4): every reason {@link #place} (or, with {@code movingId}, {@link #move})
+	 * would refuse it for, in their order, and what placing there would note (water, a short approach, hostile mobs
+	 * removed, the site warnings). Changes nothing; never loads a chunk. Server thread.
+	 */
+	public record Verdict(List<String> refusals, List<String> notes) {
+		public Verdict {
+			refusals = List.copyOf(refusals);
+			notes = List.copyOf(notes);
+		}
+
+		public boolean ok() {
+			return refusals.isEmpty();
+		}
+	}
+
+	/** {@link Verdict} for placing {@code bp} (or moving {@code movingId} with it) at {@code origin}, {@code rotation}. Server thread. */
+	public static Verdict verdict(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force,
+		@Nullable String movingId) {
+		List<String> refusals = new ArrayList<>();
+		Refusals out = refusals::add;
+		Building moving = null;
+		try {
+			if (movingId != null) {
+				moving = get(movingId);
+				if (moving == null) {
+					return new Verdict(List.of("No building " + movingId), List.of());
+				}
+				ServerLevel oldLevel = levelOf(level.getServer(), moving);
+				if (oldLevel == null) {
+					refusals.add(moving.dimensionOrDefault() + " is not loaded; nothing was moved");
+				}
+				if (loadFailed) {
+					refusals.add(FILE + " could not be read when the world started; nothing was moved");
+				}
+				if (moving.isFixture() != bp.isFixture()) {
+					refusals.add(moving.blueprint() + " is " + (bp.isFixture() ? "a fixture" : "a building") + " blueprint now, but " + movingId + " is "
+						+ (moving.isFixture() ? "a fixture" : "a building") + "; nothing was moved");
+				}
+				Building m = moving;
+				if (!m.isFixture()) {
+					collect(refusals, () -> checkRepos(bp.id(), bp.wings(), m.repos(), movingId));
+				}
+				if (oldLevel != null && loaded(oldLevel, m.restoreBox())) {
+					collect(refusals, () -> refusePlayerIn(oldLevel, m.restoreBox(), movingId, "moving it"));
+					if (!force) {
+						List<String> blockers = removalBlockers(oldLevel, moving);
+						if (!blockers.isEmpty()) {
+							refusals.add(blockersMessage(movingId, blockers).replace("removing it", "moving it"));
+						}
+					}
+				}
+			} else {
+				if (bp.isFixture()) {
+					if (!repos.isEmpty()) {
+						refusals.add(bp.name() + " is a fixture: it takes no repos");
+					}
+				} else {
+					collect(refusals, () -> checkRepos(bp.id(), bp.wings(), repos, null));
+				}
+				if (loadFailed) {
+					refusals.add(FILE + " could not be read when the world started (see the log); fix or move it, then restart");
+				}
+			}
+			SitePlan site = checkSite(level, bp, origin, rotation, force, moving, out, true);
+			return new Verdict(refusals, site == null ? List.of() : siteNotes(site, site.found()));
+		} catch (BuildingException | RuntimeException e) {
+			refusals.add(e.getMessage() == null ? e.toString() : e.getMessage());
+			return new Verdict(refusals, List.of());
+		}
+	}
+
+	private interface Check {
+		void run() throws BuildingException;
+	}
+
+	private static void collect(List<String> refusals, Check c) {
+		try {
+			c.run();
+		} catch (BuildingException e) {
+			refusals.add(e.getMessage());
+		}
+	}
+
+	/** What a placement at a checked site says beside success before anything is built: water, a short approach, hostile mobs removed, site warnings. */
+	private static List<String> siteNotes(SitePlan s, List<Occupancy.Found> found) {
+		List<String> notes = new ArrayList<>();
+		String gone = Occupancy.removalNote(found);
+		if (gone != null) {
+			notes.add(gone);
+		}
+		String water = TerrainFit.waterWarning(s.plan());
+		if (water != null) {
+			notes.add(water + " (filled below the floor; water next to the walls stays)");
+		}
+		String wet = Approach.waterWarning(s.approach());
+		if (wet != null) {
+			notes.add(wet);
+		}
+		String shortOf = Approach.shortWarning(s.approach());
+		if (shortOf != null) {
+			notes.add(shortOf);
+		}
+		notes.addAll(s.site().warnings());
+		return notes;
+	}
+
+	/**
+	 * Checks a site ({@link #checkSite}, the first refusal thrown) and puts the template there: snapshot to {@code snap},
+	 * template, panels, bindings, foundation, cleared terrain, drops caused by it removed. {@code moving}: the building
+	 * being moved (its own repos are fine, its own current box is still an overlap). Restores the site and throws when
+	 * anything fails.
+	 */
+	private static Built build(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force,
+		@Nullable Building moving, Path snap) throws BuildingException {
+		SitePlan site = checkSite(level, bp, origin, rotation, force, moving, THROW, false);
+		if (site == null) {
+			throw new BuildingException("Internal: no site for " + bp.id()); // checkSite threw already
+		}
+		StructureTemplate template = site.template();
+		int turns = site.turns();
+		StructurePlaceSettings settings = site.settings();
+		BlockPos placePos = site.placePos();
+		Anchors.Bounds box = site.box();
+		TemplateGrid grid = site.grid();
+		TerrainFit.Plan plan = site.plan();
+		Approach.Plan approach = site.approach();
+		Anchors.Bounds snapBox = site.snapBox();
+		List<Occupancy.Found> found = site.found();
+		String here = dimensionId(level);
 
 		snapshot(level, snapBox, snap);
 		List<BlockPos> plants = straddlingPositions(level, snapBox, false);
@@ -538,6 +720,7 @@ public final class Buildings {
 			if (shortOf != null) {
 				notes.add(shortOf);
 			}
+			notes.addAll(site.site().warnings());
 			return new Built(turns, box, snapBox, BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
 				BedSafety.withoutBeds(BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), beds.heads()),
 				BedSafety.strip(pinFor(bp, grid, turns, box), beds.cells(), beds.heads(), box), notes.isEmpty() ? null : String.join("; ", notes));

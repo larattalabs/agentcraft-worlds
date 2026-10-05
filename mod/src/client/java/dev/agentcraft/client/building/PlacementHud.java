@@ -62,8 +62,18 @@ final class PlacementHud implements HudElement {
 				verdict = "Placing…";
 				vc = soft;
 			} else if (v.refusals().isEmpty()) {
-				verdict = BuildPlacement.moving() != null ? "Ready: Enter moves it here (the old site comes back as it was)" : "Ready: Enter places it";
-				vc = UiStyle.SAGE;
+				// S4: "Ready" only once the server checked the exact site; its reasons when it would refuse
+				dev.agentcraft.building.Buildings.Verdict sv = BuildPlacement.serverVerdict();
+				if (sv == null) {
+					verdict = "Checking the site with the server…";
+					vc = soft;
+				} else if (!sv.ok()) {
+					verdict = "Server would refuse: " + String.join("; ", sv.refusals());
+					vc = RED;
+				} else {
+					verdict = BuildPlacement.moving() != null ? "Ready: Enter moves it here (the old site comes back as it was)" : "Ready: Enter places it";
+					vc = UiStyle.SAGE;
+				}
 			} else {
 				verdict = "Would be refused: " + String.join("; ", v.refusals());
 				vc = RED;

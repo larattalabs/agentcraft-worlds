@@ -13,6 +13,7 @@ import dev.agentcraft.building.Buildings;
 import dev.agentcraft.building.GhostModel;
 import dev.agentcraft.building.Occupancy;
 import dev.agentcraft.building.Approach;
+import dev.agentcraft.building.SiteWarnings;
 import dev.agentcraft.building.TerrainFit;
 import dev.agentcraft.client.agents.ClientAgentEntity;
 import dev.agentcraft.client.foreman.Protocol.Notify;
@@ -89,18 +90,21 @@ public final class BuildPlacement {
 	 * @param approach the entrance approach ({@link Approach}; its fill and clear cells are drawn with {@code fill} /
 	 *                 {@code clear}, its counts are its own), {@code path} its path and slab cells as quadruples
 	 * @param snapBox the whole box place() snapshots and checks (foundation and approach included)
+	 * @param hazards the site warnings' cells ({@link SiteWarnings}: water, lava, drops and cave openings in front of the
+	 *                entrance, gullies and caves under the approach) as quadruples; {@code site} the warnings themselves
 	 */
 	record View(Blueprint bp, GhostModel model, int ox, int oy, int oz, int turns, String front, int[] obstructed, int obstructedCount,
 		int[] blocked, int blockedCount, List<String> refusals, boolean playerInside, boolean locked, boolean pending, boolean forceArmed,
 		int[] water, int waterCount, int[] lava, int lavaCount, int[] fill, int fillCount, int[] clear, int clearCount, List<String> notes,
-		int snapMinY, Approach.Plan approach, int[] path, Anchors.Bounds snapBox) {
+		int snapMinY, Approach.Plan approach, int[] path, Anchors.Bounds snapBox, int[] hazards, SiteWarnings.Result site) {
 		Anchors.Bounds box() {
 			return new Anchors.Bounds(ox, oy, oz, ox + model.sizeX - 1, oy + model.sizeY - 1, oz + model.sizeZ - 1);
 		}
 
 		View with(boolean locked, boolean pending, boolean forceArmed) {
 			return new View(bp, model, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, refusals, playerInside, locked,
-				pending, forceArmed, water, waterCount, lava, lavaCount, fill, fillCount, clear, clearCount, notes, snapMinY, approach, path, snapBox);
+				pending, forceArmed, water, waterCount, lava, lavaCount, fill, fillCount, clear, clearCount, notes, snapMinY, approach, path, snapBox, hazards,
+				site);
 		}
 	}
 
@@ -146,6 +150,15 @@ public final class BuildPlacement {
 	private static int @Nullable [] lastAim;
 	/** The last {@link #spot} found nothing in reach and kept {@link #lastAim}: the HUD says "too far". */
 	private static boolean tooFar;
+	/** How often (ticks) the server is asked again about an unmoved ghost (blocks and mobs change). */
+	private static final int VERDICT_TICKS = 20;
+	/** The server's verdict (contract S4) for {@link #verdictKey}, or null before one arrived. */
+	private static Buildings.@Nullable Verdict verdict;
+	private static @Nullable String verdictKey;
+	private static long verdictTick;
+	/** The key of the verdict request in flight, or null: at most one at a time, a reply for an old key is dropped. */
+	private static @Nullable String verdictAsked;
+	private static long ticks;
 
 	private BuildPlacement() {
 	}
@@ -254,6 +267,9 @@ public final class BuildPlacement {
 		forceArmed = false;
 		lastAim = null;
 		tooFar = false;
+		verdict = null;
+		verdictKey = null;
+		verdictAsked = null;
 	}
 
 	// ------------------------------------------------------------------ input (keys and DevBridge share these)
@@ -337,13 +353,20 @@ public final class BuildPlacement {
 		pending = true;
 		inFlight = f;
 		setStatus((moveId != null ? "Moving " + moveId : "Placing " + v.bp().name()) + "…", false);
+		String key = verdictKey(v, useForce);
 		server.execute(() -> {
 			Result r;
+			Buildings.Verdict checked = null;
 			try {
 				ServerLevel sl = server.getLevel(dim);
 				Blueprint b = Blueprints.get(bpId);
 				if (sl == null || b == null) {
 					throw new Buildings.BuildingException(sl == null ? "That dimension is not loaded" : "Blueprint " + bpId + " is gone (reloaded?)");
+				}
+				// the server's verdict on the exact site first (S4): a refusal lists every reason, not only the first
+				checked = Buildings.verdict(sl, b, origin, rotation, rs, useForce, moveId);
+				if (!checked.ok()) {
+					throw new Buildings.BuildingException(String.join("; ", checked.refusals()));
 				}
 				if (moveId != null) {
 					Building moved = Buildings.move(sl, moveId, origin, rotation, useForce);
@@ -364,7 +387,13 @@ public final class BuildPlacement {
 				r = new Result(false, null, "Placing " + bpId + " failed: " + e);
 			}
 			Result result = r;
+			Buildings.Verdict seen = checked;
 			mc.execute(() -> {
+				if (seen != null && !result.placed()) {
+					verdict = seen;
+					verdictKey = key;
+					verdictTick = ticks;
+				}
 				onResult(result, v);
 				f.complete(result);
 			});
@@ -405,6 +434,7 @@ public final class BuildPlacement {
 
 	/** Called every client tick. */
 	static void tick(Minecraft mc) {
+		ticks++;
 		if (!active) {
 			return;
 		}
@@ -427,6 +457,68 @@ public final class BuildPlacement {
 			java.util.Arrays.fill(MODELS, null);
 		}
 		update(mc, false);
+		askVerdict(mc);
+	}
+
+	/** The key a verdict is for: the exact site, the blueprint, the repos, the building moved and force. */
+	private static String verdictKey(View v, boolean force) {
+		return v.bp().id() + "|" + v.ox() + "," + v.oy() + "," + v.oz() + "|" + v.turns() + "|" + repos + "|" + moving + "|" + force;
+	}
+
+	/**
+	 * Asks the integrated server for its verdict on the ghost's site (contract S4) when the client's own checks pass: once
+	 * when the site changes, then every {@value #VERDICT_TICKS} ticks; one request in flight, a reply for a site the ghost
+	 * has left is dropped. The HUD says "Checking" until it arrives and "Ready" only when the server agrees.
+	 */
+	private static void askVerdict(Minecraft mc) {
+		View v = view;
+		IntegratedServer server = mc.getSingleplayerServer();
+		if (!active || v == null || pending || !v.refusals().isEmpty() || server == null || mc.player == null || verdictAsked != null) {
+			return;
+		}
+		String key = verdictKey(v, forceArmed);
+		if (key.equals(verdictKey) && ticks - verdictTick < VERDICT_TICKS) {
+			return;
+		}
+		ResourceKey<Level> dim = mc.player.level().dimension();
+		String bpId = v.bp().id();
+		BlockPos origin = new BlockPos(v.ox(), v.oy(), v.oz());
+		Rotation rotation = Rotation.values()[v.turns()];
+		List<String> rs = List.copyOf(repos);
+		String moveId = moving;
+		boolean force = forceArmed;
+		verdictAsked = key;
+		server.execute(() -> {
+			Buildings.Verdict out;
+			try {
+				ServerLevel sl = server.getLevel(dim);
+				Blueprint b = Blueprints.get(bpId);
+				out = sl == null || b == null ? new Buildings.Verdict(List.of(sl == null ? "That dimension is not loaded" : "Blueprint " + bpId
+					+ " is gone (reloaded?)"), List.of()) : Buildings.verdict(sl, b, origin, rotation, rs, force, moveId);
+			} catch (RuntimeException e) {
+				AgentCraft.LOGGER.warn("Building wizard: the server verdict for {} failed", bpId, e);
+				out = new Buildings.Verdict(List.of("the server could not check the site (" + e + ")"), List.of());
+			}
+			Buildings.Verdict result = out;
+			mc.execute(() -> {
+				if (!key.equals(verdictAsked)) {
+					return; // placement ended or restarted meanwhile
+				}
+				verdictAsked = null;
+				verdict = result;
+				verdictKey = key;
+				verdictTick = ticks;
+			});
+		});
+	}
+
+	/**
+	 * The server's verdict for the ghost's current site, or null while none arrived for it (the HUD says "Checking").
+	 * Client thread.
+	 */
+	static Buildings.@Nullable Verdict serverVerdict() {
+		View v = view();
+		return v != null && verdict != null && verdictKey(v, forceArmed).equals(verdictKey) ? verdict : null;
 	}
 
 	private static GhostModel model(int turns) {
@@ -670,12 +762,17 @@ public final class BuildPlacement {
 		if (shortOf != null) {
 			notes.add(shortOf);
 		}
+		// site warnings (never a refusal): what the ground in front of the door and under the path is like
+		SiteWarnings.Result site = SiteWarnings.forBlueprint(b, turns, box, approach, world);
+		for (String w : site.warnings()) {
+			notes.add(w + " (magenta)");
+		}
 		String front = BlueprintTransform.rotateDirection(b.front(), turns);
 		return new View(b, m, ox, oy, oz, turns, front, obstructed, obstructedCount, blocked, blockedCount, List.copyOf(refusals), inside, locked,
 			pending, forceArmed, shellOf(concat(plan.water(), approach.water())), plan.waterCount() + approach.waterCount(),
 			shellOf(concat(plan.lava(), approach.lava())), plan.lavaCount() + approach.lavaCount(), shellOf(concat(plan.fill(), approach.fill())),
 			plan.fillCount(), shellOf(concat(plan.clear(), approach.clear())), plan.clearCount(), List.copyOf(notes), snapBox.minY(), approach,
-			shellOf(approach.path()), snapBox);
+			shellOf(approach.path()), snapBox, shellOf(site.cells()), site);
 	}
 
 	private static int[] concat(int[] a, int[] b) {
@@ -853,6 +950,19 @@ public final class BuildPlacement {
 			a.add("end", e);
 		}
 		c.add("approach", a);
+		SiteWarnings.Result sw = v.site();
+		JsonObject site = new JsonObject();
+		site.addProperty("water", sw.water());
+		site.addProperty("lava", sw.lava());
+		site.addProperty("drops", sw.drops());
+		site.addProperty("maxDrop", sw.maxDrop());
+		site.addProperty("openings", sw.openings());
+		site.addProperty("gullies", sw.gullies());
+		site.addProperty("caves", sw.caves());
+		JsonArray sws = new JsonArray();
+		sw.warnings().forEach(sws::add);
+		site.add("warnings", sws);
+		c.add("site", site);
 		JsonArray notes = new JsonArray();
 		v.notes().forEach(notes::add);
 		c.add("notes", notes);
@@ -861,6 +971,21 @@ public final class BuildPlacement {
 		c.add("refusals", refs);
 		c.addProperty("wouldPlace", v.refusals().isEmpty());
 		o.add("conflicts", c);
+		Buildings.Verdict sv = serverVerdict();
+		if (sv == null) {
+			o.add("serverVerdict", null);
+		} else {
+			JsonObject sj = new JsonObject();
+			sj.addProperty("ok", sv.ok());
+			JsonArray sr = new JsonArray();
+			sv.refusals().forEach(sr::add);
+			sj.add("refusals", sr);
+			JsonArray sn = new JsonArray();
+			sv.notes().forEach(sn::add);
+			sj.add("notes", sn);
+			o.add("serverVerdict", sj);
+		}
+		o.addProperty("ready", v.refusals().isEmpty() && sv != null && sv.ok());
 		JsonObject r = new JsonObject();
 		r.addProperty("cells", v.model().count());
 		r.addProperty("visibleCells", v.model().visibleCount());
