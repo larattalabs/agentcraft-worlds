@@ -115,13 +115,19 @@ covers (tied to key 2). Buttons: Allow once (1), Always allow (2, sends the exac
 
 ## HUD
 
-- Goal bar (top centre, boss-bar style): status dot, goal text, %, progress bar, the open task
+- Overlay style (hub Settings > General > HUD, mod/FEATURES.md "Overlay styles", mod/DEV.md "HUD
+  overlay styles"): **Pill** by default, one compact line in the top right under the effect icons
+  ("39% · 2 decisions [J] · 1 blk"); **Pill+** adds the goal title, a progress bar, who is working, usage
+  and the next decision's first words; **Panel** is the goal bar and badges below; **Off**. Positions
+  top right / top left / bottom left / bottom right / right middle, sizes S/M/L, a 5 s peek on changes;
+  an unbound key cycles the style, F1 hides it all.
+- Panel style: the goal bar (boss-bar style): status dot, goal text, %, progress bar, the open task
   columns that have tasks and "n/m done" ("finished 2m ago" once the goal is done). With no goal
   yet: "No goal yet · press [Backtick] to give the team one" (punctuation keys are spelled out on
   keycaps; their glyphs are a pixel or two). It keeps clear of the connection pill using the pill's
   real size each frame: narrower next to it, or below it when there is no room (the two-line
   "Reconnecting to the Foreman" pill on a narrow GUI).
-- Decisions badge under it: "2 waiting · press J" with a pulsing clay dot.
+- Panel style: the decisions badge under it: "2 waiting · press J" with a pulsing clay dot.
 - Paper toasts for `notify` (top right, under the connection pill, below the goal bar on narrow
   screens): the agent's portrait, "Marlow needs you", two lines, the J hint; they leave early once
   their decision is answered. Hidden while the decision screen is open.
