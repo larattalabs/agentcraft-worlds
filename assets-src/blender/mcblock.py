@@ -35,7 +35,7 @@ VANILLA = {
 
 class Assets:
     def __init__(self, roots):
-        """roots: {namespace: assets_dir} e.g. {"agentcraft": ".../out/assets/agentcraft",
+        """roots: {namespace: assets_dir} e.g. {"agentcraft_worlds": ".../out/assets/agentcraft_worlds",
         "minecraft": ".../_ref/vanilla_assets/minecraft"}; vanilla textures may also be flat files."""
         self.roots = roots
         self.images = {}

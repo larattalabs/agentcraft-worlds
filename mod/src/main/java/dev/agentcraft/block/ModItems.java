@@ -31,7 +31,7 @@ public final class ModItems {
 			ITEMS.add(Registry.register(BuiltInRegistries.ITEM, key, item));
 		}
 		Registry.register(BuiltInRegistries.CREATIVE_MODE_TAB, TAB, FabricCreativeModeTab.builder()
-			.title(Component.translatable("itemGroup.agentcraft"))
+			.title(Component.translatable("itemGroup.agentcraft_worlds"))
 			.icon(() -> new ItemStack(ModBlocks.MONITOR))
 			.displayItems((params, output) -> ITEMS.forEach(output::accept))
 			.build());

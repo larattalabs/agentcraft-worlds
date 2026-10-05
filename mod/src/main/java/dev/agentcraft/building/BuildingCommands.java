@@ -104,7 +104,7 @@ public final class BuildingCommands {
 	private static int listBlueprints(CommandContext<CommandSourceStack> ctx) {
 		var all = Blueprints.all();
 		ctx.getSource().sendSuccess(() -> Component.literal(all.size() + " blueprint(s)" + (all.isEmpty()
-			? " (bundled: data/agentcraft/blueprints; yours: " + Blueprints.userDir() + ")" : ":")), false);
+			? " (bundled: data/agentcraft_worlds/blueprints; yours: " + Blueprints.userDir() + ")" : ":")), false);
 		for (Blueprint bp : all) {
 			var e = Blueprints.entry(bp.id());
 			ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "  %s  \"%s\"  %s%s  %dx%dx%d  front %s  [%s]",

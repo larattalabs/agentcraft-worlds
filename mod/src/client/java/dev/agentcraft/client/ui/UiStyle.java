@@ -13,8 +13,8 @@ import java.util.Map;
 
 /**
  * Colour and metric tokens of the Warm Studio UI, read from the synced art files
- * {@code assets/agentcraft/gui/ui-style.json} (monitor/paper/status/agents/ink_ui/metrics, see
- * assets-src/ui-style.md) and {@code assets/agentcraft/palette.json} ({@code colors.*}, {@code ui.*}).
+ * {@code assets/agentcraft_worlds/gui/ui-style.json} (monitor/paper/status/agents/ink_ui/metrics, see
+ * assets-src/ui-style.md) and {@code assets/agentcraft_worlds/palette.json} ({@code colors.*}, {@code ui.*}).
  * Never hard-code a colour in a screen or renderer: ask here.
  *
  * <pre>
@@ -40,8 +40,8 @@ public final class UiStyle {
 	private static final Map<String, Double> NUMBERS = new HashMap<>();
 
 	static {
-		load("/assets/agentcraft/gui/ui-style.json", "");
-		load("/assets/agentcraft/palette.json", "palette.");
+		load("/assets/agentcraft_worlds/gui/ui-style.json", "");
+		load("/assets/agentcraft_worlds/palette.json", "palette.");
 	}
 
 	private UiStyle() {

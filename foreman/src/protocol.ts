@@ -99,7 +99,7 @@ export const Agent = z.object({
   title: z.string().optional().describe('short descriptive role from cast.json, e.g. "Backend tinkerer"'),
   color: HexColor.describe('agent color (scarf/badge/nameplate)'),
   accent: HexColor.optional(),
-  skin: z.string().describe('skin id -> assets/agentcraft/textures/entity/agent/<skin>.png'),
+  skin: z.string().describe('skin id -> assets/agentcraft_worlds/textures/entity/agent/<skin>.png'),
   state: AgentState,
   activity: z.string().describe('one short line for the nameplate, e.g. "editing src/cli.ts" (<= 48 chars)'),
   station: Station,

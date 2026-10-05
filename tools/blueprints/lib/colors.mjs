@@ -7,23 +7,23 @@ const GLASS = { c: '#a9d6ee', a: 0.38 };
 
 export const COLOR_TABLE = {
   // ---- AgentCraft (mod/src/main/java/dev/agentcraft/block/ModBlocks.java)
-  'agentcraft:plaster_panel': '#ece6d6',
-  'agentcraft:plaster_frame': '#d8cfb8',
-  'agentcraft:walnut_panel': '#5b3a25',
-  'agentcraft:walnut_trim': '#432a1a',
-  'agentcraft:terracotta_tile': '#b4613f',
-  'agentcraft:oak_parquet': '#b98c57',
-  'agentcraft:glow_panel': { c: '#fff1c4', emissive: true },
-  'agentcraft:glow_strip': { c: '#ffe6a0', emissive: true, shape: 'strip' },
-  'agentcraft:monitor': { c: '#1d2431', border: '#cfd6e0', lit: '#3f78b8', shape: 'panel' },
-  'agentcraft:task_board': { c: '#252c36', border: '#e8e2d0', shape: 'panel' },
-  'agentcraft:village_board': { c: '#2a211b', border: '#c9a227', shape: 'panel' },
-  'agentcraft:decision_podium': { c: '#7a4e2e', shape: 'small', box: [0.15, 0, 0.15, 0.85, 0.95, 0.85], border: '#d9b45a' },
-  'agentcraft:memory_archive': '#5f4c80',
-  'agentcraft:memory_catalog': '#7e6ba3',
-  'agentcraft:merge_station': { c: '#3e8574', shape: 'small', box: [0.08, 0, 0.08, 0.92, 0.7, 0.92], border: '#bfe9dc' },
-  'agentcraft:status_lamp': { c: '#62d37a', emissive: true, shape: 'small', box: [0.25, 0, 0.25, 0.75, 0.5, 0.75] },
-  'agentcraft:console_terminal': { c: '#2a303c', shape: 'small', box: [0.1, 0, 0.1, 0.9, 0.85, 0.9], border: '#6fe08a' },
+  'agentcraft_worlds:plaster_panel': '#ece6d6',
+  'agentcraft_worlds:plaster_frame': '#d8cfb8',
+  'agentcraft_worlds:walnut_panel': '#5b3a25',
+  'agentcraft_worlds:walnut_trim': '#432a1a',
+  'agentcraft_worlds:terracotta_tile': '#b4613f',
+  'agentcraft_worlds:oak_parquet': '#b98c57',
+  'agentcraft_worlds:glow_panel': { c: '#fff1c4', emissive: true },
+  'agentcraft_worlds:glow_strip': { c: '#ffe6a0', emissive: true, shape: 'strip' },
+  'agentcraft_worlds:monitor': { c: '#1d2431', border: '#cfd6e0', lit: '#3f78b8', shape: 'panel' },
+  'agentcraft_worlds:task_board': { c: '#252c36', border: '#e8e2d0', shape: 'panel' },
+  'agentcraft_worlds:village_board': { c: '#2a211b', border: '#c9a227', shape: 'panel' },
+  'agentcraft_worlds:decision_podium': { c: '#7a4e2e', shape: 'small', box: [0.15, 0, 0.15, 0.85, 0.95, 0.85], border: '#d9b45a' },
+  'agentcraft_worlds:memory_archive': '#5f4c80',
+  'agentcraft_worlds:memory_catalog': '#7e6ba3',
+  'agentcraft_worlds:merge_station': { c: '#3e8574', shape: 'small', box: [0.08, 0, 0.08, 0.92, 0.7, 0.92], border: '#bfe9dc' },
+  'agentcraft_worlds:status_lamp': { c: '#62d37a', emissive: true, shape: 'small', box: [0.25, 0, 0.25, 0.75, 0.5, 0.75] },
+  'agentcraft_worlds:console_terminal': { c: '#2a303c', shape: 'small', box: [0.1, 0, 0.1, 0.9, 0.85, 0.9], border: '#6fe08a' },
 
   // ---- vanilla blocks used by the bundled designs
   'minecraft:air': { shape: 'none', c: '#000000' },
@@ -162,7 +162,7 @@ export function resolveMaterial(id, props = {}, unknown = null) {
   const direct = COLOR_TABLE[id];
   if (direct) {
     const m = fromEntry(direct);
-    if (id === 'agentcraft:status_lamp') m.color = hexToRgb(STATUS[props.status] ?? STATUS.off);
+    if (id === 'agentcraft_worlds:status_lamp') m.color = hexToRgb(STATUS[props.status] ?? STATUS.off);
     return m;
   }
   const [base, shape] = splitShape(name);

@@ -20,12 +20,12 @@ node tools/mac.mjs stop --game --foreman                # when done
 | `--size x,y,z` | template size if it cannot be read (vanilla ids are read from the Minecraft jar) |
 | `--no-clear` | do not clear the site afterwards (and the copied template file is still removed) |
 
-`<id>` resolves to `mod/src/main/resources/data/agentcraft/structure/<id>.nbt` (or
+`<id>` resolves to `mod/src/main/resources/data/agentcraft_worlds/structure/<id>.nbt` (or
 `artifacts/blueprint-test/<id>.nbt`); a sidecar `<id>.blueprint.json` is read from the same folder or
-`mod/src/main/resources/data/agentcraft/blueprints/`. An id with a namespace (`minecraft:village/...`)
+`mod/src/main/resources/data/agentcraft_worlds/blueprints/`. An id with a namespace (`minecraft:village/...`)
 is an existing game template and is placed as is (no sidecar, exterior shots only).
 
-What it does: copies the `.nbt` into `<dev world>/generated/agentcraft/structure/` (singular `structure`
+What it does: copies the `.nbt` into `<dev world>/generated/agentcraft_worlds/structure/` (singular `structure`
 in 26.3) under a unique name per run, clears + floors the site, `/place template`s it, takes
 `ext_sw/se/ne/nw` (45 degree orbit), one shot per `cam_*` anchor, `top` and `front`, at noon, clear
 weather, HUD hidden, chunks waited for; writes them with `sheet.png` (contact sheet) and `report.json`
@@ -34,7 +34,7 @@ terminal testbench mergestation user decision_podium goal_atrium entrance spawn 
 `dev.command` (`execute if block ... #minecraft:replaceable`): solid floor below, feet and head cells
 open (a `seat_` may sit inside its chair), inside `walk`. Exit code 0 = all shots and anchors ok.
 
-`make-test-nbt.mjs [outDir] [id]` writes a tiny 7x5x7 room (+ sidecar, one `agentcraft:monitor`, one
+`make-test-nbt.mjs [outDir] [id]` writes a tiny 7x5x7 room (+ sidecar, one `agentcraft_worlds:monitor`, one
 deliberately bad anchor) to `artifacts/blueprint-test/`; `nbt.mjs` is the dependency-free NBT
 reader/writer (usable by the generator).
 
@@ -59,7 +59,7 @@ lowered to sill height), `<id>.preview-top.png` (top-down, highest block, height
 (`<id>.blueprint.json`, found next to the `.nbt` or in the bundled blueprints folder, or `--sidecar`) supplies
 `front` (the view is turned so that side faces the camera) and `walk`. Default `--out` is
 `artifacts/blueprint-preview/`; `build.mjs` renders after a successful check into the bundled blueprints folder
-(`mod/src/main/resources/data/agentcraft/blueprints/`), where the hub picks the previews up.
+(`mod/src/main/resources/data/agentcraft_worlds/blueprints/`), where the hub picks the previews up.
 
 Colours come from `lib/colors.mjs` (one entry per block id; stairs/slabs/carpets/panes inherit their base
 block). An id missing from the table gets a colour guessed from its name (stone/wood/brick/glass/...) and is

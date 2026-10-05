@@ -43,7 +43,7 @@ test('written structure file: valid gzipped template with id/properties palette'
     assert.ok(!('Name' in p) && !('Properties' in p), 'palette must not use Name/Properties');
     for (const v of Object.values(p.properties ?? {})) assert.equal(typeof v, 'string');
   }
-  const monitor = root.palette.findIndex((p) => p.id === 'agentcraft:monitor' && p.properties.facing === 'east');
+  const monitor = root.palette.findIndex((p) => p.id === 'agentcraft_worlds:monitor' && p.properties.facing === 'east');
   assert.ok(monitor >= 0);
   assert.deepEqual(Object.keys(root.palette[monitor].properties).sort(), ['down', 'facing', 'left', 'lit', 'right', 'up']);
   // every block: pos in size, state valid; interior air is written; monitors carry bindings
@@ -54,7 +54,7 @@ test('written structure file: valid gzipped template with id/properties palette'
     const p = root.palette[b.state];
     assert.ok(p);
     if (p.id === 'minecraft:air') air++;
-    if (p.id === 'agentcraft:monitor') bindings.add(b.nbt.binding);
+    if (p.id === 'agentcraft_worlds:monitor') bindings.add(b.nbt.binding);
   }
   assert.ok(air > 2000);
   assert.deepEqual([...bindings].sort(), ['juniper', 'kit', 'rowan', 'tove', 'wren']);
@@ -103,8 +103,8 @@ test('checker fails: anchor on a block (no head room), no floor, bad monitor/tas
   const res = checkBlueprint(bp).errors.join('\n');
   assert.match(res, /anchor entrance: head cell/);
   assert.match(res, /anchor terminal: no solid block below/);
-  assert.match(res, /anchor monitor_kit: not on an agentcraft:monitor/);
-  assert.match(res, /anchor task_wall@1: not on an agentcraft:task_board/);
+  assert.match(res, /anchor monitor_kit: not on an agentcraft_worlds:monitor/);
+  assert.match(res, /anchor task_wall@1: not on an agentcraft_worlds:task_board/);
 });
 
 test('checker fails: uncleared walk cells, size mismatch, invalid palette properties', () => {
@@ -118,7 +118,7 @@ test('checker fails: uncleared walk cells, size mismatch, invalid palette proper
 
   const bad = {
     DataVersion: 5023, size: [1, 1, 1], entities: [],
-    palette: [{ id: 'agentcraft:monitor', properties: { facing: 'sideways', lit: 'true' } }, { id: 'minecraft:dark_oak_stairs', properties: { facing: 'north' } }],
+    palette: [{ id: 'agentcraft_worlds:monitor', properties: { facing: 'sideways', lit: 'true' } }, { id: 'minecraft:dark_oak_stairs', properties: { facing: 'north' } }],
     blocks: [{ pos: [0, 0, 0], state: 0 }],
   };
   const res = checkStructure({ id: 'x', name: 'x', kind: 'single', wings: 1, size: { x: 1, y: 1, z: 1 }, groundY: 0, front: 'south', walk: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 }, anchors: {} }, bad);
@@ -131,7 +131,7 @@ test('checker fails: uncleared walk cells, size mismatch, invalid palette proper
 
 test('kit: block states are complete; desk writes its anchors; unknown blocks/props throw', () => {
   assert.deepEqual(normalize('minecraft:glass_pane').props, { north: 'false', east: 'false', south: 'false', west: 'false', waterlogged: 'false' });
-  assert.throws(() => normalize('agentcraft:monitor', { sparkle: 'true' }), /unknown property/);
+  assert.throws(() => normalize('agentcraft_worlds:monitor', { sparkle: 'true' }), /unknown property/);
   assert.throws(() => normalize('minecraft:nope'), /unknown block/);
   const bp = new Blueprint({ id: 't', size: [8, 6, 8], groundY: 1 });
   bp.desk(4, 1, 'south', 'kit');
@@ -209,13 +209,13 @@ test('C5 materials: bundled designs use AgentCraft blocks only where functional;
   const { default: studio } = await import('../blueprints/designs/studio.mjs');
   const { buildCampus } = await import('../blueprints/lib/campus.mjs');
   for (const bp of [studio(), workshop(), buildCampus(5)]) {
-    const ac = new Set([...bp.cells.values()].map((c) => c.state.name).filter((n) => n.startsWith('agentcraft:')));
+    const ac = new Set([...bp.cells.values()].map((c) => c.state.name).filter((n) => n.startsWith('agentcraft_worlds:')));
     for (const n of ac) assert.ok(FUNCTIONAL_BLOCKS.has(n), `${bp.id} uses ${n}`);
     assert.equal(bp.materials, 'agentcraft'); // = the AgentCraft look in vanilla blocks
   }
   const bp = workshop();
-  bp.set(5, 3, 0, 'agentcraft:plaster_panel');
-  assert.match(checkBlueprint(bp).errors.join('\n'), /decorative AgentCraft block 'agentcraft:plaster_panel'.*smooth_quartz/);
+  bp.set(5, 3, 0, 'agentcraft_worlds:plaster_panel');
+  assert.match(checkBlueprint(bp).errors.join('\n'), /decorative AgentCraft block 'agentcraft_worlds:plaster_panel'.*smooth_quartz/);
 });
 
 test('C5 shell: a functional block in the outer wall without a vanilla block behind it is a hole without the mod', () => {
@@ -223,7 +223,7 @@ test('C5 shell: a functional block in the outer wall without a vanilla block beh
   const bp = workshop();
   bp.statusLamp(26, 3, 14, 'ci:#1');
   const errs = checkBlueprint(bp).errors.join('\n');
-  assert.match(errs, /shell: without the mod the agentcraft:status_lamp at 27,3,15 leaves a hole/);
+  assert.match(errs, /shell: without the mod the agentcraft_worlds:status_lamp at 27,3,15 leaves a hole/);
   const fixed = workshop();
   fixed.wallLamp(26, 3, 14, 'west', 'ci:#1');
   assert.equal(fixed.nameAt(27, 3, 14), B.walnutTrim); // the backing plate outside
@@ -244,7 +244,7 @@ test('C5 shell: a doorway without a door is an error; a lamp in a gable wall ope
   const gable = workshop();
   gable.statusLamp(0, 8, 3, 'ci:#1'); // west gable wall, attic behind it, open eave outside
   const errs = checkBlueprint(gable).errors.join('\n');
-  assert.match(errs, /without the mod the agentcraft:status_lamp at 1,8,4 leaves a hole in the outer shell/);
+  assert.match(errs, /without the mod the agentcraft_worlds:status_lamp at 1,8,4 leaves a hole in the outer shell/);
   // a courtyard (walk open to the sky only) stays a warning
   const yard = workshop();
   for (let y = 7; y <= 14; y++) for (const [x, z] of [[5, 16], [5, 17]]) if (yard.inBounds(x, y, z)) yard.air(x, y, z);
@@ -299,7 +299,7 @@ test('C5 light: vanilla propagation (decrement, opaque, glass, slab faces, no Ag
   assert.equal(r.levels('nomod')[2], 0);
   // AgentCraft blocks and the invisible light block never count
   const g3 = new Map();
-  g3.set('0,1,0', { name: 'agentcraft:status_lamp', props: { status: 'idle' } });
+  g3.set('0,1,0', { name: 'agentcraft_worlds:status_lamp', props: { status: 'idle' } });
   g3.set('1,1,0', normalize('minecraft:light', { level: '15' }));
   g3.set('2,1,0', normalize('minecraft:air'));
   r = lightCheck(g3, [3, 2, 1], { minX: 0, minY: 1, minZ: 0, maxX: 2, maxY: 1, maxZ: 0 }, 1);
@@ -344,8 +344,8 @@ test('C4 foundationBlock: sidecar default, per design, validated', async () => {
   assert.equal(workshop().sidecar().foundationBlock, 'minecraft:cobblestone');
   assert.equal(new Blueprint({ id: 'f', size: [1, 1, 1] }).foundationBlock, 'minecraft:stone_bricks');
   const bp = workshop();
-  bp.foundationBlock = 'agentcraft:plaster_panel';
-  assert.match(checkBlueprint(bp).errors.join('\n'), /foundationBlock 'agentcraft:plaster_panel' must be a vanilla block id/);
+  bp.foundationBlock = 'agentcraft_worlds:plaster_panel';
+  assert.match(checkBlueprint(bp).errors.join('\n'), /foundationBlock 'agentcraft_worlds:plaster_panel' must be a vanilla block id/);
   bp.foundationBlock = 'minecraft:glass';
   assert.match(checkBlueprint(bp).errors.join('\n'), /must be a full, opaque block/);
 });
@@ -525,7 +525,7 @@ test('fixture: the bundled village board passes the checker, takes no repos and 
   assert.deepEqual(Object.keys(side.anchors).sort(), ['board', 'cam_overview', 'spawn']);
   // the anchor is the display's centre, on the board plane, facing south
   assert.deepEqual(side.anchors.board, { x: 3.5, y: 3.5, z: 1.127, yaw: 0, pitch: 0 });
-  const ac = [...bp.cells.values()].filter((c) => c.state.name.startsWith('agentcraft:'));
+  const ac = [...bp.cells.values()].filter((c) => c.state.name.startsWith('agentcraft_worlds:'));
   assert.equal(ac.length, 15); // 5 x 3 display
   assert.ok(ac.every((c) => c.state.name === B.villageBoard && !c.nbt));
   assert.ok(FUNCTIONAL_BLOCKS.has(B.villageBoard));
@@ -535,13 +535,13 @@ test('fixture: the checker wants the board anchor on the display, a backing behi
   const { default: villageBoard } = await import('../blueprints/designs/village_board.mjs');
   const noBack = villageBoard();
   noBack.set(3, 3, 0, 'minecraft:air');
-  assert.match(checkBlueprint(noBack).errors.join('\n'), /fixture: the agentcraft:village_board at 3,3,1 has no full vanilla block behind it/);
+  assert.match(checkBlueprint(noBack).errors.join('\n'), /fixture: the agentcraft_worlds:village_board at 3,3,1 has no full vanilla block behind it/);
   const bound = villageBoard();
   bound.bind(2, 2, 1, 'repo:#1');
   assert.match(checkBlueprint(bound).errors.join('\n'), /bound to 'repo:#1' \(a fixture takes no repos\)/);
   const moved = villageBoard();
   moved.anchor('board', 3.5, 1.5, 3.5, 0);
-  assert.match(checkBlueprint(moved).errors.join('\n'), /anchor board: not on an agentcraft:village_board block/);
+  assert.match(checkBlueprint(moved).errors.join('\n'), /anchor board: not on an agentcraft_worlds:village_board block/);
   const wings = villageBoard();
   wings.wings = 1;
   assert.match(checkBlueprint(wings).errors.join('\n'), /a fixture takes no repos: wings 0/);

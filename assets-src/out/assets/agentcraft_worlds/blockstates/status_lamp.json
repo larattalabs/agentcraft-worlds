@@ -1,0 +1,25 @@
+{
+  "variants": {
+    "status=off": {
+      "model": "agentcraft_worlds:block/status_lamp_off"
+    },
+    "status=idle": {
+      "model": "agentcraft_worlds:block/status_lamp_idle"
+    },
+    "status=thinking": {
+      "model": "agentcraft_worlds:block/status_lamp_thinking"
+    },
+    "status=working": {
+      "model": "agentcraft_worlds:block/status_lamp_working"
+    },
+    "status=waiting": {
+      "model": "agentcraft_worlds:block/status_lamp_waiting"
+    },
+    "status=error": {
+      "model": "agentcraft_worlds:block/status_lamp_error"
+    },
+    "status=done": {
+      "model": "agentcraft_worlds:block/status_lamp_done"
+    }
+  }
+}

@@ -12,7 +12,7 @@ import net.minecraft.world.entity.player.PlayerModelType;
 import net.minecraft.world.entity.player.PlayerSkin;
 
 /**
- * Agent skins: {@code assets/agentcraft/textures/entity/agent/<skin>.png} (64x64, both layers) with
+ * Agent skins: {@code assets/agentcraft_worlds/textures/entity/agent/<skin>.png} (64x64, both layers) with
  * the arm model from cast.json ({@code slim} = 3 px arms). Unknown skins fall back to a vanilla
  * default skin so a new Foreman agent still renders.
  */

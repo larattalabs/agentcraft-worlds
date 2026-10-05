@@ -220,7 +220,7 @@ class TrophyTest {
 
 	@Test
 	void bundledBlueprintsGiveEveryWingSixSlotsInsideTheBoxAtEveryRotation() throws IOException {
-		Path dir = Path.of("src/main/resources/data/agentcraft/blueprints");
+		Path dir = Path.of("src/main/resources/data/agentcraft_worlds/blueprints");
 		List<Path> files;
 		try (var s = Files.list(dir)) {
 			files = s.filter(p -> p.getFileName().toString().endsWith(".blueprint.json")).sorted().toList();

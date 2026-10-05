@@ -2,10 +2,10 @@
 
 Usage: blender -b --factory-startup -P render_blocks.py -- jobs.json
 jobs.json = {
-  "out_dir": str, "roots": {"agentcraft": dir, "minecraft": dir}, "size": [w,h], "samples": n,
+  "out_dir": str, "roots": {"agentcraft_worlds": dir, "minecraft": dir}, "size": [w,h], "samples": n,
   "lighting": "mc" (default; calibrated to vanilla face shading, see studio.mc_block_lights) | "studio",
-  "blocks": [{"name": str, "block": "agentcraft:monitor", "props": {...}}       # via blockstate
-             | {"name": str, "model": "agentcraft:block/x"}                     # direct model
+  "blocks": [{"name": str, "block": "agentcraft_worlds:monitor", "props": {...}}       # via blockstate
+             | {"name": str, "model": "agentcraft_worlds:block/x"}                     # direct model
              | {"name": str, "inline": {model json}}],                          # e.g. vanilla refs
   "scenes": [{"name": str, "size": [w,h], "ortho": f, "az": f, "el": f, "target": [x,y,z],
               "night": bool, "blocks": [{"block"|"model"|"inline": ..., "props": {}, "pos": [x,y,z]}]}]

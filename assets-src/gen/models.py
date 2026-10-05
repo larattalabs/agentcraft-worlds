@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from common import OUT, write_json  # noqa: E402
 
-NS = "agentcraft"
+NS = "agentcraft_worlds"
 MODELS = {}
 BLOCKSTATES = {}
 ITEMS = {}
@@ -547,7 +547,7 @@ def build():
         write_json(OUT / "items" / f"{name}.json", data)
     lang = {f"block.{NS}.{k}": v for k, v in LANG.items()}
     lang.update({f"item.{NS}.{k}": v for k, v in LANG.items()})
-    lang["itemGroup.agentcraft"] = "AgentCraft Studio"
+    lang["itemGroup.agentcraft_worlds"] = "AgentCraft Studio"
     write_json(OUT / "lang" / "en_us.json", lang)
     assert set(BLOCKSTATES) == set(LANG), set(BLOCKSTATES) ^ set(LANG)
     assert set(PROPERTY_DOMAINS) == set(LANG), set(PROPERTY_DOMAINS) ^ set(LANG)

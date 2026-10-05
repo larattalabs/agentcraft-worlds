@@ -43,8 +43,8 @@ function die(msg) { console.error(`verify: ${msg}`); process.exit(1); }
 const log = (...a) => console.log(...a);
 
 // ---- resolve the blueprint --------------------------------------------------------------------
-const BUNDLED_STRUCT = path.join(root, 'mod/src/main/resources/data/agentcraft/structure');
-const BUNDLED_SIDECAR = path.join(root, 'mod/src/main/resources/data/agentcraft/blueprints');
+const BUNDLED_STRUCT = path.join(root, 'mod/src/main/resources/data/agentcraft_worlds/structure');
+const BUNDLED_SIDECAR = path.join(root, 'mod/src/main/resources/data/agentcraft_worlds/blueprints');
 
 function resolveBlueprint(arg) {
   const looksLikePath = arg.endsWith('.nbt') || (arg.includes('/') && !arg.includes(':') && fs.existsSync(path.resolve(arg)));
@@ -197,11 +197,11 @@ try {
     // the structure manager caches templates by id for the whole session (hits AND misses): a unique id per run so an
     // edited .nbt is never served stale; removed again at the end.
     const unique = `${bp.id.toLowerCase().replace(/[^a-z0-9_]/g, "_")}_v${Date.now().toString(36)}`;
-    const dest = path.join(worldDir, 'generated', 'agentcraft', 'structure', `${unique}.nbt`);
+    const dest = path.join(worldDir, 'generated', 'agentcraft_worlds', 'structure', `${unique}.nbt`);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(bp.nbtPath, dest);
     copiedTemplate = dest;
-    templateId = `agentcraft:${unique}`;
+    templateId = `agentcraft_worlds:${unique}`;
     log(`copied ${path.relative(root, bp.nbtPath)} -> ${path.relative(root, dest)}`);
   }
 

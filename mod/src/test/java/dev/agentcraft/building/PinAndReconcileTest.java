@@ -57,7 +57,7 @@ class PinAndReconcileTest {
 	@Test
 	void fingerprintIsOrderFreeAndSeesEveryChange() {
 		int[] xyz = {0, 0, 0, 1, 0, 0, 0, 1, 0};
-		String[] st = {"Block{minecraft:stone}", "Block{agentcraft:monitor}[facing=north]", "Block{minecraft:air}"};
+		String[] st = {"Block{minecraft:stone}", "Block{agentcraft_worlds:monitor}[facing=north]", "Block{minecraft:air}"};
 		boolean[] be = {false, true, false};
 		String f = TemplateGrid.fingerprint(xyz, st, be);
 		assertEquals(16, f.length());

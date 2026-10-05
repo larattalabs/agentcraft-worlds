@@ -12,7 +12,7 @@ import java.util.Map;
 import net.minecraft.resources.Identifier;
 
 /**
- * The GUI kit sprites ({@code agentcraft:kit/<name>} in the vanilla GUI atlas; nine-slice metadata
+ * The GUI kit sprites ({@code agentcraft_worlds:kit/<name>} in the vanilla GUI atlas; nine-slice metadata
  * ships with the stretchable ones). Content padding per sprite comes from {@code gui/kit.json}.
  * Draw them in screens with {@link Panels} (GuiGraphicsExtractor.blitSprite) and in the world with
  * {@link WorldUi}.
@@ -49,7 +49,7 @@ public final class Kit {
 	private static final Map<String, Padding> PADDING = new HashMap<>();
 
 	static {
-		try (InputStream in = Kit.class.getResourceAsStream("/assets/agentcraft/gui/kit.json")) {
+		try (InputStream in = Kit.class.getResourceAsStream("/assets/agentcraft_worlds/gui/kit.json")) {
 			if (in != null) {
 				JsonObject sprites = JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("sprites");
 				for (var e : sprites.entrySet()) {

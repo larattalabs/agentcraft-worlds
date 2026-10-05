@@ -14,7 +14,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent          # assets-src/
 PROJECT = ROOT.parent                                   # repo root
-OUT = ROOT / "out" / "assets" / "agentcraft"            # mirrors mod resources
+OUT = ROOT / "out" / "assets" / "agentcraft_worlds"            # mirrors mod resources
 ART = PROJECT / "artifacts" / "art"                     # review renders / sheets
 
 

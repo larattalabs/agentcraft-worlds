@@ -6,7 +6,7 @@
 //     job that was still finishing
 //   - the scratch dir of a job: <profile>/designs/<id>/, a mirror of the repo layout
 //     (tools/blueprints = the kit, docs/BUILDINGS.md, BRIEF.md); `build.mjs` then writes into
-//     <scratch>/mod/src/main/resources/data/agentcraft/{structure,blueprints}/ like in the repo
+//     <scratch>/mod/src/main/resources/data/agentcraft_worlds/{structure,blueprints}/ like in the repo
 //   - checking a built design with a PRISTINE copy of the kit (the agent may have edited its copy),
 //     in a child process with a minimal environment (it runs agent-written code)
 //   - installing the result into the mod's user blueprint folder, never overwriting anything
@@ -179,8 +179,8 @@ export function sidecarProblem(sc: Sidecar, req: DesignRequest): string | undefi
 // ---- running the kit --------------------------------------------------------------------------
 
 /** Where build.mjs writes, relative to a repo-shaped root (the project, or a scratch dir). */
-export const BUILT_NBT_DIR = path.join('mod', 'src', 'main', 'resources', 'data', 'agentcraft', 'structure');
-export const BUILT_JSON_DIR = path.join('mod', 'src', 'main', 'resources', 'data', 'agentcraft', 'blueprints');
+export const BUILT_NBT_DIR = path.join('mod', 'src', 'main', 'resources', 'data', 'agentcraft_worlds', 'structure');
+export const BUILT_JSON_DIR = path.join('mod', 'src', 'main', 'resources', 'data', 'agentcraft_worlds', 'blueprints');
 export const KIT_DIR = path.join('tools', 'blueprints');
 export const PREVIEW_DIR = 'previews';
 

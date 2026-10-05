@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
  * features are wired in {@code dev.agentcraft.client.ClientFeatures}.
  */
 public class AgentCraft implements ModInitializer {
-	public static final String MOD_ID = "agentcraft";
+	public static final String MOD_ID = "agentcraft_worlds";
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	@Override

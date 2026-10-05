@@ -5,15 +5,15 @@
     python assets-src/sync.py --check    # exit 1 if the mod is out of date (CI / pre-build)
     python assets-src/sync.py --dest DIR # sync into another assets dir (tests)
 
-Only files under out/assets are touched. Files the mod track owns (e.g. assets/agentcraft/icon.png)
-are never deleted: the script records what it synced in <dest>/agentcraft/.art-sync.json and only
+Only files under out/assets are touched. Files the mod track owns (e.g. assets/agentcraft_worlds/icon.png)
+are never deleted: the script records what it synced in <dest>/agentcraft_worlds/.art-sync.json and only
 prunes files it synced before.
 
 Lang files are MERGED, not copied. Minecraft loads exactly one lang/<locale>.json per namespace
 per pack, so the mod's own keys (keybinds, screen titles, messages) live in the same
-assets/agentcraft/lang/en_us.json as the art pipeline's block/item names. The mod track edits
+assets/agentcraft_worlds/lang/en_us.json as the art pipeline's block/item names. The mod track edits
 that file directly, as in any Fabric mod; sync owns only the keys it generates
-(`block.agentcraft.*`, `item.agentcraft.*`, `itemGroup.agentcraft` - whatever out/ contains):
+(`block.agentcraft_worlds.*`, `item.agentcraft_worlds.*`, `itemGroup.agentcraft_worlds` - whatever out/ contains):
   - generated keys are added or updated in place (an existing mod value for a generated key is
     overwritten, with a warning - block/item names belong to assets-src/gen/models.py LANG),
   - every other key is preserved verbatim, in the file's order,
@@ -98,7 +98,7 @@ def main() -> int:
     ap.add_argument("--dest", type=Path, default=DST_DEFAULT, help="assets dir to sync into")
     args = ap.parse_args()
     DST = args.dest
-    LEDGER = DST / "agentcraft" / ".art-sync.json"
+    LEDGER = DST / "agentcraft_worlds" / ".art-sync.json"
     if not SRC.exists():
         print(f"nothing to sync: {SRC} missing (run: python assets-src/build.py)")
         return 1

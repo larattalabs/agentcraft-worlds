@@ -18,7 +18,7 @@ loom {
 	splitEnvironmentSourceSets()
 
 	mods {
-		"agentcraft" {
+		"agentcraft_worlds" {
 			sourceSet sourceSets.main
 			sourceSet sourceSets.client
 		}

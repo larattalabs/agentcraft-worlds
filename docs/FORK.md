@@ -142,7 +142,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   test with every mod; it found two instance issues (LWJGL pinned at 3.4.1 while 26.3 + Sodium need 3.4.3;
   Sodium 0.9.3-alpha broke Reese's Sodium Options -> stable Sodium 0.9.2) and one mod issue (Entity Culling's
   tick culling froze agents -> agents now advance from the client tick; the instance also whitelists
-  agentcraft:agent). Installed with `hardcore-setup --no-prelaunch --apply` (stable checkout, mod-started
+  agentcraft_worlds:agent). Installed with `hardcore-setup --no-prelaunch --apply` (stable checkout, mod-started
   Foreman, profile hardcore, port 7880); verified to the title screen. Next: play, place buildings, first real goals.
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
@@ -189,7 +189,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 9. **Any-world layout** — load anchors in any world (`Anchors.java`), player commands to set
    anchors/bounds and bind station blocks (`StationBlockEntity.setBinding` exists), saved via
    `Anchors.publish`.
-10. **Survival-obtainable blocks** — recipes + loot tables under `data/agentcraft/` (none exist).
+10. **Survival-obtainable blocks** — recipes + loot tables under `data/agentcraft_worlds/` (none exist).
 11. **Iris compatibility** for the custom pipelines (`DisplayDraw`, `WorldUi`).
 12. **More useful displays** — usage/model/context badges, branch/dependency view, repo ↔ building.
 

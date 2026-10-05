@@ -204,7 +204,7 @@ public final class Protocol {
 	 * <li>{@code title}: short descriptive role from cast.json, e.g. "Backend tinkerer"</li>
 	 * <li>{@code color}: agent color (scarf/badge/nameplate)</li>
 	 * <li>{@code accent}: "#RRGGBB"</li>
-	 * <li>{@code skin}: skin id -&gt; assets/agentcraft/textures/entity/agent/&lt;skin&gt;.png</li>
+	 * <li>{@code skin}: skin id -&gt; assets/agentcraft_worlds/textures/entity/agent/&lt;skin&gt;.png</li>
 	 * <li>{@code state}: What the agent is doing right now; drives nameplate dot color, particles and
 	 * animation.</li>
 	 * <li>{@code activity}: one short line for the nameplate, e.g. "editing src/cli.ts" (&lt;= 48 chars)</li>

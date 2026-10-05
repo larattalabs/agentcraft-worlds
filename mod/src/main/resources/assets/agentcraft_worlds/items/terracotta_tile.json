@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "agentcraft_worlds:block/terracotta_tile"
+  }
+}

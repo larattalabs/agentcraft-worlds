@@ -4,7 +4,7 @@ Light comes from the top-left. Each material uses 4-6 tones from palette.json ra
 Tileable textures (plaster, walnut, parquet, tile, screens) tile seamlessly in both
 directions so multi-block walls/screens read as one surface.
 
-python gen/blocks.py   -> out/assets/agentcraft/textures/block/*.png
+python gen/blocks.py   -> out/assets/agentcraft_worlds/textures/block/*.png
 """
 from __future__ import annotations
 
