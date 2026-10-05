@@ -73,14 +73,6 @@ final class LauncherSection {
 		if (log != null && s != LauncherPlan.State.RUNNING_OLDER && (Launcher.ours() || s == LauncherPlan.State.CRASHED)) {
 			y = hub.fact(g, "Log", log.toString(), x, y, w);
 		}
-		List<String> tail = Launcher.logTail();
-		if (s == LauncherPlan.State.CRASHED && !tail.isEmpty()) {
-			for (String line : tail.subList(Math.max(0, tail.size() - 8), tail.size())) {
-				g.text(font, TextUtil.ellipsize(font, line, w), x, y, UiBits.errorText(), false);
-				y += 10;
-			}
-			y += 2;
-		}
 		// buttons
 		int bx = x;
 		y += 2;
@@ -100,6 +92,18 @@ final class LauncherSection {
 			hub.button(g, "launcher_log", l, bx, y, hub.bw(l), false, !java.nio.file.Files.exists(log), false, mx, my, Launcher::openLog);
 			bx += hub.bw(l) + 4;
 		}
-		return bx > x ? y + 22 : y;
+		y = bx > x ? y + 22 : y;
+		// a crash: the log's last lines, under the buttons (the Overview scrolls)
+		List<String> tail = Launcher.logTail();
+		if (s == LauncherPlan.State.CRASHED && !tail.isEmpty()) {
+			g.text(font, "Last lines of the log:", x, y, UiBits.muted(), false);
+			y += 10;
+			for (String line : tail.subList(Math.max(0, tail.size() - 8), tail.size())) {
+				g.text(font, TextUtil.ellipsize(font, line, w), x, y, UiBits.errorText(), false);
+				y += 10;
+			}
+			y += 2;
+		}
+		return y;
 	}
 }

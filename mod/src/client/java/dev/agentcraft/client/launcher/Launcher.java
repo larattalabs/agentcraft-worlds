@@ -324,8 +324,8 @@ public final class Launcher {
 		switch (action) {
 			case REUSE -> {
 				pid = running != null ? running.pid() : 0;
-				set(State.RUNNING, (ours ? "running (started by the game" + (startedThisSession ? "" : " earlier") + ")" : "running (reused: "
-					+ who() + ")") + " on :" + PORT);
+				set(State.RUNNING, ours ? oursDetail(startedThisSession ? "" : "started by the game earlier; ") : "reused: started by " + who() + "; "
+					+ where());
 				watch(pid);
 				return;
 			}
@@ -434,7 +434,7 @@ public final class Launcher {
 		if (Foreman.link() != null) {
 			Foreman.link().reconnectNow();
 		}
-		set(State.RUNNING, "running (started by the game) on :" + PORT);
+		set(State.RUNNING, oursDetail(""));
 		watch(newPid);
 	}
 
@@ -500,7 +500,7 @@ public final class Launcher {
 				pid = r.pid();
 				runningRoot = r.root();
 				runningCommit = r.commit();
-				set(State.RUNNING, (ours ? "running (started by the game, restarted from the hub)" : "running (reused: " + who() + ")") + " on :" + PORT);
+				set(State.RUNNING, ours ? oursDetail("restarted from the hub; ") : "reused: started by " + who() + "; " + where());
 				watch(r.pid());
 				return;
 			}
@@ -714,6 +714,14 @@ public final class Launcher {
 		return r == null ? 0 : r.pid();
 	}
 
+	private static String where() {
+		return "profile " + PROFILE + " on :" + PORT;
+	}
+
+	private static String oursDetail(String prefix) {
+		return prefix + where() + "; " + (config.stopOnExit() ? "stops when the game exits (launcher.stopOnExit)" : "keeps running after the game exits");
+	}
+
 	private static String who() {
 		String by = runningBy;
 		if (by == null) {
@@ -739,7 +747,7 @@ public final class Launcher {
 
 	/**
 	 * {@code hello} with the client token (as the link sends it): a Foreman answers with a {@code snapshot}; its
-	 * {@code status.version} is noted. CLOSED when nothing listens, NOT_FOREMAN when something listens but no snapshot
+	 * {@code foreman.version} is noted. CLOSED when nothing listens, NOT_FOREMAN when something listens but no snapshot
 	 * comes within 4 s.
 	 */
 	static Probe probe() {
@@ -776,7 +784,7 @@ public final class Launcher {
 				.put("token", tok.token()).json();
 			ws.sendText(hello.toString(), true);
 			JsonObject snap = snapshot.get(4, TimeUnit.SECONDS);
-			JsonObject st = snap.has("status") && snap.get("status").isJsonObject() ? snap.getAsJsonObject("status") : null;
+			JsonObject st = snap.has("foreman") && snap.get("foreman").isJsonObject() ? snap.getAsJsonObject("foreman") : null;
 			runningVersion = st != null && st.has("version") ? st.get("version").getAsString() : null;
 			return Probe.FOREMAN;
 		} catch (Exception e) {
