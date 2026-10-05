@@ -598,7 +598,7 @@ public final class HubScreen extends Screen {
 	// ------------------------------------------------------------------ Status tab
 
 	/** The Overview; returns the bottom of the taller column (StatusPane reports the layout). */
-	int drawStatus(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+	int drawStatus(GuiGraphicsExtractor g, int x, int y, int w, int h, int mx, int my) {
 		int ink = UiBits.ink();
 		int muted = UiBits.muted();
 		ForemanState s = Foreman.state();
@@ -630,6 +630,8 @@ public final class HubScreen extends Screen {
 		if (s != null && s.isStale()) {
 			ly = fact(g, "State", "last known (Foreman offline)", lx, ly, colW);
 		}
+		ly += 6;
+		ly = LauncherSection.draw(this, g, lx, ly, colW, mx, my);
 		ly += 6;
 		ly = section(g, "Backend and account", lx, ly, colW);
 		if (st == null) {

@@ -98,7 +98,7 @@ final class StatusPane implements HubPane {
 			int viewH = h - 18;
 			scroll = Math.max(0, Math.min(scroll, maxScroll));
 			g.enableScissor(x - 2, top, x + w + 2, top + viewH);
-			int bottom = hub.drawStatus(g, x, top - scroll, w - 8, viewH);
+			int bottom = hub.drawStatus(g, x, top - scroll, w - 8, viewH, mx, my);
 			g.disableScissor();
 			int content = bottom - (top - scroll);
 			needed = content + 18;
@@ -268,6 +268,10 @@ final class StatusPane implements HubPane {
 		l.addProperty("scroll", scroll);
 		l.addProperty("maxScroll", maxScroll);
 		o.add("layout", l);
+		JsonObject launcher = new JsonObject();
+		launcher.addProperty("headline", LauncherSection.headline());
+		launcher.addProperty("state", dev.agentcraft.client.launcher.Launcher.state().wire());
+		o.add("launcher", launcher);
 		if (view == View.HELP) {
 			o.add("help", HelpContent.json());
 		}

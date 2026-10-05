@@ -21,6 +21,9 @@ export interface RunInfo {
   startedAt: string;
   /** absolute path of the client token file (clienttoken.ts); absent with --no-client-token */
   tokenFile?: string;
+  /** the checkout this Foreman runs from, and its commit at start (launchers compare them to tell a stale Foreman) */
+  root?: string;
+  commit?: string;
 }
 
 export function profileRunFile(dataDir: string): string {

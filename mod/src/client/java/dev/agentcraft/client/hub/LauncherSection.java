@@ -1,0 +1,105 @@
+package dev.agentcraft.client.hub;
+
+import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.launcher.Launcher;
+import dev.agentcraft.client.ui.Panels;
+import dev.agentcraft.client.ui.TextUtil;
+import dev.agentcraft.launcher.LauncherPlan;
+import java.nio.file.Path;
+import java.util.List;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+
+/**
+ * The Status tab's "Launcher" section (docs/HUB.md "Foreman launcher"): what the mod's Foreman launcher did (disabled,
+ * node missing and how to install it, installing, starting, running: ours or reused, pid, version, log; crashed with the
+ * log's last lines; an older Foreman it did not start), with Start, Restart (only for one the game started) and Open log.
+ */
+final class LauncherSection {
+	private LauncherSection() {
+	}
+
+	/** One line for the state, as the section's first line and in dev state. */
+	static String headline() {
+		return switch (Launcher.state()) {
+			case IDLE -> "not checked yet";
+			case DISABLED -> "off";
+			case NODE_MISSING -> "Node.js not found";
+			case NO_SOURCE -> "no checkout to run from";
+			case INSTALLING -> "installing (npm ci)…";
+			case STARTING -> "starting…";
+			case RUNNING -> Launcher.ours() ? "running · started by the game" : "running · reused";
+			case RUNNING_OLDER -> "running (older version)";
+			case CRASHED -> "crashed";
+			case BLOCKED -> "could not start";
+			case STOPPED -> "stopped";
+		};
+	}
+
+	static String dot() {
+		return switch (Launcher.state()) {
+			case RUNNING -> "done";
+			case STARTING, INSTALLING -> "thinking";
+			case RUNNING_OLDER, BLOCKED, NODE_MISSING, NO_SOURCE -> "waiting";
+			case CRASHED -> "error";
+			default -> "idle";
+		};
+	}
+
+	/** Draws the section at (x, y), {@code w} wide; returns the y below it. */
+	static int draw(HubScreen hub, GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
+		var font = hub.font();
+		y = hub.section(g, "Launcher", x, y, w);
+		Panels.dot(g, dot(), x, y + 1, false);
+		g.text(font, TextUtil.ellipsize(font, headline(), w - 10), x + 10, y, UiBits.ink(), false);
+		y += 11;
+		LauncherPlan.State s = Launcher.state();
+		y = hub.fact(g, "", Launcher.detail(), x, y, w);
+		if (s == LauncherPlan.State.INSTALLING && Launcher.installLine() != null) {
+			y = hub.fact(g, "npm", Launcher.installLine(), x, y, w);
+		}
+		if (Launcher.pid() > 0 && (s == LauncherPlan.State.RUNNING || s == LauncherPlan.State.RUNNING_OLDER || s == LauncherPlan.State.STARTING)) {
+			String version = Launcher.runningVersion() == null ? "" : " · v" + Launcher.runningVersion();
+			String commit = Launcher.runningCommit() == null ? "" : " · " + LauncherPlan.shortSha(Launcher.runningCommit());
+			y = hub.fact(g, "PID", Launcher.pid() + version + commit, x, y, w);
+		}
+		LauncherPlan.Source src = Launcher.source();
+		if (src != null && src.root() != null) {
+			y = hub.fact(g, "From", src.root() + " (" + src.origin() + ")", x, y, w);
+		}
+		if (s == LauncherPlan.State.NODE_MISSING) {
+			y = hub.fact(g, "Install", "brew install node (or mise use -g node@22, or " + LauncherPlan.NODE_INSTALL_URL + "), then Start", x, y, w);
+		}
+		Path log = Launcher.logFile();
+		if (log != null && s != LauncherPlan.State.RUNNING_OLDER && (Launcher.ours() || s == LauncherPlan.State.CRASHED)) {
+			y = hub.fact(g, "Log", log.toString(), x, y, w);
+		}
+		List<String> tail = Launcher.logTail();
+		if (s == LauncherPlan.State.CRASHED && !tail.isEmpty()) {
+			for (String line : tail.subList(Math.max(0, tail.size() - 8), tail.size())) {
+				g.text(font, TextUtil.ellipsize(font, line, w), x, y, UiBits.errorText(), false);
+				y += 10;
+			}
+			y += 2;
+		}
+		// buttons
+		int bx = x;
+		y += 2;
+		boolean busy = Launcher.busy();
+		if (Launcher.canStart()) {
+			String l = "Start";
+			hub.button(g, "launcher_start", l, bx, y, hub.bw(l), true, busy, false, mx, my, Launcher::start);
+			bx += hub.bw(l) + 4;
+		}
+		if (Launcher.canRestart()) {
+			String l = "Restart";
+			hub.button(g, "launcher_restart", l, bx, y, hub.bw(l), false, busy, false, mx, my, Launcher::restart);
+			bx += hub.bw(l) + 4;
+		}
+		if (log != null) {
+			String l = "Open log";
+			hub.button(g, "launcher_log", l, bx, y, hub.bw(l), false, !java.nio.file.Files.exists(log), false, mx, my, Launcher::openLog);
+			bx += hub.bw(l) + 4;
+		}
+		return bx > x ? y + 22 : y;
+	}
+}
