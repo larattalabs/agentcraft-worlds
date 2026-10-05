@@ -30,7 +30,9 @@ like a player's own world (the welcome card shows while it has no buildings). Th
 The launcher installs npm dependencies on first use, runs the Fabric development client,
 and waits for the studio world. It reuses a running Foreman or game from the same profile.
 Use `--dev` for mute/no focus/no notifications; `--no-game` or `--no-foreman` to run just
-one component; `--no-wait` to return immediately while Minecraft builds. Repeat
+one component (`--no-foreman` also turns the mod's Foreman launcher off, so no Foreman runs at all);
+`--mod-foreman` to start no Foreman here and let the mod start one itself (its Foreman launcher, docs/HUB.md
+"Foreman launcher": the way a jar in Prism gets its Foreman); `--no-wait` to return immediately while Minecraft builds. Repeat
 `--foreman-arg VALUE` to pass extra Foreman options. Logs and process records live in
 `artifacts/logs/mac-*.log` and `artifacts/run/mac-*.json`. `stop` only signals processes
 recorded by this launcher. macOS uses Notification Center for agent decisions.
@@ -42,8 +44,9 @@ runs for weeks can grow its log past 5 MB until the next start.
 ## Playing in a Hardcore world (Prism Launcher, macOS)
 
 Dev runs (`mac.mjs`) use the dev checkout, profile `claude`/`sim` and ports 7878/7879. The
-everyday game is different: a jar in a Prism instance, with a Foreman that starts with the game.
-That Foreman runs from a **stable checkout** (default: `agentcraft-stable` next to your clone,
+everyday game is different: a jar in a Prism instance, and **the mod starts the Foreman itself** when the
+game starts (its Foreman launcher, docs/HUB.md "Foreman launcher"), so Prism needs no hook and no
+terminal is involved. That Foreman runs from a **stable checkout** (default: `agentcraft-stable` next to your clone,
 e.g. `~/code/agentcraft-stable` for `~/code/agentcraft`), not from your dev checkout. The dev
 checkout has many worktrees, the Foreman works on it as a repository, and agent merges land in its `main`. The stable Foreman uses its own profile and port
 (`hardcore`, 7880), so it never collides with a dev run.
@@ -73,30 +76,38 @@ the two:
 without one, setup notes that the world saves are not backed up (instance.cfg and `mods/` still are).
 
 ```sh
-node tools/hardcore-setup.mjs                    # dry run: prints every change, changes nothing
-node tools/hardcore-setup.mjs --apply            # do it
-node tools/hardcore-setup.mjs --apply --ref v0.2 # pin the stable checkout to a tag/branch/commit
+node tools/hardcore-setup.mjs --no-prelaunch                    # dry run: prints every change, changes nothing
+node tools/hardcore-setup.mjs --no-prelaunch --apply            # do it
+node tools/hardcore-setup.mjs --no-prelaunch --apply --ref v0.2 # pin the stable checkout to a tag/branch/commit
 ```
+
+`--no-prelaunch` is the recommended setup: the mod starts the Foreman. Without it the script sets up the
+older **daemon path** (Prism's PreLaunchCommand runs `tools/foreman-daemon.sh start`), which still works
+and can live side by side with the mod's launcher (whichever starts first wins; see "How the Foreman
+starts"). Running setup with `--no-prelaunch` on an instance set up the old way removes our
+PreLaunchCommand and unwraps the PostExitCommand.
 
 What `--apply` changes (defaults; see `--help`):
 
 | what | change |
 | --- | --- |
-| `<stable>` (default `../agentcraft-stable`) | cloned from this repository (or fetched), `--ref` (default `main`) checked out detached; refuses local changes, and refuses a ref without `tools/foreman-daemon.sh`/`.mjs` (the PreLaunchCommand points there) |
+| `<stable>` (default `../agentcraft-stable`) | cloned from this repository (or fetched), `--ref` (default `main`) checked out detached; refuses local changes, and refuses a ref without the launch tools: with `--no-prelaunch` the mod's Foreman launcher (`mod/.../client/launcher/Launcher.java`) and `tools/foreman-daemon.mjs`, else `tools/foreman-daemon.sh`/`.mjs` (the PreLaunchCommand points there) |
 | the `hardcore` Foreman | stopped first when it runs from the stable checkout and the checkout or its `node_modules` are about to change; it starts again with the next game launch |
 | its `foreman/`, `tools/` | `npm ci` |
 | its `mod/` | `gradlew build`, giving `mod/build/libs/agentcraft-<version>.jar` |
 | `~/MinecraftBackups/<instance>/` | world saves via the backup script, when one is set; `agentcraft-setup-<stamp>/` with `instance.cfg` and the whole `mods/` folder on every run; on the first run also `agentcraft-setup-original/`, the pre-AgentCraft state, which is never overwritten |
 | `<instance>/.minecraft/mods/` | older `agentcraft*.jar` removed (they are in the backup) and the new jar copied in |
-| `<instance>/instance.cfg` | `PreLaunchCommand="<stable>/tools/foreman-daemon.sh" start --profile hardcore --port 7880 --home "<home>"`; `JvmArgs` gains `-Dagentcraft.port=7880 -Dagentcraft.profile=hardcore` (other args kept); `OverrideCommands`/`OverrideJavaArgs=true`; `PostExitCommand` (the world backup) kept. When the instance used Prism's global commands or JVM args (override off), their `PostExitCommand`, `WrapperCommand` and `JvmArgs` are copied in from `prismlauncher.cfg` (`--prism-cfg` if it is elsewhere) |
+| `<instance>/instance.cfg` | `JvmArgs` gains `-Dagentcraft.port=7880 -Dagentcraft.profile=hardcore -Dagentcraft.foreman.dir=<stable>` (other args kept; the stable path cannot contain spaces); with `--no-prelaunch` no `PreLaunchCommand` (ours is removed, someone else's kept), else `PreLaunchCommand="<stable>/tools/foreman-daemon.sh" start --profile hardcore --port 7880 --home "<home>"`; `OverrideCommands`/`OverrideJavaArgs=true`; `PostExitCommand` (the world backup) kept. When the instance used Prism's global commands or JVM args (override off), their `PostExitCommand`, `WrapperCommand` and `JvmArgs` are copied in from `prismlauncher.cfg` (`--prism-cfg` if it is elsewhere) |
 
 Running it again changes only what is out of date. It refuses when Prism or the game is running
 (a java process whose command line or working directory is in the instance), when the
 instance (or Prism's global settings, without the override) already has a PreLaunchCommand that
-is not ours, when the ref has no daemon script, when the Minecraft versions differ, and
+is not ours (the daemon path only), when the ref has no launch tools, when the Minecraft versions differ, and
 when `--stable` sits inside a repository listed in `~/.agentcraft/config.json`.
 
-Options: `--stop-on-exit` stops the Foreman when the game exits. The backup still runs first,
+Options: `--stop-on-exit` stops the Foreman when the game exits. With `--no-prelaunch` it becomes
+`-Dagentcraft.launcher.stop.on.exit=1` (the mod stops the Foreman it started as the game closes; the
+PostExitCommand backup runs after the game as always). On the daemon path the backup still runs first,
 because the PostExitCommand becomes `foreman-daemon.sh after-exit ... -- <backup command>`.
 Without the option the Foreman keeps running after you quit, so agents keep working and PR polling
 continues; running setup again without the option removes it. `--devbridge [--dev-port 7881]`
@@ -104,7 +115,48 @@ turns the DevBridge on in this instance, for scripted checks in a copy of the in
 Hardcore world the DevBridge answers only `dev.help`. `--instance`, `--stable`, `--profile`,
 `--port`, `--home`, `--backup-script` and `--backup-dir` override the defaults and the config.
 
-**How the Foreman starts:** Prism runs the PreLaunchCommand and waits for it, and a non-zero exit
+**How the Foreman starts (the mod):** when the game has started, the mod's Foreman launcher (on its
+own thread, never the render thread) reads the `launcher` section of `<home>/config.json`, picks the
+checkout (`-Dagentcraft.foreman.dir`, which setup writes; else `launcher.foremanDir`, `hardcore.stable`,
+or the checkout the jar was built from), and probes the port with `hello` and the client token. A
+current Foreman there (same checkout, same commit) is reused, whoever started it. One the game started
+earlier that runs older code (another commit or checkout) is restarted. One it did not start (Prism's
+daemon, `mac.mjs`, a terminal) is never stopped, even when older: the Status tab says "running (older
+version)" and who started it. When nothing answers, it finds node 22+ (`launcher.nodePath`, PATH,
+Homebrew, mise/volta/nvm/asdf/fnm, then your login shell), runs `npm ci` in `foreman/` once when
+`node_modules` is missing (log: `<stable>/artifacts/logs/foreman-launcher-npm.log`), and starts the
+daemon's command line (`node --import tsx src/main.ts --backend claude --profile hardcore --home <home>
+--port 7880`) detached through node, so the game's exit or a signal to the game never reaches it. The
+Foreman gets your login shell's environment (`$SHELL -lic`, as the daemon uses; `-lc` as the
+fallback): its PATH (node's folder first, then mise, `dotnet@8`, Homebrew's `az`/`gh`/`cargo`,
+`~/.local/bin`) and variables such as `DOTNET_ROOT`. Nothing secret goes on the command line: the
+Foreman reads its own config (`useClaudeLogin` etc.). It records what it started in
+`<home>/<profile>/launcher.json` (pid and start time, so a reused pid is never mistaken for it) and in
+the checkout's `artifacts/run/mac-foreman-<profile>.json`, the run file `foreman-daemon.sh` and
+`mac.mjs stop --foreman` read, so those tools see and can stop it too. The Foreman keeps running after
+you quit (PR polling continues) unless `launcher.stopOnExit` (or `--stop-on-exit`) is set, and then
+only if the game started it.
+
+```json
+{
+  "launcher": {
+    "enabled": true,
+    "foremanDir": "~/code/agentcraft-stable",
+    "nodePath": "/opt/homebrew/bin/node",
+    "stopOnExit": false
+  }
+}
+```
+
+All keys are optional (defaults shown, `foremanDir`/`nodePath` unset). Environment variables or `-D`
+properties override them: `AGENTCRAFT_LAUNCHER=0|1` (`-Dagentcraft.launcher`),
+`AGENTCRAFT_FOREMAN_DIR` (`-Dagentcraft.foreman.dir`), `AGENTCRAFT_NODE` (`-Dagentcraft.node`),
+`AGENTCRAFT_LAUNCHER_STOP_ON_EXIT` (`-Dagentcraft.launcher.stop.on.exit`). The Foreman's backend is
+`AGENTCRAFT_BACKEND` (default `claude`), its profile `-Dagentcraft.profile` (default: the backend's name),
+its port `-Dagentcraft.port` (default 7878). A launcher-started (non-dev) game refuses to run the Foreman
+from a checkout listed in config.json `repos`, as the daemon does.
+
+**How the Foreman starts (the daemon path, optional):** Prism runs the PreLaunchCommand and waits for it, and a non-zero exit
 aborts the launch. Prism 11.0.3 does no shell parsing: it splits the command on double quotes
 (`launcher/launch/steps/PreLaunchCommand.cpp`). `foreman-daemon.sh start` therefore returns 0
 immediately and does the work in the background. The background work goes through
@@ -113,9 +165,14 @@ bare one. That PATH covers mise's node, `dotnet@8`/`DOTNET_ROOT`, Homebrew's
 `az`/`gh`/`cargo` and `~/.local/bin`. If the stable checkout's Foreman is already running at the
 same commit, nothing happens. If it runs older code or comes from another checkout, it is
 restarted. If something else holds the port, such as a dev Foreman, it is left alone and the
-error goes to the log.
+error goes to the log. The mod's launcher stays on next to it: the daemon usually wins the race (the
+mod then reuses its Foreman); when the mod wins, the daemon finds the mod's run file and does nothing.
 
-**Day to day** (any terminal; the script finds its own checkout):
+**Day to day:** the hub's **Status** tab (`H`) has a Launcher section: its state (off, Node.js not
+found and how to install it, installing, starting, running: started by the game or reused, pid,
+version, commit, log; crashed with the log's last lines; running (older version); could not start),
+with **Start**, **Restart** (only for a Foreman the game started) and **Open log**. A crash or a
+failed start also shows a toast. From any terminal (the scripts find their own checkout):
 
 ```sh
 <stable>/tools/foreman-daemon.sh status    # JSON: running, pid, port, commit, stale
@@ -125,11 +182,11 @@ error goes to the log.
 node <stable>/tools/mac.mjs stop --foreman --profile hardcore   # same as stop
 ```
 
-Logs: `<stable>/artifacts/logs/foreman-daemon-hardcore.log` holds the daemon
-and the Foreman's output. It is checked at every game launch and rotated past 5 MB, with 3 kept. Prism's own console shows only that the
-PreLaunchCommand ran. In game, the top-right pill says "Foreman not running: it starts with the
-game; or run tools/foreman-daemon.sh" until the link is up. After a reboot, nothing starts the
-Foreman until the next game launch or `foreman-daemon.sh start`.
+Logs: `<stable>/artifacts/logs/foreman-launcher-hardcore.log` holds the output of a Foreman the
+mod started; `foreman-daemon-hardcore.log` that of the daemon path. Both are checked at every start and rotated past 5 MB, with 3 kept. In game, the top-right pill
+follows the launcher until the link is up ("Starting the Foreman…", "The Foreman stopped: see the
+hub's Status tab"). After a reboot, nothing starts the Foreman until the next game launch, Start in
+the Status tab, or `foreman-daemon.sh start`.
 
 **Updating:** run `node tools/hardcore-setup.mjs --apply` again, optionally with `--ref`. It
 fetches `--ref` from the source and checks it out in the stable checkout. Run from the dev
@@ -140,7 +197,7 @@ the local `main`, which includes agent merges that have not been pushed; pass a 
 to pin one. A running `hardcore` Foreman is stopped before the checkout and `npm ci` (the dry run
 lists it), because it runs from that checkout's code and `node_modules`; it starts again with the
 next game launch, or right away with `foreman-daemon.sh start`. Merge the launch tools
-(`tools/foreman-daemon.sh`) into the ref you install: setup refuses a ref without them.
+(the mod's Foreman launcher, `tools/foreman-daemon.sh`) into the ref you install: setup refuses a ref without them.
 
 **Rollback:** setup prints the exact commands. In short, quit Prism and copy
 `~/MinecraftBackups/<instance>/agentcraft-setup-original/instance.cfg` over
@@ -276,7 +333,7 @@ Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.
 | `scenes/phase1.json`, `scenes/qa-selftest.json` | Phase 1 proof scene, runner self-test |
 | `mac.mjs`, `lib/macprocs.mjs`, `lib/foremanproc.mjs`, `lib/logrotate.mjs` | macOS launcher: ps parsing and run files, finding a running Foreman, log rotation |
 | `hardcore-setup.mjs`, `lib/prismcfg.mjs` | set up a Prism instance to play with AgentCraft from a stable checkout ("Playing in a Hardcore world") |
-| `foreman-daemon.sh`, `foreman-daemon.mjs`, `lib/daemonplan.mjs` | keep one Foreman running for a game launched outside a terminal (Prism's PreLaunchCommand) |
+| `foreman-daemon.sh`, `foreman-daemon.mjs`, `lib/daemonplan.mjs` | keep one Foreman running for a game launched outside a terminal (Prism's PreLaunchCommand; optional since the mod starts the Foreman itself) |
 | `blueprints/` | blueprints as code: the parametric kit, `build.mjs`, the checker (`verify.mjs`) and the offline renderer (`render.mjs`); see `blueprints/VERIFY.md` |
 | `agents-live.mjs`, `agents-typing.mjs` | live checks of the agents feature (observe agent life; the agent card's message line by keyboard) |
 | `smoke.mjs`, `lib/smoke.mjs` | end-to-end smoke test of the main flows against the sim ("Smoke test" above) |

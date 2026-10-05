@@ -94,6 +94,12 @@ normal [--seed N]` (env switches `AGENTCRAFT_AUTOWORLD_NAME/_PRESET/_SEED` below
 | `AGENTCRAFT_DEV_TEST` | 0 | `1` registers test-only commands (`dev.test.stall`, which blocks the render thread to simulate a hung game; `dev.test.foremanMessage`). Never set it for real use |
 | `AGENTCRAFT_PORT` | 7878 | Foreman WebSocket port the mod connects to (always 127.0.0.1) |
 | `AGENTCRAFT_FOREMAN` | 1 | `0` disables the Foreman link (the HUD says so) |
+| `AGENTCRAFT_LAUNCHER` | config.json `launcher.enabled` (true) | `0`: the mod does not start the Foreman (the Status tab's Start still can). `tools/mac.mjs --no-foreman` sets 0, `--mod-foreman` sets 1. See "Foreman launcher" below |
+| `AGENTCRAFT_FOREMAN_DIR` | (see below) | The checkout the launcher runs the Foreman from (`-Dagentcraft.foreman.dir`, written by `tools/hardcore-setup.mjs`) |
+| `AGENTCRAFT_NODE` | config.json `launcher.nodePath` | A node 22+ binary (or its folder), tried first |
+| `AGENTCRAFT_LAUNCHER_STOP_ON_EXIT` | config.json `launcher.stopOnExit` (false) | `1`: stop the Foreman at game exit, only if the launcher started it |
+| `AGENTCRAFT_BACKEND` | `claude` | The backend of a Foreman the launcher starts (`mac.mjs` passes `--backend`) |
+| `AGENTCRAFT_PROFILE` / `AGENTCRAFT_HOME` | the backend's name / `~/.agentcraft` | The Foreman's profile and home: for the client token (run files) and for a Foreman the launcher starts |
 | `AGENTCRAFT_WELCOME` | 1 | `0`: the welcome card never opens by itself on joining a world without buildings (scripted QA worlds); `dev.onboarding {show}` still opens it |
 
 The defaults (muted, no focus) suit unattended agent runs. `tools/launch.ps1` should set
@@ -171,6 +177,10 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.foreman` | `reconnect?` (false) | The Foreman link + model summary (same as `dev.state.foreman`); `reconnect:true` drops the connection and connects again now |
 | `dev.foreman.send` | `message:{type, ...}` | Sends a client message (docs/protocol.md "Mod -> Foreman") through the mod's own link and replies `{ack:{re, ok, error?, result?}}`. Example: `{message:{type:"goal.submit", text:"Add #tags"}}`, `{message:{type:"decision.answer", decisionId:"d3", option:"Merge"}}` |
 | `dev.foreman.inject` | exactly one of `message:{type,...}`, `patch:{agent\|task: id, set:{wire fields}}`, `say:{agent, text, to?}` | Applies to the mod's Foreman model **as if the Foreman had sent it** (always available; bypasses the hold queue). `patch` copies the current agent/task, replaces the given wire fields (`{"station":"desk","state":"editing"}`, `{"status":"doing","assignee":"marlow"}`, `null` clears) and applies it as an `agent.upsert`/`task.upsert`; `say` is an `agent.say` stamped now. Replies `{applied, message}`. Video choreography; the next snapshot (reconnect) undoes it |
+| `dev.launcher.state` | (none) | The Foreman launcher: `state` (`idle` `disabled` `node-missing` `no-source` `installing` `starting` `running` `running-older` `crashed` `blocked` `stopped`), `detail`, `action` (`reuse` `reuse_older` `start` `restart` `port_taken` `profile_busy`), `pid`, `ours` (the game started it), `startedThisSession`, `runningBy/Root/Commit/Version`, `stale[]`, `source` + `sourceOrigin`, `expectedCommit`, `node`, `nodeVersion`, `profile`, `port`, `backend`, `home`, `log`, `enabled`, `stopOnExit`, `configProblems[]`, `logTail[]` |
+| `dev.launcher.start` | (none) | Runs the launch sequence (reuse, start or report; the Status tab's Start); poll `dev.launcher.state` |
+| `dev.launcher.restart` | (none) | Restarts a Foreman the game started; refused for one it did not start |
+| `dev.launcher.stop` | (none) | Stops a Foreman the game started (SIGTERM, then SIGKILL after 8 s); refused for one it did not start |
 | `dev.foreman.hold` | `on` (bool), `release?` = `reconnect` (default) / `replay` / `drop` | `on:true`: live Foreman messages are queued instead of applied, so a shot shows only what it injects. `on:false` releases them: `reconnect` drops the queue and reconnects (fresh snapshot), `replay` applies the queue, `drop` discards it. `dev.state.foreman.held/heldQueued` show it |
 | `dev.play` | `duration` (s), `camera`, `timeline?`, `name?`, `showHud?` (false), `holdEndMs?` (300), `foreman?:{hold?, release?}`, `log?` (true) | **Real-time shot playback** for a screen recorder (OBS). See "Shot playback" below. Replies when the shot is done: `{frames, resolution, perf{fps, frameMsMedian/P99/Max, framesOver20ms, pathStepMsMin/Max}, cameraVsPath{maxPosError, maxRotError, maxFovError}, events[{t, at, event, ok, error?}], warnings, frameLog}` |
 | `dev.play.pose` | `camera`, `t?` (0), `duration?` | Where a camera path is at time t: `{pose{x,y,z,yaw,pitch,fov}, start, end}` (eye position). `record.mjs` puts the camera there with `dev.camera` before playing; also handy to preview a path with stills |
@@ -313,12 +323,49 @@ backoff (about 3 s in the Phase 2 test). The model keeps the last known state wh
 (`isStale()`): agents stay in place with a dimmed "Foreman offline" plate and the HUD says
 "Reconnecting to the Foreman".
 
-Before the first connection the HUD pill reads "Foreman not running" and gives a hint from
-`hub.ConnectionHints` (pure, `ConnectionHintsTest`). In a dev run the hint is `tools/mac.mjs launch`.
-In a launcher jar it reads "it starts with the game; or run tools/foreman-daemon.sh". The auth
-banner falls back on the same split when the Foreman sends no message of its own. A jar in Prism
-gets its port and profile as `-Dagentcraft.port` / `-Dagentcraft.profile` JVM args, which
-`tools/hardcore-setup.mjs` writes (tools/README.md "Playing in a Hardcore world").
+Before the first connection the HUD pill follows the Foreman launcher (below) through
+`hub.ConnectionHints` (pure, `ConnectionHintsTest`): "Starting the Foreman…", "The Foreman stopped" /
+"Foreman could not start" / "Foreman needs Node.js" with "see the hub's Status tab", else "Foreman not
+running" with a hint (dev run: `tools/mac.mjs launch`; a jar: "Start it in the hub's Status tab"). The
+auth banner falls back on "Restart in the hub's Status tab" for a Foreman the game started, else on the
+dev/daemon split, when the Foreman sends no message of its own. A jar in Prism gets its port, profile
+and checkout as `-Dagentcraft.port` / `-Dagentcraft.profile` / `-Dagentcraft.foreman.dir` JVM args,
+which `tools/hardcore-setup.mjs` writes (tools/README.md "Playing in a Hardcore world").
+
+### Foreman launcher
+
+`client.launcher.Launcher` starts the Foreman with the game (docs/HUB.md "Foreman launcher"); its
+decisions are pure in `dev.agentcraft.launcher.LauncherPlan` (`LauncherPlanTest`: node discovery order
+with a fake file system, source order, stale detection, ownership, reuse/restart/never-kill, the command
+line, PATH composition) and its settings in `LauncherConfig` (`LauncherConfigTest`). At
+`CLIENT_STARTED`, on the `AgentCraft-Launcher` thread:
+
+1. Settings: `<home>/config.json` `launcher` + env/`-D` overrides (table above).
+2. Source, first match: `AGENTCRAFT_FOREMAN_DIR`, `launcher.foremanDir` (either one, when not a
+   checkout, stops with a problem), a dev run's own checkout (`<repo>/mod/run` is the game dir),
+   `hardcore.stable`, the checkout the jar was built from (`agentcraft-build.properties`, generated by
+   mod/build.gradle). A dev run's checkout comes before `hardcore.stable` on purpose, so a dev client
+   runs (and compares against) the code next to it. A non-dev game refuses a checkout listed in
+   config.json `repos` (daemonplan.mjs `devCheckoutConflict`). The expected commit is `git rev-parse HEAD`.
+3. Probe: `hello` with the client token; a `snapshot` reply = a Foreman. Identity: the run file on the
+   port (`<home>/<profile>/foreman.json`, which now carries `root` and `commit`), else the checkout's
+   launcher run file. Ownership: `<home>/<profile>/launcher.json` (pid + start time; a hub restart is
+   followed when the profile's run file names a new Foreman from the same checkout).
+4. Decision (`LauncherPlan.decide`): current -> reuse; ours and stale (other checkout or commit) ->
+   restart; not ours and stale -> reuse, "running (older version)", never stopped; port held by a non-
+   Foreman -> blocked; profile running on another port -> blocked; nothing -> start.
+5. Start: node 22+ (`launcher.nodePath`, PATH, Homebrew, mise/volta/nvm/asdf/fnm, `$SHELL -lc 'command -v
+   node'`), `npm ci` when `foreman/node_modules` is missing, then `node -e <spawn helper>` starts
+   `node --import tsx src/main.ts --backend --profile --home --port` detached (own session), output
+   appended to `<checkout>/artifacts/logs/foreman-launcher-<profile>.log`, environment = the game's
+   without `AGENTCRAFT_*` + the login shell's (`$SHELL -lic`, else `-lc`; PATH composed with node's
+   folder first). Records: `launcher.json` and `<checkout>/artifacts/run/mac-foreman-<profile>.json`
+   (the tools' format, `stamp` = `ps -o lstart=`), so `mac.mjs stop --foreman` and the daemon see it.
+6. Watch: the pid's exit is a crash (toast, log tail), a hub restart (followed) or, for a reused one,
+   "stopped". At `CLIENT_STOPPING` it stops the Foreman only with `stopOnExit` and only if it started it.
+
+Dev check: `node tools/mac.mjs launch --mod-foreman --backend sim --profile lt --port 7890 --dev-port 7891
+--home <scratch> --dev` (no Foreman from mac.mjs; the mod starts one), then `dev.launcher.state`.
 
 **Protocol mirror (generated).** `client.foreman.Protocol` is GENERATED from `foreman/src/protocol.ts` by
 `npm run gen:java-protocol` (`foreman/scripts/gen-java-protocol.ts`); never edit it by hand, and run the
