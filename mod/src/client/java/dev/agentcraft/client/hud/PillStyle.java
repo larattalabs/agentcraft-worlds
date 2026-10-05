@@ -127,7 +127,7 @@ final class PillStyle {
 	// ------------------------------------------------------------------ Pill
 
 	/** The pill's widest line without a peek (overlay px); with a peek it may grow by {@link #PEEK_W}. */
-	static final int PILL_MAX = 190;
+	static final int PILL_MAX = 205;
 	/** The peek's text at most (overlay px). */
 	static final int PEEK_W = 130;
 	/** Decisions level, other counts level: tried in order until the line fits. */

@@ -159,9 +159,12 @@ public final class HudOverlay implements HudElement {
 		o.addProperty("style", s.style().wire());
 		o.addProperty("position", s.position().wire());
 		o.addProperty("size", s.size().wire());
-		o.add("rect", rectJson(rect));
-		o.addProperty("hidden", hidden);
-		Overlaps ov = HudLayout.overlaps(env, rect);
+		// F1: vanilla skips the HUD elements, so the last frame's values would be stale
+		var mc = Minecraft.getInstance();
+		boolean f1 = mc.player != null && mc.gui.hud.isHidden();
+		o.add("rect", f1 ? null : rectJson(rect));
+		o.addProperty("hidden", f1 ? HudVisibility.F1 : hidden);
+		Overlaps ov = HudLayout.overlaps(env, f1 ? Rect.NONE : rect);
 		JsonObject overlaps = new JsonObject();
 		overlaps.addProperty("bossbar", ov.bossbar());
 		overlaps.addProperty("effects", ov.effects());

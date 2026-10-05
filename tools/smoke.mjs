@@ -955,6 +955,7 @@ async function main() {
       const scene = await call('dev.hud.state');
       ctx.require('the scene shows two boss bars and both effect rows', sceneProblems(scene).length === 0, sceneProblems(scene));
       const problems = [];
+      const fallbacks = [];
       let checked = 0;
       for (const style of STYLES) {
         for (const position of POSITIONS) {
@@ -962,13 +963,17 @@ async function main() {
             await call('dev.hud.set', { style, position, size });
             await sleep(120);
             const h = await call('dev.hud.state');
-            problems.push(...hudProblems(`${style}/${position}/${size}`, h));
+            // a big style that has no room at its spot on this crowded 426x240 screen moves to top right (by design); the
+            // one-line Pill must fit everywhere
+            problems.push(...hudProblems(`${style}/${position}/${size}`, h, { allowFallback: style !== 'pill' }));
+            if (h.overlay?.fallback) fallbacks.push(`${style}/${position}/${size}`);
             checked++;
             if (size === 'm') await shot(ctx, `hud_${style}_${position}`, { hud: true, waitChunks: false, frames: 2 });
           }
         }
       }
       ctx.data('combinations', checked);
+      ctx.data('fell back to top right', fallbacks);
       ctx.check(`all ${checked} style/position/size combinations show, clear of everything`, problems.length === 0, problems);
       // a peek widens the pill for a few seconds
       await call('dev.hud.set', { style: 'pill', position: 'top_right', size: 'm' });
@@ -982,7 +987,9 @@ async function main() {
       ctx.check('the peeking pill stays clear', hudProblems('pill peek', wide).length === 0, hudProblems('pill peek', wide));
       await shot(ctx, 'hud_pill_peek', { hud: true, waitChunks: false, frames: 2 });
       // Off draws nothing; F1 hides everything
-      const off = await call('dev.hud.set', { style: 'off', clearPeek: true });
+      await call('dev.hud.set', { style: 'off', clearPeek: true });
+      await sleep(150);
+      const off = await call('dev.hud.state');
       ctx.check('Off: hidden, no rectangle', off.hidden === 'off' && !off.rect, { hidden: off.hidden, rect: off.rect });
       await call('dev.hud.set', { style: 'pill' });
       await call('dev.hud', { hidden: true });

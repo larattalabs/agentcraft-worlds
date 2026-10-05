@@ -39,7 +39,7 @@ const report = { shots: [], problems: [] };
 
 async function shot(name, label) {
   const h = await call('dev.hud.state');
-  const probs = label ? hudProblems(label, h, { allowFallback: false }) : [];
+  const probs = label ? hudProblems(label, h, { allowFallback: h.style !== 'pill' }) : [];
   report.problems.push(...probs);
   const s = await call('dev.screenshot', { name: `${opt.out}/${name}`, hideHud: false, waitChunks: false, frames: 3 });
   report.shots.push({ name, path: path.relative(root, s.path), rect: h.rect, hidden: h.hidden, style: h.style, position: h.position, size: h.size, problems: probs });

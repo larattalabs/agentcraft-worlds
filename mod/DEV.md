@@ -1213,8 +1213,8 @@ needs_you|all, `topLeftOffset` 0-200; unknown or broken values keep their defaul
     x, y, w, h}`); chips `hud:style:<style>`, `hud:position:<pos>`, `hud:size:<s>`, `hud:offset:-|+`, `hud:peek`,
     `hud:autoHide`, `hud:hideInCombat`, `hud:toasts:<mode>` (`dev.hub.action {action:"press", button}`).
 - **QA**: smoke step `hud_styles_426x240` (two boss bars, a beneficial and a harmful effect via `/bossbar` and
-  `/effect`; auto-hide and peek off; all 45 style / position / size combinations shown with no overlap and no
-  fallback, the toast column clear; a peek widens the pill; Off and F1 hide it; settings restored). `node
+  `/effect`; auto-hide and peek off; all 45 style / position / size combinations shown with no overlap (the Pill with no
+  fallback; Pill+ and Panel may move to top right where a crowded 426x240 screen has no room), the toast column clear; a peek widens the pill; Off and F1 hide it; settings restored). `node
   tools/hud-shots.mjs` (attached to a running dev client) shoots every style at 1278x720 auto (426x240) and at GUI
   scale 3 into `artifacts/shots/hud-styles/` with `report.json`; checks shared in `tools/lib/hudstyles.mjs`.
 - Not avoided (yet): the scoreboard sidebar (right middle), subtitles (bottom right), vanilla advancement / recipe
