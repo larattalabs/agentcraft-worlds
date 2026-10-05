@@ -196,6 +196,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.library.lectern` | `x`, `y`, `z` | Whether a right-click on the lectern there opens the library (`opensLibrary`, the `building` holding it) or is left to vanilla |
 | `dev.team.card` | `agent` | The hub Team tab's Card button: the agent card with the hub as its parent (Esc returns to the hub) |
 | `dev.team.release` | `world` | The Team tab's Release for a world holding leads (`lead.releaseWorld {world}`; the hub must be open); returns the note |
+| `dev.agents.freezeEntityTick` | `on?` (bool) | Skips every agent's entity tick, as Entity Culling's `tickCulling` does for entities out of view (see "Compatibility: entity tick culling"); agents must keep walking through `AgentManager`'s catch-up. Always returns `{on, entityAdvances, catchUpAdvances, moving}` summed over agents: with `on:false`, `catchUpAdvances` must not grow |
 | `dev.agents.fx` | `agent`, `fx` = `confetti`/`puff`/`sparkle`/`say`, `text?`, `to?` | Plays an agent effect now (QA preview; `say` shows a local speech bubble, nothing is sent) |
 | `dev.agents.keys` | `keys` (comma-separated: key names `space return escape back tab left right`, or text typed letter by letter, a-z 0-9 space) | **Test only** (`AGENTCRAFT_DEV_TEST=1`): presses keys as SDL reports a keyboard (SDL events queued for the game window, one key every 3 frames, through Minecraft's SDL event loop; printable keys produce text events only while SDL text input is on). Returns `{pressed, textEvents, screen, input?, textInputActive}`. `tools/agents-typing.mjs` uses it to check the agent card's message line |
 | `dev.walk.state` | `reset?` (false: zeroes `maxTickUs` after this read) | Walking between buildings (W8): `enabled, world, walking, planning, trips[{agent, from, to, phase planning\|walking, length, ticks, limit, target, pos, remainingPoints}], jobs, cache{size, hits, misses, invalidations, blockChanges, routes[{key, length, points, cells, nodes, micros}]}, planner{plans, found, tickNodes, tickBudgetUs, lastTickUs, maxTickUs, last{key, status, nodes, micros, ticks, length, points, unloadedHits, pad, widenings, worstStepUs, why?, closest?, closestCell?}, failures[the last 12 failed plans, same fields]}, reasons{walk\|disabled\|other_dimension\|no_entrance\|too_far\|unloaded\|player_far\|no_path\|no_door_path\|budget\|blocked\|stuck\|rerouted\|settled: count}, recent[{agent, from, to, outcome walk\|teleport, reason, why, detail? (the planner's explanation), length?}], ui{drawn, needed, available, overflow, compact}` (also `dev.state.walk`) |
@@ -443,6 +444,24 @@ teleports. Rendering: `EntityRenderDispatcherMixin` routes agents to `AgentRende
 `AvatarRenderer`, slim or wide by skin), because vanilla sends every `AvatarRenderState` to the
 player renderer at submit time. Clicks on agents are consumed client-side (never sent to the server,
 which does not know them).
+
+#### Compatibility: entity tick culling (Entity Culling)
+Mods that skip ticking entities the player can't see would freeze agents, because an agent only
+moves when it advances. The best known is Entity Culling (tr7zw), whose `tickCulling` is on by default.
+Found in a soak test with a real modpack: an agent walking out of view stopped mid-route, and the
+smoke step `agent_walks` failed. So `AgentManager` (END_CLIENT_TICK) offers every agent a catch-up
+advance after the level's entity ticks, using the same filters as `ClientLevel.tickEntities`: not
+while paused, removed, a passenger or tick-frozen. A per-agent `TickGate` stamps the advance with
+`AgentManager.clock()`, so it runs exactly once per client tick, either from the entity tick or from
+the catch-up, never both (`TickGateTest`). The catch-up calls `setOldPosAndRot()` first, as
+`commonTick()` does, so render interpolation stays right. The only effect that is not caught up is
+`tickCount` (the clock behind `AgentRenderer`'s `timeSeconds`), and only while a culler skips the whole
+tick, that is, while the agent is out of view. No user configuration is needed.
+Entity Culling is not a dependency and is not touched at runtime. With an older AgentCraft build, the
+workaround is to add `"agentcraft:agent"` to `tickCullingWhitelist` in `config/entityculling.json`.
+To check without the mod, run `dev.agents.freezeEntityTick {on:true}`, make an agent walk (for example
+`dev.routines.library {agent}`), and confirm that it still arrives, `entityAdvances` stays flat and
+`catchUpAdvances` grows by about 20 per agent per second.
 
 ### Nameplates: declutter and occlusion (fix round)
 The verifier found plates unreadable whenever agents shared a station (the lounge at every session
