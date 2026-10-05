@@ -1,6 +1,7 @@
 # AgentCraft mod: developer notes
 
-Fabric mod `agentcraft` (package `dev.agentcraft`). Common entrypoint `dev.agentcraft.AgentCraft`,
+Fabric mod `agentcraft_worlds` (package `dev.agentcraft`; the id was `agentcraft` until the fork renamed
+it, docs/FORK.md "Mod id": old ids are aliased and remapped by `dev.agentcraft.compat`). Common entrypoint `dev.agentcraft.AgentCraft`,
 client entrypoint `dev.agentcraft.client.AgentCraftClient`. Loom's split source sets are used:
 `src/main` (both sides) and `src/client` (client only).
 
@@ -458,8 +459,10 @@ the catch-up, never both (`TickGateTest`). The catch-up calls `setOldPosAndRot()
 `commonTick()` does, so render interpolation stays right. The only effect that is not caught up is
 `tickCount` (the clock behind `AgentRenderer`'s `timeSeconds`), and only while a culler skips the whole
 tick, that is, while the agent is out of view. No user configuration is needed.
-Entity Culling is not a dependency and is not touched at runtime. With an older AgentCraft build, the
-workaround is to add `"agentcraft_worlds:agent"` to `tickCullingWhitelist` in `config/entityculling.json`.
+Entity Culling is not a dependency and is not touched at runtime. With an older AgentCraft build (from
+before the catch-up, so still mod id `agentcraft`), the workaround is to add `"agentcraft:agent"` to
+`tickCullingWhitelist` in `config/entityculling.json`; since the mod id rename the agent is
+`"agentcraft_worlds:agent"` (docs/FORK.md "Mod id"), which needs no whitelist entry.
 To check without the mod, run `dev.agents.freezeEntityTick {on:true}`, make an agent walk (for example
 `dev.routines.library {agent}`), and confirm that it still arrives, `entityAdvances` stays flat and
 `catchUpAdvances` grows by about 20 per agent per second.

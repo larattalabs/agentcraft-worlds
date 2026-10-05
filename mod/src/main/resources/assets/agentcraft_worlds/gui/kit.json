@@ -1,7 +1,7 @@
 {
   "version": 1,
   "atlas_prefix": "agentcraft_worlds:kit/",
-  "how_to_draw": "graphics.blitSprite(RenderPipelines.GUI_TEXTURED, Identifier.fromNamespaceAndPath(\"agentcraft\", \"kit/<name>\"), x, y, w, h) with graphics = net.minecraft.client.gui.GuiGraphicsExtractor (Minecraft 26.3, Mojang names). Sprites with a 'slice' entry ship <name>.png.mcmeta (gui.scaling nine_slice) so vanilla nine-slices them; the rest (icons, dots, ring frames, grip, tail, checkboxes) are fixed-size and drawn at their own size.",
+  "how_to_draw": "graphics.blitSprite(RenderPipelines.GUI_TEXTURED, Identifier.fromNamespaceAndPath(\"agentcraft_worlds\", \"kit/<name>\"), x, y, w, h) with graphics = net.minecraft.client.gui.GuiGraphicsExtractor (Minecraft 26.3, Mojang names). Sprites with a 'slice' entry ship <name>.png.mcmeta (gui.scaling nine_slice) so vanilla nine-slices them; the rest (icons, dots, ring frames, grip, tail, checkboxes) are fixed-size and drawn at their own size.",
   "gui_scale_note": "Sprites are authored at 1 texel = 1 GUI pixel; never scale by non-integers.",
   "sprites": {
     "bubble": {
