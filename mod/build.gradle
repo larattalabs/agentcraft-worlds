@@ -71,9 +71,25 @@ test {
 	}
 }
 
+// The checkout this jar is built from, as a resource: the Foreman launcher's last-resort source when neither
+// launcher.foremanDir nor hardcore.stable is set (docs/HUB.md "Foreman launcher"). A path only, no commit: the launcher
+// asks git for the checkout's commit when it starts.
+def buildInfoDir = layout.buildDirectory.dir("generated/agentcraft-build")
+def buildCheckout = rootProject.projectDir.parentFile.absolutePath
+def buildInfo = tasks.register("agentcraftBuildInfo") {
+	inputs.property "checkout", buildCheckout
+	outputs.dir buildInfoDir
+	doLast {
+		def f = buildInfoDir.get().file("agentcraft-build.properties").asFile
+		f.parentFile.mkdirs()
+		f.text = "# the checkout this jar was built from (the Foreman launcher's fallback source)\ncheckout=" + buildCheckout.replace('\\', '\\\\') + "\n"
+	}
+}
+
 processResources {
 	def version = project.version
 	inputs.property "version", version
+	from(buildInfo)
 
 	filesMatching("fabric.mod.json") {
 		expand "version": version

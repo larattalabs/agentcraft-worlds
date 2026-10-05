@@ -99,13 +99,45 @@ to "Place…" too (`dev.roads.state ui.strip.compact`).
   6. **Status** *(done)*: Foreman connection, backend, auth/account, usage windows (percent, reset
      time), spend, mod and Foreman versions, DevBridge state. Wave 2 (docs/WAVE2.md W7): a second view,
      **Keys & help** (every AgentCraft key with its live binding, every in-world interaction, "Show the
-     welcome card").
+     welcome card"). The Overview's **Launcher** section shows the mod's Foreman launcher (see "Foreman
+     launcher" below) with Start / Restart / Open log.
 - Wave 2 (docs/WAVE2.md W5/W6, "As implemented: hud"): tabs carry badges (Inbox needs-you, Goals unread, Repos
   failing CI, Team blocked agents); `H` reopens the world's last tab, or after an away toast the Inbox (else Goals).
 - Style: the existing UI kit (`ui/Kit`, `ui/Panels`, `gui/ui-style.json`, `palette.json`), like
   `DecisionScreen`. Shootable through `DevBridge.registerScreen("hub", ...)` with a tab argument.
   *(done: screens `hub`, `hub_<tab>`, `hub_blueprints`; `dev.hub.open {tab}`, `dev.hub.state`,
   `dev.hub.action`, see mod/DEV.md "Hub")*
+
+## Foreman launcher (mod, client; branch `mod/foreman-launcher`)
+
+The mod starts the Foreman itself, so a player needs neither Prism's PreLaunchCommand
+(`tools/foreman-daemon.sh`, still supported) nor `tools/mac.mjs`. Code: `client/launcher/Launcher.java`
+(I/O, its own thread), pure decisions in `dev.agentcraft.launcher.LauncherPlan` and settings in
+`LauncherConfig` (both unit-tested); details in mod/DEV.md "Foreman launcher", the player's view in
+tools/README.md "Playing in a Hardcore world".
+
+- **Config** (`<home>/config.json`, read only by the mod): `launcher: { enabled (true), foremanDir?,
+  nodePath?, stopOnExit (false) }`; overrides `AGENTCRAFT_LAUNCHER`, `AGENTCRAFT_FOREMAN_DIR`,
+  `AGENTCRAFT_NODE`, `AGENTCRAFT_LAUNCHER_STOP_ON_EXIT` (or the `-Dagentcraft.*` spelling).
+- **Source:** `AGENTCRAFT_FOREMAN_DIR`, `launcher.foremanDir`, a dev run's checkout, `hardcore.stable`, the
+  checkout the jar was built from. `npm ci` in `foreman/` on first use.
+- **Same Foreman as the daemon:** the daemon's command line (`--backend --profile --home --port`), the login
+  shell's environment, the same stale rule (another checkout or commit; tools/lib/macprocs.mjs
+  `staleReasons`) and the same launcher run file (`<checkout>/artifacts/run/mac-foreman-<profile>.json`).
+  The Foreman's run file (`<home>/<profile>/foreman.json`) now also records `root` and `commit`.
+- **Coexistence:** whichever starts first wins. A Foreman on the port that answers `hello` is reused when
+  current. When stale: restarted only if the mod started it (`<home>/<profile>/launcher.json`: pid + start
+  time), else left running and shown as **running (older version)** with who started it. Something on the
+  port that is not a Foreman is never touched ("could not start").
+- **Lifetime:** the Foreman keeps running after the game exits (PR polling continues); `stopOnExit` stops
+  it at exit only if the mod started it. A hub restart (`foreman.restart`) is followed.
+- **Status tab states:** off, Node.js not found (with how to install it), no checkout, installing (the npm
+  line), starting, running (started by the game or reused: pid, version, commit, log), running (older
+  version), crashed (the log's last lines), could not start, stopped. Buttons: **Start**, **Restart** (only
+  a Foreman the game started), **Open log**. A crash, a failed start or a missing node also shows a toast;
+  the HUD pill follows the launcher until the link is up.
+- **DevBridge:** `dev.launcher.state`, `dev.launcher.start`, `dev.launcher.restart`, `dev.launcher.stop`
+  (the last two refuse a Foreman the game did not start).
 
 ## Generated buildings
 

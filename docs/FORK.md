@@ -130,7 +130,14 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   roads/trophies, sim PRs, editable MCP servers and repo env with write-only secrets (two GPT reviews; the log
   redactor is best-effort by decision), the Foreman's Claude backend split into modules, one shell lexer,
   the mod's protocol mirror generated from protocol.ts, and `npm run smoke` (18 in-game steps, ~2 min, all
-  passing). Queued: the mod launching the Foreman itself (reuse Architect's launcher when it exists).
+  passing).
+- **2026-10-04, branch `mod/foreman-launcher`:** the mod starts the Foreman itself (design adapted from
+  Architect's launcher): node discovery, `npm ci` on first use, the daemon's command line and login-shell
+  environment, reuse of a current Foreman, restart of its own stale one, never stops one it did not start
+  ("running (older version)"), keeps running after the game unless `launcher.stopOnExit`; Status tab
+  Launcher section, `dev.launcher.*`, `hardcore-setup.mjs --no-prelaunch` (now the documented setup; the
+  Prism hook is optional), `mac.mjs --mod-foreman`. Checked in the dev client (start, reuse, hub restart,
+  Restart, crash, stale restart, foreign older one left alone, stopOnExit, port held, disabled).
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
@@ -186,6 +193,6 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 - All 29 mods have 26.3 builds (checked 2026-10-03). Exceptions to the stable-only rule:
   **Sodium is alpha-only on 26.3** (`mc26.3-0.9.3-alpha.1`), Visuality is beta.
 - Soak the clone (no AgentCraft) before trusting it; only then add AgentCraft (after items 7–8).
-- Adding AgentCraft to it: `node tools/hardcore-setup.mjs` (dry run, then `--apply` with Prism and the game closed; the ref must contain `tools/foreman-daemon.sh`).
-  It sets up a stable checkout, a `hardcore` Foreman profile on port 7880 that starts with the game,
-  and backups. See tools/README.md "Playing in a Hardcore world".
+- Adding AgentCraft to it: `node tools/hardcore-setup.mjs --no-prelaunch` (dry run, then `--apply` with Prism and the game closed; the ref must contain the mod's Foreman launcher).
+  It sets up a stable checkout, a `hardcore` Foreman profile on port 7880 that the mod starts with the game
+  (no Prism hook; the daemon path without `--no-prelaunch` still works), and backups. See tools/README.md "Playing in a Hardcore world".

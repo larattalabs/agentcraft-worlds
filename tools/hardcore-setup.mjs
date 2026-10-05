@@ -15,9 +15,12 @@
 //   5. backups: the world saves (--backup-script, optional), and instance.cfg + mods/ into
 //      <backup-dir>/agentcraft-setup-<stamp>/
 //   6. mods/: older agentcraft*.jar out, the new jar in
-//   7. instance.cfg: PreLaunchCommand -> <stable>/tools/foreman-daemon.sh start ...;
-//      JvmArgs += -Dagentcraft.port/profile (and the DevBridge with --devbridge);
-//      PostExitCommand kept (with --stop-on-exit: the backup first, then the Foreman is stopped)
+//   7. instance.cfg: JvmArgs += -Dagentcraft.port/profile/foreman.dir (and the DevBridge with --devbridge).
+//      With --no-prelaunch (recommended): the mod starts the Foreman itself (its Foreman launcher,
+//      docs/HUB.md) from the stable checkout, so no PreLaunchCommand is set (ours is removed), and
+//      --stop-on-exit becomes -Dagentcraft.launcher.stop.on.exit=1. Without it (the daemon path):
+//      PreLaunchCommand -> <stable>/tools/foreman-daemon.sh start ...; PostExitCommand kept (with
+//      --stop-on-exit: the backup first, then the Foreman is stopped).
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -71,6 +74,9 @@ function usage(code = 0) {
   --backup-dir PATH     where backups go (default ~/MinecraftBackups/<instance dir name>)
   --backup-script PATH  world backup script, run as: SCRIPT <game dir> <backup dir> (optional;
                         without one the world saves are not backed up)
+  --no-prelaunch        the mod starts the Foreman itself (recommended): no PreLaunchCommand (ours is
+                        removed; Prism needs no hook). Without it, Prism's PreLaunchCommand starts it
+                        through tools/foreman-daemon.sh (the daemon path).
   --stop-on-exit        stop the Foreman when the game exits (after the backup). Default: it keeps
                         running (PR polling continues); running again without it undoes it.
   --devbridge [--dev-port N]  enable the DevBridge in this instance on port N (default ${DEFAULTS.devPort})
@@ -151,7 +157,7 @@ function defaultSource() {
 export function parseArgs(argv, { config } = {}) {
   const out = { ...DEFAULTS, apply: false };
   const given = new Set();
-  const flags = new Set(['apply', 'stop-on-exit', 'devbridge', 'skip-checkout', 'skip-deps']);
+  const flags = new Set(['apply', 'stop-on-exit', 'devbridge', 'skip-checkout', 'skip-deps', 'no-prelaunch']);
   const values = new Set(['instance', 'stable', 'source', 'ref', 'profile', 'port', 'home', 'backup-dir', 'backup-script', 'dev-port', 'jar', 'prism-cfg']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -182,6 +188,7 @@ export function parseArgs(argv, { config } = {}) {
   if (out.devbridge && (DEV_PORTS.has(out.devPort) || out.devPort === out.port)) throw new Error(`--dev-port ${out.devPort} collides with the Foreman port or dev runs`);
   if (!/^[\w-]+$/.test(out.profile)) throw new Error('profile must contain only letters, digits, _ or -');
   if (/\s/.test(out.home)) throw new Error(`--home cannot contain spaces (it goes into JvmArgs): ${out.home}`);
+  if (out.noPrelaunch && /\s/.test(out.stable)) throw new Error(`--stable cannot contain spaces with --no-prelaunch (it goes into JvmArgs as -Dagentcraft.foreman.dir): ${out.stable}. Use a path without spaces, or the daemon path (without --no-prelaunch)`);
   out.backupDir ??= path.join(HOME, 'MinecraftBackups', path.basename(out.instance));
   if (!out.source) {
     const origin = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: out.stable, encoding: 'utf8' });
@@ -233,6 +240,8 @@ export const realDeps = {
 
 /** The files the instance's PreLaunchCommand needs in the stable checkout. */
 export const DAEMON_FILES = ['tools/foreman-daemon.sh', 'tools/foreman-daemon.mjs'];
+/** With --no-prelaunch: the mod built from the stable checkout must start the Foreman itself (and this script stops it through the daemon script). */
+export const LAUNCHER_FILES = ['mod/src/client/java/dev/agentcraft/client/launcher/Launcher.java', 'tools/foreman-daemon.mjs'];
 
 /** The last JSON line of `foreman-daemon.mjs status` output, or null. */
 export function parseStatusLine(stdout) {
@@ -352,7 +361,9 @@ export async function setup(opt, deps = realDeps) {
     jvm: overrideJava ? general.JvmArgs ?? '' : globalCfg.JvmArgs ?? '',
   };
   const preWhere = overrideCmds ? 'the instance' : 'Prism\'s global settings (the instance does not override commands)';
-  if (effective.pre.trim() && !isOurPreLaunch(effective.pre)) throw new Error(`${preWhere} already has a PreLaunchCommand that is not ours: ${effective.pre}\nRemove it in Prism (Edit instance > Settings > Custom commands) or fold it in by hand.`);
+  if (opt.noPrelaunch) {
+    if (effective.pre.trim() && !isOurPreLaunch(effective.pre)) warn(`${preWhere} has a PreLaunchCommand that is not ours; it is kept: ${effective.pre}`);
+  } else if (effective.pre.trim() && !isOurPreLaunch(effective.pre)) throw new Error(`${preWhere} already has a PreLaunchCommand that is not ours: ${effective.pre}\nRemove it in Prism (Edit instance > Settings > Custom commands) or fold it in by hand.`);
   if (effective.wrapper.trim()) warn(`the instance runs a WrapperCommand (${effective.wrapper}); it is kept`);
   const prism = deps.prismRunning();
   if (prism) {
@@ -386,17 +397,18 @@ export async function setup(opt, deps = realDeps) {
     if (apply) deps.foremanStop(opt.stable, { profile: opt.profile, home: opt.home });
   };
   if (fmStatus?.running === false && fs.existsSync(stableDaemonMjs)) say(`  the ${opt.profile} Foreman is not running`);
-  const missingDaemon = (rev, where) => new Error(`${opt.ref} (${String(rev).slice(0, 9)}) has no ${DAEMON_FILES.join(' / ')} (checked in ${where}). The instance's PreLaunchCommand points there, so every launch would fail. Use a --ref that contains the launch tools (merge them first).`);
-  const daemonIn = (repo, rev) => DAEMON_FILES.every((f) => deps.query('git', ['cat-file', '-e', `${rev}:${f}`], { cwd: repo }) !== null);
+  const needed = opt.noPrelaunch ? LAUNCHER_FILES : DAEMON_FILES;
+  const missingDaemon = (rev, where) => new Error(`${opt.ref} (${String(rev).slice(0, 9)}) has no ${needed.join(' / ')} (checked in ${where}). ${opt.noPrelaunch ? 'The mod built from it could not start the Foreman (--no-prelaunch needs the mod\'s Foreman launcher)' : 'The instance\'s PreLaunchCommand points there, so every launch would fail'}. Use a --ref that contains the launch tools (merge them first).`);
+  const daemonIn = (repo, rev) => needed.every((f) => deps.query('git', ['cat-file', '-e', `${rev}:${f}`], { cwd: repo }) !== null);
   const hasCommit = (repo, rev) => deps.query('git', ['cat-file', '-e', `${rev}^{commit}`], { cwd: repo }) !== null;
-  const daemonOnDisk = () => DAEMON_FILES.every((f) => fs.existsSync(path.join(opt.stable, f)));
+  const daemonOnDisk = () => needed.every((f) => fs.existsSync(path.join(opt.stable, f)));
   let commit = null;
   if (opt.skipCheckout) {
     if (!fs.existsSync(opt.stable)) throw new Error(`--skip-checkout: ${opt.stable} does not exist`);
     commit = deps.query('git', ['rev-parse', 'HEAD'], { cwd: opt.stable });
     say(`  using it as it is (${commit ? commit.slice(0, 9) : 'not a git checkout'})`);
     if (!daemonOnDisk()) throw missingDaemon(commit ?? 'working tree', opt.stable);
-    say(`  ${DAEMON_FILES.join(' and ')}: present`);
+    say(`  ${needed.join(' and ')}: present`);
     if (!opt.skipDeps) stopForeman();
   } else {
     // ls-remote: read-only, current (no stale remote-tracking refs), works for a path or a URL;
@@ -411,8 +423,8 @@ export async function setup(opt, deps = realDeps) {
     if (hasCommit(opt.source, target)) { daemonOk = daemonIn(opt.source, target); checkedIn = opt.source; }
     else if (exists && hasCommit(opt.stable, target)) { daemonOk = daemonIn(opt.stable, target); checkedIn = opt.stable; }
     if (daemonOk === false) throw missingDaemon(target, checkedIn);
-    say(daemonOk ? `  ${opt.ref} (${target.slice(0, 9)}) has ${DAEMON_FILES.join(' and ')} (checked in ${checkedIn})`
-      : `  ${opt.ref} (${target.slice(0, 9)}) is not available locally: ${DAEMON_FILES.join(' and ')} are checked after the ${exists ? 'fetch' : 'clone'}, before anything else changes`);
+    say(daemonOk ? `  ${opt.ref} (${target.slice(0, 9)}) has ${needed.join(' and ')} (checked in ${checkedIn})`
+      : `  ${opt.ref} (${target.slice(0, 9)}) is not available locally: ${needed.join(' and ')} are checked after the ${exists ? 'fetch' : 'clone'}, before anything else changes`);
     const verifyAfterFetch = () => {
       if (daemonOk === null && !daemonIn(opt.stable, target)) throw missingDaemon(target, `${opt.stable} after the fetch; nothing else was changed`);
     };
@@ -511,19 +523,25 @@ export async function setup(opt, deps = realDeps) {
   // 7. instance.cfg
   say('\n7. instance.cfg');
   const updates = {
-    PreLaunchCommand: preLaunchCommand({ daemon, profile: opt.profile, port: opt.port, home: opt.home }),
+    // --no-prelaunch: the mod starts the Foreman; ours is removed, someone else's is kept
+    PreLaunchCommand: opt.noPrelaunch ? (isOurPreLaunch(effective.pre) ? '' : effective.pre)
+      : preLaunchCommand({ daemon, profile: opt.profile, port: opt.port, home: opt.home }),
     JvmArgs: mergeJvmArgs(effective.jvm, {
       'agentcraft.port': opt.port,
       'agentcraft.profile': opt.profile,
       'agentcraft.home': path.resolve(opt.home) === path.join(HOME, '.agentcraft') ? null : opt.home,
       'agentcraft.dev': opt.devbridge ? 1 : null,
       'agentcraft.dev.port': opt.devbridge ? opt.devPort : null,
+      // the checkout the mod's Foreman launcher runs the Foreman from (on the daemon path the jar's own
+      // build checkout, the stable one, already says so)
+      'agentcraft.foreman.dir': opt.noPrelaunch ? opt.stable : null,
+      'agentcraft.launcher.stop.on.exit': opt.noPrelaunch && opt.stopOnExit ? 1 : null,
     }),
     OverrideCommands: 'true',
     OverrideJavaArgs: 'true',
   };
   const post = effective.post;
-  updates.PostExitCommand = opt.stopOnExit ? wrapPostExit(post, { daemon, profile: opt.profile, home: opt.home }) : unwrapPostExit(post);
+  updates.PostExitCommand = opt.stopOnExit && !opt.noPrelaunch ? wrapPostExit(post, { daemon, profile: opt.profile, home: opt.home }) : unwrapPostExit(post);
   if (!overrideCmds) updates.WrapperCommand = effective.wrapper;
   if (!post.trim()) warn('the instance has no PostExitCommand (no world backup after each session)');
   if (!overrideCmds) say('  OverrideCommands was off: Prism\'s global PostExitCommand and WrapperCommand are copied into the instance');
@@ -533,7 +551,8 @@ export async function setup(opt, deps = realDeps) {
     const before = general[key] ?? '';
     if (before !== value) plan(`set ${key}: ${JSON.stringify(before)} -> ${JSON.stringify(value)}`);
   }
-  if (isWrappedPostExit(post) && !opt.stopOnExit) say('  (PostExitCommand: --stop-on-exit removed; the backup command is kept as it was)');
+  if (isWrappedPostExit(post) && (!opt.stopOnExit || opt.noPrelaunch)) say(`  (PostExitCommand: ${opt.noPrelaunch ? 'the daemon\'s stop is removed (the mod stops what it started)' : '--stop-on-exit removed'}; the backup command is kept as it was)`);
+  if (opt.noPrelaunch) say(`  the mod starts the Foreman from ${opt.stable} when the game starts (no PreLaunchCommand); it ${opt.stopOnExit ? 'stops it when the game exits' : 'keeps running after the game exits'}`);
   if (newText === cfgText) say('  instance.cfg already up to date');
   else if (apply) {
     const tmp = `${cfgFile}.agentcraft-tmp`;
@@ -542,7 +561,7 @@ export async function setup(opt, deps = realDeps) {
   }
 
   say(`\nForeman: profile ${opt.profile}, port ${opt.port}, home ${opt.home}${commit ? `, commit ${commit.slice(0, 9)}` : ''}`);
-  say(`Log: ${path.join(opt.stable, 'artifacts', 'logs', `foreman-daemon-${opt.profile}.log`)}`);
+  say(`Log: ${path.join(opt.stable, 'artifacts', 'logs', opt.noPrelaunch ? `foreman-launcher-${opt.profile}.log` : `foreman-daemon-${opt.profile}.log`)}`);
   const rollbackFrom = fs.existsSync(original) || !isOurPreLaunch(pre) ? original : backup;
   say(`Rollback (Prism closed): cp "${path.join(rollbackFrom, 'instance.cfg')}" "${cfgFile}"; rm "${modsDir}"/agentcraft*.jar; cp "${path.join(rollbackFrom, 'mods')}"/agentcraft*.jar "${modsDir}"/ (only if there were any); then "${daemon}" stop`);
   if (apply && foremanStopped) say(`The ${opt.profile} Foreman was stopped for the update: it starts with the next game launch, or now with "${daemon}" start`);

@@ -98,7 +98,9 @@ public final class HelpContent {
 		if (link.everSynced()) {
 			return new Status("waiting", "Reconnecting to the Foreman…");
 		}
-		return new Status("idle", "Foreman not running: " + ConnectionHints.notRunning(ClientEnv.DEV_RUN));
+		String ls = dev.agentcraft.client.launcher.Launcher.state().wire();
+		return new Status(ls.equals("starting") || ls.equals("installing") ? "thinking" : "idle", ConnectionHints.title(ls) + ": "
+			+ ConnectionHints.detail(ls, ClientEnv.DEV_RUN, Keys.hub == null ? "H" : Keys.label(Keys.hub)));
 	}
 
 	public static JsonObject json() {

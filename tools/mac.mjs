@@ -22,7 +22,7 @@ function usage(code = 0) {
                             [--home PATH] [--profile NAME] [--port N] [--dev-port N]
                             [--dev] [--showcase busy|late] [--reset]
                             [--world NAME] [--preset flat|normal] [--seed N]
-                            [--no-game] [--no-foreman] [--no-wait] [--restart-foreman]
+                            [--no-game] [--no-foreman | --mod-foreman] [--no-wait] [--restart-foreman]
                             [--summary-json PATH]
                             [--foreman-arg VALUE] (repeatable)
   node tools/mac.mjs stop [--game] [--foreman] [--profile NAME] [--stop-daemon] [--dry-run]
@@ -33,6 +33,9 @@ would be signalled and changes nothing. launch --restart-foreman replaces a runn
 (launch warns when the running one came from another checkout or an older commit).
 Default: Claude backend, ~/.agentcraft, ports 7878/7879. --dev mutes the game,
 keeps it from taking focus, and disables desktop notifications.
+--no-foreman: no Foreman at all (the mod's Foreman launcher is turned off, AGENTCRAFT_LAUNCHER=0).
+--mod-foreman: this launcher starts no Foreman; the mod starts one itself (its Foreman launcher,
+docs/HUB.md), with --backend, --profile, --port and --home, or reuses one already running.
 --world/--preset/--seed pick the world the dev client opens or creates (default the flat
 "AgentCraft HQ"; any other name is a plain creative world without the HQ rules or studio;
 preset and seed only apply when the world is created). Example:
@@ -43,7 +46,7 @@ preset and seed only apply when the world is created). Example:
 function options(argv) {
   const out = { action: argv.shift(), repo: [], foremanArgs: [] };
   const values = new Set(['backend', 'repo', 'home', 'profile', 'port', 'dev-port', 'showcase', 'summary-json', 'foreman-arg', 'world', 'preset', 'seed']);
-  const switches = new Set(['use-claude-login', 'dev', 'reset', 'no-game', 'no-foreman', 'no-wait', 'game', 'foreman', 'stop-daemon', 'restart-foreman', 'dry-run']);
+  const switches = new Set(['use-claude-login', 'dev', 'reset', 'no-game', 'no-foreman', 'mod-foreman', 'no-wait', 'game', 'foreman', 'stop-daemon', 'restart-foreman', 'dry-run']);
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i].replace(/^--/, '');
     if (!argv[i].startsWith('--')) throw new Error(`unexpected argument: ${argv[i]}`);
@@ -77,6 +80,8 @@ function options(argv) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`invalid port: ${port}`);
   }
   if (out.port === out['dev-port']) throw new Error('Foreman and DevBridge ports must differ');
+  if (out['no-foreman'] && out['mod-foreman']) throw new Error('--no-foreman and --mod-foreman exclude each other');
+  if (out['mod-foreman'] && out['no-game']) throw new Error('--mod-foreman needs the game (the mod starts the Foreman)');
   return out;
 }
 
@@ -175,7 +180,10 @@ async function launch(opt, summary) {
   const fmFile = runFile('foreman', opt.profile);
   let fm = readJson(fmFile);
   let fmPort = opt.port;
-  if (!opt['no-foreman']) {
+  if (opt['mod-foreman']) {
+    console.log(await portOpen(fmPort) ? `A Foreman is listening on :${fmPort}; the mod will reuse it (or restart it if it started it and it is stale).`
+      : `No Foreman on :${fmPort}; the mod's Foreman launcher starts one (${opt.backend}, profile ${opt.profile}).`);
+  } else if (!opt['no-foreman']) {
     // also finds a Foreman restarted from the hub (foreman.restart), whose pid the launcher never saw
     const found = await findForeman({ runFile: fmFile, home: opt.home, profile: opt.profile });
     fm = found.fm;
@@ -247,7 +255,11 @@ async function launch(opt, summary) {
     AGENTCRAFT_PORT: String(fmPort), AGENTCRAFT_DEV_PORT: String(opt['dev-port']),
     AGENTCRAFT_HOME: opt.home, AGENTCRAFT_PROFILE: opt.profile,
     AGENTCRAFT_MUTE: opt.dev ? '1' : '0', AGENTCRAFT_FOCUS: opt.dev ? '0' : '1',
+    // the mod's Foreman launcher reuses the Foreman started above, or starts one itself (--mod-foreman)
+    AGENTCRAFT_BACKEND: opt.backend,
   };
+  if (opt['no-foreman']) env.AGENTCRAFT_LAUNCHER = '0';
+  if (opt['mod-foreman']) env.AGENTCRAFT_LAUNCHER = '1';
   if (opt.world) env.AGENTCRAFT_AUTOWORLD_NAME = opt.world;
   if (opt.preset) env.AGENTCRAFT_AUTOWORLD_PRESET = opt.preset;
   if (opt.seed) env.AGENTCRAFT_AUTOWORLD_SEED = opt.seed;
