@@ -1128,7 +1128,8 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
 ### HUD check-in (wave 2)
 The contract is docs/WAVE2.md W5-W7 ("As implemented: hud" there). Code in `client.hud` and `client.hub`; pure rules
 in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTest`, `HudRulesTest`).
-- **Alert line** (`GoalBar.drawAlerts`, counts from `Alerts.line()` over an `AlertCounts` source: the Inbox's
+- **Alert line** (the Panel style's `GoalBar.drawAlerts`; the Pill styles show the same parts, see "HUD overlay
+  styles"; counts from `Alerts.line()` over an `AlertCounts` source: the Inbox's
   (`HubFeature.init`: `Alerts.setSource("inbox", …, Inbox::revision)`; `ForemanAlertCounts` before it is set):
   decisions, blocked, replies, PRs, hold; under the decisions badge, full / short / dots width by what fits, hub keycap
   at the end. `needsYou` = the Inbox's Needs you (the hold counts one), the inbox tab badge and the away toast. The whole goal bar is skipped while the HUD is hidden (F1, `dev.hud
@@ -1162,6 +1163,62 @@ in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTe
     to:"user"}}}`; a blocked task with `{patch:{task:"t1", set:{status:"blocked"}}}`; more goals with
     `{message:{type:"goal.upsert", goal:{id:"g90", text:"…", progress:0.3, status:"active", createdAt:<ms>,
     updatedAt:<ms>}}}`.
+
+### HUD overlay styles
+The in-game overlay (`client.hud.HudOverlay`, element id `hud/goal`, guard `hud.goal`) draws in the style chosen in
+hub Settings > General > HUD (`hub.HudSettingsView`). Client-side settings, no Foreman config:
+`<gameDir>/agentcraft/hud.json` (pure `hud.HudSettings`: `style` off|pill|pill_plus|panel, `position`
+top_right|top_left|bottom_left|bottom_right|right_middle, `size` s|m|l, `peek`, `autoHide`, `hideInCombat`, `toasts`
+needs_you|all, `topLeftOffset` 0-200; unknown or broken values keep their default). Changes apply and save at once.
+- **Styles**: **Off** (nothing; toasts and `J` still work), **Pill** (default; `PillStyle`: one ink line, mini progress
+  bar, "40%", non-zero counts "1 blocked · 3 replies · paused → 14:20"; with decisions waiting a clay stripe, the
+  pulsing dot and "2 decisions [J]"; full / short / dot counts by width), **Pill+** (188 px: one dot per open goal,
+  title and %, a thin bar, working agents "Kit · Juniper …" with the shortest usage window "5h 62%" or the hold
+  "paused until 14:20", the next decision's first words with `J`, else the other alerts with `H`), **Panel** (`GoalBar`:
+  the wave 2 goal bar, decisions badge and alert line, stacked in a column aligned to the overlay's side). All draw
+  from one `HudModel` per frame (the goal pick `HudRules.pickGoal`, counts, `Alerts.line()`, `DecisionQueue.first()`).
+- **Layout** (pure `hud.HudLayout`, `HudLayoutTest`; vanilla geometry in its javadoc): the rectangle for a position,
+  slid down (top positions, right middle) or up (bottom positions) past what it meets by 3 px: boss bars (count and
+  widest title through `mixin.BossHealthOverlayAccessor`, the ones vanilla draws before a third of the height), effect
+  icons (beneficial row / harmful row), the connection pill (now placed under the effect icons the same way), the
+  top-left minimap room (`topLeftOffset`, default 72), the hotbar with offhand slots and status rows (survival 62 px,
+  creative 48), the chat lines showing right now (`mixin.ChatComponentAccessor`: lines younger than 10 s, or the page
+  while chat is open; nothing when the chat is empty, so a full chat moves or hides the overlay only while it shows)
+  and the placement / plot / road panel. No room: falls back to top right, then hides (`no_room`).
+- **Size**: S/M/L = one framebuffer pixel per overlay pixel less / equal / more than the GUI scale (pose scale
+  `effectivePx / guiScale`: whole pixels, crisp); S never below 2 px (at GUI scale 2 S is M). The rectangle is rounded
+  out so nothing drawn escapes it.
+- **Visibility** (pure `hud.HudVisibility`): `no_world`, `f1` (F1 hides the overlay, the toasts and the connection
+  pill), `off`, `no_data`, `combat` (setting; `HudCombat`: hurt in the last 5 s or an `Enemy` within 12 blocks, scanned
+  every 10 ticks), `idle` (auto-hide: no active goal, nothing needs the player, no peek), `no_room`.
+- **Peek on change** (pure `hud.HudPeek`, `HudPeeks` listener): a task done ("Done: …"), a PR merged, a new decision,
+  a goal done widen the overlay for 5 s (2.5 s while more wait, 4 queued at most); only per-item upserts with a known
+  previous state, never a snapshot (and nothing for 3 s after one).
+- **Toasts**: the Foreman's notifies become toasts per the setting (needs-you only by default; `dev.toast`, the away
+  toast and feature toasts always show); they stack in `HudLayout.toasts`: beside the overlay, under it (top
+  positions, right middle) or above it (bottom positions), clear of the same things.
+- **Key**: "Cycle the HUD style" (`key.agentcraft.hud_style`, AgentCraft category, unbound) cycles Off, Pill, Pill+,
+  Panel and says so on the action bar.
+- **DevBridge**:
+  - `dev.hud.state` gains `style`, `position`, `size`, `rect{x,y,w,h}` (GUI px, null = not drawn), `hidden` (reason or
+    null), `overlaps{bossbar, effects, hotbar, chat, pill, minimap, offscreen, any}`, `peek{enabled, active, kind,
+    text, remainingMs, waiting}`, `overlay{settings, scale, effectivePx, contentW, contentH, placedAt, fallback, text
+    (the pill as text), inCombat, hostileNear, lastHurtAt, env{guiWidth, guiHeight, guiScale, bossBars,
+    bossBarsDrawn, beneficialEffects, harmfulEffects, survivalBars, bossRect, effectsRect, hotbarRect, chatRect,
+    pillRect, minimapRect}, toastColumn{x, top, bottom, up}, toasts}`, `toasts.x/w`, `hudStyleKey`. The old fields
+    stay (`goalBarBottom`/`Right` = the overlay's rectangle; `alert.layout` = the Panel's alert line, last drawn).
+  - `dev.hud.set {style?, position?, size?, peek?, autoHide?, hideInCombat?, toasts?, topLeftOffset?, cycle?,
+    clearChat?, clearPeek?}` (saved like the settings); `dev.hud.peek {text, kind?}` (any peek setting).
+  - `dev.hub.state settingsTab.hud` = the settings and where the preview put the overlay (`preview{sample, placed,
+    x, y, w, h}`); chips `hud:style:<style>`, `hud:position:<pos>`, `hud:size:<s>`, `hud:offset:-|+`, `hud:peek`,
+    `hud:autoHide`, `hud:hideInCombat`, `hud:toasts:<mode>` (`dev.hub.action {action:"press", button}`).
+- **QA**: smoke step `hud_styles_426x240` (two boss bars, a beneficial and a harmful effect via `/bossbar` and
+  `/effect`; auto-hide and peek off; all 45 style / position / size combinations shown with no overlap (the Pill with no
+  fallback; Pill+ and Panel may move to top right where a crowded 426x240 screen has no room), the toast column clear; a peek widens the pill; Off and F1 hide it; settings restored). `node
+  tools/hud-shots.mjs` (attached to a running dev client) shoots every style at 1278x720 auto (426x240) and at GUI
+  scale 3 into `artifacts/shots/hud-styles/` with `report.json`; checks shared in `tools/lib/hudstyles.mjs`.
+- Not avoided (yet): the scoreboard sidebar (right middle), subtitles (bottom right), vanilla advancement / recipe
+  toasts (top right, transient), the auth banner (top centre over the boss bars: `ConnectionBanner`).
 
 ### Generated buildings (design form, plot marking, design progress)
 The contract is docs/HUB.md "Generated buildings"; code in `dev.agentcraft.client.design` plus

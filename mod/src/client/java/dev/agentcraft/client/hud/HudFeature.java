@@ -7,18 +7,24 @@ import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Protocol.Notify;
 import dev.agentcraft.client.foreman.Protocol.NotifyLevel;
+import dev.agentcraft.hud.HudPeek;
+import dev.agentcraft.hud.HudSettings;
+import dev.agentcraft.ui.Guard;
+import java.util.List;
 import java.util.Locale;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 
 /**
- * HUD: the Foreman connection pill / auth banner ({@link ConnectionBanner}), the boss-bar style goal
- * progress with the decisions badge and the alert line ({@link GoalBar}, {@link Alerts}), paper toasts for
+ * HUD: the Foreman connection pill / auth banner ({@link ConnectionBanner}), the overlay in the chosen style (Off, Pill,
+ * Pill+, Panel: {@link HudOverlay}, {@link PillStyle}, {@link GoalBar}; settings {@link HudConfig}, cycle key), paper toasts for
  * {@code notify} ({@link Toasts}), the decision bell / done chime ({@link HudSounds}), and the wave 2 check-in
  * helpers ({@link HudWatch}: away toast, H to the last tab, welcome card).
  *
  * <p>QA: {@code dev.toast {text, level?, decisionId?}} shows a toast without the Foreman,
- * {@code dev.hud.state} reports what the HUD shows (waiting count, alert line, goal bar pick, toasts, sounds,
- * away state), {@code dev.away {minutes}}, {@code dev.onboarding {reset?, show?}}; screens {@code welcome},
+ * {@code dev.hud.state} reports what the HUD shows (style, position, size, rect, peek, hidden reason, overlaps, waiting
+ * count, alert line, goal bar pick, toasts, sounds, away state), {@code dev.hud.set} changes the overlay settings,
+ * {@code dev.hud.peek} shows a peek, {@code dev.away {minutes}}, {@code dev.onboarding {reset?, show?}}; screens {@code welcome},
  * {@code hub_status_help}.
  */
 public final class HudFeature {
@@ -28,9 +34,17 @@ public final class HudFeature {
 	public static void init() {
 		Keys.ensureRegistered();
 		HudElementRegistry.addLast(AgentCraft.id("hud/connection"), dev.agentcraft.client.ui.GuardedHud.of("hud.connection", new ConnectionBanner()));
-		HudElementRegistry.addLast(AgentCraft.id("hud/goal"), dev.agentcraft.client.ui.GuardedHud.of("hud.goal", new GoalBar()));
+		// the overlay (style from hub Settings > General > HUD); keeps the old element id and guard kind
+		HudElementRegistry.addLast(AgentCraft.id("hud/goal"), dev.agentcraft.client.ui.GuardedHud.of("hud.goal", new HudOverlay()));
 		HudElementRegistry.addLast(AgentCraft.id("hud/toasts"), dev.agentcraft.client.ui.GuardedHud.of("hud.toasts", new Toasts()));
 		Toasts.init();
+		HudPeeks.init();
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hud.overlay", () -> {
+			HudCombat.tick(mc);
+			while (Keys.hudStyle != null && Keys.hudStyle.consumeClick()) {
+				cycleStyle(mc);
+			}
+		}));
 		HudSounds.init();
 		HudWatch.init();
 		DevBridge.registerScreen("welcome", mc -> new WelcomeScreen());
@@ -106,6 +120,74 @@ public final class HudFeature {
 		DevBridge.register("dev.hud.state", 10_000, "{} - what the AgentCraft HUD shows: decisions waiting, the alert line (text, parts, layout), "
 			+ "the goal bar's pick, away state, toasts, sounds", (req, mc) -> DevBridge
 			.onClient(mc, HudFeature::hudState));
+		DevBridge.register("dev.hud.set", 10_000, "{style?: off|pill|pill_plus|panel, position?: top_right|top_left|bottom_left|bottom_right|"
+			+ "right_middle, size?: s|m|l, peek?, autoHide?, hideInCombat?, toasts?: needs_you|all, topLeftOffset?: 0-200, cycle?: bool (the cycle "
+			+ "key), clearChat?: bool, clearPeek?: bool} - change the overlay settings (saved to hud.json like the hub's Settings > General > HUD); "
+			+ "replies dev.hud.state", (req, mc) -> {
+				Fields f = Fields.of(req);
+				HudSettings.Style style = f.has("style") ? parsed("style", HudSettings.parseStyle(f.nonBlank("style"))) : null;
+				HudSettings.Position pos = f.has("position") ? parsed("position", HudSettings.parsePosition(f.nonBlank("position"))) : null;
+				HudSettings.Size size = f.has("size") ? parsed("size", HudSettings.parseSize(f.nonBlank("size"))) : null;
+				HudSettings.Toasts toasts = f.has("toasts") ? parsed("toasts", HudSettings.parseToasts(f.nonBlank("toasts"))) : null;
+				Boolean peek = f.has("peek") ? f.optBool("peek", true) : null;
+				Boolean autoHide = f.has("autoHide") ? f.optBool("autoHide", true) : null;
+				Boolean combat = f.has("hideInCombat") ? f.optBool("hideInCombat", false) : null;
+				Integer offset = f.has("topLeftOffset") ? f.optInt("topLeftOffset", HudSettings.OFFSET_DEFAULT, 0, HudSettings.OFFSET_MAX) : null;
+				boolean cycle = f.optBool("cycle", false);
+				boolean clearChat = f.optBool("clearChat", false);
+				boolean clearPeek = f.optBool("clearPeek", false);
+				return DevBridge.onClient(mc, () -> {
+					HudSettings s = HudConfig.get();
+					if (style != null) {
+						s.setStyle(style);
+					}
+					if (pos != null) {
+						s.setPosition(pos);
+					}
+					if (size != null) {
+						s.setSize(size);
+					}
+					if (toasts != null) {
+						s.setToasts(toasts);
+					}
+					if (peek != null) {
+						s.setPeek(peek);
+					}
+					if (autoHide != null) {
+						s.setAutoHide(autoHide);
+					}
+					if (combat != null) {
+						s.setHideInCombat(combat);
+					}
+					if (offset != null) {
+						s.setTopLeftOffset(offset);
+					}
+					if (cycle) {
+						cycleStyle(mc);
+					}
+					HudConfig.save();
+					if (clearChat) {
+						mc.gui.hud.getChat().clearMessages(false);
+					}
+					if (clearPeek) {
+						HudPeeks.clear();
+					}
+					return hudState();
+				});
+			});
+		DevBridge.register("dev.hud.peek", 10_000, "{text, kind?: task_done|pr_merged|decision|goal_done} - show a peek on the overlay (whatever the "
+			+ "peek setting); replies dev.hud.state", (req, mc) -> {
+				Fields f = Fields.of(req);
+				String text = f.nonBlank("text");
+				String kind = f.has("kind") ? f.nonBlank("kind").toLowerCase(Locale.ROOT) : HudPeek.TASK_DONE;
+				if (!List.of(HudPeek.TASK_DONE, HudPeek.PR_MERGED, HudPeek.DECISION, HudPeek.GOAL_DONE).contains(kind)) {
+					throw new DevBridge.DevException("kind must be task_done, pr_merged, decision or goal_done");
+				}
+				return DevBridge.onClient(mc, () -> {
+					HudPeeks.force(kind, text);
+					return hudState();
+				});
+			});
 		DevBridge.register("dev.hud.guiScale", 10_000, "{scale: 0 (auto) - 6} - change the GUI scale for this session (layout checks; not saved)",
 			(req, mc) -> {
 				int scale = Fields.of(req).optInt("scale", 3, 0, 6);
@@ -120,8 +202,26 @@ public final class HudFeature {
 			});
 	}
 
+	private static <T> T parsed(String field, @org.jspecify.annotations.Nullable T v) {
+		if (v == null) {
+			throw new DevBridge.DevException("unknown " + field);
+		}
+		return v;
+	}
+
+	/** The cycle key: next style, saved, and said on the action bar. */
+	static void cycleStyle(net.minecraft.client.Minecraft mc) {
+		HudSettings s = HudConfig.get();
+		HudSettings.Style st = s.cycleStyle();
+		HudConfig.save();
+		if (mc.player != null) {
+			mc.gui.hud.setOverlayMessage(net.minecraft.network.chat.Component.literal("AgentCraft HUD: " + st.label()), false);
+		}
+	}
+
 	static JsonObject hudState() {
 		JsonObject o = new JsonObject();
+		HudOverlay.state(o);
 		o.addProperty("waiting", DecisionsFeature.waitingCount());
 		var mc = net.minecraft.client.Minecraft.getInstance();
 		o.addProperty("hudHidden", mc.gui.hud.isHidden());
@@ -171,9 +271,10 @@ public final class HudFeature {
 		o.addProperty("decisionsKey", Keys.label(Keys.decisions));
 		o.addProperty("terminalKey", Keys.label(Keys.terminal));
 		o.addProperty("hubKey", Keys.label(Keys.hub));
+		o.addProperty("hudStyleKey", Keys.label(Keys.hudStyle));
 		// what Options > Controls shows for them (proves the lang keys resolve)
 		JsonObject names = new JsonObject();
-		for (var k : new net.minecraft.client.KeyMapping[] {Keys.console, Keys.terminal, Keys.decisions, Keys.build}) {
+		for (var k : new net.minecraft.client.KeyMapping[] {Keys.console, Keys.terminal, Keys.decisions, Keys.build, Keys.hudStyle}) {
 			if (k != null) {
 				names.addProperty(k.getName(), net.minecraft.client.resources.language.I18n.get(k.getName()) + " [" + k.getCategory().label().getString() + "]");
 			}

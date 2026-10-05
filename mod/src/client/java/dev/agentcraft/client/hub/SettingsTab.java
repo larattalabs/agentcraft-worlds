@@ -17,7 +17,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The hub's Settings tab (docs/HUB.md "Settings tab (mod)"): group chips General / Permissions / Context /
- * Subagents / PRs / Usage, each a form generated from the global {@code config.get} settings of that group
+ * Subagents / PRs / Usage, each a form generated from the global {@code config.get} settings of that group (General
+ * starts with the client-side HUD section, {@link HudSettingsView})
  * ({@link SettingsForm}; the Team tab's keys are left to the Team tab). Context edits the MCP servers (wave 3 S2: add,
  * edit, remove, their env as a secret map; restart-required); an older Foreman's plain map is listed read-only. Usage also shows the Status tab's plan usage windows read-only. Edits are
  * staged until Apply (one {@code config.set}); widening changes ask a second confirm; changes that need a
@@ -30,10 +31,15 @@ final class SettingsTab implements HubPane {
 	private boolean compact;
 	private int needed;
 	private int available;
+	/** General > HUD (client-side, hud.json). */
+	final HudSettingsView hud;
+	private int mouseX;
+	private int mouseY;
 
 	SettingsTab(HubScreen hub) {
 		this.hub = hub;
 		this.form = new SettingsForm(hub, "settings");
+		this.hud = new HudSettingsView(form);
 		form.onCtrlEnter(() -> form.apply(scopes(), false));
 	}
 
@@ -63,6 +69,12 @@ final class SettingsTab implements HubPane {
 	List<SettingsForm.Row> rows() {
 		ConfigScope sc = HubConfig.global();
 		List<SettingsForm.Row> rows = new ArrayList<>();
+		if (group.equals(SettingsLogic.GENERAL)) {
+			// the in-game overlay: client-side (hud.json), so it works with no Foreman and is never staged
+			rows.add(new SettingsForm.Section("HUD (this game, applies at once)"));
+			rows.add(new SettingsForm.Custom("hud", (g, x, y, w) -> hud.draw(g, hub.font(), x, y, w, mouseX, mouseY)));
+			rows.add(new SettingsForm.Section("Foreman"));
+		}
 		if (group.equals(SettingsLogic.USAGE)) {
 			rows.add(new SettingsForm.Section("Plan usage (read-only, as on the Status tab)"));
 			rows.add(new SettingsForm.Custom("usage", (g, x, y, w) -> hub.drawUsage(g, x, y + 2, w) + 8));
@@ -107,6 +119,8 @@ final class SettingsTab implements HubPane {
 	@Override
 	public void draw(GuiGraphicsExtractor g, int x, int y, int w, int h, int mx, int my) {
 		form.begin();
+		mouseX = mx;
+		mouseY = my;
 		compact = w < 470 || h < 200;
 		form.compact(compact);
 		available = h;
@@ -194,6 +208,7 @@ final class SettingsTab implements HubPane {
 		o.add("form", form.state());
 		o.add("config", HubConfig.state());
 		o.add("layout", layout(hub, compact, needed, available));
+		o.add("hud", hud.state());
 		return o;
 	}
 

@@ -10,7 +10,7 @@ import net.minecraft.client.input.KeyEvent;
  * AgentCraft key mappings (Options > Controls > Key Binds > AgentCraft, rebindable like any vanilla
  * key): the console ({@code `}), the console from a terminal you look at (Enter), the decision
  * queue ({@code J}), the building wizard (unbound by default: {@code B} clashed with Xaero's new-waypoint key; the hub's
- * "Place new…" opens it) and the hub ({@code H}). Registered once, from whichever feature initialises first.
+ * "Place new…" opens it), the hub ({@code H}) and the overlay style cycle (unbound by default). Registered once, from whichever feature initialises first.
  */
 public final class Keys {
 	public static KeyMapping console;
@@ -18,6 +18,7 @@ public final class Keys {
 	public static KeyMapping decisions;
 	public static KeyMapping build;
 	public static KeyMapping hub;
+	public static KeyMapping hudStyle;
 	private static boolean registered;
 
 	private Keys() {
@@ -46,6 +47,9 @@ public final class Keys {
 			cat, 4));
 		// H: vanilla only uses it as F3+H (advanced tooltips), never on its own
 		hub = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.hub", InputConstants.Type.KEYBOARD, InputConstants.KEY_H, cat, 5));
+		// unbound by default: cycles the overlay style (Off, Pill, Pill+, Panel; hub Settings > General > HUD)
+		hudStyle = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.agentcraft.hud_style", InputConstants.Type.KEYBOARD,
+			InputConstants.UNKNOWN.getValue(), cat, 6));
 	}
 
 	/**
