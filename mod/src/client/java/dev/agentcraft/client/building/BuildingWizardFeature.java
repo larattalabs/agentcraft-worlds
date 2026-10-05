@@ -462,7 +462,7 @@ public final class BuildingWizardFeature {
 					}
 				})).thenCompose(f2 -> f2);
 			});
-		DevBridge.register("dev.buildings.failNextRename", 10_000, "{} - test hook: the next world journal commit fails (a move then rolls back: "
+		DevBridge.register("dev.buildings.failNextRename", 10_000, "{} - test hook: the next move's world journal commit fails (the move rolls back: "
 			+ "new site restored, record unchanged; the name is kept from the snapshot-rename days)", (req, mc) -> DevBridge.onClient(mc, () -> {
 				Buildings.failNextSnapshotRename();
 				JsonObject o = new JsonObject();

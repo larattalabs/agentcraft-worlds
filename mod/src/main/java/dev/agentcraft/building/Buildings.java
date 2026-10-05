@@ -579,6 +579,16 @@ public final class Buildings {
 	/** {@link Verdict} for placing {@code bp} (or moving {@code movingId} with it) at {@code origin}, {@code rotation}. Server thread. */
 	public static Verdict verdict(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force,
 		@Nullable String movingId) {
+		return verdict(level, bp, origin, rotation, repos, force, movingId, true);
+	}
+
+	/**
+	 * {@link #verdict}; {@code dryRun} false reads the site as {@link #place} does, loading its chunks (the confirm, which
+	 * places in the same server task right after), true never loads one (the ghost's polling: an unloaded site is a
+	 * refusal of its own).
+	 */
+	public static Verdict verdict(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force,
+		@Nullable String movingId, boolean dryRun) {
 		List<String> refusals = new ArrayList<>();
 		Refusals out = refusals::add;
 		Building moving = null;
@@ -603,7 +613,7 @@ public final class Buildings {
 				if (!m.isFixture()) {
 					collect(refusals, () -> checkRepos(bp.id(), bp.wings(), m.repos(), movingId));
 				}
-				if (oldLevel != null && loaded(oldLevel, m.restoreBox())) {
+				if (oldLevel != null && (!dryRun || loaded(oldLevel, m.restoreBox()))) {
 					collect(refusals, () -> refusePlayerIn(oldLevel, m.restoreBox(), movingId, "moving it"));
 					if (!force) {
 						List<String> blockers = removalBlockers(oldLevel, moving);
@@ -628,7 +638,7 @@ public final class Buildings {
 			if (journal != null) {
 				refusals.add(journal);
 			}
-			SitePlan site = checkSite(level, bp, origin, rotation, force, moving, out, true);
+			SitePlan site = checkSite(level, bp, origin, rotation, force, moving, out, dryRun);
 			return new Verdict(refusals, site == null ? List.of() : siteNotes(site, site.found()));
 		} catch (BuildingException | RuntimeException e) {
 			refusals.add(e.getMessage() == null ? e.toString() : e.getMessage());
@@ -1314,6 +1324,10 @@ public final class Buildings {
 			plan = planSite(oldLevel, b, oldEntry);
 			Map<String, Journal.Entry> up = new LinkedHashMap<>(plan.updated());
 			up.put(built.entry().id(), built.entry().withMeta(nb.toJson()));
+			if (failNextMove) {
+				failNextMove = false;
+				throw new IOException("injected failure of the move's journal commit (dev.buildings.failNextRename)");
+			}
 			WorldJournal.commit(up, List.of());
 		} catch (IOException | RuntimeException e) {
 			AgentCraft.LOGGER.error("Moving {} failed before its journal commit; taking the new site down again", id, e);
@@ -1352,12 +1366,16 @@ public final class Buildings {
 		return nb;
 	}
 
+	/** Test hook (DevBridge {@code dev.buildings.failNextRename}): the next move's journal commit fails. */
+	private static volatile boolean failNextMove;
+
 	/**
-	 * Test hook (DevBridge {@code dev.buildings.failNextRename}): the next world journal commit fails before it writes,
-	 * so a move rolls back (the new site restored, the record unchanged) as it did when a snapshot rename failed.
+	 * Arms {@link #failNextMove} (DevBridge only): the next {@link #move} fails at its journal commit, before it writes, so it
+	 * rolls back (the new site restored, the record unchanged) as it did when a snapshot rename failed. Other commits (a
+	 * trophy, a road) do not consume it.
 	 */
 	public static void failNextSnapshotRename() {
-		WorldJournal.failNextCommit();
+		failNextMove = true;
 	}
 
 	/** Moves a building back to where it stood before its last move ({@link Building#movedFrom()}): the hub's "Undo move". */

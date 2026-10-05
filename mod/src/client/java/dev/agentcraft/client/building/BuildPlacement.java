@@ -364,7 +364,7 @@ public final class BuildPlacement {
 					throw new Buildings.BuildingException(sl == null ? "That dimension is not loaded" : "Blueprint " + bpId + " is gone (reloaded?)");
 				}
 				// the server's verdict on the exact site first (S4): a refusal lists every reason, not only the first
-				checked = Buildings.verdict(sl, b, origin, rotation, rs, useForce, moveId);
+				checked = Buildings.verdict(sl, b, origin, rotation, rs, useForce, moveId, false); // reads the site as place() does
 				if (!checked.ok()) {
 					throw new Buildings.BuildingException(String.join("; ", checked.refusals()));
 				}

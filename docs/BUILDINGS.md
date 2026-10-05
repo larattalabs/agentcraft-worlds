@@ -389,7 +389,7 @@ site's entry and the old site's undo (its entry and its trophies'), then the old
 until the next world start, as for a removal), then the record. A failure before the commit takes the new site down
 again and records nothing; a failure restoring the old site after it takes the commit back (the old entries active again,
 the new one released) and the new site down, so the record never points at a site the journal does not hold
-(`dev.buildings.failNextRename` makes the next journal commit fail). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
+(`dev.buildings.failNextRename` makes the next move's journal commit fail). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
 old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step). The building's trophies are hung again
 at the new site (see "Trophies").
 
@@ -752,8 +752,9 @@ explicit and reversible.
    first, as a dry run (no world change; it never loads or generates a chunk: an unloaded site is a refusal of its own).
    Asked once when the site changes and then every second (one request in flight; a reply for a site the ghost left is
    dropped). The HUD says "Checking the site with the server…" until it arrives, "Ready" only when the server agrees, else
-   "Server would refuse: <reasons>". Enter runs the verdict and `place` in one server task, so a refusal lists every
-   reason. `dev.build.state.serverVerdict {ok, refusals, notes}` and `ready`.
+   "Server would refuse: <reasons>" (and the ghost's outline turns red). Enter runs the verdict and `place` in one server
+   task, so a refusal lists every reason; that verdict reads the site as `place` does (it may load the site's chunks, as
+   placing does), only the polling never loads one. `dev.build.state.serverVerdict {ok, refusals, notes}` and `ready`.
    **Too far** (wave 3): looking further than the 64-block reach (or at the sky) keeps the ghost at the last spot that
    was in reach in this placement session, with an orange "Too far: aim within 64 blocks" HUD line
    (`dev.build.state.tooFar`), instead of snapping it to the player's feet; before any spot was in reach the feet

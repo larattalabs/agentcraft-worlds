@@ -171,7 +171,9 @@ final class GhostRenderer {
 
 		// the outline of what is drawn (GhostModel.outline: the footprint's perimeter, not the template's box,
 		// whose corners can be cells the template never writes, e.g. beside the studio's porch)
-		boolean refused = !v.refusals().isEmpty();
+		// the client's refusals, or the server's verdict (S4) when it refuses a site the client passed
+		dev.agentcraft.building.Buildings.Verdict sv = BuildPlacement.serverVerdict();
+		boolean refused = !v.refusals().isEmpty() || sv != null && !sv.ok();
 		int edge = refused ? UiStyle.withAlpha(0xFFD0402A, 0xE8) : UiStyle.withAlpha(UiStyle.SAGE, 0xE0);
 		float t = EDGE;
 		for (GhostModel.Edge e : m.outline()) {

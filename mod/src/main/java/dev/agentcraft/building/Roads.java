@@ -732,8 +732,11 @@ public final class Roads {
 			commit(server, s, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
 		} catch (RoadException ex) {
 			try {
-				WorldJournal.commit(previous, List.of());
-			} catch (IOException again) {
+				// take the commit back: hand-downs (to a site over the road) reversed, the road and its receivers as they were
+				Map<String, Journal.Entry> back = new LinkedHashMap<>(Journal.reactivate(up.values(), jid));
+				back.putAll(previous);
+				WorldJournal.commit(back, List.of());
+			} catch (IOException | RuntimeException again) {
 				AgentCraft.LOGGER.warn("Could not put road {}'s journal entries back (the next start settles it)", id, again);
 			}
 			throw ex;

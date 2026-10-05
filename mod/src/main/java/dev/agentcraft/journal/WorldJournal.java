@@ -59,8 +59,6 @@ public final class WorldJournal {
 	private static volatile @Nullable String unavailable;
 	private static volatile @Nullable Path world;
 	private static volatile JournalMigration.@Nullable Plan imported;
-	/** Test hook (DevBridge {@code dev.buildings.failNextRename}): the next commit throws before it writes. */
-	private static volatile boolean failNext;
 
 	private WorldJournal() {
 	}
@@ -73,7 +71,6 @@ public final class WorldJournal {
 			unavailable = null;
 			world = null;
 			imported = null;
-			failNext = false;
 		});
 	}
 
@@ -126,11 +123,6 @@ public final class WorldJournal {
 	/** What the last world start imported, or null. */
 	public static JournalMigration.@Nullable Plan imported() {
 		return imported;
-	}
-
-	/** Arms {@link #failNext} (DevBridge only). */
-	public static void failNextCommit() {
-		failNext = true;
 	}
 
 	// ------------------------------------------------------------------ reads
@@ -217,10 +209,6 @@ public final class WorldJournal {
 	/** Commits entries (new, changed, undone) and releases others in one index write. */
 	public static void commit(Map<String, Entry> upserts, Collection<String> releases) throws IOException {
 		JournalStore s = store();
-		if (failNext) {
-			failNext = false;
-			throw new IOException("injected journal failure (dev.buildings.failNextRename)");
-		}
 		s.commit(upserts, releases);
 	}
 

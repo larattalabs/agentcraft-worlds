@@ -539,7 +539,8 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   `Reconcile`, `Displays`; tests `TerrainFitTest`, `BuildingLifecycleTest`, `PinAndReconcileTest`.
   `dev.buildings.pending` (pending sites with `snapshotExists` and the journal `entry` they resolve to, the sites'
   journal entries as `snapshotFiles`, each building's pin fingerprint, the world-start reports) and
-  `dev.buildings.failNextRename` (since wave 3: the next world journal commit fails, so a move must roll back).
+  `dev.buildings.failNextRename` (since wave 3: the next move's journal commit fails, so it must roll back; other
+  commits do not consume it).
   Wave 3: `dev.journal.state` and `dev.journal.at {x, y, z, dimension?}` (docs/BUILDINGS.md "World journal");
   `dev.build.state.serverVerdict`, `ready`, `tooFar` and `conflicts.site` (S4, too far, site warnings). `dev.build.state.conflicts` adds
   `water, lava, foundation, cleared, snapshotMinY, notes[]` and `moving`; refusals include occupants, lava
