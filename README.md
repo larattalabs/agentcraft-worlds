@@ -257,13 +257,15 @@ you, unread goal threads, failing CI and blocked agents.
 | **Repos** | Registered repos, their branch, CI and open PRs, and their settings: landing mode, CI and setup commands, protected files, PR review |
 | **Goals** | New goals (on a repo, continuing a branch, or across several repos) and per goal: the thread with its lead, the plan, standing instructions, tasks and the "since you were away" summary |
 | **Team** | Every lead and worker: role, model, effort, who is on shift, how many work at once, and leads still held by other worlds |
-| **Settings** | Your name, permission mode, allow and deny rules, context files, subagents, PR watching, per-turn budget and usage reserve; applied live or after a Foreman restart the hub does for you |
+| **Settings** | The in-game HUD style and position, your name, permission mode, allow and deny rules, context files, subagents, PR watching, per-turn budget and usage reserve; applied live or after a Foreman restart the hub does for you |
 | **Status** | Foreman connection, backend and account, usage windows and spend, and **Keys & help**: every key and in-world interaction |
 
-<img src="docs/img/fork/hud.jpg" alt="The HUD: goal bar, waiting badge and the alert line" align="right" width="45%">
+<img src="docs/img/fork/hud.jpg" alt="The HUD Panel style: goal bar, waiting badge and the alert line" align="right" width="45%">
 
-**Out in the world**, a line under the goal bar stays up while anything needs you: `1 decision ·
-1 blocked · H open`, plus replies, PRs and usage pauses as they come. Come back after ten minutes
+**Out in the world**, a compact pill in the corner shows the goal's progress and turns clay when
+something needs you: `40% · 2 decisions J · 1 blocked`, plus replies, PRs and usage pauses as they
+come. Pick Off, Pill, Pill+ (who is working, usage, the next decision) or the full Panel, and where it
+sits, in Settings > General; it keeps clear of boss bars, effects, the hotbar and chat. Come back after ten minutes
 away and a toast sums up what moved; <kbd>H</kbd> then opens the Inbox with the catch-up at the top.
 Otherwise <kbd>H</kbd> reopens the tab you used last.
 

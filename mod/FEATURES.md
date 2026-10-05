@@ -25,7 +25,7 @@ was verified in game in Phase 2 (`artifacts/shots/phase2_*.png`).
 |---|---|---|
 | `client.foreman` | core | WebSocket link, protocol mirror, state model, `Foreman` facade |
 | `client.agents` | agents specialist | agent NPCs: manager, motion, pathfinding, renderer, nameplate, hooks |
-| `client.hud` | hud specialist | connection banner, goal bar, alert line, toasts, away digest, welcome card, Keys & help |
+| `client.hud` | hud specialist | connection banner, overlay styles (pill, pill+, panel: goal bar, alert line), toasts, away digest, welcome card, Keys & help |
 | `client.hub` | hub | the hub screen (`H`): Inbox, Buildings, Repos, Goals, Team, Settings, Status |
 | `client.design` | hub | generated buildings: the design form, plot marking, the Designs list |
 | `client.leads` | leads | a lead per building: `lead.assign/sync/release`, podium and wall routing |
@@ -441,15 +441,24 @@ hard-code colours; ask `UiStyle`. Sprites are 1 texel = 1 GUI px (GUI scale 3 at
 
 `HudElementRegistry.addLast(AgentCraft.id("hud/<name>"), element)`. Contract: docs/WAVE2.md W5-W7 and
 "As implemented: hud". Pure rules in `dev.agentcraft.hud` (`AlertLine`, `HudRules`, `HudPrefs`; unit-tested).
-- **Connection banner** (top right: "Foreman · sim" / "Reconnecting to the Foreman" / "Foreman not running"; a
-  loud paper banner at the top centre when claude auth failed).
-- **Goal bar** (`GoalBar`): the open goals ranked by urgency (decisions + blocked tasks), an urgent one pinned, the
-  others taking turns every 8 s, "+N more"; task counts per goal; the decisions badge (`J`) under it.
-- **Alert line** (W5): one compact row under the goal bar while anything needs the player: "2 decisions · 1
+- **Connection banner** (top right under the effect icons: "Foreman · sim" / "Reconnecting to the Foreman" /
+  "Foreman not running"; a loud paper banner at the top centre when claude auth failed).
+- **Overlay styles** (`HudOverlay`, hub Settings > General > HUD, `hud.json`; mod/DEV.md "HUD overlay styles"): Off,
+  **Pill** (default: one compact line, mini bar, "40%", non-zero counts; clay "2 decisions [J]" when something needs
+  the player; hidden when idle), **Pill+** (goal dots, title and %, working agents, usage or hold, the next decision),
+  **Panel** (the goal bar, badge and alert line below). Position top right (default, under the effect icons and the
+  pill), top left (minimap offset), bottom left (above the chat), bottom right, right middle; size S/M/L in whole
+  pixels; peek on change (task done, PR merged, new decision, goal done: 5 s); auto-hide when idle; optional hide in
+  combat; never over boss bars, effect icons, the hotbar and status rows or the chat lines on screen (pure
+  `hud.HudLayout`, `HudLayoutTest`; falls back to top right, else hides); F1 hides everything; cycle key (unbound).
+- **Goal bar** (`GoalBar`, the Panel style): the open goals ranked by urgency (decisions + blocked tasks), an urgent one
+  pinned, the others taking turns every 8 s, "+N more"; task counts per goal; the decisions badge (`J`) under it.
+- **Alert line** (W5): one compact row under the goal bar (Panel; the Pills carry the same parts) while anything needs the player: "2 decisions · 1
   blocked · 3 replies · 1 PR · usage paused until 14:20" (each part only when non-zero, full / short / dots widths
   by `AlertLine.fit`) and the hub key. Counts = the Inbox's Needs you (`Alerts`, source `Inbox.counts()`); hidden
   with F1, dimmed while the Foreman is stale.
-- **Toasts** (`Toasts`): `notify` and need-you events with a key hint (`J answer`, `H open hub`). Stacking (wave 3,
+- **Toasts** (`Toasts`): `notify` (need-you only by default, or all: the HUD setting) and need-you events with a key
+  hint (`J answer`, `H open hub`), stacked beside the overlay (under it, or above it at the bottom). Stacking (wave 3,
   pure `hud.ToastStack`, `ToastStackTest`): need-you toasts first, three at most; what does not fit (or a fourth) waits
   and counts on one "+N more" line (clay "· 1 needs you" when a need-you toast waits), its time starting when it shows;
   info toasts never evict or hide a need-you toast (the queue of 8 drops its oldest info toast first; after a need-you
@@ -461,7 +470,8 @@ hard-code colours; ask `UiStyle`. Sprites are 1 texel = 1 GUI px (GUI scale 3 at
   the H / J / console keys (live bindings), "Place your first building: H > Buildings > Place new"; dismissed
   for good per world (`AGENTCRAFT_WELCOME=0` for scripted QA). **Keys & help** (Status tab, `HelpContent`): every
   AgentCraft key, every in-world interaction, "Show the welcome card".
-- DevBridge: `dev.hud.state`, `dev.onboarding`; mod/DEV.md "HUD check-in (wave 2)".
+- DevBridge: `dev.hud.state`, `dev.hud.set`, `dev.hud.peek`, `dev.onboarding`; mod/DEV.md "HUD check-in (wave 2)" and
+  "HUD overlay styles".
 
 ## Hub (`client.hub`, key `H`, console `/hub [tab]`)
 
