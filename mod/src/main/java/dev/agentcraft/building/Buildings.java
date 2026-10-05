@@ -768,7 +768,9 @@ public final class Buildings {
 	/**
 	 * What a removal would destroy that the building did not bring: block entities at positions where the template
 	 * has none (a chest, furnace, bed or barrel the player placed), template containers / lecterns the player filled,
-	 * dropped items (not the trophy signs the mod hung at the building's trophy slots, {@link Trophies}), item frames, paintings, armor stands and other non-living entities in the box. Server thread.
+	 * dropped items (not the trophy signs the mod hung at the building's trophy slots, {@link Trophies}; not natural drops,
+	 * {@link NaturalDrops}: what decaying leaves and cleared plants dropped is nobody's), item frames, paintings, armor stands
+	 * and other non-living entities in the box. Server thread.
 	 */
 	public static List<String> removalBlockers(ServerLevel level, Building b) {
 		List<String> out = new ArrayList<>();
@@ -804,7 +806,9 @@ public final class Buildings {
 			if (f.kind() == Occupancy.Kind.ITEM && !(e instanceof ItemEntity)) {
 				out.add(f.name() + " at " + e.blockPosition().toShortString()); // a trident or an arrow that can be picked up: named
 			} else if (f.kind() == Occupancy.Kind.ITEM) {
-				dropped++;
+				if (!(e instanceof ItemEntity item && NaturalDrops.natural(item))) {
+					dropped++; // saplings, sticks, apples, seeds and flowers the trees and plants dropped are nobody's
+				}
 			} else if (!f.removable()) {
 				out.add(f.name() + " at " + e.blockPosition().toShortString()); // pets, villagers, item frames, armor stands...
 			}
