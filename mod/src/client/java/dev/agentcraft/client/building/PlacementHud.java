@@ -53,6 +53,9 @@ final class PlacementHud implements HudElement {
 				+ (v.bp().isFixture() ? "" : "  for " + String.join(", ", BuildPlacement.repos()));
 			String rot = BlueprintTransform.rotationName(v.turns()).replace('_', ' ') + " · entrance " + v.front() + (v.locked() ? " · locked" : "");
 			lines.add(new Line(TextUtil.ellipsize(font, title, inner - font.width(rot) - 8), cream, rot, soft));
+			if (BuildPlacement.tooFar()) {
+				lines.add(new Line(TextUtil.ellipsize(font, BuildPlacement.TOO_FAR, inner), ORANGE, null, 0));
+			}
 			String verdict;
 			int vc;
 			if (v.pending()) {

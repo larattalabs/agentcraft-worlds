@@ -63,6 +63,8 @@ public final class BuildPlacement {
 	}
 
 	static final int REACH = 64;
+	/** The HUD note while {@link #tooFar()}. */
+	static final String TOO_FAR = "Too far: aim within " + REACH + " blocks (the ghost stays at the last spot in reach)";
 	/** How far below the looked-at spot the ground is searched for (a ray that hits a wall lands on the floor below). */
 	private static final int GROUND_SEARCH = 24;
 	/** Conflict cells kept for drawing (the counts are always exact). */
@@ -137,6 +139,13 @@ public final class BuildPlacement {
 	private static boolean statusError;
 	private static @Nullable Result lastResult;
 	private static @Nullable CompletableFuture<Result> inFlight;
+	/**
+	 * The last spot the look ray hit in this placement session ({@link #spot}), or null: looking further than
+	 * {@value #REACH} blocks (or at the sky) keeps the ghost there instead of jumping to the player's feet.
+	 */
+	private static int @Nullable [] lastAim;
+	/** The last {@link #spot} found nothing in reach and kept {@link #lastAim}: the HUD says "too far". */
+	private static boolean tooFar;
 
 	private BuildPlacement() {
 	}
@@ -243,6 +252,8 @@ public final class BuildPlacement {
 		scanned = null;
 		pending = false;
 		forceArmed = false;
+		lastAim = null;
+		tooFar = false;
 	}
 
 	// ------------------------------------------------------------------ input (keys and DevBridge share these)
@@ -434,9 +445,36 @@ public final class BuildPlacement {
 
 	/**
 	 * Where the player points: {x, surfaceY, z, gap, facingIndex}. The looked-at block's open
-	 * neighbour, dropped to the ground below it; nothing in reach = the feet, {@code GAP} ahead.
+	 * neighbour, dropped to the ground below it. Nothing in reach ({@value #REACH} blocks, or the sky): the last spot
+	 * that was in reach in this placement session, with {@link #tooFar()} set (the ghost stays put instead of snapping
+	 * to the feet); before any spot was in reach, the feet, {@code GAP} ahead.
 	 */
 	static int[] spot(Minecraft mc, Player p) {
+		int[] s = aim(mc, p);
+		if (s != null) {
+			lastAim = s;
+			tooFar = false;
+			return s;
+		}
+		if (lastAim != null) {
+			tooFar = true;
+			return lastAim;
+		}
+		tooFar = false;
+		BlockPos feet = p.blockPosition();
+		return new int[] {feet.getX(), feet.getY(), feet.getZ(), BuildingCommands.GAP, BlueprintTransform.directionIndex(horizontalFacing(p).getName())};
+	}
+
+	/**
+	 * Whether the ghost stays at the last spot in reach because the player looks further than {@value #REACH} blocks (or
+	 * at the sky). False while locked or at an explicit origin (the look does not move the ghost then).
+	 */
+	static boolean tooFar() {
+		return active && tooFar && !locked && explicitOrigin == null;
+	}
+
+	/** The looked-at spot as {@link #spot} returns it, or null when nothing is in reach. */
+	private static int @Nullable [] aim(Minecraft mc, Player p) {
 		Direction facing = horizontalFacing(p);
 		int fi = BlueprintTransform.directionIndex(facing.getName());
 		HitResult hr = p.pick(REACH, 1f, true); // fluids too: aiming at a lake lands on its surface, not its bed
@@ -455,8 +493,7 @@ public final class BuildPlacement {
 			}
 			return new int[] {open.getX(), m.getY() + 1, open.getZ(), 0, fi};
 		}
-		BlockPos feet = p.blockPosition();
-		return new int[] {feet.getX(), feet.getY(), feet.getZ(), BuildingCommands.GAP, fi};
+		return null;
 	}
 
 	private static void update(Minecraft mc, boolean force) {
@@ -779,6 +816,7 @@ public final class BuildPlacement {
 		o.addProperty("locked", v.locked());
 		o.addProperty("pending", v.pending());
 		o.addProperty("forceArmed", v.forceArmed());
+		o.addProperty("tooFar", tooFar());
 		JsonObject c = new JsonObject();
 		c.addProperty("obstructed", v.obstructedCount());
 		c.addProperty("blockEntities", v.blockedCount());
