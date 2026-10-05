@@ -503,7 +503,7 @@ public final class Buildings {
 		TerrainFit.Plan plan = TerrainFit.plan(model, box.minX(), box.minY(), box.minZ(), world);
 		Approach.Plan approach = Approach.forBlueprint(bp, turns, box, world);
 		SiteWarnings.Result site = SiteWarnings.forBlueprint(bp, turns, box, approach, world);
-		Anchors.Bounds snapBox = snapshotBox(box, plan, approach);
+		Anchors.Bounds snapBox = snapshotBox(box, plan, approach, level.getMinY());
 		if (dryRun && (unloaded[0] || !loaded(level, snapBox))) {
 			out.add("the site is not loaded on the server (walk closer)");
 			return null;
@@ -887,11 +887,15 @@ public final class Buildings {
 
 	/**
 	 * The box a placement snapshots and restores: the template's box, grown down to the lowest foundation cell and out
-	 * over the entrance approach (docs/BUILDINGS.md "Entrance approach").
+	 * over the entrance approach (docs/BUILDINGS.md "Entrance approach"), plus one row below the lowest written cell: the
+	 * ground under the floor and the foundation changes while the site stands (grass under a solid block turns to dirt),
+	 * and Remove puts that back too. The extra row is left out where it would be below {@code worldMinY} (the level's
+	 * floor); a lower written cell still leaves the build height and is refused.
 	 */
-	public static Anchors.Bounds snapshotBox(Anchors.Bounds box, TerrainFit.Plan plan, Approach.Plan approach) {
+	public static Anchors.Bounds snapshotBox(Anchors.Bounds box, TerrainFit.Plan plan, Approach.Plan approach, int worldMinY) {
 		Anchors.Bounds u = approach.union(box);
-		return new Anchors.Bounds(u.minX(), Math.min(u.minY(), plan.minY()), u.minZ(), u.maxX(), u.maxY(), u.maxZ());
+		int lowest = Math.min(u.minY(), plan.minY());
+		return new Anchors.Bounds(u.minX(), lowest - 1 >= worldMinY ? lowest - 1 : lowest, u.minZ(), u.maxX(), u.maxY(), u.maxZ());
 	}
 
 	/** Builds the entrance approach: clears, fills with the foundation, lays the path and the half-step slabs. */

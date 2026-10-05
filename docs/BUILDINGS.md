@@ -249,7 +249,9 @@ lava amber.
   hills the porch kept turf at head height and agents could not leave the door; `natural()` now uses
   `#substrate_overworld`.)
 - The snapshot box extends down to the lowest foundation cell and out over the entrance approach
-  (`snapshotBox`), so Remove restores all of it.
+  (`snapshotBox`), so Remove restores all of it, and one row further down (since 2026-10-05): the ground under the
+  floor and the foundation changes while the site stands (grass under a solid block turns to dirt) and Remove puts
+  that back too. At the level's floor the extra row is left out. Buildings placed before keep their recorded box.
 - The wizard puts the ground row on the **median surface** of the footprint's columns (motion-blocking,
   fluids count, leaves do not; columns more than 12 blocks from the looked-at spot are ignored), not on the
   looked-at spot; PgUp/PgDn still raise and lower it.

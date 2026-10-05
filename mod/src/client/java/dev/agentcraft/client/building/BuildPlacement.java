@@ -671,8 +671,8 @@ public final class BuildPlacement {
 		TerrainFit.Plan plan = TerrainFit.plan(m, ox, oy, oz, world);
 		Anchors.Bounds box = new Anchors.Bounds(ox, oy, oz, ox + sx - 1, oy + sy - 1, oz + sz - 1);
 		Approach.Plan approach = Approach.forBlueprint(b, turns, box, world);
-		// the box place() snapshots and checks: the template's, the foundation below it, the entrance approach
-		Anchors.Bounds snapBox = Buildings.snapshotBox(box, plan, approach);
+		// the box place() snapshots and checks: the template's, the foundation below it (and one row more), the entrance approach
+		Anchors.Bounds snapBox = Buildings.snapshotBox(box, plan, approach, lv.getMinY());
 		int qx = snapBox.maxX() - snapBox.minX() + 1;
 		int qy = snapBox.maxY() - snapBox.minY() + 1;
 		int qz = snapBox.maxZ() - snapBox.minZ() + 1;
