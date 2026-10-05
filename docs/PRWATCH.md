@@ -87,7 +87,7 @@ policies. Agents never push or call the PR host; only the Foreman does, after an
 ### As implemented (branch foreman/pr-watch)
 
 Code: `foreman/src/prwatch.ts` (watcher, triage, decisions), `prs.ts` (host adapters),
-`prreview.ts` (review parser), the `triage` job and fold-ins in `agents/claude/index.ts`, follow-up
+`prreview.ts` (review parser), the `triage` job and fold-ins in `agents/claude/jobs/followup.ts`, follow-up
 landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-followup.test.ts`,
 `pr-watch.test.ts` (fake host runner; nothing reaches a host).
 
