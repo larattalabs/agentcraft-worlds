@@ -23,8 +23,8 @@
 > building per repository, placed wherever you like in any singleplayer world (Hardcore included),
 > each with its own lead, and an in-game **hub** that replaces chat commands, config files and launch
 > flags. Everything upstream does still works. Its mod id is `agentcraft_worlds` (blocks are
-> `agentcraft_worlds:<name>`), so it does not collide with upstream's `agentcraft`; worlds and blueprints
-> made with the old id still load. [What the fork adds](#what-this-fork-adds) ·
+> `agentcraft_worlds:<name>`), not upstream's `agentcraft` (install one or the other, not both); worlds and
+> blueprints made with the old id still load. [What the fork adds](#what-this-fork-adds) ·
 > [fork notes](docs/FORK.md)
 
 Multi-agent coding usually means a wall of terminal text. AgentCraft turns it into a place.

@@ -41,8 +41,9 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 ## Mod id
 
 2026-10-05: the Fabric mod id and resource namespace changed from `agentcraft` to `agentcraft_worlds`, so
-this fork can be published (and installed next to upstream) without colliding with upstream's
-`agentcraft` mod. Renamed: `fabric.mod.json` `id`, `AgentCraft.MOD_ID` (so every `AgentCraft.id(..)`:
+this fork is published under its own mod id instead of upstream's `agentcraft`. Installing both mods at once
+is still not supported: they share the `dev.agentcraft.*` classes (mixin packages included), the
+`/agentcraft` command root and the `<gameDir>/agentcraft/` folder. Renamed: `fabric.mod.json` `id`, `AgentCraft.MOD_ID` (so every `AgentCraft.id(..)`:
 blocks, items, block entity types, the agent entity `agentcraft_worlds:agent`, the creative tab, the key
 category, textures, GUI sprites), `assets/` + `data/` namespaces (bundled structures:
 `/place template agentcraft_worlds:<id>`), lang keys (`block.`/`item.agentcraft_worlds.*`,
@@ -64,11 +65,13 @@ Foreman commit-message prefixes `agentcraft: <task>`.
 Backward compatibility:
 - Old worlds: `LegacyAliases` registers Fabric API registry aliases `agentcraft:<x>` -> `agentcraft_worlds:<x>`
   for every block, item, block entity type, entity type and creative tab, so blocks, block entities, agents
-  and items saved before the rename load as the new ids. Skipped (with a log line) when upstream's
-  `agentcraft` mod is installed as well: then those ids are upstream's. Checked in the dev client (44 aliases
-  logged; `setblock ... agentcraft:monitor` places `agentcraft_worlds:monitor`, `give @s agentcraft:status_lamp`
-  gives the Status Lamp, `summon agentcraft:agent` resolves to `agentcraft_worlds:agent`), not yet by opening a
-  world saved with the old id.
+  and items saved before the rename load as the new ids (44: 17 blocks, 17 items, 8 block entity types, the
+  agent, the creative tab). Defensively skipped (with a log line) if a mod `agentcraft` is loaded too, which is
+  not a supported setup (above). Checked in the dev client: a copy of a dev "AgentCraft HQ" world saved with
+  the old id opened without prompts, its studio monitors load as `agentcraft_worlds:monitor` with their block
+  entity data (bindings) intact, no unknown block/entity lines in the log; Minecraft logs "Missing data pack
+  agentcraft" once and enables the new `agentcraft_worlds` pack itself (bundled blueprints load). Commands with
+  old ids resolve too (`setblock ... agentcraft:monitor`, `give @s agentcraft:status_lamp`).
 - `LegacyIds` remaps `agentcraft:<x>` when reading user/generated blueprints (`<gameDir>/agentcraft/blueprints`:
   template palettes, block entity and entity ids; sidecar `foundationBlock` and approach `block`/`slab`), world
   journal entries (before/after states and block entity NBT, also the pre-journal migration files) and the HQ
