@@ -313,12 +313,35 @@ left beside the box decay over the next minutes and drop into it), unless a play
 They are nobody's items: they never block Remove or a Move's old site and are not listed or counted. Placement occupancy
 is unchanged (dropped items in a box about to be built still refuse: "pick them up first").
 
+### Held leaves
+
+Placing a site clears the logs inside its box; leaves outside it that hung on those logs then decayed, and Remove
+(which restores the box) could not bring them back. Since 2026-10-05 (`building.LeafGuard`, ported from Architect,
+`LeafGuardTest`) placement first makes those leaves **persistent** and records them as a journal entry of their own:
+kind `leaves`, policy CELL, owned by the building, each cell's `before` the natural leaf with its `distance` and its
+`after` the same leaf persistent.
+- **Which**: non-persistent leaves within 6 of the snapshot box with `distance` below 7 whose Manhattan distance to the
+  box is at most their `distance` (only those can hang on a log inside it); not cells inside a standing site's box (they
+  are that site's), not in unloaded chunks. Read before the box changes.
+- **Quiet**: holding and releasing a leaf never notifies neighbours (`UPDATE_KNOWN_SHAPE`; `WorldJournal.apply` writes
+  `leaves` cells that way): world generation leaves many leaf distances stale, and a recompute would change cells nobody
+  recorded.
+- **Remove / Move** undo the hold with the site's entry and its trophies (one group, so crash safety settles it with
+  the site): the box first (the logs come back), then each held leaf that is still a persistent leaf of the same block
+  gets its natural state and recorded `distance` back. Vanilla recomputes a persistent leaf's distance too, so the undo
+  compares only block and `persistent` (`LeafGuard.stillHeld`); a leaf the player broke or replaced is left.
+- **Overlaps**: a later site whose box takes in a held leaf records the persistent leaf as its `before`; the journal's
+  hand-down gives it the natural leaf when the holder goes first, and when the later site goes first the holder still
+  holds it. After a Remove or Move, the sites standing near the restored box **hold again** (a new `leaves` entry each)
+  what now hangs on them: restored leaves whose logs a standing site cleared, leaves the removed site held.
+- **Forget** releases the hold with the site's entry: the building stays, so its held leaves stay persistent.
+
 ### Crash safety
 
 Removing a building (or moving it away) restores its site at once, but the restored chunks only reach the disk
 with some later save, and a save does not promise it: an autosave or a pause save (singleplayer saves every time
 the game pauses: the Esc menu, any AgentCraft screen) skips chunks saved in the last few seconds and does not
-wait for the writes. So the site's journal entry is kept undone (with its trophies' entries, one group), and the site
+wait for the writes. So the site's journal entry is kept undone (with its trophies' and held leaves' entries, one group), and the site
 recorded under `pending` in `agentcraft-buildings.json` (`snapshot` names the entry, `j<n>`; an imported pending site
 keeps its old file name, which the journal's `legacy` map resolves), until the **next world start**, which settles each
 pending site on evidence (`Reconcile.decide`, unit-tested), never on a count of saves:
@@ -479,7 +502,7 @@ verdict's notes; `dev.build.state.conflicts.site {water, lava, drops, maxDrop, o
 
 Every AgentCraft world change is an entry of one per-world journal, `<world>/agentcraft-journal/` (package
 `dev.agentcraft.journal`, wave 3): buildings and fixtures (their whole site: template box, foundation and entrance
-approach), roads, trophy signs, anything later. An entry is `{id: "j<n>", kind, owner, dimension, policy, createdAt,
+approach), roads, trophy signs, the leaves a site holds ("Held leaves"), anything later. An entry is `{id: "j<n>", kind, owner, dimension, policy, createdAt,
 status, cells: [{pos, layer, before, after}], meta}`: `owner` is the record it belongs to (`b3`, `r2`; a trophy's is its
 building), `before`/`after` a block state with its block entity data, `meta` the owner's record when it was made (crash
 repair rebuilds a lost record from it).

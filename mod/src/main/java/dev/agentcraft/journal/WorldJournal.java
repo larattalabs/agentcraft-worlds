@@ -33,6 +33,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -55,6 +56,12 @@ import org.jspecify.annotations.Nullable;
  * ({@link #unavailable}) and nothing on disk is touched. Server thread, except the read-only views.
  */
 public final class WorldJournal {
+	/**
+	 * The kind of a building's held leaves ({@code building.LeafGuard}): leaves outside a site made persistent while it
+	 * stands. {@link #apply} writes their cells without shape updates, so neighbouring leaves keep their {@code distance}.
+	 */
+	public static final String LEAVES = "leaves";
+
 	private static volatile @Nullable JournalStore store;
 	private static volatile @Nullable String unavailable;
 	private static volatile @Nullable Path world;
@@ -322,8 +329,8 @@ public final class WorldJournal {
 
 	/**
 	 * Writes an undo's blocks: a BOX writer's through a structure template over its entry's box ({@code boxFlags}, the
-	 * buildings' restore exactly), the CELL writers' cell by cell, lowest first ({@code cellFlags}), their block entity data
-	 * loaded after. Server thread.
+	 * buildings' restore exactly), then the CELL writers' cell by cell, lowest first ({@code cellFlags}; {@link #LEAVES}
+	 * cells without shape updates), their block entity data loaded after. Server thread.
 	 */
 	public static void apply(ServerLevel level, Journal.UndoPlan plan, int boxFlags, int cellFlags) {
 		Map<String, Map<Long, Value>> boxes = new LinkedHashMap<>();
@@ -348,7 +355,9 @@ public final class WorldJournal {
 		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
 		for (Journal.Write w : cells) {
 			m.set(Journal.x(w.pos()), Journal.y(w.pos()), Journal.z(w.pos()));
-			level.setBlock(m, state(level, w.value()), cellFlags);
+			Entry by = plan.updated().get(w.by());
+			int flags = by != null && LEAVES.equals(by.kind()) ? cellFlags | Block.UPDATE_KNOWN_SHAPE : cellFlags;
+			level.setBlock(m, state(level, w.value()), flags);
 			if (w.value().nbt() != null) {
 				BlockEntity be = level.getBlockEntity(m);
 				if (be != null) {
