@@ -8,11 +8,13 @@
 // command?, args?, url?, envKeys }]`; config.set takes the same entries (env in the S1 partial form,
 // under `env`) and `{ name, remove: true }`, each an upsert of that one server.
 //
-// Nothing secret leaves through here: env values are never shown; an argument in a credential
-// position (after --token, --api-key=..., KEY=... with a secret-looking name, a token-shaped word)
-// is shown as "(hidden)"; a URL is shown without credentials or query. When an entry comes back
-// with the hidden or shortened form in the same place, the stored original is kept, so editing a
-// server in the hub never loses what the hub could not show. Error messages name keys, never values.
+// Nothing secret leaves through here: env values are never shown; an argument is shown only when it
+// clearly holds nothing secret (a bare flag, a number, a path, a package or file name, a URL without
+// credentials or query) and is not the value of a credential flag (--token, -H/--header, --key, --pat,
+// ...); everything else (headers, "Bearer ...", token-shaped words, KEY=value with an unsafe value)
+// is shown as "(hidden)". When an entry comes back with the hidden or shortened form in the same
+// place, the stored original is kept, so editing a server in the hub never loses what the hub could
+// not show; one that moved is refused. Error messages name keys, never values.
 import { createHash } from 'node:crypto';
 import { RESERVED_KEYS } from './config.js';
 import { isSecretEnvVar } from './util/env.js';
@@ -123,18 +125,38 @@ function shortUrl(u: string): string | undefined {
   }
 }
 
-/** One argument as config.get shows it (`prev`: the argument before it). */
-function maskArg(a: string, prev: string | undefined): string {
-  if (prev && /^--?[\w-]+$/.test(prev) && SECRET_WORD.test(prev) && !a.startsWith('-')) return HIDDEN;
-  const eq = /^(--?[\w-]+|[A-Za-z_][A-Za-z0-9_]*)=(.+)$/.exec(a);
-  if (eq && SECRET_WORD.test(eq[1]!)) return `${eq[1]}=${HIDDEN}`;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(a)) {
+/** Flags whose next argument is a value that may be a credential (a header, a key, a user:password). */
+const VALUE_FLAG = /^(-H|-u|-e|--?(env|user|cookie|header|headers)|--?[\w-]*(key|keys|pat|pats|pass))$/i;
+/** Words shown as they are: bare flags, numbers, paths and package / file names (no ':', '=', spaces, quotes, ...). */
+const SAFE_WORD = /^(--?[A-Za-z][\w-]*|-?\d+(\.\d+)?|(~|\.{1,2})?\/[\w@%+.~/-]*|@?[\w.-]+(\/[\w.-]+)*(@[\w.^~*-]+)?)$/;
+/** A long run of letters and digits mixed (no separator): likely a key, not a name. */
+const keyish = (w: string) => w.length >= 16 && /\d/.test(w) && /[A-Za-z]/.test(w);
+
+/** A value shown as it is only when it clearly holds nothing secret; a URL loses credentials and query. */
+function maskValue(a: string): string {
+  if (/\b(bearer|basic|token)\s+\S/i.test(a)) return HIDDEN;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(a) && !/\s/.test(a)) {
     const s = shortUrl(a);
-    if (s !== undefined && s !== a && s !== `${a}/`) return s;
-    return a;
+    if (s === undefined) return HIDDEN;
+    return s !== a && s !== `${a}/` ? s : a;
   }
-  if (TOKEN_SHAPE.test(a) && !a.includes('/')) return HIDDEN;
-  return a;
+  if (a === '' || (SAFE_WORD.test(a) && a.length <= 200 && !(TOKEN_SHAPE.test(a) && !a.includes('/')) && !a.split(/[/@.-]/).some(keyish))) return a;
+  return HIDDEN;
+}
+
+/**
+ * One argument as config.get shows it (`prev`: the argument before it). Hidden unless it clearly holds
+ * nothing secret: the value after a credential flag (--token, -H, --header, --key, --pat, ...), a
+ * header ("Authorization: Bearer ..."), anything not shaped like a flag, number, path or name.
+ */
+function maskArg(a: string, prev: string | undefined): string {
+  if (prev && /^--?[\w-]+$/.test(prev) && (SECRET_WORD.test(prev) || VALUE_FLAG.test(prev)) && !/^--?[A-Za-z][\w-]*$/.test(a)) return HIDDEN;
+  const eq = /^(--?[\w-]+|[A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(a);
+  if (eq) {
+    if (SECRET_WORD.test(eq[1]!) || VALUE_FLAG.test(eq[1]!)) return `${eq[1]}=${HIDDEN}`;
+    return `${eq[1]}=${maskValue(eq[2]!)}`;
+  }
+  return maskValue(a);
 }
 
 function maskArgs(args: string[]): string[] {
@@ -301,9 +323,9 @@ export function mergeMcpServers(current: unknown, entries: Entry[]): Checked {
       if (before?.type === 'stdio') next.type = 'stdio';
       next.command = e.command;
       if (e.args) {
-        const args = restoreArgs(e.args, Array.isArray(before?.args) ? (before.args as unknown[]).filter((a): a is string => typeof a === 'string') : []);
-        // a hidden argument that moved (one inserted or removed before it) cannot be restored: never written as "(hidden)"
-        const lost = args.map((a, i) => (a === HIDDEN || a.endsWith(`=${HIDDEN}`) ? i + 1 : 0)).filter(Boolean);
+        const { args, lost } = restoreArgs(e.args, Array.isArray(before?.args) ? (before.args as unknown[]).filter((a): a is string => typeof a === 'string') : []);
+        // a hidden or shortened argument that moved (one inserted or removed before it) cannot be
+        // restored: never written as "(hidden)" or without the part config.get left out
         if (lost.length) {
           problems.push(`${e.name}: argument${lost.length > 1 ? 's' : ''} ${lost.join(', ')} ${lost.length > 1 ? 'are' : 'is'} hidden and moved; enter ${lost.length > 1 ? 'them' : 'it'} again`);
           continue;
@@ -326,8 +348,19 @@ export function mergeMcpServers(current: unknown, entries: Entry[]): Checked {
   return { value: Object.keys(out).length ? out : undefined };
 }
 
-/** Arguments as sent, with every hidden one that matches the stored argument's view in the same place restored. */
-function restoreArgs(sent: string[], stored: string[]): string[] {
+/**
+ * Arguments as sent, with every hidden or shortened one that matches the stored argument's view in the
+ * same place restored. `lost`: 1-based places of the ones that could not be restored (a "(hidden)"
+ * value, or another stored argument's shortened view sent somewhere else).
+ */
+function restoreArgs(sent: string[], stored: string[]): { args: string[]; lost: number[] } {
   const view = maskArgs(stored);
-  return sent.map((a, i) => (i < stored.length && a === view[i] && view[i] !== stored[i] ? stored[i]! : a));
+  const masked = new Set(view.filter((v, j) => v !== stored[j]));
+  const lost: number[] = [];
+  const args = sent.map((a, i) => {
+    if (i < stored.length && a === view[i] && view[i] !== stored[i]) return stored[i]!;
+    if (a === HIDDEN || a.endsWith(`=${HIDDEN}`) || (masked.has(a) && a !== stored[i])) lost.push(i + 1);
+    return a;
+  });
+  return { args, lost };
 }

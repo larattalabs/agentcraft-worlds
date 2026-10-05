@@ -420,8 +420,8 @@ export const SettingType = z
   .describe(
     'How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only name -> text), ' +
       'secretMap (a repository\'s `env`: value `{ NAME: "(set)" }`, names only, never values; config.set takes a partial update `{ NAME: "value" | null }`, null removes that variable), ' +
-      'mcpServers (`claude.context.mcpServers`: value `[{ name, type: "stdio"|"http"|"sse", command?, args?, url?, envKeys }]`; arguments in a credential position show as "(hidden)", URLs without credentials or query; ' +
-      'config.set takes `[{ name, type, command?, args?, url?, env?: { NAME: "value" | null } } | { name, remove: true }]`, each an upsert or removal of that one server, the others unchanged; an argument or URL sent back exactly as shown keeps the stored original)',
+      'mcpServers (`claude.context.mcpServers`: value `[{ name, type: "stdio"|"http"|"sse", command?, args?, url?, envKeys }]`; an argument shows as "(hidden)" unless it clearly holds nothing secret (a bare flag, number, path or name, not after a credential flag such as --token, -H/--header, --key or --pat), URLs without credentials or query; ' +
+      'config.set takes `[{ name, type, command?, args?, url?, env?: { NAME: "value" | null } } | { name, remove: true }]`, each an upsert or removal of that one server, the others unchanged; an argument or URL sent back exactly as shown keeps the stored original; a hidden or shortened one sent back in another place is refused)',
   );
 export const SettingSource = z.enum(['file', 'flag', 'env', 'default']).describe('where the value comes from: config.json, a command-line flag, an AGENTCRAFT_* environment variable, or the built-in default');
 

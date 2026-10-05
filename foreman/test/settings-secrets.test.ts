@@ -240,4 +240,88 @@ describe('S2 MCP servers', () => {
     expect(h.fm.status.restartRequired).toBeUndefined();
     await expectNoSecrets(h, [...all, 'bad-secret-1', 'bad-secret-2', 'bad-secret-3', 'bad-secret-4', 'bad-secret-5', 'bad-secret-6']);
   });
+  it('hides header, Bearer, --key / --pat and name=URL arguments; shows only what clearly holds no secret', async () => {
+    const remote = {
+      command: 'npx',
+      args: [
+        'mcp-remote',
+        'https://mcp.example.com/sse',
+        '--header',
+        'Authorization: Bearer hdr-arg-secret-11',
+        '-H',
+        'X-API-Key: hdr-arg-secret-12',
+        '--key',
+        'key-arg-secret-13',
+        '--pat',
+        'pat-arg-secret-14',
+        'Authorization: Bearer hdr-arg-secret-15',
+        '--header=X-Token: hdr-arg-secret-16',
+        '--db=postgres://u:url-arg-secret-17@db.example.com/x',
+        'token tok-arg-secret-18',
+        '--config={"key":"json-arg-secret-19"}',
+        '-u',
+        'sam:pw-arg-secret-20',
+        '@scope/server-notes@1.2.3',
+        '/srv/pocket-notes',
+        '--port',
+        '8080',
+      ],
+    };
+    const h = setup({ claude: { context: { mcpServers: { remote } } } });
+    const got = await call(h, { type: 'config.get' });
+    const shown = def(got, 'claude.context.mcpServers').value as Array<Record<string, unknown>>;
+    expect(shown[0]!.args).toEqual([
+      'mcp-remote',
+      'https://mcp.example.com/sse',
+      '--header',
+      '(hidden)',
+      '-H',
+      '(hidden)',
+      '--key',
+      '(hidden)',
+      '--pat',
+      '(hidden)',
+      '(hidden)',
+      '--header=(hidden)',
+      '--db=postgres://db.example.com/x',
+      '(hidden)',
+      '--config=(hidden)',
+      '-u',
+      '(hidden)',
+      '@scope/server-notes@1.2.3',
+      '/srv/pocket-notes',
+      '--port',
+      '8080',
+    ]);
+    // sent back as shown: every original kept
+    const same = await call(h, { type: 'config.set', changes: [{ key: 'claude.context.mcpServers', value: [shown[0]] }] });
+    expect(same.ok, same.error).toBe(true);
+    expect(readFile(h.file).claude.context.mcpServers.remote).toEqual(remote);
+    // a new server with the same kinds of arguments: the ack and the broadcast carry none of them
+    const add = await call(h, {
+      type: 'config.set',
+      changes: [{ key: 'claude.context.mcpServers', value: [{ name: 'other', type: 'stdio', command: 'npx', args: ['mcp-remote', '--header', 'Authorization: Bearer new-arg-secret-21', '--key', 'new-arg-secret-22', '--pat', 'new-arg-secret-23', 'X-API-Key: new-arg-secret-24'] }] }],
+    });
+    expect(add.ok, add.error).toBe(true);
+    const again = await call(h, { type: 'config.get' });
+    expect((def(again, 'claude.context.mcpServers').value as Array<Record<string, unknown>>)[1]!.args).toEqual(['mcp-remote', '--header', '(hidden)', '--key', '(hidden)', '--pat', '(hidden)', '(hidden)']);
+    await expectNoSecrets(h, [11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => `arg-secret-${n}`).concat(['new-arg-secret-21', 'new-arg-secret-22', 'new-arg-secret-23', 'new-arg-secret-24']));
+  });
+
+  it('refuses a shortened URL argument that moved instead of writing it without its credentials', async () => {
+    const pg = { command: 'npx', args: ['-y', 'postgres://user:pg-secret-1@db.example.com/x'] };
+    const h = setup({ claude: { context: { mcpServers: { pg } } } });
+    const before = fs.readFileSync(h.file, 'utf8');
+    const got = await call(h, { type: 'config.get' });
+    expect((def(got, 'claude.context.mcpServers').value as Array<Record<string, unknown>>)[0]!.args).toEqual(['-y', 'postgres://db.example.com/x']);
+    const moved = await call(h, { type: 'config.set', changes: [{ key: 'claude.context.mcpServers', value: [{ name: 'pg', type: 'stdio', command: 'npx', args: ['postgres://db.example.com/x'] }] }] });
+    expect(moved.ok).toBe(false);
+    expect(moved.error).toContain('pg: argument 1 is hidden and moved; enter it again');
+    expect(fs.readFileSync(h.file, 'utf8')).toBe(before);
+    // in the same place: kept with its password
+    const kept = await call(h, { type: 'config.set', changes: [{ key: 'claude.context.mcpServers', value: [{ name: 'pg', type: 'stdio', command: 'npx', args: ['-y', 'postgres://db.example.com/x', '--ro'] }] }] });
+    expect(kept.ok, kept.error).toBe(true);
+    expect(readFile(h.file).claude.context.mcpServers.pg.args).toEqual(['-y', 'postgres://user:pg-secret-1@db.example.com/x', '--ro']);
+    await expectNoSecrets(h, ['pg-secret-1']);
+  });
 });
