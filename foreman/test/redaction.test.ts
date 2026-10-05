@@ -312,3 +312,51 @@ describe('text stored before a secret was known (snapshot, agent.logs.request, g
     expectAbsent(c.raw.join('\n'), [secret]);
   });
 });
+
+describe('structured text (task blockedReason, agent messages, memory notes) is stored and sent without a known secret', () => {
+  it('an exception quoting a secret becomes a blockedReason without it; an agent message quoting one is stored and sent without it', async () => {
+    const home = tempDir();
+    const repoPath = await demoRepo();
+    dirs.push(home, path.dirname(repoPath));
+    const secret = 'sk-live-structured-secret-0077';
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ repoSettings: { [repoPath]: { env: { API_KEY: secret } } } }));
+    const { logs, logger } = capture();
+    const fm = new Foreman({ config: testConfig(home, ['--backend', 'claude', '--repo', repoPath, '--workers', 'kit', '--no-lead-review']), logger, notifier: new Notifier({ enabled: false, bell: false }) });
+    foremen.push(fm);
+    const out: Outbound[] = [];
+    fm.subscribe((x) => out.push(x));
+    type ToolServer = { instance: { _registeredTools: Record<string, { handler: (a: unknown, e: unknown) => Promise<unknown> }> } };
+    const tool = (o: Options, name: string, args: Record<string, unknown>) => (o.mcpServers!.agentcraft as unknown as ToolServer).instance._registeredTools[name]!.handler(args, {});
+    const queryFn = ({ options }: { prompt: string; options: Options }) => {
+      const lead = !(options.tools as string[]).includes('Bash');
+      async function* run(): AsyncGenerator<SDKMessage> {
+        const s = sid();
+        yield m({ type: 'system', subtype: 'init', session_id: s, model: 'fake' });
+        if (lead) {
+          if (!fm.tasks.get('t1')) {
+            await tool(options, 'create_task', { title: 'Add a flag', assignee: 'kit' });
+            await tool(options, 'send_message', { to: 'user', text: `FYI the key is ${secret}` });
+            await tool(options, 'write_memory', { title: 'Notes', body: `curl -H "Authorization: Bearer ${secret}"`, scope: 'shared' });
+          }
+          yield m({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 1, total_cost_usd: 0, session_id: s, duration_ms: 1, duration_api_ms: 1, usage: {}, modelUsage: {}, permission_denials: [] });
+          return;
+        }
+        throw new Error(`spawn EINVAL: API_KEY=${secret}`);
+      }
+      return Object.assign(run(), { close() {}, accountInfo: async () => ({ email: 'x' }) });
+    };
+    await fm.start(new ClaudeBackend(fm, testConfig(home, ['--backend', 'claude', '--workers', 'kit', '--no-lead-review']).claude, { queryFn: queryFn as never, skipAuthCheck: true, transientRetryMs: 50 }));
+    await fm.submitGoal('add a flag');
+    await until(() => fm.tasks.get('t1')?.status === 'blocked');
+    const t1 = fm.tasks.get('t1')!;
+    expect(t1.blockedReason).toBeTruthy();
+    expect(t1.blockedReason).not.toContain(secret);
+    const said = fm.store.data.messages.find((x) => x.from !== 'user' && x.text.startsWith('FYI the key is'))!;
+    expect(said.text).toBe('FYI the key is [redacted]');
+    expect(fm.memory.list().find((e) => e.title === 'Notes')!.body).toContain('Bearer [redacted]');
+    expect(out.some((x) => x.type === 'task.upsert' && x.task.id === 't1' && x.task.status === 'blocked')).toBe(true);
+    const snapshot = JSON.stringify(fm.snapshot());
+    await fm.close();
+    expectAbsent([JSON.stringify(out), snapshot, logs.join('\n'), otherFiles(home)].join('\n'), [secret]);
+  });
+});

@@ -55,6 +55,8 @@ export class MessageBus {
    */
   send(from: string, to: string, text: string, opts: { goalId?: string; taskId?: string; goalMessage?: boolean; feedText?: string } = {}): BusMessage {
     const goalId = this.goalOf(opts);
+    // what an agent says can quote a secret it saw: stored, said and fed without it
+    if (from !== 'user' && this.ctx.redact) text = this.ctx.redact(text);
     const msg: BusMessage = { id: this.ctx.store.nextId('m'), ts: this.ctx.now(), from, to, text, readBy: [], ...(goalId ? { goalId } : {}), ...(opts.goalMessage && goalId ? { goalMessage: true } : {}) };
     this.ctx.store.pushMessage(msg);
     if (from !== 'user') {

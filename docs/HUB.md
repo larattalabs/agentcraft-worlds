@@ -482,6 +482,9 @@ decisions, and with config.set loosen its own permissions). From now on:
   the feed, `agent.say`, `notify`, desktop / Discord notifications, ack and error texts, setup / test output
   and console logs (foreman/src/redact.ts); stored feed and log text is cut again when the snapshot,
   `agent.logs.request` or `goal.digest` replays it (it may predate a secret).
+  Structured text is stored and sent without them too: a task's `blockedReason` and `summary`, a
+  decision's question, context and answer text, agent messages (bus), memory notes and a design's step /
+  error are redacted when written and again in `*.upsert`, the snapshot and the digest.
 - **config.set ack**: a key a flag or variable overrides is listed only under `overridden`
   (`by`: the flag as given, e.g. `"--no-notify"`, or the variable name), not under `applied` or
   `restartRequired`. `config.changed.keys` are the keys as sent, repository keys as

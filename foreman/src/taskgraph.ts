@@ -57,6 +57,11 @@ const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 export class TaskGraph {
   constructor(private ctx: Ctx) {}
 
+  /** Text built from exceptions or tool output is stored without any known secret (redact.ts). */
+  private red(s: string): string {
+    return this.ctx.redact ? this.ctx.redact(s) : s;
+  }
+
   private get tasks(): Task[] {
     return this.ctx.store.data.tasks;
   }
@@ -130,7 +135,7 @@ export class TaskGraph {
     if (patch.branch !== undefined) t.branch = patch.branch;
     if (patch.worktree !== undefined) t.worktree = patch.worktree;
     if (patch.ci !== undefined) t.ci = patch.ci;
-    if (patch.summary !== undefined) t.summary = patch.summary;
+    if (patch.summary !== undefined) t.summary = this.red(patch.summary);
     if (patch.repoId !== undefined) t.repoId = patch.repoId;
     if (patch.pr !== undefined) {
       if (patch.pr === null) delete t.pr;
@@ -138,7 +143,7 @@ export class TaskGraph {
     }
     if (patch.blockedReason !== undefined) {
       if (patch.blockedReason === null) delete t.blockedReason;
-      else t.blockedReason = patch.blockedReason;
+      else t.blockedReason = this.red(patch.blockedReason);
     }
     this.touch(t);
     return t;
@@ -169,9 +174,9 @@ export class TaskGraph {
       }
     }
     t.status = to;
-    if (to === 'blocked') t.blockedReason = opts.reason ?? t.blockedReason ?? 'blocked';
+    if (to === 'blocked') t.blockedReason = opts.reason !== undefined ? this.red(opts.reason) : (t.blockedReason ?? 'blocked');
     else delete t.blockedReason;
-    if (opts.summary) t.summary = opts.summary;
+    if (opts.summary) t.summary = this.red(opts.summary);
     this.touch(t);
     return t;
   }

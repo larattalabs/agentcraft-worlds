@@ -241,6 +241,31 @@ export class Foreman {
     return entries.map((e) => ({ ...e, text: this.redact(e.text) }));
   }
 
+  /** Copies with the text fields built from errors, tool output or agents' words redacted (ids, paths and branches untouched). */
+  private redactTask(t: Task): Task {
+    const o = { ...t };
+    if (o.blockedReason !== undefined) o.blockedReason = this.redact(o.blockedReason);
+    if (o.summary !== undefined) o.summary = this.redact(o.summary);
+    return o;
+  }
+
+  private redactDecision(d: Decision): Decision {
+    const o = { ...d, question: this.redact(d.question) };
+    if (o.context !== undefined) o.context = this.redact(o.context);
+    if (o.answer?.text !== undefined) o.answer = { ...o.answer, text: this.redact(o.answer.text) };
+    return o;
+  }
+
+  private redactMemory(e: MemoryEntry): MemoryEntry {
+    return { ...e, title: this.redact(e.title), body: this.redact(e.body) };
+  }
+
+  private redactDesign(d: Design): Design {
+    const o = { ...d, step: this.redact(d.step) };
+    if (o.error !== undefined) o.error = this.redact(o.error);
+    return o;
+  }
+
   /** More secret values to redact (the client token, set up after the Foreman). */
   addSecrets(values: Iterable<string | undefined>): void {
     this.redactor.add(values);
@@ -260,8 +285,12 @@ export class Foreman {
     }
     // a building lead exists for the mod only while it is assigned
     if (m.type === 'agent.upsert' && !this.visible(m.agent)) return;
-    // what an agent says goes out as text (a copy: the store keeps its own)
+    // text fields go out without a known secret (copies; stored text may predate a secret learnt later)
     if (m.type === 'agent.say') m = { ...m, text: this.redact(m.text) };
+    else if (m.type === 'task.upsert') m = { ...m, task: this.redactTask(m.task) };
+    else if (m.type === 'decision.upsert') m = { ...m, decision: this.redactDecision(m.decision) };
+    else if (m.type === 'memory.upsert') m = { ...m, entry: this.redactMemory(m.entry) };
+    else if (m.type === 'design.upsert') m = { ...m, design: this.redactDesign(m.design) };
     for (const l of this.listeners) {
       try {
         l(m);
@@ -571,7 +600,7 @@ export class Foreman {
   digest(since: number, goalId?: string): Digest {
     if (goalId) this.requireGoal(goalId);
     const d = this.store.data;
-    return buildDigest({ goals: d.goals, tasks: d.tasks, decisions: d.decisions, feed: this.redactFeed(d.feed) }, { since, until: this.ctx.now(), ...(goalId ? { goalId } : {}), nameOf: (id) => (id === 'user' ? userName() : this.nameOf(id)) });
+    return buildDigest({ goals: d.goals, tasks: d.tasks.map((t) => this.redactTask(t)), decisions: d.decisions.map((x) => this.redactDecision(x)), feed: this.redactFeed(d.feed) }, { since, until: this.ctx.now(), ...(goalId ? { goalId } : {}), nameOf: (id) => (id === 'user' ? userName() : this.nameOf(id)) });
   }
 
   /** repo.remove: refused while it has open tasks or a goal still being planned. */
@@ -1171,16 +1200,16 @@ export class Foreman {
       type: 'snapshot',
       foreman: { ...this.status },
       agents: this.agents().map((a) => ({ ...a })),
-      tasks: this.tasks.list().map((t) => ({ ...t, deps: [...t.deps] })),
-      decisions: [...recent, ...open].sort((a, b) => a.createdAt - b.createdAt),
+      tasks: this.tasks.list().map((t) => this.redactTask({ ...t, deps: [...t.deps] })),
+      decisions: [...recent, ...open].sort((a, b) => a.createdAt - b.createdAt).map((d) => this.redactDecision(d)),
       repos: this.repos.list().map((r) => this.repos.view(r)),
-      memory: this.memory.list(),
+      memory: this.memory.list().map((e) => this.redactMemory(e)),
       ...(goal ? { goal: goalCopy(goal) } : {}),
       goals: this.goals().map(goalCopy),
       // stored text is cut again on the way out: it may predate a secret the Foreman learnt later
       feed: this.redactFeed(this.store.data.feed.slice(-200)),
       logs: this.agents().map((a) => ({ agentId: a.id, entries: this.redactLog(this.store.logTail(a.id).slice(-60)) })),
-      designs: this.designs.recent(),
+      designs: this.designs.recent().map((d) => this.redactDesign(d)),
       leads: this.leads.list(),
     };
   }

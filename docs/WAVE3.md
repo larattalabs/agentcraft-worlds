@@ -49,7 +49,10 @@ Wave A runs four streams in parallel; wave B (codegen + smoke test) starts after
   cuts them (`[redacted]`; also URL-encoded, JSON-escaped and base64; values of at least 6 characters)
   from agent log entries, feed items, `agent.say`, notifications (desktop, Discord, `notify`), ack /
   error texts, setup / test output and console logs, before they are truncated, persisted or broadcast;
-  stored feed and log text is cut again when the snapshot, `agent.logs.request` or `goal.digest` replays it. Values with a NUL in
+  stored feed and log text is cut again when the snapshot, `agent.logs.request` or `goal.digest` replays it.
+  Structured text is stored and sent without them too: a task's `blockedReason` and `summary`, a
+  decision's question, context and answer text, agent messages (bus), memory notes and a design's step /
+  error are redacted when written and again in `*.upsert`, the snapshot and the digest. Values with a NUL in
   config.json are dropped at load (a spawn error would quote them).
 - **S3 Sim PRs.** Sim repos marked `land: "pr"` (sim config or a sim-only demo repo setting) produce
   `Task.pr` like the real backend, a fake host (no `az`/`gh` calls), review threads with the parser's
