@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.BiPredicate;
+import java.util.function.LongPredicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.NbtUtils;
 import net.minecraft.server.level.ServerLevel;
@@ -33,6 +34,10 @@ public final class LeafGuard {
 	public static final String KIND = WorldJournal.LEAVES;
 	/** Leaves decay at distance 7, so nothing further than 6 from the box can depend on a log inside it. */
 	public static final int RADIUS = 6;
+	/** The journal kind of a building's leaf ring ({@link WorldJournal#LEAF_RING}). */
+	public static final String RING_KIND = WorldJournal.LEAF_RING;
+	/** How far around a snapshot box the leaf ring reaches ({@link #ring}): past box + 7, the reach of an exact Remove. */
+	public static final int RING = RADIUS + 2;
 
 	private LeafGuard() {
 	}
@@ -114,6 +119,58 @@ public final class LeafGuard {
 	}
 
 	/**
+	 * The leaf ring of {@code box} (ported from Architect): every leaf within {@link #RING} of the box but outside it, as
+	 * journal cells at {@code layer} whose before and after are the leaf as it is now. Read before the box changes. World
+	 * generation leaves many distances larger than their nearest log gives (trees generated over each other); any shape
+	 * update next to them lets the canopy relax to the true distances, up to about 7 blocks out, so placing and removing a
+	 * site would change leaves nobody recorded. The ring's undo (CELL, quiet) gives each one its recorded state back where
+	 * the cell still holds the same leaf ({@link #sameLeaf}: only {@code distance} may differ). Cells for which
+	 * {@code skip} is true (the cells of other active journal entries: they are theirs) and cells in unloaded chunks are
+	 * left out. Changes nothing.
+	 */
+	public static List<Journal.Cell> ring(ServerLevel level, Anchors.Bounds box, LongPredicate skip, long layer) {
+		List<Journal.Cell> out = new ArrayList<>();
+		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+		int minY = Math.max(level.getMinY(), box.minY() - RING);
+		int maxY = Math.min(level.getMaxY(), box.maxY() + RING);
+		for (int z = box.minZ() - RING; z <= box.maxZ() + RING; z++) {
+			for (int x = box.minX() - RING; x <= box.maxX() + RING; x++) {
+				if (!level.hasChunk(x >> 4, z >> 4)) {
+					continue;
+				}
+				for (int y = minY; y <= maxY; y++) {
+					if (box.contains(x, y, z)) {
+						continue;
+					}
+					BlockState s = level.getBlockState(p.set(x, y, z));
+					if (!(s.getBlock() instanceof LeavesBlock) || skip.test(p.asLong())) {
+						continue;
+					}
+					Journal.Value v = value(s);
+					out.add(new Journal.Cell(p.asLong(), layer, v, v));
+				}
+			}
+		}
+		return out;
+	}
+
+	/** The box {@link #ring} looks at: {@code box} grown by {@link #RING}. */
+	public static Anchors.Bounds ringBounds(Anchors.Bounds box) {
+		return new Anchors.Bounds(box.minX() - RING, box.minY() - RING, box.minZ() - RING, box.maxX() + RING, box.maxY() + RING, box.maxZ() + RING);
+	}
+
+	/**
+	 * Whether {@code now} is still the leaf a ring recorded ({@code recorded}): the same block with the same
+	 * {@code persistent} and {@code waterlogged}; only {@code distance} (vanilla's to change) may differ. A leaf the
+	 * player broke, replaced, placed or waterlogged is not, so the ring leaves it alone.
+	 */
+	public static boolean sameLeaf(BlockState now, BlockState recorded) {
+		return recorded.getBlock() instanceof LeavesBlock && now.is(recorded.getBlock())
+			&& now.getValue(LeavesBlock.PERSISTENT) == recorded.getValue(LeavesBlock.PERSISTENT)
+			&& now.getValue(LeavesBlock.WATERLOGGED) == recorded.getValue(LeavesBlock.WATERLOGGED);
+	}
+
+	/**
 	 * Takes a hold back that never reached the journal (a placement rolled back): cells that still hold a persistent leaf
 	 * of the same block get their before (no neighbour updates). Returns how many.
 	 */
@@ -141,9 +198,13 @@ public final class LeafGuard {
 			&& now.getValue(LeavesBlock.PERSISTENT);
 	}
 
-	/** {@code other} (how the other CELL entries recognise their blocks), with held leaves recognised by {@link #stillHeld}. */
+	/**
+	 * {@code other} (how the other CELL entries recognise their blocks), with leaves recognised as leaves: a persistent
+	 * leaf (a hold's after, or a player's leaf in a ring) by {@link #stillHeld}, a natural one (a ring's) by
+	 * {@link #sameLeaf}. Their {@code distance} is never compared.
+	 */
 	public static BiPredicate<BlockState, BlockState> or(BiPredicate<BlockState, BlockState> other) {
-		return (now, placed) -> placed.getBlock() instanceof LeavesBlock && placed.getValue(LeavesBlock.PERSISTENT) ? stillHeld(now, placed)
-			: other.test(now, placed);
+		return (now, placed) -> !(placed.getBlock() instanceof LeavesBlock) ? other.test(now, placed)
+			: placed.getValue(LeavesBlock.PERSISTENT) ? stillHeld(now, placed) : sameLeaf(now, placed);
 	}
 }
