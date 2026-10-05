@@ -391,7 +391,7 @@ changing your system Java), then:
 
 ```sh
 git clone https://github.com/larattalabs/agentcraft-worlds
-cd agentcraft
+cd agentcraft-worlds
 
 node tools/mac.mjs launch --backend sim             # try it first: a simulated team, no API usage
 node tools/mac.mjs stop --profile sim
