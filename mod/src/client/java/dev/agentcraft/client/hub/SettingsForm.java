@@ -1111,6 +1111,25 @@ final class SettingsForm {
 		return false;
 	}
 
+	/**
+	 * Scrolls the rows (DevBridge {@code settings_scroll}): with {@code key}, so that the row of that setting starts at the
+	 * top of the area (as laid out last frame; false when no such row was laid out), else by {@code by} GUI px (negative =
+	 * up). The next draw clamps the offset to the content, as the wheel's scrolling is.
+	 */
+	boolean scroll(@Nullable String key, int by) {
+		if (key != null) {
+			for (JsonObject r : rowsState) {
+				if (r.has("key") && key.equals(r.get("key").getAsString())) {
+					offset = Math.max(0, r.get("y").getAsInt());
+					return true;
+				}
+			}
+			return false;
+		}
+		offset = Math.max(0, offset + by);
+		return true;
+	}
+
 	boolean keyPressed(KeyEvent e) {
 		if (focus == null) {
 			if (TextKeys.isEnter(e) && e.hasControlDown()) {

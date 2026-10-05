@@ -1054,7 +1054,7 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
     change without confirm replies `ok:false, "confirm needed: …"`), `settings_confirm`, `settings_confirm_back`,
     `settings_revert`, `settings_group {group}`, `settings_reload {repoId?}`, `foreman_restart`, `team_select
     {agentId?}`, `team_back`, `team_on {agentId, on}`, `team_lead {agentId, inUse?, move?: -1|1}`, `repo_settings
-    {repoId?}`, `repo_settings_done`, `settings_field {id, text}` (a secret editor's helper field drawn last frame:
+    {repoId?}`, `repo_settings_done`, `settings_scroll {key? | by?}` (scroll the shown form: `key` brings that setting's row to the top, `by` moves by GUI px; chips below the fold are not drawn, so `press` on them fails until they are scrolled in), `settings_field {field, text}` (a secret editor's helper field drawn last frame:
     `repo:env:name`, `repo:env:value`, `mcp:name`, `mcp:command`, `mcp:args`, `mcp:url`, `mcp:env:name`,
     `mcp:env:value`; the text is never echoed); `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
     `group:<g>`, `team:on_team:<id>`, `team:lead_up:<id>`, …; see `*.form.chips`) and buttons `settings_apply`,
