@@ -53,7 +53,7 @@ final class HudSettingsView {
 		HudSettings s = HudConfig.get();
 		int y0 = y;
 		boolean narrow = w < 300;
-		int lw = narrow ? 0 : LABEL_W;
+		int lw = narrow ? 0 : w < 480 ? 64 : LABEL_W;
 		int muted = UiBits.muted();
 		int ink = UiBits.ink();
 		y = chipRow(g, font, "Style", x, y, w, lw, mx, my, Style.values(), s.style(), Style::label, "hud:style:", Style::wire, st -> s.setStyle(st));
@@ -155,7 +155,7 @@ final class HudSettingsView {
 		HudModel m = sample ? HudModel.sample() : live;
 		lastSample = sample;
 		// the small screen: where it goes, next to what vanilla draws
-		int tw = Math.min(w, 213);
+		int tw = Math.min(w, 176);
 		int th = tw * PH / PW;
 		float f = tw / (float) PW;
 		Env env = previewEnv(s);

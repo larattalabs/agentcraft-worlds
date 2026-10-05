@@ -52,12 +52,13 @@ public final class HudEnv {
 		}
 		boolean survival = mc.gameMode != null && mc.gameMode.canHurtPlayer();
 		int[] chat = chatSize(mc);
+		int area = Mth.ceil(ChatComponent.getHeight(mc.options.chatHeightUnfocused().get()) * mc.options.chatScale().get());
 		Rect pill = ConnectionBanner.pillBottom > 0
 			? new Rect(ConnectionBanner.pillLeft, ConnectionBanner.pillTop, guiW - ConnectionBanner.pillLeft, ConnectionBanner.pillBottom - ConnectionBanner.pillTop)
 			: Rect.NONE;
 		int[] panel = dev.agentcraft.client.building.BuildPlacement.hudRect();
 		Rect other = panel == null ? Rect.NONE : new Rect(panel[0], panel[1], panel[2], panel[3]);
-		return e.withPanel(other).effects(good, bad).withDemo(mc.isDemo()).boss(bars, titleW).survival(survival).chat(chat[0], chat[1]).withPill(pill)
+		return e.withPanel(other).effects(good, bad).withDemo(mc.isDemo()).boss(bars, titleW).survival(survival).chat(chat[0], chat[1]).chatArea(area).withPill(pill)
 			.withMinimap(HudConfig.get().topLeftOffset());
 	}
 

@@ -105,6 +105,8 @@ class HudLayoutTest {
 		Rect r = HudLayout.place(e, Position.BOTTOM_LEFT, 96, 16).rect();
 		assertEquals(chat.y() - HudLayout.GAP - 16, r.y());
 		assertEquals(4, r.x());
+		// no chat lines showing: still above the chat's area, so a new message does not make it jump
+		assertEquals(r, HudLayout.place(e.chat(0, 0), Position.BOTTOM_LEFT, 96, 16).rect());
 	}
 
 	@Test
@@ -137,7 +139,7 @@ class HudLayoutTest {
 	@Test
 	void noRoomFallsBackToTopRightThenHides() {
 		// a tall chat leaves bottom left no room at 320x180 (the hotbar below it, the chat above)
-		Env e = Env.of(320, 180, 4).chat(200, 130);
+		Env e = Env.of(320, 180, 4).chat(200, 175);
 		Placement p = HudLayout.place(e, Position.BOTTOM_LEFT, 96, 16);
 		assertTrue(p.fallback());
 		assertEquals(Position.TOP_RIGHT, p.used());

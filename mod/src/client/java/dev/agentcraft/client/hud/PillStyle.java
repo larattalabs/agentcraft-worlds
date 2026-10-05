@@ -126,7 +126,15 @@ final class PillStyle {
 
 	// ------------------------------------------------------------------ Pill
 
-	private static List<Seg> pillSegs(HudModel m, Font font, AlertLine.Level level, int peekW) {
+	/** The pill's widest line without a peek (overlay px); with a peek it may grow by {@link #PEEK_W}. */
+	static final int PILL_MAX = 190;
+	/** The peek's text at most (overlay px). */
+	static final int PEEK_W = 130;
+	/** Decisions level, other counts level: tried in order until the line fits. */
+	private static final AlertLine.Level[][] LEVELS = {{AlertLine.Level.FULL, AlertLine.Level.FULL}, {AlertLine.Level.FULL, AlertLine.Level.SHORT},
+		{AlertLine.Level.FULL, AlertLine.Level.DOTS}, {AlertLine.Level.SHORT, AlertLine.Level.DOTS}, {AlertLine.Level.DOTS, AlertLine.Level.DOTS}};
+
+	private static List<Seg> pillSegs(HudModel m, Font font, AlertLine.Level dec, AlertLine.Level other, boolean peek) {
 		List<Seg> out = new ArrayList<>();
 		int cream = m.stale ? UiBits.activityOnInk() : UiBits.cream();
 		int muted = UiBits.activityOnInk();
@@ -139,31 +147,33 @@ final class PillStyle {
 				m.goal != null && m.goal.status() == GoalStatus.DONE ? "done" : "idle", false));
 		}
 		if (m.waiting > 0) {
-			sep(out, font);
-			String t = level == AlertLine.Level.FULL ? UiBits.plural(m.waiting, "decision", "decisions") : m.waiting + (level == AlertLine.Level.SHORT ? " dec"
+			sep(out, font, false);
+			String t = dec == AlertLine.Level.FULL ? UiBits.plural(m.waiting, "decision", "decisions") : m.waiting + (dec == AlertLine.Level.SHORT ? " dec"
 				: "");
 			out.add(new Txt(font, t, m.stale ? muted : UiStyle.CLAY, m.stale ? "idle" : "waiting", !m.stale));
 			out.add(new Gap(4));
 			out.add(new Cap(font, decisionsKey()));
 		}
 		long now = System.currentTimeMillis();
+		boolean dots = other == AlertLine.Level.DOTS;
 		for (AlertLine.Part p : m.alert.parts(ZoneId.systemDefault(), now)) {
 			if (p.kind().equals("decisions")) {
 				continue; // the clay part above (the waiting count, which leaves out what is being answered)
 			}
-			sep(out, font);
-			out.add(new Txt(font, p.at(level), cream, m.stale ? "idle" : p.family(), false));
+			sep(out, font, dots && out.size() > 0 && out.get(out.size() - 1) instanceof Txt last && last.dot() != null && !last.pulse());
+			out.add(new Txt(font, p.at(other), cream, m.stale ? "idle" : p.family(), false));
 		}
-		if (m.peek != null && peekW > 0) {
-			sep(out, font);
-			out.add(new Txt(font, TextUtil.ellipsize(font, m.peek.text(), peekW), cream, HudPeeks.family(m.peek.kind()), false));
+		if (m.peek != null && peek) {
+			sep(out, font, false);
+			out.add(new Txt(font, TextUtil.ellipsize(font, m.peek.text(), PEEK_W), cream, HudPeeks.family(m.peek.kind()), false));
 		}
 		return out;
 	}
 
-	private static void sep(List<Seg> out, Font font) {
+	/** " · " between parts; a small gap between two dot counts ("●1 ●3"). */
+	private static void sep(List<Seg> out, Font font, boolean tight) {
 		if (!out.isEmpty()) {
-			out.add(new Txt(font, SEP, UiBits.activityOnInk(), null, false));
+			out.add(tight ? new Gap(5) : new Txt(font, SEP, UiBits.activityOnInk(), null, false));
 		}
 	}
 
@@ -179,19 +189,25 @@ final class PillStyle {
 		return w;
 	}
 
-	/** The pill's segments that fit {@code maxW} (overlay px): full, short, then dot counts; the peek is cut to what is left. */
+	/**
+	 * The pill's segments that fit (at most {@link #PILL_MAX}, plus the peek while one shows): decisions and the other
+	 * counts step down from full to short to dots; a peek that does not fit at any step is left out.
+	 */
 	private static List<Seg> fitPill(HudModel m, Font font, int maxW) {
-		List<Seg> segs = null;
-		for (AlertLine.Level level : AlertLine.Level.values()) {
-			segs = pillSegs(m, font, level, 0);
-			if (width(segs) + frame(m) <= maxW || level == AlertLine.Level.DOTS) {
-				if (m.peek != null) {
-					int left = maxW - frame(m) - width(segs) - font.width(SEP) - 10;
-					if (left >= 30) {
-						segs = pillSegs(m, font, level, Math.min(left, 200));
-					}
+		int cap = Math.min(maxW, PILL_MAX + (m.peek != null ? PEEK_W + 20 : 0));
+		if (m.peek != null) {
+			for (AlertLine.Level[] l : LEVELS) {
+				List<Seg> segs = pillSegs(m, font, l[0], l[1], true);
+				if (width(segs) + frame(m) <= cap) {
+					return segs;
 				}
-				break;
+			}
+		}
+		List<Seg> segs = null;
+		for (AlertLine.Level[] l : LEVELS) {
+			segs = pillSegs(m, font, l[0], l[1], false);
+			if (width(segs) + frame(m) <= Math.min(cap, PILL_MAX)) {
+				return segs;
 			}
 		}
 		return segs;

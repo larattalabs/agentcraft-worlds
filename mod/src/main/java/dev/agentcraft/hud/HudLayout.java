@@ -72,44 +72,49 @@ public final class HudLayout {
 	 * kept for a top-left minimap and another AgentCraft panel on screen (placement, plot or road panel).
 	 */
 	public record Env(int guiW, int guiH, int guiScale, int beneficial, int harmful, boolean demo, int bossBars, int bossTitleW, boolean statusBars,
-		int chatW, int chatH, Rect pill, int minimap, Rect panel) {
+		int chatW, int chatH, Rect pill, int minimap, Rect panel, int chatArea) {
 
 		/** No effects, no boss bars, creative, the default chat (320 x 90), no pill, no minimap. */
 		public static Env of(int guiW, int guiH, int guiScale) {
-			return new Env(guiW, guiH, guiScale, 0, 0, false, 0, 0, false, 320, 90, Rect.NONE, 0, Rect.NONE);
+			return new Env(guiW, guiH, guiScale, 0, 0, false, 0, 0, false, 320, 90, Rect.NONE, 0, Rect.NONE, 90);
 		}
 
 		public Env effects(int beneficialIcons, int harmfulIcons) {
-			return new Env(guiW, guiH, guiScale, beneficialIcons, harmfulIcons, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel);
+			return new Env(guiW, guiH, guiScale, beneficialIcons, harmfulIcons, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea);
 		}
 
 		public Env boss(int bars, int widestTitle) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bars, widestTitle, statusBars, chatW, chatH, pill, minimap, panel);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bars, widestTitle, statusBars, chatW, chatH, pill, minimap, panel, chatArea);
 		}
 
 		public Env survival(boolean bars) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, bars, chatW, chatH, pill, minimap, panel);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, bars, chatW, chatH, pill, minimap, panel, chatArea);
 		}
 
 		public Env chat(int w, int h) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, w, h, pill, minimap, panel);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, w, h, pill, minimap, panel, chatArea);
 		}
 
 		public Env withPill(Rect r) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, r, minimap, panel);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, r, minimap, panel, chatArea);
 		}
 
 		public Env withMinimap(int px) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, px, panel);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, px, panel, chatArea);
 		}
 
 		/** Another AgentCraft panel on screen (the placement, plot or road panel), NONE = none. */
 		public Env withPanel(Rect r) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, r);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, r, chatArea);
+		}
+
+		/** The chat's full (unfocused) height, lines or not: bottom left always sits above it. */
+		public Env chatArea(int h) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, h);
 		}
 
 		public Env withDemo(boolean on) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, on, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, on, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea);
 		}
 	}
 
@@ -227,7 +232,7 @@ public final class HudLayout {
 	 * Places a {@code w} x {@code h} overlay at {@code pos}, clear of everything in {@link Env} by {@link #GAP}:
 	 * top positions slide down past what they meet (effect icons, the connection pill, boss bars), bottom positions
 	 * slide up (above the hotbar and its status rows, above the chat), the right-edge middle tries down then up; top
-	 * left starts below the minimap room. When the position has no room (a tiny window, a tall chat) it falls back to
+	 * left starts below the minimap room, bottom left above the chat's whole area. When the position has no room (a tiny window, a tall chat) it falls back to
 	 * top right; when that has none either the rectangle is NONE (hidden as "no_room").
 	 */
 	public static Placement place(Env e, Position pos, int w, int h) {
@@ -256,7 +261,9 @@ public final class HudLayout {
 		return switch (pos) {
 			case TOP_RIGHT -> slide(e, obs, new Rect(x, MARGIN, w, h), 1);
 			case TOP_LEFT -> slide(e, obs, new Rect(x, MARGIN + e.minimap(), w, h), 1);
-			case BOTTOM_LEFT, BOTTOM_RIGHT -> slide(e, obs, new Rect(x, e.guiH() - MARGIN - h, w, h), -1);
+			// bottom left sits above the chat's whole area (not only the lines showing), so it does not jump when a message comes
+			case BOTTOM_LEFT -> slide(e, obs, new Rect(x, Math.min(e.guiH() - MARGIN, e.guiH() - 40 - e.chatArea() - GAP) - h, w, h), -1);
+			case BOTTOM_RIGHT -> slide(e, obs, new Rect(x, e.guiH() - MARGIN - h, w, h), -1);
 			case RIGHT_MIDDLE -> {
 				Rect start = new Rect(x, (e.guiH() - h) / 2, w, h);
 				Rect down = slide(e, obs, start, 1);

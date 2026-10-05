@@ -14,8 +14,8 @@ export const SCENE = [
   'bossbar add agentcraft:qa_boss_b "Raid - Wave 3 of 7: Pillagers and Vindicators"',
   'bossbar set agentcraft:qa_boss_b players @a',
   'bossbar set agentcraft:qa_boss_b color red',
-  'effect give @s minecraft:speed 600 0 true',
-  'effect give @s minecraft:weakness 600 0 true',
+  'effect give @s minecraft:speed 600 0',
+  'effect give @s minecraft:weakness 600 0',
 ];
 export const SCENE_UNDO = ['bossbar remove agentcraft:qa_boss_a', 'bossbar remove agentcraft:qa_boss_b', 'effect clear @s'];
 
