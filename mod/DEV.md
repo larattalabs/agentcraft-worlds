@@ -1351,6 +1351,13 @@ docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraf
 
 ## Tools (repo `tools/`, Node 22, local `ws` dependency: run `npm install` in tools/ once)
 
+**Smoke test** (macOS): `npm run smoke --prefix tools` launches the dev client against the sim in a fresh natural-terrain
+world and runs the main flows through the DevBridge (placement with the server verdict, the board, a road laid and removed
+with an exact block-level restore, walking, night and morning, move and undo, goals and a stand-up, the Inbox with a
+simulated PR, its review and triage, answering, a merge through the diff screen, a goal's trophy, removing a building that
+holds trophies, the MCP editor with a fake secret, layout at 426x240); report and contact sheet in
+`artifacts/shots/smoke/`. Details: tools/README.md "Smoke test".
+
 ```bash
 node tools/devcli.mjs wait                         # wait for the bridge + a ready world (300 s)
 node tools/devcli.mjs state
