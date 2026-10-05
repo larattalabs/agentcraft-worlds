@@ -208,6 +208,17 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   release-before-snapshot bookkeeping: a site built over a held leaf undoes in either order to the natural leaf. Matching
   is by block + `persistent` only (vanilla recomputes a held leaf's distance), writes are quiet; Forget releases the hold
   (the building stays, so do its leaves). See docs/BUILDINGS.md "Held leaves".
+- **2026-10-05, branch `fix/leaf-ring`** (ported from Architect 0200a2b): Remove is exact for the leaves around a site too.
+  Worldgen leaves often carry a larger `distance` than their nearest log gives, so any shape update next to them let a
+  canopy relax up to ~7 blocks outside the box, held leaves or not. Placement now records the **leaf ring** (every leaf
+  within 8 of the snapshot box, outside it) and Remove/Move put those leaves' states back quietly; restores drop the leaf
+  ticks they schedule (`LevelTicksMixin`, `LeafTicks`). *Decision*: the ring is a journal entry too (kind `leafring`, CELL,
+  owned by the building, undone in the site's group; cells of other active entries left out), not Architect's int array
+  in the snapshot tag, so save/reload, crash safety and undo in any order come from the journal's layers and hand-downs;
+  "skip other standing sites" became "skip every cell another entry owns", and after a Remove/Move the standing sites
+  nearby ring the leaves it gave back (a Move's new site relaxes the old one's surroundings after the old site is
+  restored). A changed leaf is left (same block, `persistent` and `waterlogged`, else no write). QA hooks
+  `dev.region.capture/diff/hash`, `dev.buildings.timing`. See docs/BUILDINGS.md "Leaf ring".
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
