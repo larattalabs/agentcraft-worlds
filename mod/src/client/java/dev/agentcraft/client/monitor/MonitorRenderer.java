@@ -9,6 +9,7 @@ import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.client.ui.WorldUi;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
+import dev.agentcraft.ui.TextDepth;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -41,6 +42,12 @@ public class MonitorRenderer extends StationRenderer<MonitorBlockEntity, Monitor
 	static final float Z_VEIL = 5 * DisplayDraw.Z_STEP;
 	static final float Z_BADGE = 6 * DisplayDraw.Z_STEP;
 	static final float Z_BADGE_TEXT = 7 * DisplayDraw.Z_STEP;
+	/** Smallest text-over-background gap (header text at 4 steps over its band at 3.5), blocks. */
+	static final float MIN_TEXT_GAP = 0.5f * -DisplayDraw.Z_STEP;
+	/** From the drawing plane to the frontmost layer (the badge's text), blocks. */
+	static final float STACK_DEPTH = 7 * -DisplayDraw.Z_STEP;
+	/** Room in front of the screen the stack may use: the bezel lip stands 1/16 in front of it (rows slide under it). */
+	static final float MAX_STACK_DEPTH = 0.04f;
 
 	public static class State extends StationRenderState {
 		public boolean lit;
@@ -110,6 +117,10 @@ public class MonitorRenderer extends StationRenderer<MonitorBlockEntity, Monitor
 		poseStack.pushPose();
 		toFace(poseStack, s.facing, SCREEN_DEPTH, m.ppb);
 		poseStack.translate(0, -(s.panelHeight - 1) * m.ppb, 0);
+		// text a hair in front of what is under it at any distance (TextDepth): the layer steps stretch with the camera
+		// distance, so the smallest gap (header text over its band, half a step) is at least 0.0003 x the distance; the
+		// stack (7 steps to the offline badge's text) stays within 0.04 of the screen, well behind the 1/16 bezel lip
+		poseStack.scale(1f, 1f, TextDepth.faceDepthScale(WorldUi.eyeDistance(poseStack), MIN_TEXT_GAP, STACK_DEPTH, MAX_STACK_DEPTH));
 		if (s.lit) {
 			drawLit(s, m, poseStack, collector);
 		} else {

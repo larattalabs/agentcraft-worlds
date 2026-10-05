@@ -651,7 +651,9 @@ reading, gather and talk). `keepLying` skips retargeting while an agent sleeps; 
 relayout snap, a building change, a released lead leaving, the level or the link going away) gets it up first.
 
 - **Priorities** (`RoutineRules.decide`): waiting on the player (asking, or owning an open decision) or changing
-  building -> nothing; a running stand-up it is in (only in the stand-up's building) -> stand-up; a library visit
+  building -> nothing; a running stand-up it is in (only in the stand-up's building) -> stand-up, unless it needs the
+  player (`Facts.needsUser`, `AgentManager.needsUser`: state `waiting_user`/`blocked` even while paused, an open
+  decision it owns, its task `blocked` or with an open decision, `StatusMap.needsYou`); a library visit
   due and between steps (not `working`/`thinking`/`error`) -> library; night (13000 <= time of day < 23000, the
   overworld clock, `Level.getOverworldClockTime`) + idle (no task and not mid-step, or off shift) -> rest; else its
   own station. While the link is stale the previous routine stays.
@@ -816,9 +818,10 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
 
 ### Hub (`H`, `/hub [tab]`)
 The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
-- `HubScreen` (not pausing): tabs from `HubTab` (Inbox, Buildings, Repos, Goals, Team, Settings, Status). Repos, Goals,
-  Team and Settings are `HubPane`s
-  (`ReposTab`, `GoalsTab`) with their own state: the hub hands them keys, typed characters, clicks and the
+- `HubScreen` (not pausing): tabs from `HubTab` (Inbox, Buildings, Repos, Goals, Team, Settings, Status). Every built
+  tab is a `HubPane` (`InboxTab`, `BuildingsTab` (wave 3: its five lists, selections, armed remove and actions moved out
+  of `HubScreen`, which keeps the frame, tab strip, buttons and thin public delegates; ids unchanged), `ReposTab`,
+  `GoalsTab`, `TeamTab`, `SettingsTab`, `StatusPane`) with its own state: the hub hands them keys, typed characters, clicks and the
   wheel first; while one of their text fields has focus every key goes to it (typing "h" never closes the hub;
   `isInputCaptured`, SDL text input on), Esc unfocuses, Tab moves between the view's fields, Ctrl+Enter sends. Tab / Shift+Tab cycle tabs, Left /
   Right switch buildings/blueprints, Up / Down select, Esc or the hub key close. Selection and the armed
@@ -1000,8 +1003,8 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   single-line field, Ctrl+Enter applies, Esc unfocuses.
 - Settings tab: group chips General / Permissions / Context / Subagents / PRs / Usage (• = staged edits in it) and the
   config file; a group = the global settings whose `SettingsLogic.groupOf` is it (Team keys excluded; `group` from the
-  Foreman, else by key prefix). Context lists the MCP servers read-only (`mcpServers` of the ack, else a `map`
-  setting named `*mcpServers`); Usage starts with the Status tab's usage windows (`HubScreen.drawUsage`, shared).
+  Foreman, else by key prefix). Context edits the MCP servers (`mcpServers` setting, wave 3 S2; an older Foreman's
+  `mcpServers` of the ack or `map` setting named `*mcpServers` is listed read-only); Usage starts with the Status tab's usage windows (`HubScreen.drawUsage`, shared).
 - Team tab: roster (`PaneList`): "Models and limits", the leads (staged `claude.leads` order, then the cast's other
   leads "not in use"; building via `Leads.view().buildingOf`, model · effort) and the workers (cast + Foreman +
   configured; on/off = staged `claude.workers`), each with its face, state dot and a second line. Detail: framed
@@ -1010,8 +1013,8 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   per repo (one row per repo, each repo's scope). Models: lead/worker/design model + effort, task-size models,
   concurrency, then any other Team key (`claude.leadReview`, …). Apply covers the global scope and every repo scope.
 - Repos tab: **Edit settings…** opens the repo's form in place of the tab (Done / Esc back), in the Foreman's groups:
-  Landing (`land`, `baseBranch`, `pr.*`), Worktrees (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`, `env`
-  read-only), Agents (`subagents`, `roles.<agent>` for every roster agent: chips of the agent file ids), Review
+  Landing (`land`, `baseBranch`, `pr.*`), Worktrees (`ci`, `setup`, `copy`, `setupTimeoutMs`, `protect`, `env` as a
+  secret map: names with "(set)", values write-only, wave 3 S1), Agents (`subagents`, `roles.<agent>` for every roster agent: chips of the agent file ids), Review
   (`prReview.*`).
 - Layout: compact under 470 × 200 GUI px like Repos/Goals (Team: list or detail with "‹ Team"); banners collapse to
   one line each; only the form scrolls. `dev.hub.state` `teamTab.layout` / `settingsTab.layout` = `{guiWidth,
@@ -1031,7 +1034,9 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
     change without confirm replies `ok:false, "confirm needed: …"`), `settings_confirm`, `settings_confirm_back`,
     `settings_revert`, `settings_group {group}`, `settings_reload {repoId?}`, `foreman_restart`, `team_select
     {agentId?}`, `team_back`, `team_on {agentId, on}`, `team_lead {agentId, inUse?, move?: -1|1}`, `repo_settings
-    {repoId?}`, `repo_settings_done`; `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
+    {repoId?}`, `repo_settings_done`, `settings_field {id, text}` (a secret editor's helper field drawn last frame:
+    `repo:env:name`, `repo:env:value`, `mcp:name`, `mcp:command`, `mcp:args`, `mcp:url`, `mcp:env:name`,
+    `mcp:env:value`; the text is never echoed); `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
     `group:<g>`, `team:on_team:<id>`, `team:lead_up:<id>`, …; see `*.form.chips`) and buttons `settings_apply`,
     `settings_revert`, `settings_confirm`, `foreman_restart`, `settings_retry`, `repo_edit_settings`. Foreman actions
     reply after the ack with `result{ok, message, unsupported, result}`.
@@ -1039,6 +1044,9 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
     loads a config.get result into a scope; `settings_fake_agents {repoId, agents:[name | {name, path, description,
     model}]}` fakes repo.agents. Apply still sends a real config.set.
   - Screens: `hub_team`, `hub_settings`, `hub_settings_<group>`, `hub_repo_settings` (the first repo).
+  - Secret editors (wave 3 S1/S2) chips: `<form>:env:replace:<NAME>`, `:remove:<NAME>`, `:undo:<NAME>`, `:set`;
+    `settings:claude.context.mcpServers:add`, `:edit:<name>`, `:remove:<name>`, `:undo:<name>`, `mcp:type:<stdio|http|sse>`,
+    `mcp:env:set`, `mcp:done`, `mcp:cancel`. Staged secret values show as `"(staged)"` in every state.
 - Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`, once the Foreman side is merged):
   `dev.hub.open {tab:"settings", group:"permissions"}` -> `settings_set {key:"claude.permissions.allow",
   value:["Bash(npm test)"]}` -> `settings_apply` (confirm bar: shoot it) -> `settings_confirm`; `settings_set
@@ -1166,7 +1174,9 @@ name on the screen).
   `AvatarRenderState` to the player renderer: custom avatars need the mixin, or they lose their own
   nameplate and layers.
 - World-space UI: a nine-slice plate and the sprites on top of it z-fight at the same depth, so
-  overlays/text use the polygon-offset variant (`WorldUi.Layer.OVERLAY`, `WorldUi.submitText`).
+  overlays/text use the polygon-offset variant (`WorldUi.Layer.OVERLAY`, `WorldUi.submitText`). Opaque text goes to
+  the solid pass, where that offset does not separate it from a coplanar plate (glyphs went missing): text needs a
+  real lift, `WorldUi.liftText` / `TextDepth` (see FEATURES.md "Nameplates").
 - **Fully opaque world text is drawn in the solid pass**, before every translucent quad
   (`SubmitNodeCollection.canRenderAsSolid`: text alpha 255, no background). Submit order does not
   change that. A translucent plate (`RenderTypes.text(GUI atlas)`, the kit nameplate has alpha 220)

@@ -16,6 +16,7 @@ import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.hub.SecretSettings;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
 import java.util.ArrayList;
@@ -34,7 +35,8 @@ import org.jspecify.annotations.Nullable;
  * The one form renderer behind the hub's Team tab, Settings tab and a repo's "Edit settings" (docs/HUB.md
  * "Team and Settings tabs"): rows generated from {@link SettingDef}s by type (bool checkbox, enum / model /
  * effort chips, int stepper with a typed value, string field, string list one per line, agent list toggle
- * chips, a repo role picker, maps read-only), each with its source badge (file/flag/env/default), "restart"
+ * chips, a repo role picker, secret maps (a repository's env: names with "(set)", values write-only) and the MCP
+ * servers list with add / edit / remove (wave 3 S1/S2, {@link SecretSettings}), plain maps read-only), each with its source badge (file/flag/env/default), "restart"
  * when it is not live, "overridden by --flag" and its problem in red, in a scrolled area; plus the shared
  * chrome: the read-only banner (the Foreman did not accept the client token), the restart banner with
  * "Restart Foreman" (reconnecting state), the second confirm naming widening changes, and Apply / Revert.
@@ -85,6 +87,14 @@ final class SettingsForm {
 	private @Nullable String note;
 	private boolean noteError;
 	private final List<JsonObject> rowsState = new ArrayList<>();
+	/** Helper fields of the secret editors (a variable's name and value, the MCP server form) -> their id. */
+	private final Map<HubField, String> auxIds = new HashMap<>();
+	/** What Enter does in a helper field (next field, Set, Done). */
+	private final Map<HubField, Runnable> auxSubmit = new HashMap<>();
+	/** The last problem of a secret editor (a bad variable name, a server that does not check), by editor id. */
+	private final Map<String, String> auxProblems = new HashMap<>();
+	/** The MCP server being added or edited (one at a time), null = none. */
+	private @Nullable McpDraft draft;
 	/** What Ctrl+Enter does (the owner's Apply). */
 	private Runnable onCtrlEnter = () -> {
 	};
@@ -338,6 +348,9 @@ final class SettingsForm {
 				}
 				y += CHIP_H + 3;
 			}
+			case SettingDef.SECRET_MAP -> y += secretMap(g, id, SecretSettings.keys(scope.current(s.key())), () -> scope.staged.value(s.key(), null),
+				"env".equals(s.key()) && scope.repoId != null, x, y, w, editable, mx, my, p -> stageSecret(scope, s.key(), p));
+			case SettingDef.MCP_SERVERS -> y += mcpServers(g, s, id, x, y, w, editable, mx, my);
 			case SettingDef.STRING, SettingDef.STRING_LIST -> {
 				if (scope.repoId != null && s.key().startsWith("roles.")) {
 					y += rolePicker(g, s, d, x, y, w, editable, mx, my);
@@ -386,7 +399,7 @@ final class SettingsForm {
 		st.addProperty("key", s.key());
 		st.addProperty("label", label);
 		st.addProperty("type", d.type());
-		st.add("value", v.deepCopy());
+		st.add("value", d.secret() && changed ? SettingsLogic.masked(d, v) : v.deepCopy()); // secret values never echoed
 		st.add("current", d.value().deepCopy());
 		st.addProperty("staged", changed);
 		st.addProperty("source", d.source());
@@ -531,6 +544,351 @@ final class SettingsForm {
 
 	private static boolean orderMatters(SettingDef d) {
 		return d.key().endsWith("leads");
+	}
+
+	// ------------------------------------------------------------------ secret settings (wave 3 S1/S2)
+
+	/** A secret setting's update staged in its scope; an empty update stages nothing. */
+	private static void stageSecret(ConfigScope scope, String key, JsonElement update) {
+		boolean empty = update.isJsonObject() && update.getAsJsonObject().isEmpty() || update.isJsonArray() && update.getAsJsonArray().isEmpty();
+		if (empty) {
+			scope.unstage(key);
+		} else {
+			scope.set(key, update);
+		}
+	}
+
+	/** A helper field of the secret editors (not bound to a setting: typing in it stages nothing). */
+	private HubField aux(String id, boolean multi, String placeholder, int max) {
+		String fid = "aux|" + id;
+		HubField f = fields.get(fid);
+		if (f == null || f.multiLine != multi) {
+			f = new HubField(prefix + ":" + id, max, multi, placeholder);
+			fields.put(fid, f);
+		}
+		auxIds.put(f, id);
+		return f;
+	}
+
+	/** DevBridge: puts text into a helper field drawn last frame ({@code id} as {@code form.chips}/focus name it); false when there is none. */
+	boolean setAux(String id, String text) {
+		for (HubField f : drawnFields) {
+			if (id.equals(auxIds.get(f))) {
+				f.set(text);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * A secret map: one line per variable (name, "(set)" / "new value" / "removed", Replace and Remove or Undo), then a
+	 * name field, a value field and Set. Values are write-only: typed into the value field, staged on Set (the field
+	 * clears) and never shown again. {@code update} supplies the staged partial update now; {@code stage} takes the next.
+	 * Returns the height.
+	 */
+	private int secretMap(GuiGraphicsExtractor g, String id, List<String> current, java.util.function.Supplier<@Nullable JsonElement> update,
+		boolean repo, int x, int y, int w, boolean editable, int mx, int my, java.util.function.Consumer<JsonObject> stage) {
+		int y0 = y;
+		int muted = UiBits.muted();
+		List<SecretSettings.Var> vars = SecretSettings.vars(current, update.get());
+		HubField nameF = aux(id + ":name", false, "NAME", 200);
+		HubField valueF = aux(id + ":value", false, "value (write-only)", 20_000);
+		if (vars.isEmpty()) {
+			g.text(font(), "No variables.", x, y + 3, muted, false);
+			y += CHIP_H + 2;
+		}
+		for (SecretSettings.Var v : vars) {
+			String n = v.name();
+			int cx = x + w;
+			if (v.state() == SecretSettings.VarState.SET) {
+				cx -= chipW("Remove");
+				rowChip(g, id + ":remove:" + n, "Remove", cx, y, false, editable, mx, my, () -> stage.accept(SecretSettings.withVar(update.get(), current, n,
+					null)));
+				cx -= 3 + chipW("Replace");
+				rowChip(g, id + ":replace:" + n, "Replace", cx, y, false, editable, mx, my, () -> {
+					nameF.set(n);
+					valueF.set("");
+					setFocus(valueF);
+				});
+			} else {
+				cx -= chipW("Undo");
+				rowChip(g, id + ":undo:" + n, "Undo", cx, y, false, editable, mx, my, () -> stage.accept(SecretSettings.undo(update.get(), n)));
+			}
+			String st = switch (v.state()) {
+				case SET -> SecretSettings.SET;
+				case NEW -> "new value";
+				case REPLACED -> "new value (replaces)";
+				case REMOVED -> "removed";
+			};
+			int stColor = v.state() == SecretSettings.VarState.SET ? muted : v.state() == SecretSettings.VarState.REMOVED ? UiBits.errorText()
+				: UiStyle.CLAY_DARK;
+			int room = cx - x - 6;
+			int stW = font().width(st) + 6;
+			String nm = TextUtil.ellipsize(font(), n, Math.max(20, room - stW));
+			if (visible(y, CHIP_H)) {
+				g.text(font(), nm, x, y + 3, UiBits.ink(), false);
+				if (font().width(nm) + stW <= room) {
+					g.text(font(), st, x + font().width(nm) + 6, y + 3, stColor, false);
+				}
+			}
+			y += CHIP_H + 2;
+		}
+		if (editable) {
+			int setW = chipW("Set");
+			int nw = Math.max(50, (w - setW - 6) * 2 / 5);
+			int vw = w - nw - setW - 6;
+			Runnable set = () -> {
+				String n = nameF.value().strip();
+				String why = SecretSettings.nameProblem(n, repo);
+				if (why == null && valueF.value().isEmpty()) {
+					why = (n.isEmpty() ? "the variable" : n) + ": type a value (Remove takes a variable out)";
+				}
+				if (why != null) {
+					auxProblems.put(id, why);
+					return;
+				}
+				stage.accept(SecretSettings.withVar(update.get(), current, n, valueF.value()));
+				nameF.set("");
+				valueF.set(""); // write-only: the value is not kept in the field
+				auxProblems.remove(id);
+			};
+			auxSubmit.put(nameF, () -> setFocus(valueF));
+			auxSubmit.put(valueF, set);
+			int fh = nameF.draw(g, font(), x, y, nw, 1, nameF == focus);
+			drawn(nameF, true, y);
+			valueF.draw(g, font(), x + nw + 3, y, vw, 1, valueF == focus);
+			drawn(valueF, true, y);
+			rowChip(g, id + ":set", "Set", x + w - setW, y, false, true, mx, my, set);
+			y += Math.max(fh, CHIP_H) + 3;
+			String why = auxProblems.get(id);
+			if (why != null) {
+				y += text(g, UiBits.CROSS + " " + why, UiBits.errorText(), x, y, w);
+			}
+		}
+		return y - y0;
+	}
+
+	/** The MCP server form's state: a new server or an edit of {@code original}. */
+	private static final class McpDraft {
+		final String scopeKey;
+		final @Nullable String original;
+		String type;
+		final List<String> envKeys;
+		@Nullable JsonObject env;
+
+		McpDraft(String scopeKey, @Nullable String original, String type, List<String> envKeys, @Nullable JsonObject env) {
+			this.scopeKey = scopeKey;
+			this.original = original;
+			this.type = type;
+			this.envKeys = envKeys;
+			this.env = env;
+		}
+	}
+
+	/**
+	 * The MCP servers: one entry per server (name, type, the command or URL, its variables; Edit, Remove or Undo), Add
+	 * server, and while one is added or edited its form (name for a new one, type, command and arguments or URL, the
+	 * environment as a secret map; Done stages it, Cancel drops it). Each server's change is one entry of the update
+	 * ({@link SecretSettings#entry} / {@link SecretSettings#removal}). Returns the height.
+	 */
+	private int mcpServers(GuiGraphicsExtractor g, Setting s, String id, int x, int y, int w, boolean editable, int mx, int my) {
+		int y0 = y;
+		ConfigScope scope = s.scope();
+		String key = s.key();
+		int muted = UiBits.muted();
+		java.util.function.Supplier<@Nullable JsonElement> stagedNow = () -> scope.staged.value(key, null);
+		List<SecretSettings.Server> cur = SecretSettings.servers(scope.current(key));
+		List<SecretSettings.Row> rows = SecretSettings.rows(cur, stagedNow.get());
+		String scopeKey = scope.id() + "|" + key;
+		if (rows.isEmpty()) {
+			g.text(font(), "No MCP servers.", x, y + 3, muted, false);
+			y += CHIP_H + 2;
+		}
+		for (SecretSettings.Row r : rows) {
+			SecretSettings.Server sv = r.server();
+			String n = sv.name();
+			int cx = x + w;
+			boolean changed = r.added() || r.edited() || r.removed();
+			if (changed) {
+				cx -= chipW("Undo");
+				rowChip(g, id + ":undo:" + n, "Undo", cx, y, false, editable, mx, my, () -> {
+					stageSecret(scope, key, SecretSettings.without(stagedNow.get(), n));
+					if (draft != null && n.equals(draft.original)) {
+						draft = null;
+					}
+				});
+			}
+			if (!r.removed()) {
+				if (!r.added()) {
+					if (!changed) {
+						cx -= chipW("Remove");
+						rowChip(g, id + ":remove:" + n, "Remove", cx, y, false, editable, mx, my, () -> stageSecret(scope, key, SecretSettings.withEntry(
+							stagedNow.get(), SecretSettings.removal(n))));
+					}
+				}
+				cx -= 3 + chipW("Edit");
+				rowChip(g, id + ":edit:" + n, "Edit", cx, y, draft != null && n.equals(draft.original), editable, mx, my, () -> startDraft(scopeKey, r,
+					cur));
+			}
+			String badge = r.added() ? "new" : r.edited() ? "changed" : r.removed() ? "removed" : "";
+			int room = cx - x - 6;
+			if (visible(y, CHIP_H)) {
+				String head = n + "  " + sv.type();
+				String hs = TextUtil.ellipsize(font(), head, Math.max(20, room - (badge.isEmpty() ? 0 : font().width(badge) + 6)));
+				g.text(font(), hs, x, y + 3, r.removed() ? muted : UiBits.ink(), false);
+				if (!badge.isEmpty() && font().width(hs) + font().width(badge) + 6 <= room) {
+					g.text(font(), badge, x + font().width(hs) + 6, y + 3, r.removed() ? UiBits.errorText() : UiStyle.CLAY_DARK, false);
+				}
+			}
+			y += CHIP_H + 1;
+			String detail = sv.target() + (sv.envKeys().isEmpty() ? "" : "  ·  env: " + String.join(", ", sv.envKeys()));
+			if (visible(y, 10)) {
+				g.text(font(), TextUtil.ellipsize(font(), detail, w - 8), x + 8, y, muted, false);
+			}
+			y += 12;
+		}
+		if (draft == null || !draft.scopeKey.equals(scopeKey)) {
+			rowChip(g, id + ":add", "Add server…", x, y, false, editable, mx, my, () -> {
+				draft = new McpDraft(scopeKey, null, "stdio", List.of(), null);
+				for (String f : List.of("name", "command", "args", "url")) {
+					aux("mcp:" + f, f.equals("args"), "", 4000).set("");
+				}
+				auxProblems.remove("mcp");
+			});
+			return y + CHIP_H + 3 - y0;
+		}
+		y += 2;
+		return y - y0 + mcpDraft(g, scope, key, stagedNow, cur, x, y, w, editable, mx, my);
+	}
+
+	/** Opens the form on a listed server (its staged change, if any, else as the Foreman shows it). */
+	private void startDraft(String scopeKey, SecretSettings.Row r, List<SecretSettings.Server> cur) {
+		SecretSettings.Server sv = r.server();
+		List<String> envKeys = List.of(); // the variables it has now (an added server: none yet)
+		for (SecretSettings.Server c : cur) {
+			if (c.name().equals(sv.name())) {
+				envKeys = c.envKeys();
+			}
+		}
+		draft = new McpDraft(scopeKey, sv.name(), sv.type(), envKeys, r.envPatch() == null ? null : r.envPatch().deepCopy());
+		aux("mcp:name", false, "", 64).set(sv.name());
+		aux("mcp:command", false, "", 1000).set(sv.command() == null ? "" : sv.command());
+		aux("mcp:args", true, "", 4000).set(String.join("\n", sv.args()));
+		aux("mcp:url", false, "", 2000).set(sv.url() == null ? "" : sv.url());
+		auxProblems.remove("mcp");
+	}
+
+	private int mcpDraft(GuiGraphicsExtractor g, ConfigScope scope, String key, java.util.function.Supplier<@Nullable JsonElement> stagedNow,
+		List<SecretSettings.Server> cur, int x, int y, int w, boolean editable, int mx, int my) {
+		McpDraft d = draft;
+		int y0 = y;
+		int muted = UiBits.muted();
+		int labelW = font().width("Command") + 6;
+		g.text(font(), d.original == null ? "New MCP server" : "Edit " + d.original, x, y + 1, UiStyle.CLAY_DARK, false);
+		y += 12;
+		HubField nameF = aux("mcp:name", false, "letters, digits, _ or -", 64);
+		if (d.original == null) {
+			g.text(font(), "Name", x, y + 3, muted, false);
+			int fy = y;
+			y += nameF.draw(g, font(), x + labelW, y, w - labelW, 1, nameF == focus) + 3;
+			drawn(nameF, editable, fy);
+		}
+		g.text(font(), "Type", x, y + 3, muted, false);
+		int cx = x + labelW;
+		for (String t : SecretSettings.SERVER_TYPES) {
+			cx += rowChip(g, "mcp:type:" + t, t, cx, y, t.equals(d.type), editable, mx, my, () -> d.type = t) + 3;
+		}
+		y += CHIP_H + 3;
+		HubField commandF = aux("mcp:command", false, "e.g. npx -y @modelcontextprotocol/server-filesystem", 1000);
+		HubField argsF = aux("mcp:args", true, "arguments, one per line", 4000);
+		HubField urlF = aux("mcp:url", false, "https://host/path (no credentials, no query)", 2000);
+		Runnable done = () -> commitDraft(scope, key, stagedNow, cur);
+		auxSubmit.put(nameF, () -> setFocus("stdio".equals(d.type) ? commandF : urlF));
+		auxSubmit.put(commandF, done);
+		auxSubmit.put(urlF, done);
+		if ("stdio".equals(d.type)) {
+			g.text(font(), "Command", x, y + 3, muted, false);
+			int fy = y;
+			y += commandF.draw(g, font(), x + labelW, y, w - labelW, 1, commandF == focus) + 3;
+			drawn(commandF, editable, fy);
+			g.text(font(), "Args", x, y + 3, muted, false);
+			fy = y;
+			y += argsF.draw(g, font(), x + labelW, y, w - labelW, compact ? 2 : 3, argsF == focus) + 3;
+			drawn(argsF, editable, fy);
+			g.text(font(), "Environment (values are never shown)", x, y + 1, muted, false);
+			y += 12;
+			y += secretMap(g, "mcp:env", d.envKeys, () -> d.env, false, x, y, w, editable, mx, my, p -> d.env = p.isEmpty() ? null : p);
+		} else {
+			g.text(font(), "URL", x, y + 3, muted, false);
+			int fy = y;
+			y += urlF.draw(g, font(), x + labelW, y, w - labelW, 1, urlF == focus) + 3;
+			drawn(urlF, editable, fy);
+		}
+		String why = auxProblems.get("mcp");
+		if (why != null) {
+			y += text(g, UiBits.CROSS + " " + why, UiBits.errorText(), x, y, w);
+		}
+		int bx = x;
+		bx += rowChip(g, "mcp:done", d.original == null ? "Add" : "Done", bx, y, true, editable, mx, my, done) + 3;
+		rowChip(g, "mcp:cancel", "Cancel", bx, y, false, true, mx, my, () -> {
+			draft = null;
+			auxProblems.remove("mcp");
+		});
+		y += CHIP_H + 3;
+		return y - y0;
+	}
+
+	/** Done / Add: checks the form and stages the server's entry (an edit that changes nothing stages nothing). */
+	private void commitDraft(ConfigScope scope, String key, java.util.function.Supplier<@Nullable JsonElement> stagedNow, List<SecretSettings.Server> cur) {
+		McpDraft d = draft;
+		if (d == null) {
+			return;
+		}
+		String name = d.original != null ? d.original : aux("mcp:name", false, "", 64).value().strip();
+		List<String> args = new ArrayList<>();
+		for (String a : aux("mcp:args", true, "", 4000).value().split("\n", -1)) {
+			if (!a.isEmpty()) {
+				args.add(a); // as typed: an untouched argument (a hidden one too) goes back byte for byte
+			}
+		}
+		boolean stdio = "stdio".equals(d.type);
+		SecretSettings.Server sv = new SecretSettings.Server(name, d.type, stdio ? aux("mcp:command", false, "", 1000).value().strip() : null, stdio ? args
+			: List.of(), stdio ? null : aux("mcp:url", false, "", 2000).value().strip(), d.envKeys);
+		List<String> others = new ArrayList<>();
+		for (SecretSettings.Row r : SecretSettings.rows(cur, stagedNow.get())) {
+			others.add(r.server().name());
+		}
+		JsonObject env = stdio ? d.env : null;
+		String why = SecretSettings.serverProblem(sv, env, d.original == null, others);
+		if (why == null) {
+			List<String> shown = List.of();
+			for (SecretSettings.Server c : cur) {
+				if (c.name().equals(name)) {
+					shown = c.args();
+				}
+			}
+			why = SecretSettings.hiddenArgsProblem(shown, sv.args());
+		}
+		if (why == null && !stdio && d.env != null && !d.env.isEmpty()) {
+			why = "env: only stdio servers have variables";
+		}
+		if (why != null) {
+			auxProblems.put("mcp", why);
+			return;
+		}
+		JsonElement staged = stagedNow.get();
+		SecretSettings.Server was = null;
+		for (SecretSettings.Server c : cur) {
+			if (c.name().equals(name)) {
+				was = c;
+			}
+		}
+		boolean unchanged = was != null && (env == null || env.isEmpty()) && was.type().equals(sv.type()) && java.util.Objects.equals(was.command(),
+			sv.command()) && was.args().equals(sv.args()) && java.util.Objects.equals(was.url(), sv.url());
+		stageSecret(scope, key, unchanged ? SecretSettings.without(staged, name) : SecretSettings.withEntry(staged, SecretSettings.entry(sv, env)));
+		draft = null;
+		auxProblems.remove("mcp");
 	}
 
 	// ------------------------------------------------------------------ chrome
@@ -703,6 +1061,11 @@ final class SettingsForm {
 				e.getValue().set(SettingsLogic.text(s.scope().value(s.key())));
 			}
 		}
+		draft = null;
+		auxProblems.clear();
+		for (var e : auxIds.entrySet()) {
+			e.getKey().set("");
+		}
 		setNote("Reverted", false);
 	}
 
@@ -722,7 +1085,7 @@ final class SettingsForm {
 
 	@Nullable String focusKey() {
 		Setting s = focus == null ? null : fieldRows.get(focus);
-		return s == null ? null : s.key();
+		return s != null ? s.key() : focus == null ? null : auxIds.get(focus);
 	}
 
 	void setFocus(@Nullable HubField f) {
@@ -740,7 +1103,7 @@ final class SettingsForm {
 	boolean focusKey(String key) {
 		for (HubField f : drawnFields) {
 			Setting s = fieldRows.get(f);
-			if (s != null && s.key().equals(key)) {
+			if (s != null && s.key().equals(key) || key.equals(auxIds.get(f))) {
 				setFocus(f);
 				return true;
 			}
@@ -776,7 +1139,11 @@ final class SettingsForm {
 				focus.model.insert("\n");
 				commit(focus);
 			} else {
+				Runnable submit = auxSubmit.get(focus);
 				setFocus(null);
+				if (submit != null) {
+					submit.run();
+				}
 			}
 			return true;
 		}

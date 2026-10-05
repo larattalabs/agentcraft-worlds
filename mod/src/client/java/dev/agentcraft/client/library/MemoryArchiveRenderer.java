@@ -144,10 +144,15 @@ public class MemoryArchiveRenderer extends StationRenderer<MemoryArchiveBlockEnt
 				WorldUi.submitSprite(ps, c, Kit.icon("edit"), lx - 1, y + 2, 12, 12, 0xFFFFFFFF, light);
 				lx += 12;
 			}
+			// text a hair in front of what it is written on (TextDepth): the pill, the count chip
+			ps.pushPose();
+			WorldUi.liftText(ps);
 			WorldUi.submitText(ps, c, TextUtil.ellipsize(font, s.label.toUpperCase(java.util.Locale.ROOT), cx - 4 - lx), lx, y + 4, ink, light);
+			ps.popPose();
 			ps.pushPose();
 			ps.translate(0, 0, -LIFT);
 			WorldUi.submitNineSlice(ps, c, WorldUi.Layer.SOLID, Kit.progressFill("brass"), cx, y + 3, cw, 10, 0xFFFFFFFF, light);
+			WorldUi.liftText(ps);
 			WorldUi.submitText(ps, c, count, cx + (cw - font.width(count) + 1) / 2, y + 4, ink, light);
 			ps.popPose();
 		} else {
@@ -158,7 +163,10 @@ public class MemoryArchiveRenderer extends StationRenderer<MemoryArchiveBlockEnt
 				WorldUi.submitSprite(ps, c, Kit.icon("edit"), right - 11, y + 2, 12, 12, 0xFFFFFFFF, light);
 				right -= 13;
 			}
+			ps.pushPose();
+			WorldUi.liftText(ps); // text a hair in front of the pill (TextDepth)
 			WorldUi.submitText(ps, c, TextUtil.ellipsize(font, s.label, right - lx), lx, y + 4, ink, light);
+			ps.popPose();
 			ps.pushPose();
 			ps.translate(0, 0, -LIFT);
 			WorldUi.submitNineSlice(ps, c, WorldUi.Layer.SOLID, s.plan ? Kit.progressFill("brass") : Kit.PROGRESS_TRACK, x0 + 3, y + 3, 4, LABEL_H - 6,

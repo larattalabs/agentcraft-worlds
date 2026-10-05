@@ -40,7 +40,8 @@ import org.jspecify.annotations.Nullable;
  * wizard with this repo picked), Refresh PRs ({@code pr.refresh}), New goal (the Goals tab's form for it).
  * "Edit settings…" opens the repo's {@code repoSettings} as a form ({@link SettingsForm} on the repo's
  * {@link ConfigScope}: land, base branch, CI/setup, copy, protect, subagents, PR options, review defaults,
- * roles picked from the repo's {@code .claude/agents}; env read-only), applied with one {@code config.set {repoId}}.
+ * roles picked from the repo's {@code .claude/agents}; env as a secret map: names, write-only values, wave 3 S1), applied with
+ * one {@code config.set {repoId}}.
  */
 final class ReposTab implements HubPane {
 	static final long CONFIRM_MS = 6000;
@@ -92,7 +93,7 @@ final class ReposTab implements HubPane {
 		editing = repoId;
 	}
 
-	/** The repo form's rows: landing and checks, pull requests, review, roles (a row per agent), other, env (read-only). */
+	/** The repo form's rows: landing and checks, pull requests, review, roles (a row per agent), other, env (a secret map). */
 	List<SettingsForm.Row> editorRows(String repoId) {
 		ConfigScope sc = HubConfig.repo(repoId);
 		List<SettingsForm.Row> rows = new ArrayList<>();

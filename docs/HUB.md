@@ -547,7 +547,24 @@ the mod fills gaps in this contract (the Foreman side was built in parallel; ali
 - `model` / `effort` choices come from each setting's `options`; effort without options falls back to low, medium,
   high, max. `agentList` candidates: `options`, else the cast (leads for `claude.leads`).
 - MCP servers: the ack's `mcpServers` (`[{name, command}]` or `{name: command | {command}}`), else a `map` setting
-  whose key ends in `mcpServers`. Maps are always read-only in the hub.
+  whose key ends in `mcpServers`. Maps are always read-only in the hub. Wave 3 (S1/S2, pure `SecretSettings`,
+  `SecretSettingsTest`): a `secretMap` setting (a repo's `env` in its Edit settings form) and the `mcpServers` setting
+  (Settings > Context, restart-required) are edited; an older Foreman's plain map is still listed read-only.
+  - **Secret map**: one line per variable, `NAME (set)` with Replace / Remove, or the staged change ("new value",
+    "new value (replaces)", "removed") with Undo; then a name field, a value field and Set (Enter in the value field).
+    Values are write-only: typed, staged on Set (the field clears), never shown again; the staged value is the
+    partial update `{NAME: "value" | null}`. Checks before staging: a variable name, a repo refuses `GIT_*`, nobody
+    takes `AGENTCRAFT_CLIENT_TOKEN`.
+  - **MCP servers**: one entry per server (name, type, its command and arguments or URL, `env:` its variable names;
+    Edit, Remove or Undo; "new" / "changed" / "removed"), then "Add server…". The form: name (a new server), type
+    chips stdio / http / sse, command + arguments (one per line) and the environment as a secret map (stdio), or the
+    URL (http, sse); Add / Done stages the server's entry (`{name, type, command, args, url, env?}`, an edit that
+    changes nothing stages nothing), Cancel drops it. Arguments shown as `(hidden)` go back as shown, byte for byte (the
+    Foreman keeps the original in that place); a hidden argument that moved to another index (or a new one) is refused
+    ("type its real value again"), so a placeholder is never written to config.json. Checks like the Foreman's: name `[\w-]{1,64}`, not `agentcraft`, free for a new server; stdio needs
+    a one-line command; http/sse an http(s) URL without credentials, query or fragment.
+  - After Apply the current value is the names-only view (no value is kept in the mod); `dev.hub.state` and
+    `settings_set` replies show staged secret values as `"(staged)"`.
 - Widening (second confirm): permission mode away from `policy` (strict -> loose: policy, auto; unknown modes count
   as loosest), a deny rule removed, an allow rule added, any change of `claude.useClaudeLogin`.
 - Restart: a `foreman.restart` whose ack is lost to the closing socket counts as restarting; "reconnecting" lasts
@@ -593,7 +610,9 @@ The first hub tab: everything that needs the player or happened for them, in one
   box (`user.message`) and Open card. An older Foreman shows the live tail with "older lines need a newer Foreman".
   A failed first page is asked for again after 5 s. When more entries arrive than the live tail keeps (200) while
   the view is open, it pages back from the tail until it meets the fetched pages, so the log has no hole
-  (`LogJoin`); the fetched pages stop at 2,000 entries (older ones: the Foreman's `logs/<agent>.jsonl`). The
+  (`LogJoin`); the fetched pages stop at 2,000 entries (older ones: the Foreman's `logs/<agent>.jsonl`). The paging
+  state (pages, `more`, the entries put in front, the cap) is the pure `LogPager` (`LogPagerTest` covers the `more`
+  path: older pages asked with `before` = the oldest ts until a page says `more: false`, then no further request). The
   wrapped lines are cached and rebuilt only when the entries or the width change.
 - **Deep links** (W4): podium right-click -> Inbox on that podium's decisions; monitor right-click (empty hand or a
   non-block item; with a block in hand the click places it, so monitor walls still build) -> the Inbox view of the

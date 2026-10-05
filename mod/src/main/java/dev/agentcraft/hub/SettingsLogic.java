@@ -153,10 +153,19 @@ public final class SettingsLogic {
 		return out;
 	}
 
-	/** Short display text: on/off, numbers without ".0", lists joined, "not set" for null. */
+	/** Short display text: on/off, numbers without ".0", lists joined, "not set" for null; secret maps and MCP servers by name only. */
 	public static String format(SettingDef d, @Nullable JsonElement v) {
 		if (v == null || v.isJsonNull()) {
 			return "not set";
+		}
+		if (SettingDef.SECRET_MAP.equals(d.type())) {
+			List<String> ks = SecretSettings.keys(v);
+			return ks.isEmpty() ? "none" : String.join(", ", ks);
+		}
+		if (SettingDef.MCP_SERVERS.equals(d.type())) {
+			List<String> ns = new ArrayList<>();
+			SecretSettings.servers(v).forEach(s -> ns.add(s.name()));
+			return ns.isEmpty() ? "none" : String.join(", ", ns);
 		}
 		if (v.isJsonPrimitive()) {
 			JsonPrimitive p = v.getAsJsonPrimitive();
@@ -181,6 +190,35 @@ public final class SettingsLogic {
 			return parts.isEmpty() ? "none" : String.join(", ", parts);
 		}
 		return v.toString();
+	}
+
+	/**
+	 * The current value once a staged one applied: the staged value itself, except for the secret settings, whose
+	 * staged value is an update (S1/S2): their view after it, names only ({@code {NAME: "(set)"}}, servers with
+	 * {@code envKeys}), so no secret is ever kept as a "current" value.
+	 */
+	public static JsonElement applied(SettingDef d, @Nullable JsonElement staged) {
+		if (SettingDef.SECRET_MAP.equals(d.type())) {
+			return SecretSettings.appliedView(SecretSettings.keys(d.value()), staged);
+		}
+		if (SettingDef.MCP_SERVERS.equals(d.type())) {
+			return SecretSettings.appliedServers(SecretSettings.servers(d.value()), staged);
+		}
+		return staged == null ? JsonNull.INSTANCE : staged;
+	}
+
+	/** A staged value as the DevBridge may show it: secret values replaced by "(staged)". */
+	public static JsonElement masked(@Nullable SettingDef d, @Nullable JsonElement staged) {
+		if (staged == null) {
+			return JsonNull.INSTANCE;
+		}
+		if (d != null && SettingDef.SECRET_MAP.equals(d.type())) {
+			return SecretSettings.maskPatch(staged);
+		}
+		if (d != null && SettingDef.MCP_SERVERS.equals(d.type())) {
+			return SecretSettings.maskEntries(staged);
+		}
+		return staged.deepCopy();
 	}
 
 	/** The text a field starts with for this value: lists one per line, null empty. */
@@ -300,6 +338,12 @@ public final class SettingsLogic {
 			}
 			case SettingDef.STRING -> {
 				return v.isJsonPrimitive() && v.getAsJsonPrimitive().isString() ? null : "text is needed";
+			}
+			case SettingDef.SECRET_MAP -> {
+				return SecretSettings.validatePatch(v, "env".equals(d.key()));
+			}
+			case SettingDef.MCP_SERVERS -> {
+				return SecretSettings.validateEntries(v, SecretSettings.servers(d.value()));
 			}
 			case SettingDef.STRING_LIST, SettingDef.AGENT_LIST -> {
 				if (!v.isJsonArray()) {

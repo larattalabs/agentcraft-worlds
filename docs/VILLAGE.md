@@ -44,7 +44,8 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
 - Stand-up: when a goal becomes active with its first tasks assigned, the goal's lead and those workers
   gather at the building's `meeting` (or podium) for ~20-30 s with speech bubbles (the lead: the goal's
   title / plan's first line; workers: their task title), then go to work. Skipped when the player is far
-  away (> 64 blocks) or the building is not loaded.
+  away (> 64 blocks) or the building is not loaded. An agent that needs the player (blocked, waiting on you, owning an
+  open decision, or its task blocked or waiting on a decision) skips it and stays where it is (wave 3).
 - Library: when an agent writes a memory note (`memory.upsert` by that agent), it walks to the building's
   `library` spot holding a book (held-item render), stays ~5 s, then returns (only when idle or between
   steps; never interrupts a running task's position more than that).
@@ -70,7 +71,7 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
 - Library: `memory.upsert` with `author` = an agent; between steps only; a book in the main hand while walking, READ pose
   for 5 s at the `library` slot; cancelled by work or a stand-up; 30 s cap; notes wait at most 2 min; 1 min cooldown.
 - Toggles: hub > Buildings, a row under the trophies toggle (`Night`, `Stand-ups`, `Library`), `routines.json` per world,
-  default on. DevBridge: `dev.routines.state`, `dev.routines.toggle`, `dev.routines.time`, `dev.routines.standup`,
+  default on. DevBridge: `dev.routines.state` (per agent `needsUser`: it skips stand-ups), `dev.routines.toggle`, `dev.routines.time`, `dev.routines.standup`,
   `dev.routines.library`.
 ## As implemented: board stream (branch `village/board`)
 

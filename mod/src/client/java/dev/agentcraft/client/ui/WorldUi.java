@@ -6,6 +6,7 @@ import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.agentcraft.AgentCraft;
+import dev.agentcraft.ui.TextDepth;
 import java.util.Optional;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -50,8 +51,10 @@ import net.minecraft.util.LightCoordsUtil;
  *       all opaque text, so text behind them ghosts through.</li>
  *   <li>{@link Layer#OVERLAY}: icons/dots on top of a plate (polygon offset, translucent).</li>
  * </ul>
- * Text ({@link #submitText}) uses the polygon-offset display mode, so it sits on its own plate
- * without z-fighting. Fully opaque text is drawn in the solid pass. Two billboards at exactly the
+ * Text ({@link #submitText}) uses the polygon-offset display mode, but fully opaque text is drawn in
+ * the solid pass, where that offset does not separate it from a coplanar plate (glyphs went missing):
+ * lift text off its own background with {@link #liftText} (billboards, cards) or stack face-display
+ * layers apart ({@link TextDepth#faceDepthScale}). Two billboards at exactly the
  * same camera distance are coplanar, and then the polygon offset lets one plate's text win over the
  * other plate; give overlapping billboards distinct depths (see {@link #billboard(PoseStack,
  * CameraRenderState, double, double, double, float, float, double, double, double)}'s nudge).
@@ -142,6 +145,25 @@ public final class WorldUi {
 		poseStack.rotate(camera.orientation);
 		float s = PX * scale * (1 - t);
 		poseStack.scale(s, -s, s);
+	}
+
+	/**
+	 * Camera distance (blocks) of the current pose's origin: the length of its translation (block entity and entity
+	 * poses are camera-relative; a view rotation does not change the length).
+	 */
+	public static float eyeDistance(PoseStack poseStack) {
+		org.joml.Matrix4f m = poseStack.last().pose();
+		return (float) Math.sqrt(m.m30() * m.m30() + m.m31() * m.m31() + m.m32() * m.m32());
+	}
+
+	/**
+	 * Lifts what is drawn next {@link TextDepth#FRACTION} x the camera distance towards the camera, along the pose's
+	 * local z (whichever way faces the camera): text a hair in front of its own plate, card or paper, so no glyph loses
+	 * the depth test to it (the nameplate fix, {@link TextDepth}). Push the pose first.
+	 */
+	public static void liftText(PoseStack poseStack) {
+		org.joml.Matrix4f m = poseStack.last().pose();
+		poseStack.translate(0f, 0f, TextDepth.liftZ(m.m30(), m.m31(), m.m32(), m.m20(), m.m21(), m.m22()));
 	}
 
 	/** Full-bright light so UI stays legible at night. */

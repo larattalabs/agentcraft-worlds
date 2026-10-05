@@ -1,6 +1,7 @@
 package dev.agentcraft.client.agents;
 
 import dev.agentcraft.client.ui.WorldUi;
+import dev.agentcraft.ui.LeaderGaps;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -640,10 +641,15 @@ public final class PlateLayout {
 		return false;
 	}
 
+	/** Obstacle rectangles for {@link #leaderGaps} (x0, y0, x1, y1), reused. */
+	private static float[] obstacles = new float[64];
+	private static final float[] GAPS_SCREEN = new float[2 * MAX_GAPS];
+
 	/**
-	 * Cut the parts of item {@code i}'s leader line that run across another plate or bubble, so the
-	 * line passes behind them instead of being drawn over their text. Plate-space y pairs (top,
-	 * bottom) go to {@link AgentRenderState#leaderGaps}.
+	 * Cut the parts of item {@code i}'s leader line that run across another plate (with its bubble) or a reserved
+	 * billboard, so the line passes behind them instead of being drawn over their text ({@link LeaderGaps}: sorted,
+	 * merged, and when there are more crossings than {@value #MAX_GAPS} gaps the last ones merge into one, so the line never
+	 * crosses a plate). Plate-space y pairs (top, bottom) go to {@link AgentRenderState#leaderGaps}.
 	 */
 	private static void leaderGaps(Item a, int i, int n) {
 		Track t = a.t;
@@ -653,29 +659,29 @@ public final class PlateLayout {
 		}
 		float lineTop = a.sy - t.lift * a.k;
 		float lineBottom = a.sy - a.k;
-		float lx = a.sx;
-		int g = 0;
-		for (int j = 0; j < n && g < MAX_GAPS; j++) {
-			if (j == i) {
-				continue;
-			}
+		int count = 0;
+		if (obstacles.length < 4 * (n + reservedCount)) {
+			obstacles = new float[4 * (n + reservedCount) + 16];
+		}
+		for (int j = 0; j < n; j++) {
 			Item b = ITEMS.get(j);
 			Track q = b.t;
-			if (b.hidden || !q.hasRect || lx < q.rx0 - 1f || lx > q.rx1 + 1f || q.ry1 <= lineTop || q.ry0 >= lineBottom) {
+			if (j == i || b.hidden || !q.hasRect) {
 				continue;
 			}
-			float y0 = (Math.max(q.ry0, lineTop) - a.sy) / a.k - 1.5f;
-			float y1 = (Math.min(q.ry1, lineBottom) - a.sy) / a.k + 1.5f;
-			// insertion by top edge
-			int at = g;
-			while (at > 0 && t.gaps[2 * (at - 1)] > y0) {
-				t.gaps[2 * at] = t.gaps[2 * (at - 1)];
-				t.gaps[2 * at + 1] = t.gaps[2 * (at - 1) + 1];
-				at--;
-			}
-			t.gaps[2 * at] = y0;
-			t.gaps[2 * at + 1] = y1;
-			g++;
+			int o = 4 * count++;
+			obstacles[o] = q.rx0;
+			obstacles[o + 1] = q.ry0;
+			obstacles[o + 2] = q.rx1;
+			obstacles[o + 3] = q.ry1;
+		}
+		for (int r = 0; r < reservedCount; r++) {
+			int o = 4 * count++;
+			System.arraycopy(reservedRects, 4 * r, obstacles, o, 4);
+		}
+		int g = LeaderGaps.compute(a.sx, lineTop, lineBottom, obstacles, count, 1f, 1.5f * a.k, MAX_GAPS, GAPS_SCREEN);
+		for (int k = 0; k < 2 * g; k++) {
+			t.gaps[k] = (GAPS_SCREEN[k] - a.sy) / a.k;
 		}
 		t.gapCount = g;
 		if (g > 0) {

@@ -314,7 +314,16 @@ plate on screen once settled:
 - Text on a camera-facing plate needs a real lift towards the camera: the font's polygon offset does not
   separate it from a coplanar plate, and at close range whole glyphs lost the depth test ("Marlow" read
   "M r o"). `Nameplate` lifts its text by `TEXT_LIFT` (0.0003) x the camera distance, well under the per-rank
-  nudge; do the same for other billboard text.
+  nudge. Wave 3 applies the same rule to every world UI text (pure `ui.TextDepth`, `TextDepthTest`): billboards and
+  cards call `WorldUi.liftText(poseStack)` after their background (the lift is computed from the pose: its translation
+  is the camera-relative origin, its z column the local z, whichever way faces the camera), face displays stretch their
+  layer steps with `TextDepth.faceDepthScale` so the smallest text-over-background gap is at least that fraction,
+  capped so the front layer stays behind the block's bezel or frame. Per surface: goal hologram (text, ring, rule
+  lifted off the paper), podium bubble (content off the paper, the key off its keycap), merge card and archive pill
+  (text off the card/pill and off the count chip), monitors (min gap half a step, stack 7 steps, at most 0.04 in front
+  of the screen: the bezel lip is 1/16), task board (min gap half a step, stack LIFT + 6 steps, 0.04: the frame is
+  1/16), village board (min gap one step, stack 3.6 steps, 0.04), console terminal (the paper stays, keycap and text
+  step forward, at most 0.018: the bezel is 1/32). Speech bubbles keep their 0.5 px lift.
 
 `dev.agents {settle?}` lists positions/targets/paths and each laid-out plate (`plate{mode, lift,
 rank, rect, ...}`); `settle:true` snaps walkers to their targets and plates to their final layout
@@ -377,7 +386,9 @@ except the submit nodes themselves.
   screen (one that does not fit above may come down over its own head, nudged in front of it), a
   plate that cannot find a free spot on screen overlaps cleanly by rank instead of flying off screen,
   a slide never runs through a plate placed before it (it jumps), and leader lines pass behind other
-  plates and bubbles (gaps cut where they cross: `AgentRenderState.leaderGaps`).
+  plates and bubbles and the podium's reserved bubble (gaps cut where they cross: `AgentRenderState.leaderGaps`, computed
+  by the pure `ui.LeaderGaps`: sorted, merged, and more crossings than the four slots merge into one longer gap, so a
+  line never runs across a plate; `LeaderGapsTest` checks that property on random crowds).
 - **Agent card** (`AgentCardScreen`, empty-hand sneak + right-click an agent, or the Team tab / a task / the console roster): name/title/role, state, activity, task,
   **the decision it owns with a way to act on it**, decisions it filed that wait on you through
   another agent ("Filed d3 for you: merge of t4 (Wren's work)"), the last log lines, Message /
@@ -438,7 +449,12 @@ hard-code colours; ask `UiStyle`. Sprites are 1 texel = 1 GUI px (GUI scale 3 at
   blocked · 3 replies · 1 PR · usage paused until 14:20" (each part only when non-zero, full / short / dots widths
   by `AlertLine.fit`) and the hub key. Counts = the Inbox's Needs you (`Alerts`, source `Inbox.counts()`); hidden
   with F1, dimmed while the Foreman is stale.
-- **Toasts** (`Toasts`): `notify` and need-you events with a key hint (`J answer`, `H open hub`); **away digest**
+- **Toasts** (`Toasts`): `notify` and need-you events with a key hint (`J answer`, `H open hub`). Stacking (wave 3,
+  pure `hud.ToastStack`, `ToastStackTest`): need-you toasts first, three at most; what does not fit (or a fourth) waits
+  and counts on one "+N more" line (clay "· 1 needs you" when a need-you toast waits), its time starting when it shows;
+  info toasts never evict or hide a need-you toast (the queue of 8 drops its oldest info toast first; after a need-you
+  toast that does not fit no info toast is drawn). `dev.hud.state toasts {shown[{level, title, y}], hidden, hiddenNeed,
+  moreLine, moreY, queued}`. **Away digest**
   (W6): after >= 10 minutes without the hub, "Since you were away: 2 goals moved, 1 needs you" (`goal.digest`),
   then `H` opens the Inbox. State per world in `hub-hud.json`.
 - **Welcome card** (`WelcomeScreen`, W7): on joining a singleplayer world without buildings: what AgentCraft is,
@@ -536,7 +552,8 @@ Contract: docs/VILLAGE.md V3 ("As implemented: routines"); notes in mod/DEV.md "
 - **Library visits**: a `memory.upsert` written by an agent (`author`) queues a visit; between steps (not working,
   thinking or in an error) it walks to its building's `library` slot with a book in its hand, reads ~5 s (READ pose),
   then returns; cancelled the moment work needs it; at most 30 s; a 2 min wait and a 1 min cooldown.
-- Priorities (pure, `RoutineRules.decide`): waiting on the player / walking between buildings > stand-up > library >
+- Priorities (pure, `RoutineRules.decide`): waiting on the player / walking between buildings > stand-up (not for an
+  agent that needs the player: `Facts.needsUser`, blocked or waiting, also its task) > library >
   night rest > normal. Nothing starts or ends while the Foreman link is stale. Every hook is guarded: an error leaves
   the agents working as usual (logged at most every 10 s).
 - Per-world toggles in hub > Buildings ("Night", "Stand-ups", "Library"), `routines.json`, default on. DevBridge:

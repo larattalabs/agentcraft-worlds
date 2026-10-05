@@ -25,7 +25,7 @@ final class SettingsDev {
 	/** The contract's names (docs/HUB.md: "set {key, value}, apply, revert, confirm, restart") -> the actions. */
 	static final java.util.Map<String, String> ALIASES = java.util.Map.of("set", "settings_set", "apply", "settings_apply", "revert",
 		"settings_revert", "confirm", "settings_confirm", "restart", "foreman_restart");
-	static final String ACTIONS = "set|apply|revert|confirm|restart|settings_set|settings_text|settings_focus|settings_apply|settings_confirm|settings_confirm_back|settings_revert|"
+	static final String ACTIONS = "set|apply|revert|confirm|restart|settings_set|settings_text|settings_focus|settings_field|settings_apply|settings_confirm|settings_confirm_back|settings_revert|"
 		+ "settings_group|settings_reload|settings_fake|settings_fake_agents|foreman_restart|team_select|team_back|team_on|team_lead|repo_settings|"
 		+ "repo_settings_done";
 	private static final Set<String> NAMES = Set.of(ACTIONS.split("\\|"));
@@ -137,6 +137,15 @@ final class SettingsDev {
 					throw new DevBridge.DevException("key: no editable text field for " + key + " was drawn last frame");
 				}
 				return done(action, "focused " + key);
+			}
+			case "settings_field" -> {
+				// a helper field of the secret editors (a variable's name / value, the MCP server form): the text is never echoed
+				String id = f.nonBlank("id");
+				if (!shown(s).form().setAux(id, f.str("text"))) {
+					throw new DevBridge.DevException("id: no secret-editor field " + id + " was drawn last frame (form.focus names them: repo:env:name, repo:env:value, "
+						+ "mcp:name, mcp:command, mcp:args, mcp:url, mcp:env:name, mcp:env:value)");
+				}
+				return done(action, "set " + id);
 			}
 			case "settings_apply", "settings_confirm" -> {
 				Shown sh = shown(s);
@@ -259,7 +268,7 @@ final class SettingsDev {
 		JsonObject o = new JsonObject();
 		o.addProperty("action", action);
 		JsonObject st = new JsonObject();
-		HubConfig.global().staged.edits().forEach((k, v) -> st.add(k, v.deepCopy()));
+		HubConfig.global().staged.edits().forEach((k, v) -> st.add(k, SettingsLogic.masked(HubConfig.global().def(k), v))); // no secret values
 		o.add("staged", st);
 		JsonArray w = new JsonArray();
 		HubConfig.global().widenings().forEach(w::add);

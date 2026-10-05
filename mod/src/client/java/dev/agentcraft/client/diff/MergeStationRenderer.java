@@ -258,8 +258,11 @@ public class MergeStationRenderer extends StationRenderer<MergeStationBlockEntit
 		if (s.empty) {
 			WorldUi.submitNineSlice(ps, c, WorldUi.Layer.SOLID, Kit.card("done"), 0, 0, w, h, 0xFFFFFFFF, light);
 			WorldUi.submitSprite(ps, c, Kit.dot("done", false), 7, 7, 7, 7, 0xFFFFFFFF, light);
+			ps.pushPose();
+			WorldUi.liftText(ps); // text a hair in front of its card (TextDepth)
 			WorldUi.submitText(ps, c, "All merged", 17, 4, ink, light);
 			WorldUi.submitText(ps, c, "nothing waits", 17, 12, muted, light);
+			ps.popPose();
 			// the brass foot
 			WorldUi.submitFill(ps, c, 2, h - 1, w - 2, h + 1, UiStyle.color("palette.ui.border"), light);
 			return;
@@ -273,7 +276,11 @@ public class MergeStationRenderer extends StationRenderer<MergeStationBlockEntit
 		int cx = w - 5 - cw;
 		int labelMax = cx - (x + 13) - (s.index == 0 ? 13 : 3);
 		String head = s.index == 0 ? (font.width("Merge review") <= labelMax ? "Merge review" : "Review") : "Next";
+		// text a hair in front of what it is written on (TextDepth): on the card, and on the count chip
+		ps.pushPose();
+		WorldUi.liftText(ps);
 		WorldUi.submitText(ps, c, head, x + 13, 5, ink, light);
+		ps.popPose();
 		if (s.index == 0) {
 			float phase = (float) ((System.currentTimeMillis() % 1200) / 1200.0 * Math.PI * 2);
 			int alpha = (int) (70 + 70 * Math.sin(phase));
@@ -284,15 +291,20 @@ public class MergeStationRenderer extends StationRenderer<MergeStationBlockEntit
 			ps.pushPose();
 			ps.translate(0, 0, -LIFT);
 			WorldUi.submitNineSlice(ps, c, WorldUi.Layer.SOLID, Kit.progressFill("clay"), cx, 4, cw, 10, 0xFFFFFFFF, light);
+			WorldUi.liftText(ps);
 			WorldUi.submitText(ps, c, count, cx + (cw - font.width(count) + 1) / 2, 5, UiStyle.color("palette.ui.panel_hi"), light);
 			ps.popPose();
-		} else {
-			WorldUi.submitText(ps, c, count, w - 5 - font.width(count), 5, muted, light);
 		}
 		ps.pushPose();
 		ps.translate(0, 0, -LIFT);
 		WorldUi.submitNineSlice(ps, c, WorldUi.Layer.SOLID, Kit.DIVIDER, x, 15, w - 5 - x, 3, 0xFFFFFFFF, light);
 		ps.popPose();
+		// the rest of the card's text, lifted off the card
+		ps.pushPose();
+		WorldUi.liftText(ps);
+		if (s.index != 0) {
+			WorldUi.submitText(ps, c, count, w - 5 - font.width(count), 5, muted, light);
+		}
 		// worker face + name + task id
 		int ry = 20;
 		submitFace(ps, c, s.worker, x, ry, light);
@@ -319,6 +331,7 @@ public class MergeStationRenderer extends StationRenderer<MergeStationBlockEntit
 		if (!ci.isEmpty() && sx + font.width(ci) <= w - 15) {
 			WorldUi.submitText(ps, c, ci, w - 15 - font.width(ci), sy, s.ciInk, light);
 		}
+		ps.popPose();
 		WorldUi.submitFill(ps, c, 2, h - 1, w - 2, h + 1, UiStyle.color("palette.ui.border"), light);
 	}
 

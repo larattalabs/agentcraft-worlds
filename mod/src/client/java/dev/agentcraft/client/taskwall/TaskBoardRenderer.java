@@ -15,6 +15,7 @@ import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.client.ui.WorldUi;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
+import dev.agentcraft.ui.TextDepth;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Minecraft;
@@ -48,6 +49,12 @@ public class TaskBoardRenderer extends StationRenderer<TaskBoardBlockEntity, Tas
 	public static final float LINEN_DEPTH = 14f / 16f - 0.002f;
 	static final float Z = DisplayDraw.Z_STEP;
 	static final float LIFT = 5 * DisplayDraw.Z_STEP; // flying cards sit above the others
+	/** Smallest text-over-background gap (the empty note's key at 3 steps over its keycap at 2.5), blocks. */
+	static final float MIN_TEXT_GAP = 0.5f * -DisplayDraw.Z_STEP;
+	/** From the board plane to the frontmost layer (LIFT + 6 steps: the offline badge's text), blocks. */
+	static final float STACK_DEPTH = -(LIFT + 6 * DisplayDraw.Z_STEP);
+	/** Room in front of the linen the stack may use: the frame stands 1/16 in front of it (model z 13-14). */
+	public static final float MAX_STACK_DEPTH = 0.04f;
 	/** The board's surface sprite (block atlas), tiled under the cards. */
 	static final Identifier SURFACE = Identifier.withDefaultNamespace("block/stripped_oak_log");
 	/**
@@ -153,6 +160,10 @@ public class TaskBoardRenderer extends StationRenderer<TaskBoardBlockEntity, Tas
 		ps.pushPose();
 		toFace(ps, s.facing, LINEN_DEPTH, b.ppb);
 		ps.translate(0, -(s.panelHeight - 1) * b.ppb, 0);
+		// text a hair in front of its card/label at any distance (TextDepth): the layer steps stretch with the camera
+		// distance, so the smallest gap (the empty note's key over its keycap, half a step) is at least 0.0003 x the
+		// distance; the stack (LIFT + 6 steps: the offline badge's text) stays within 0.04, behind the 1/16 frame
+		ps.scale(1f, 1f, TextDepth.faceDepthScale(WorldUi.eyeDistance(ps), MIN_TEXT_GAP, STACK_DEPTH, MAX_STACK_DEPTH));
 		int light = s.light;
 		int headInk = UiStyle.color("paper.text", 0xFF1F1E1D);
 		int muted = UiStyle.color("paper.muted", 0xFF655E55);

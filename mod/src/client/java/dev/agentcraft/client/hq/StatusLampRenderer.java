@@ -430,6 +430,9 @@ public class StatusLampRenderer extends StationRenderer<StatusLampBlockEntity, S
 		frameStrip(poseStack, collector, x0 - 3, y0 - 3, x0 + cw + 3, y0 + ch + 3, 1, walnut, light);
 		frameStrip(poseStack, collector, x0 - 2, y0 - 2, x0 + cw + 2, y0 + ch + 2, 2, brass, light);
 		WorldUi.submitNineSlice(poseStack, collector, WorldUi.Layer.SOLID, Kit.PANEL_PAPER, x0, y0, cw, ch, 0xFFFFFFFF, light);
+		// everything on the paper (ring, rule, text) sits a hair in front of it (TextDepth): coplanar with the paper the
+		// opaque text lost whole glyphs at close range, like the nameplates did
+		WorldUi.liftText(poseStack);
 		int ink = UiStyle.INK;
 		int muted = UiStyle.color("paper.muted", 0xFF655E55);
 		int dim = s.stale ? 0x99 : 0xFF;

@@ -28,7 +28,11 @@ public record SettingDef(String key, String label, String help, String group, St
 	public static final String EFFORT = "effort";
 	public static final String AGENT_LIST = "agentList";
 	public static final String MAP = "map";
-	public static final List<String> TYPES = List.of(BOOL, INT, ENUM, STRING, STRING_LIST, MODEL, EFFORT, AGENT_LIST, MAP);
+	/** S1 (docs/WAVE3.md): {@code {NAME: "(set)"}}, names only; staged as a partial update {@code {NAME: "value" | null}}. */
+	public static final String SECRET_MAP = "secretMap";
+	/** S2: {@code [{name, type, command?, args?, url?, envKeys}]}; staged as upserts {@code {name, ...}} / {@code {name, remove: true}}. */
+	public static final String MCP_SERVERS = "mcpServers";
+	public static final List<String> TYPES = List.of(BOOL, INT, ENUM, STRING, STRING_LIST, MODEL, EFFORT, AGENT_LIST, MAP, SECRET_MAP, MCP_SERVERS);
 
 	public SettingDef {
 		label = label == null || label.isBlank() ? key : label;
@@ -52,9 +56,14 @@ public record SettingDef(String key, String label, String help, String group, St
 		this(key, label, help, group, type, options, min, max, value, def, source, live, overriddenBy, false);
 	}
 
-	/** Shown but never edited here: marked {@code readOnly} by the Foreman, maps (MCP servers, env) and types this mod does not know. */
+	/** Shown but never edited here: marked {@code readOnly} by the Foreman, plain maps and types this mod does not know (secret maps and MCP servers are edited). */
 	public boolean readOnly() {
 		return readOnlyFlag || MAP.equals(type) || !knownType();
+	}
+
+	/** Whether this setting holds secrets ({@link #SECRET_MAP}, {@link #MCP_SERVERS}): staged values are never shown or echoed. */
+	public boolean secret() {
+		return SECRET_MAP.equals(type) || MCP_SERVERS.equals(type);
 	}
 
 	/** The same setting with another current value (a config.set that applied, a fake for tests). */

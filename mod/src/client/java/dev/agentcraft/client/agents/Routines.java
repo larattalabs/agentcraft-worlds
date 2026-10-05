@@ -811,6 +811,9 @@ public final class Routines {
 			a.addProperty("id", e.agentId());
 			Plan p = plans.get(e.agentId());
 			a.addProperty("routine", p == null ? "none" : p.kind().label);
+			ForemanState fst = dev.agentcraft.client.foreman.Foreman.state();
+			Protocol.Agent fa = fst == null ? null : fst.agents().get(e.agentId());
+			a.addProperty("needsUser", fa != null && AgentManager.needsUser(fst, fa));
 			a.addProperty("station", p == null ? null : p.stationKey());
 			a.addProperty("layout", p == null ? null : p.layout());
 			a.addProperty("bed", p == null || p.bed() == null ? null : p.bed().name());

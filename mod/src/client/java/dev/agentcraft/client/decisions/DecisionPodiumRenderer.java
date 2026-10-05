@@ -175,6 +175,9 @@ public class DecisionPodiumRenderer extends StationRenderer<DecisionPodiumBlockE
 		float y0 = -h - 4;
 		WorldUi.submitNineSlice(poseStack, collector, WorldUi.Layer.SOLID, Kit.BUBBLE, x0, y0, w, h, 0xFFFFFFFF, light);
 		WorldUi.submitSprite(poseStack, collector, WorldUi.Layer.SOLID, Kit.BUBBLE_TAIL, -4.5f, -5f, 9, 5, 0xFFFFFFFF, light);
+		// the bubble's content sits a hair in front of the paper (TextDepth; coplanar, opaque text lost glyphs), and the
+		// key a hair in front of its keycap
+		WorldUi.liftText(poseStack);
 
 		float tx = x0 + 8;
 		float ty = y0 + 6;
@@ -189,7 +192,10 @@ public class DecisionPodiumRenderer extends StationRenderer<DecisionPodiumBlockE
 		int kw = font.width(key);
 		float kx = x0 + w - 8 - kw - 8;
 		WorldUi.submitNineSlice(poseStack, collector, WorldUi.Layer.SOLID, Kit.KEYCAP, kx, ty - 2, kw + 8, 12, 0xFFFFFFFF, light);
+		poseStack.pushPose();
+		WorldUi.liftText(poseStack);
 		WorldUi.submitText(poseStack, collector, key, kx + 4, ty, UiStyle.color("palette.ui.text", 0xFF34312E), light);
+		poseStack.popPose();
 		ty += 10 + 3;
 		// divider
 		WorldUi.submitFill(poseStack, collector, tx, ty - 2, x0 + w - 8, ty - 1, UiStyle.color("palette.ui.edge", 0xFFC9BBA3), light);

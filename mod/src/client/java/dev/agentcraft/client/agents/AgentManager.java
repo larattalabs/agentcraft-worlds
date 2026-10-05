@@ -465,8 +465,28 @@ public final class AgentManager {
 		String fam = a.state().family();
 		String before = agentLayouts.get(a.id());
 		boolean changing = trips.containsKey(a.id()) || before != null && !before.equals(layoutName);
-		return new RoutineRules.Facts(followsPlayer(a) || awaiting.containsKey(a.id()), changing, a.taskId() != null,
-			fam.equals("working") || fam.equals("thinking") || fam.equals("error"), a.isActive());
+		boolean waits = followsPlayer(a) || awaiting.containsKey(a.id());
+		return new RoutineRules.Facts(waits, changing, a.taskId() != null, fam.equals("working") || fam.equals("thinking") || fam.equals("error"),
+			a.isActive(), waits || needsUser(Foreman.state(), a));
+	}
+
+	/**
+	 * Anything about this agent waits on the player (it skips stand-ups): blocked or waiting on you (also while paused), an
+	 * open decision it owns, or its task blocked or waiting on an open decision (the HUD's and the task wall's rules:
+	 * {@code ForemanAlertCounts} counts blocked tasks, {@link dev.agentcraft.client.ui.StatusMap#needsYou} the decisions).
+	 */
+	static boolean needsUser(@Nullable ForemanState st, Agent a) {
+		if (a.state() == AgentState.WAITING_USER || a.state() == AgentState.BLOCKED) {
+			return true;
+		}
+		if (st == null) {
+			return false;
+		}
+		if ("waiting".equals(dev.agentcraft.client.ui.StatusMap.agent(st, a))) {
+			return true;
+		}
+		Protocol.Task t = a.taskId() == null ? null : st.tasks().get(a.taskId());
+		return t != null && (t.status() == Protocol.TaskStatus.BLOCKED || dev.agentcraft.client.ui.StatusMap.needsYou(st, t));
 	}
 
 	/** A lying agent keeps lying (true) or gets up beside its bed; an error gets it up and lets it work. */

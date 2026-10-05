@@ -12,6 +12,7 @@ import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.hud.ToastStack;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -29,21 +30,61 @@ import org.jspecify.annotations.Nullable;
  * about, two lines of text; "need you" toasts get a clay stripe and a key hint: the decisions key ({@code J})
  * when the toast is about a decision, else the hub key ({@code H}, e.g. a blocked task or a reply); a toast
  * can also carry its own hint ({@link #push(Notify, String, String)}, the away toast). They slide
- * in at the top right under the connection pill, stack (newest on top, three at most), and leave
- * early once their decision is answered. Not shown while the decision screen is open.
+ * in at the top right under the connection pill, stack (need-you toasts first, then newest on top, three at most,
+ * {@link ToastStack}), and leave early once their decision is answered. Toasts that do not fit (three already, or the
+ * screen is too short: 426x240) wait their turn and are counted on one "+N more" line; their time starts when they
+ * show. Info toasts never push out or hide a need-you toast. Not shown while the decision screen is open.
  */
 public final class Toasts implements HudElement {
 	private static final int W = 196;
-	private static final int MAX = 3;
+	/** A toast that never got room is dropped after this long (need-you toasts wait longer). */
+	private static final long QUEUE_MS = 30_000;
+	private static final long QUEUE_NEED_MS = 120_000;
+	private static final int MORE_H = 13;
 	private static final int SLIDE_MS = 180;
 	private static final int FADE_MS = 350;
 	private static final List<Toast> ACTIVE = new ArrayList<>();
 	private static int shown;
 	private static final List<java.util.function.Predicate<Notify>> DROP = new java.util.concurrent.CopyOnWriteArrayList<>();
 
-	private record Toast(Notify n, @Nullable String agentId, String title, String body, long start, long life, @Nullable String decisionId,
-		@Nullable String hintKey, @Nullable String hintVerb) {
+	/** {@code start}: when it first showed (-1 while it waits); {@code life} counts from then. */
+	private static final class Toast {
+		final Notify n;
+		final @Nullable String agentId;
+		final String title;
+		final String body;
+		final long arrived;
+		long start = -1;
+		long life;
+		final @Nullable String decisionId;
+		final @Nullable String hintKey;
+		final String hintVerb;
+
+		Toast(Notify n, @Nullable String agentId, String title, String body, long arrived, long life, @Nullable String decisionId,
+			@Nullable String hintKey, String hintVerb) {
+			this.n = n;
+			this.agentId = agentId;
+			this.title = title;
+			this.body = body;
+			this.arrived = arrived;
+			this.life = life;
+			this.decisionId = decisionId;
+			this.hintKey = hintKey;
+			this.hintVerb = hintVerb;
+		}
+
+		boolean need() {
+			return n.level() == NotifyLevel.NEED_USER;
+		}
+
+		boolean over(long now) {
+			return start >= 0 ? now - start > life : now - arrived > (need() ? QUEUE_NEED_MS : QUEUE_MS);
+		}
 	}
+
+	/** The last layout (QA, {@code dev.hud.state toasts}). */
+	private static ToastStack.Layout lastLayout = new ToastStack.Layout(List.of(), List.of(), 0, 0, -1);
+	private static List<Toast> lastOrder = List.of();
 
 	/** QA: the key hint of the newest toast ("J answer", "H open"), null = none. */
 	public static @Nullable String lastHint() {
@@ -51,12 +92,12 @@ public final class Toasts implements HudElement {
 			return null;
 		}
 		Toast t = ACTIVE.get(0);
-		return t.hintKey() == null ? null : t.hintKey() + " " + t.hintVerb();
+		return t.hintKey == null ? null : t.hintKey + " " + t.hintVerb;
 	}
 
 	/** QA: the newest toast's title and body. */
 	public static @Nullable String lastText() {
-		return ACTIVE.isEmpty() ? null : ACTIVE.get(0).title() + ": " + ACTIVE.get(0).body();
+		return ACTIVE.isEmpty() ? null : ACTIVE.get(0).title + ": " + ACTIVE.get(0).body;
 	}
 
 	public static void init() {
@@ -144,20 +185,27 @@ public final class Toasts implements HudElement {
 			}
 		}
 		ACTIVE.add(0, new Toast(n, agentId, title, body, Util.getMillis(), life, n.decisionId(), hintKey, hintVerb == null ? "" : hintVerb));
-		while (ACTIVE.size() > MAX) {
-			ACTIVE.remove(ACTIVE.size() - 1);
+		for (int drop = ToastStack.evict(needs(ACTIVE), ToastStack.MAX_KEPT); drop >= 0; drop = ToastStack.evict(needs(ACTIVE), ToastStack.MAX_KEPT)) {
+			ACTIVE.remove(drop); // the oldest info toast goes first: a need-you toast is never pushed out by news
 		}
 		shown++;
 	}
 
+	private static List<Boolean> needs(List<Toast> ts) {
+		List<Boolean> out = new ArrayList<>(ts.size());
+		for (Toast t : ts) {
+			out.add(t.need());
+		}
+		return out;
+	}
+
 	private static void expireFor(String decisionId) {
 		long now = Util.getMillis();
-		for (int i = 0; i < ACTIVE.size(); i++) {
-			Toast t = ACTIVE.get(i);
-			if (decisionId.equals(t.decisionId())) {
-				long end = Math.min(t.start() + t.life(), now + FADE_MS);
-				ACTIVE.set(i, new Toast(t.n(), t.agentId(), t.title(), t.body(), t.start(), Math.max(0, end - t.start()), t.decisionId(), t.hintKey(),
-					t.hintVerb()));
+		ACTIVE.removeIf(t -> decisionId.equals(t.decisionId) && t.start < 0); // answered before it showed: never show it
+		for (Toast t : ACTIVE) {
+			if (decisionId.equals(t.decisionId)) {
+				long end = Math.min(t.start + t.life, now + FADE_MS);
+				t.life = Math.max(0, end - t.start);
 			}
 		}
 	}
@@ -166,7 +214,7 @@ public final class Toasts implements HudElement {
 	public void extractRenderState(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
 		Minecraft mc = Minecraft.getInstance();
 		long now = Util.getMillis();
-		ACTIVE.removeIf(t -> now - t.start() > t.life());
+		ACTIVE.removeIf(t -> t.over(now));
 		if (mc.player == null || ACTIVE.isEmpty() || mc.gui.screen() instanceof DecisionScreen) {
 			return;
 		}
@@ -182,41 +230,97 @@ public final class Toasts implements HudElement {
 		// survival/Hardcore: hearts, armour, hunger and air sit above the hotbar (up to ~50 px from the bottom)
 		boolean bars = mc.gameMode != null && mc.gameMode.getPlayerMode().isSurvival();
 		int limit = placing != null ? placing[1] - 4 : g.guiHeight() - (bars ? 50 : 26);
-		for (Toast t : ACTIVE) {
-			int h = draw(g, font, t, now, y, limit);
-			if (h < 0) {
-				continue; // a shorter one below may still fit
+		// need-you toasts first (newest first), then the rest; what does not fit waits and counts on the "+N more" line
+		List<Toast> order = new ArrayList<>();
+		List<ToastStack.Item> items = new ArrayList<>();
+		for (int i : ToastStack.order(needs(ACTIVE))) {
+			Toast t = ACTIVE.get(i);
+			order.add(t);
+			items.add(new ToastStack.Item(t.need(), height(font, t)));
+		}
+		ToastStack.Layout l = ToastStack.layout(items, y, limit, 4, ToastStack.MAX_SHOWN, MORE_H);
+		lastLayout = l;
+		lastOrder = order;
+		for (int k = 0; k < l.shown().size(); k++) {
+			Toast t = order.get(l.shown().get(k));
+			if (t.start < 0) {
+				t.start = now; // its time and its slide start now that it has room
 			}
-			y += h + 4;
+			draw(g, font, t, now, l.ys().get(k));
+		}
+		if (l.moreY() >= 0) {
+			drawMore(g, font, l, l.moreY());
 		}
 	}
 
-	/** Draws the toast at {@code y} and returns its height, or -1 (nothing drawn) when it would reach below {@code limit}. */
-	private static int draw(GuiGraphicsExtractor g, Font font, Toast t, long now, int y, int limit) {
+	/** "+2 more · 1 needs you": a small paper tab under the stack, right-aligned with the toasts. */
+	private static void drawMore(GuiGraphicsExtractor g, Font font, ToastStack.Layout l, int y) {
+		String text = ToastStack.moreText(l.hidden(), l.hiddenNeed());
+		int w = Math.min(W, font.width(text) + 12);
+		int x = g.guiWidth() - 6 - w;
+		Panels.sprite(g, Kit.PANEL_PAPER, x, y, w, MORE_H, 0xFFFFFFFF);
+		g.text(font, TextUtil.ellipsize(font, text, w - 12), x + 6, y + 3, l.hiddenNeed() > 0 ? UiStyle.CLAY_DARK : UiBits.muted(), false);
+	}
+
+	/** The toast's wrapped body lines (at most two) for the text column. */
+	private static List<FormattedCharSequence> lines(Font font, Toast t) {
 		Kit.Padding p = Kit.padding("panel_paper");
-		boolean need = t.n().level() == NotifyLevel.NEED_USER;
-		int textX = p.left() + 26;
-		int textW = W - textX - p.right();
-		List<FormattedCharSequence> lines = TextUtil.wrap(font, UiBits.oneLine(t.body()), textW);
+		int textW = W - (p.left() + 26) - p.right();
+		List<FormattedCharSequence> lines = TextUtil.wrap(font, UiBits.oneLine(t.body), textW);
 		if (lines.size() > 2) {
-			String second = TextUtil.wrapPlain(font, UiBits.oneLine(t.body()), textW).get(1);
+			String second = TextUtil.wrapPlain(font, UiBits.oneLine(t.body), textW).get(1);
 			lines = List.of(lines.get(0), net.minecraft.network.chat.Component.literal(TextUtil.ellipsize(font, second + " …", textW))
 				.getVisualOrderText());
 		}
-		boolean hint = t.hintKey() != null;
-		int h = Math.max(p.top() + 20 + p.bottom() - 2, p.top() + 10 + lines.size() * 10 + (hint ? 12 : 0) + p.bottom() - 2);
-		if (y + h > limit) {
-			return -1;
+		return lines;
+	}
+
+	private static int height(Font font, Toast t) {
+		Kit.Padding p = Kit.padding("panel_paper");
+		boolean hint = t.hintKey != null;
+		return Math.max(p.top() + 20 + p.bottom() - 2, p.top() + 10 + lines(font, t).size() * 10 + (hint ? 12 : 0) + p.bottom() - 2);
+	}
+
+	/** QA: the stack as last drawn ({@code dev.hud.state toasts}). */
+	public static com.google.gson.JsonObject json() {
+		com.google.gson.JsonObject o = new com.google.gson.JsonObject();
+		com.google.gson.JsonArray shownArr = new com.google.gson.JsonArray();
+		ToastStack.Layout l = lastLayout;
+		for (int k = 0; k < l.shown().size() && l.shown().get(k) < lastOrder.size(); k++) {
+			Toast t = lastOrder.get(l.shown().get(k));
+			com.google.gson.JsonObject j = new com.google.gson.JsonObject();
+			j.addProperty("level", t.n.level().name().toLowerCase(Locale.ROOT));
+			j.addProperty("title", t.title);
+			j.addProperty("y", l.ys().get(k));
+			shownArr.add(j);
 		}
-		long age = now - t.start();
+		o.add("shown", shownArr);
+		o.addProperty("hidden", l.hidden());
+		o.addProperty("hiddenNeed", l.hiddenNeed());
+		o.addProperty("moreLine", l.moreY() >= 0 ? ToastStack.moreText(l.hidden(), l.hiddenNeed()) : null);
+		o.addProperty("moreY", l.moreY());
+		o.addProperty("queued", ACTIVE.size());
+		return o;
+	}
+
+	/** Draws the toast at {@code y} (its place in the stack, {@link ToastStack#layout}). */
+	private static void draw(GuiGraphicsExtractor g, Font font, Toast t, long now, int y) {
+		Kit.Padding p = Kit.padding("panel_paper");
+		boolean need = t.need();
+		int textX = p.left() + 26;
+		int textW = W - textX - p.right();
+		List<FormattedCharSequence> lines = lines(font, t);
+		boolean hint = t.hintKey != null;
+		int h = height(font, t);
+		long age = now - t.start;
 		float slide = Math.min(1f, age / (float) SLIDE_MS);
 		slide = 1f - (1f - slide) * (1f - slide);
-		long left = t.life() - age;
+		long left = t.life - age;
 		float fade = left < FADE_MS ? Math.max(0f, left / (float) FADE_MS) : 1f;
 		int x = g.guiWidth() - 6 - W + (int) ((1f - slide) * (W + 10));
 		int a = (int) (255 * fade);
 		if (a < 8) {
-			return h;
+			return;
 		}
 		int tint = (a << 24) | 0xFFFFFF;
 		Panels.sprite(g, Kit.PANEL_PAPER, x, y, W, h, tint);
@@ -225,21 +329,21 @@ public final class Toasts implements HudElement {
 		}
 		int px = x + p.left();
 		int py = y + p.top() - 1;
-		if (t.agentId() != null && UiBits.hasPortrait(t.agentId())) {
-			UiBits.framedPortrait(g, t.agentId(), px, py, 1);
+		if (t.agentId != null && UiBits.hasPortrait(t.agentId)) {
+			UiBits.framedPortrait(g, t.agentId, px, py, 1);
 		} else {
-			String icon = t.body().startsWith("Merged") ? "merge" : t.body().startsWith("Goal") ? "decision" : need ? "decision" : "message";
+			String icon = t.body.startsWith("Merged") ? "merge" : t.body.startsWith("Goal") ? "decision" : need ? "decision" : "message";
 			Panels.sprite(g, Kit.icon(icon), px + 4, py + 4, 12, 12, tint);
 		}
 		int tx = x + textX;
-		int nameColor = t.agentId() != null ? UiBits.nameOnLight(t.agentId()) : UiBits.ink();
-		String title = TextUtil.ellipsize(font, t.title(), textW);
-		if (t.agentId() != null && title.startsWith(UiBits.agentName(t.agentId()))) {
-			String nm = UiBits.agentName(t.agentId());
+		int nameColor = t.agentId != null ? UiBits.nameOnLight(t.agentId) : UiBits.ink();
+		String title = TextUtil.ellipsize(font, t.title, textW);
+		if (t.agentId != null && title.startsWith(UiBits.agentName(t.agentId))) {
+			String nm = UiBits.agentName(t.agentId);
 			g.text(font, nm, tx, py + 1, UiStyle.withAlpha(nameColor, a), false);
 			g.text(font, title.substring(nm.length()), tx + font.width(nm), py + 1, UiStyle.withAlpha(need ? UiStyle.CLAY_DARK : UiBits.muted(), a), false);
 		} else {
-			g.text(font, title, tx, py + 1, UiStyle.withAlpha(need ? UiStyle.CLAY_DARK : t.n().level() == NotifyLevel.WARN ? UiBits.errorText() : UiBits.ink(),
+			g.text(font, title, tx, py + 1, UiStyle.withAlpha(need ? UiStyle.CLAY_DARK : t.n.level() == NotifyLevel.WARN ? UiBits.errorText() : UiBits.ink(),
 				a), false);
 		}
 		int ly = py + 12;
@@ -248,9 +352,8 @@ public final class Toasts implements HudElement {
 			ly += 10;
 		}
 		if (hint && a > 200) {
-			int hw = UiBits.hintsWidth(font, t.hintKey(), t.hintVerb());
-			UiBits.hints(g, font, x + W - p.right() - hw, ly, false, t.hintKey(), t.hintVerb());
+			int hw = UiBits.hintsWidth(font, t.hintKey, t.hintVerb);
+			UiBits.hints(g, font, x + W - p.right() - hw, ly, false, t.hintKey, t.hintVerb);
 		}
-		return h;
 	}
 }
