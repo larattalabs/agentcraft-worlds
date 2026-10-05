@@ -100,6 +100,33 @@ public final class RegionDev {
 				boolean reset = Fields.of(req).optBool("reset", false);
 				return ServerTasks.callOnServer(server -> PlaceTiming.json(reset));
 			});
+		registerMove();
+	}
+
+	private static void registerMove() {
+		DevBridge.register("dev.buildings.move", 60_000, "{building, x, y, z, turns?: 0, force?: false} - QA: move a building so its rotated box minimum is at "
+			+ "x, y, z in the overworld (Buildings.move, as the hub's Move does) -> {building, box, restoreBox}", (req, mc) -> {
+				Fields f = Fields.of(req);
+				String id = f.nonBlank("building");
+				int x = (int) f.integer("x", -30_000_000, 30_000_000);
+				int y = (int) f.integer("y", -2048, 2048);
+				int z = (int) f.integer("z", -30_000_000, 30_000_000);
+				int turns = f.optInt("turns", 0, 0, 3);
+				boolean force = f.optBool("force", false);
+				return ServerTasks.callOnServer(server -> {
+					try {
+						var b = dev.agentcraft.building.Buildings.move(server.overworld(), id, new BlockPos(x, y, z),
+							net.minecraft.world.level.block.Rotation.values()[turns], force);
+						JsonObject o = new JsonObject();
+						o.addProperty("building", b.id());
+						o.addProperty("box", dev.agentcraft.building.Buildings.str(b.box()));
+						o.addProperty("restoreBox", dev.agentcraft.building.Buildings.str(b.restoreBox()));
+						return o;
+					} catch (dev.agentcraft.building.Buildings.BuildingException e) {
+						throw new DevBridge.DevException(e.getMessage());
+					}
+				});
+			});
 	}
 
 	private static int[] box(Fields f) {

@@ -837,6 +837,8 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
 - `dev.buildings.timing {reset?}` (QA, `building.PlaceTiming`): the last placement's (or move's) time in `Buildings.place`,
   the leaf ring's part of it and its cell count, the interval between the server ticks around it (a command runs between
   ticks, so this is the stall), the longest tick interval since the last reset, and how many leaf ticks restores dropped.
+- `dev.buildings.move {building, x, y, z, turns?, force?}` (QA): `Buildings.move` to a rotated box minimum in the overworld,
+  as the hub's Move does but without the ghost -> `{building, box, restoreBox}`.
 - `dev.roads.preview {a, b, width?, lanterns?, bridge?}` plans the route and shows the ghost (closes screens; Enter lays,
   Esc cancels); `{cancel:true}` hides it. Replies with the client's plan (what the server will do unless the world changes).
 - `dev.roads.lay {a?, b?, width?, lanterns?, bridge?}`: lays through the integrated server (it checks and plans again);
