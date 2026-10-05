@@ -14,7 +14,7 @@ import { git } from '../../util/git.js';
 import { run } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
 import { toolActivity } from '../activity.js';
-import { appendReviewNote, applyPatch, miniDiff, type Patch } from './edits.js';
+import { appendFoldNote, appendReviewNote, applyPatch, miniDiff, type Patch } from './edits.js';
 import { userName } from '../../user.js';
 
 export class Stopped extends Error {
@@ -31,6 +31,10 @@ export interface SimState {
   checkpoint?: string;
   /** goals of other leads' buildings run as short side flows (SIDE_BEATS), by goal id */
   side?: Record<string, SimState>;
+  /** the repository this flow works in (default: its goal's) */
+  repoId?: string;
+  /** review fixes on open pull requests (the PR watcher's fold-ins), by task id */
+  folds?: Record<string, { notes: string; st: SimState }>;
 }
 
 /** mulberry32: tiny seeded PRNG so jitter and filler lines are reproducible. */
@@ -83,6 +87,7 @@ export class SimDirector {
   }
 
   get repoId(): string {
+    if (this.st.repoId) return this.st.repoId;
     const g = this.fm.goal(this.goalId);
     return g?.repoId ?? this.fm.repos.defaultRepo()!.id;
   }
@@ -234,6 +239,15 @@ export class SimDirector {
     await this.tool(agentId, 'Edit', { file_path: path.join(root, file) }, root);
     await this.sleep(900);
     const r = appendReviewNote(root, file, note, round);
+    if (r.changed) this.log(agentId, 'diff', `${file}\n${miniDiff(r.before, r.after)}`);
+    this.fm.repos.scheduleRefresh(this.repoId);
+  }
+
+  /** Review fixes for an open pull request: a real edit noting what the review asked for. */
+  async foldNote(agentId: string, root: string, file: string, note: string, gen: number): Promise<void> {
+    await this.tool(agentId, 'Edit', { file_path: path.join(root, file) }, root);
+    await this.sleep(900);
+    const r = appendFoldNote(root, file, note, gen);
     if (r.changed) this.log(agentId, 'diff', `${file}\n${miniDiff(r.before, r.after)}`);
     this.fm.repos.scheduleRefresh(this.repoId);
   }
@@ -455,12 +469,17 @@ export class SimDirector {
       this.log(lead, 'tool', `request_merge ${t.id}`);
       await this.sleep(600);
       const stats = `${diff.stats.files} file${diff.stats.files === 1 ? '' : 's'}, +${diff.stats.additions} -${diff.stats.deletions}`;
+      // a repo that lands as pull requests: the same wording as the claude backend's decisions
+      const pr = this.fm.repos.landsAsPr(this.repoId) && !this.fm.repos.isUserBase(this.repoId, wt.base);
+      const fold = !!t.pr;
+      const question = fold ? `Push the review fixes for ${t.id} "${t.title}" to PR #${t.pr!.id}?` : pr ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?` : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`;
+      const how = fold ? `\n"${MERGE_OPTIONS[0]}" pushes the fixes as an added commit on the pull request (no force-push, no squash of what is there).` : pr ? `\n"${MERGE_OPTIONS[0]}" pushes the branch and opens the pull request (agents never push).` : '';
       this.openDecision(key, () => ({
         agentId: lead,
         kind: 'merge',
-        question: `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
+        question,
         options: [...MERGE_OPTIONS],
-        context: `${t.summary ?? ''}\n${stats} | tests: ${t.ci}\nReviewed by ${this.fm.nameOf(reviewer)}: ${review}`.trim(),
+        context: `${t.summary ?? ''}\n${stats} | tests: ${t.ci}\nReviewed by ${this.fm.nameOf(reviewer)}: ${review}${how}`.trim(),
         taskId: t.id,
         repoId: this.repoId,
         worktree: wt.id,
@@ -478,14 +497,25 @@ export class SimDirector {
     for (let round = 1; round <= 5; round++) {
       const key = `merge:${taskKey}:${round}`;
       if (typeof this.vars[`dec:${key}`] !== 'string') await this.requestMerge(taskKey, round, 'Changes addressed; re-reviewed. Looks good.', reviewer);
+      // review fixes on an open pull request (the PR existed before this decision)
+      const fold = typeof this.vars[`fold:${key}`] === 'boolean' ? !!this.vars[`fold:${key}`] : !!this.task(taskKey).pr;
+      if (this.fm.repos.landsAsPr(this.repoId)) this.vars[`fold:${key}`] = fold;
       const d = await this.awaitDecision(key);
       const t = this.task(taskKey);
-      if (d.answer?.option === 'Merge' && t.status === 'done') {
-        this.say(this.lead, worker, `Merged ${t.id} into main. Nice work.`);
-        this.act(worker, 'idle', 'lounge', `${t.id} merged`);
+      // landed as a pull request: the task stays in `pr` (watched) until the PR is merged
+      if (d.answer?.option === 'Merge' && (t.status === 'done' || (!!t.pr && d.status !== 'open'))) {
+        this.say(this.lead, worker, t.pr ? (fold ? `Pushed your review fixes for ${t.id} to PR #${t.pr.id}. Thanks.` : `Opened PR #${t.pr.id} for ${t.id}; I am watching it until it is merged.`) : `Merged ${t.id} into main. Nice work.`);
+        this.act(worker, 'idle', 'lounge', t.pr ? `${t.id} PR open` : `${t.id} merged`);
         this.fm.setAgent(worker, { taskId: null, worktree: null });
         await this.sleep(800);
         return 'merged';
+      }
+      if (fold && t.pr && (d.answer?.option === 'Reject' || d.status === 'cancelled')) {
+        // rejected review fixes: the pull request itself stays open and watched
+        this.say(this.lead, worker, `${userName()} rejected the review fixes for ${t.id}; PR #${t.pr.id} stays as it is.`);
+        this.act(worker, 'idle', 'lounge', `${t.id} fixes rejected`);
+        this.fm.setAgent(worker, { taskId: null, worktree: null });
+        return 'rejected';
       }
       if (d.answer?.option === 'Reject' || d.status === 'cancelled') {
         this.say(this.lead, 'all', `${userName()} rejected ${t.id}. I'll stop the work that depends on it.`);

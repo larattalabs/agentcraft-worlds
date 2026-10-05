@@ -1262,7 +1262,7 @@ export class Foreman {
       case 'repo.agents':
         return { agents: listRepoAgents(this.repoTarget(msg.repoId).path) };
       case 'pr.refresh': {
-        if (!this.backend?.onPrRefresh || !this.backend.watchesPrs?.()) throw new ClientError('pull requests are not watched (claude backend with claude.prWatch "observe" or "on")');
+        if (!this.backend?.onPrRefresh || !this.backend.watchesPrs?.()) throw new ClientError('pull requests are not watched (claude.prWatch "observe" or "on" watches them, with the claude or sim backend)');
         if (msg.taskId && this.tasks.get(msg.taskId)?.status !== 'pr') throw new ClientError(`task ${msg.taskId} has no open pull request`);
         this.backend.onPrRefresh(msg.taskId);
         return msg.taskId ? { taskId: msg.taskId } : {};

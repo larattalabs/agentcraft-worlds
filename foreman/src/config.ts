@@ -205,6 +205,11 @@ export interface SimConfig {
   autoAnswer: boolean;
   /** extra idle log lines while waiting on the user */
   ambient: boolean;
+  /**
+   * a second demo repo, pocket-api, that lands work as pull requests on a fake host (simulated PRs:
+   * checks, an automated review, triage, merge). --sim-pr / AGENTCRAFT_SIM_PR / config.json sim.prDemo
+   */
+  prDemo: boolean;
 }
 
 export interface Config {
@@ -441,7 +446,7 @@ export const KNOWN_FLAGS = new Set([
   'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges', 'commit-identity',
   'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
-  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns', 'client-token',
+  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns', 'client-token', 'sim-pr',
 ]);
 
 /**
@@ -462,7 +467,7 @@ export const CONFIG_ENV_VARS = [
   'AGENTCRAFT_HOME', 'AGENTCRAFT_BACKEND', 'AGENTCRAFT_PROFILE', 'AGENTCRAFT_WORKERS', 'AGENTCRAFT_USER_NAME', 'AGENTCRAFT_PORT',
   'AGENTCRAFT_NOTIFY', 'AGENTCRAFT_TOAST_SILENT', 'AGENTCRAFT_DEBUG', 'AGENTCRAFT_MERGE_STYLE', 'AGENTCRAFT_SIGN_MERGES', 'AGENTCRAFT_COMMIT_IDENTITY',
   'AGENTCRAFT_LEAD_MODEL', 'AGENTCRAFT_WORKER_MODEL', 'AGENTCRAFT_DESIGN_MODEL', 'AGENTCRAFT_LEADS', 'AGENTCRAFT_USE_CLAUDE_LOGIN',
-  'AGENTCRAFT_PR_WATCH', 'AGENTCRAFT_SIM_SPEED',
+  'AGENTCRAFT_PR_WATCH', 'AGENTCRAFT_SIM_SPEED', 'AGENTCRAFT_SIM_PR',
 ];
 
 /** <home>/config.json, home from --home / AGENTCRAFT_HOME / ~/.agentcraft */
@@ -632,6 +637,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       showcaseAt: flags.showcase === 'late' ? 'showcase-late' : 'showcase',
       autoAnswer: bool(flags['auto-answer'] ?? fileSim.autoAnswer, false),
       ambient: bool(flags.ambient ?? fileSim.ambient, true),
+      prDemo: bool(flags['sim-pr'] ?? (env.AGENTCRAFT_SIM_PR || undefined) ?? fileSim.prDemo, false),
     },
   };
   cfg.claude.designModel = str(flags['design-model']) ?? str(env.AGENTCRAFT_DESIGN_MODEL) ?? str(fileClaude.designModel) ?? cfg.claude.workerModel;
@@ -683,6 +689,8 @@ usage: npm run start -- [options]
   --showcase late          hold the later state instead (blocked, error, done and running agents)
   --auto-answer            answer the scenario's own decisions (unattended runs)
   --no-ambient             no idle chatter while waiting on you
+  --sim-pr                 also a pocket-api demo repo that lands as pull requests on a fake host
+                           (simulated PRs; env AGENTCRAFT_SIM_PR=1, config.json sim.prDemo)
 
  claude backend
   auth: ANTHROPIC_API_KEY, or a cloud provider (CLAUDE_CODE_USE_BEDROCK / _VERTEX / _FOUNDRY)
