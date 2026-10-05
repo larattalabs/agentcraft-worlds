@@ -106,6 +106,18 @@ export class MessageBus {
     if (changed) this.ctx.store.markDirty();
   }
 
+  /** Undo markRead (a turn that was to answer them never ran: they are offered again). */
+  markUnread(agentId: string, ids: string[]): void {
+    let changed = false;
+    for (const m of this.ctx.store.data.messages) {
+      if (ids.includes(m.id) && m.readBy.includes(agentId)) {
+        m.readBy = m.readBy.filter((r) => r !== agentId);
+        changed = true;
+      }
+    }
+    if (changed) this.ctx.store.markDirty();
+  }
+
   /** Recent conversation involving an agent (for prompts). */
   history(agentId: string, limit = 20): BusMessage[] {
     return this.ctx.store.data.messages

@@ -79,6 +79,8 @@ interface Job {
   goalReply?: boolean;
   /** when the goal message turn started (epoch ms) */
   startedAt?: number;
+  /** a goal message turn: the user's messages it answers (marked read when it starts) */
+  messageIds?: string[];
 }
 
 interface Inflight {
@@ -87,6 +89,9 @@ interface Inflight {
   taskId?: string;
   goalId?: string;
   startedAt: number;
+  /** a goal-message turn (its reply goes to the goal's thread) and the user's messages it answers */
+  goalReply?: true;
+  messageIds?: string[];
 }
 
 interface ClaudeState {
@@ -190,6 +195,11 @@ export function rotationDue(rec: SessionRecord | undefined, limits: { maxDays: n
   if (limits.maxDays > 0 && days >= limits.maxDays) return `${Math.floor(days)} days old`;
   if (limits.maxTurns > 0 && (rec.sessionTurns ?? 0) >= limits.maxTurns) return `${rec.sessionTurns} turns`;
   return undefined;
+}
+
+/** A resumed goal-message turn stays one: its final text is still the goal thread's reply (see replyToGoal). */
+function goalReplyOf(inf: Inflight): Pick<Job, 'goalReply' | 'startedAt' | 'messageIds'> {
+  return inf.goalReply ? { goalReply: true, startedAt: inf.startedAt, ...(inf.messageIds ? { messageIds: inf.messageIds } : {}) } : {};
 }
 
 export interface ClaudeBackendOptions {
@@ -675,6 +685,12 @@ export class ClaudeBackend implements Backend {
       // marlow's now, the reconciliation below hands them over
       const offDuty = this.fm.isLead(agentId) && (!this.fm.leads.onDuty(agentId) || (!!inf.goalId && this.fm.leadOf(this.fm.goal(inf.goalId)) !== agentId));
       if (this.isStopped(agentId) || !this.fm.agent(agentId) || offDuty) {
+        // an interrupted answer to goal messages: offered again (to whoever leads the goal now)
+        if (inf.goalReply) this.requeueGoalMessage(agentId, inf, true);
+        delete st.inflight[agentId];
+        continue;
+      }
+      if (inf.goalReply && this.requeueGoalMessage(agentId, inf)) {
         delete st.inflight[agentId];
         continue;
       }
@@ -687,7 +703,7 @@ export class ClaudeBackend implements Backend {
       const session = this.fm.store.data.sessions[inf.sessionKey];
       if (session?.sessionId) {
         this.fm.log.info(`recover: resuming ${agentId} (${inf.kind}${inf.taskId ? ` ${inf.taskId}` : ''})`);
-        this.enqueue({ kind: inf.kind, agentId, sessionKey: inf.sessionKey, prompt: RESUME_PROMPT, resumed: true, ...(inf.taskId ? { taskId: inf.taskId } : {}), ...(inf.goalId ? { goalId: inf.goalId } : {}) });
+        this.enqueue({ kind: inf.kind, agentId, sessionKey: inf.sessionKey, prompt: RESUME_PROMPT, resumed: true, ...(inf.taskId ? { taskId: inf.taskId } : {}), ...(inf.goalId ? { goalId: inf.goalId } : {}), ...goalReplyOf(inf) });
       } else {
         // the turn died before it had a session: the reconciliation below starts it again
         delete st.inflight[agentId];
@@ -695,6 +711,27 @@ export class ClaudeBackend implements Backend {
     }
     this.reconcile();
     this.fm.store.markDirty();
+  }
+
+  /**
+   * A goal-message turn the restart interrupted before the lead answered (it sent the user nothing
+   * since the turn started): its messages are unread again, so the goal's next goal-message turn
+   * (queueGoalMessages, after recover) asks the lead again with the full text. True when re-queued
+   * that way; false when the lead already answered (the turn resumes as usual).
+   */
+  private requeueGoalMessage(agentId: string, inf: Inflight, handOver = false): boolean {
+    const replied = this.fm.store.data.messages.some((m) => m.from === agentId && m.to === 'user' && m.ts >= inf.startedAt && (!inf.goalId || m.goalId === inf.goalId));
+    if (replied) return false;
+    if (inf.messageIds?.length) this.fm.bus.markUnread(agentId, inf.messageIds);
+    // this lead no longer leads the goal (released while the Foreman was down): its lead now gets them
+    const goal = inf.goalId ? this.fm.goal(inf.goalId) : undefined;
+    const now = goal ? this.fm.goalLead(goal) : undefined;
+    if (handOver && now && now !== agentId && inf.messageIds?.length) {
+      for (const m of this.fm.store.data.messages) if (inf.messageIds.includes(m.id) && m.to === agentId) m.to = now;
+      this.fm.store.markDirty();
+    }
+    this.fm.log.info(`recover: ${agentId}'s answer about ${inf.goalId ?? 'a goal'} was interrupted; the message${inf.messageIds?.length === 1 ? '' : 's'} will be asked again`);
+    return true;
   }
 
   /** Bring planning goals, doing tasks and review tasks back in line with running/queued jobs. */
@@ -1415,7 +1452,7 @@ export class ClaudeBackend implements Backend {
           this.fm.agentLog(agentId, 'text', `Starting a fresh session for ${job.goalId ?? 'this work'} (the last one is ${why}); seeded with the plan, the board and the latest messages`);
         }
       }
-      this.st.inflight[agentId] = { kind: job.kind, sessionKey: job.sessionKey, startedAt: Date.now(), ...(job.taskId ? { taskId: job.taskId } : {}), ...(job.goalId ? { goalId: job.goalId } : {}) };
+      this.st.inflight[agentId] = { ...this.inflightOf(job), startedAt: job.goalReply && job.startedAt ? job.startedAt : Date.now() };
       this.fm.store.markDirty();
 
       let systemAppend: string;
@@ -2208,7 +2245,22 @@ export class ClaudeBackend implements Backend {
     job.pendingGoalMessage = false;
     job.goalReply = true;
     job.startedAt = Date.now();
+    job.messageIds = msgs.map((m) => m.id);
+    // persisted before the turn's first await: a restart from here on asks the lead again (recover)
+    this.st.inflight[job.agentId] = { ...this.inflightOf(job), startedAt: job.startedAt };
+    this.fm.store.markDirty();
     return true;
+  }
+
+  /** What a restart needs to know about a job that is running (ClaudeState.inflight, without its start time). */
+  private inflightOf(job: Job): Omit<Inflight, 'startedAt'> {
+    return {
+      kind: job.kind,
+      sessionKey: job.sessionKey,
+      ...(job.taskId ? { taskId: job.taskId } : {}),
+      ...(job.goalId ? { goalId: job.goalId } : {}),
+      ...(job.goalReply ? { goalReply: true as const, ...(job.messageIds?.length ? { messageIds: job.messageIds } : {}) } : {}),
+    };
   }
 
   /** A goal-message turn ended: when the lead sent the user nothing, its final text is the reply. */
@@ -2255,6 +2307,7 @@ export class ClaudeBackend implements Backend {
             resumed: true,
             ...(t ? { taskId: t.id } : inf?.taskId ? { taskId: inf.taskId } : {}),
             ...(goalId ? { goalId } : {}),
+            ...(inf ? goalReplyOf(inf) : {}),
             prompt: `Earlier you asked ${userName()}: "${d.question}". ${userName()} answered: ${ans}. (Your ask_user call was interrupted by an orchestrator restart.) Continue.`,
           });
         }
