@@ -732,7 +732,10 @@ spawns git with an empty environment); the policy refuses every command it can s
 
 `src/protocol.ts` (zod) is the source of truth; `docs/protocol.md` is generated from it with field
 tables and a JSON example per message (`npm run gen:protocol-doc`; `npm run check:protocol-doc`
-fails if it is stale). Highlights beyond the spec draft: `foreman.status` (backend/auth banner),
+fails if it is stale). The mod's Java mirror (`mod/.../client/foreman/Protocol.java`) and the mod test's
+example fixtures (`mod/src/test/resources/protocol-examples.json`) are generated from the same schemas
+(`npm run gen:java-protocol`; `npm run check:java-protocol`, also part of `npm run check`, fails if
+either is stale): change `src/protocol.ts`, regenerate both, rebuild the mod. Highlights beyond the spec draft: `foreman.status` (backend/auth banner),
 `ack`/`error` replies for messages with an `id`, `snapshot.logs`/`snapshot.goals`,
 `Agent.active/paused/worktree/title`, task status `cancelled`, decision status `cancelled`.
 

@@ -61,7 +61,7 @@ final class CameraPath {
 	// ------------------------------------------------------------------ parsing
 
 	static CameraPath parse(Fields f, double duration, double defaultFov) {
-		String type = f.optStr("type", f.has("keys") ? "keys" : "orbit").toLowerCase(Locale.ROOT);
+		String type = f.optStr("type", f.has("keys") ? "keys" : "orbit").toLowerCase(Locale.ROOT); // the camera object's own field (reserved-ok: not a request)
 		return switch (type) {
 			case "keys" -> parseKeys(f, duration, defaultFov);
 			case "orbit" -> parseOrbit(f, duration, defaultFov);

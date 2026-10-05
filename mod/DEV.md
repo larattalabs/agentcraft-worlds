@@ -320,6 +320,26 @@ banner falls back on the same split when the Foreman sends no message of its own
 gets its port and profile as `-Dagentcraft.port` / `-Dagentcraft.profile` JVM args, which
 `tools/hardcore-setup.mjs` writes (tools/README.md "Playing in a Hardcore world").
 
+**Protocol mirror (generated).** `client.foreman.Protocol` is GENERATED from `foreman/src/protocol.ts` by
+`npm run gen:java-protocol` (`foreman/scripts/gen-java-protocol.ts`); never edit it by hand, and run the
+generator after any protocol change (`npm run check` in foreman/ fails while it is stale). Mapping: named zod enums
+become `Protocol.Wire` enums with an `UNKNOWN` fallback (camelCase wire values such as `stringList` carry an explicit
+`wire()`; `ForemanJson` decodes by `wire()`), entities and exported objects become records of the same name,
+server messages drop the `Msg` (`Snapshot`, `AgentUpsert`, ...; `ForemanStatusMsg`, `ErrorMsg` keep it), client
+messages keep it (`HelloMsg`, ...), envelopes (`v`, `type`, `id`) are not in the records; optional = `@Nullable`
+boxed, timestamps (`Ts`) `long`, other integers `int`; missing required lists/maps become empty and missing
+required enums `UNKNOWN`. `Protocol.SERVER_MESSAGES` / `CLIENT_MESSAGES` map each `type` to its record. The
+generator's `JAVA` table keeps per-field exceptions (nullable for older Foremen, String instead of an enum, defaults
+such as `Agent.color`, inline type names such as `PrThreads` / `Size3`, `newCount` / `defaultValue` for keywords);
+it fails on an entry that no longer matches a schema. Behaviour lives in the hand-written `ProtocolSupport`:
+interfaces with default methods that the generated types implement (`JAVA.mixins`: `AgentState.family()`,
+`DesignStatus.isFinal/isRunning`, `Agent.isActive/isPaused`, `Decision.isOpen/freeText`, `Goal.allRepos/isOpen/lead`,
+`TaskPr.isOpen`), `displayName` (the `Agent` constructor's name fallback), and the ack results without a schema
+(`ProtocolSupport.LogPage`, `ProtocolSupport.RepoAgentFile`). Record components follow the schema's field order.
+`ProtocolExamplesTest` (src/test, which sees the client classes) round-trips every protocol example
+(`src/test/resources/protocol-examples.json`, written by the same generator) through Gson: no field lost or
+changed, no enum value decoded as `UNKNOWN`, one record per message type.
+
 **Client token** (docs/HUB.md "Client token"). `hello` carries `token` when the mod finds one, so a newer Foreman
 gives the mod a full (not read-only) connection; an older Foreman never sees the field. `ClientToken.resolve`
 (pure, `ClientTokenTest`) runs on **every connect** (a restarted Foreman has a new token): the run file whose
@@ -780,7 +800,7 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
 - Cast: `Cast.deskIds()` (workers + Marlow) owns the studio's / test room's desks, monitors and test-bench
   lamps, so lead entries (`ines`, `bram`, `cass`, role `lead`) added to cast.json get none. An agent
   whose Foreman name is missing or just its id shows the cast name, else the id capitalised
-  (`Protocol.Agent.displayName`).
+  (`ProtocolSupport.displayName`, applied by the generated `Protocol.Agent` constructor).
 - `ForemanState.leads()` from `snapshot.leads` / `leads.update`; `leadsKnown()` is false until the Foreman
   sends either (an older Foreman never does). `Leads.view()` resolves the assignments against this world's
   buildings once per Foreman revision / buildings change (client thread): `assignedHere` (lead -> building
@@ -968,7 +988,7 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
 (unit-tested in `SettingsLogicTest`).
 - Protocol mirror: `Foreman.configGet(repoId?)`, `configSet(repoId?, changes)`, `restart()`, `repoAgents(repoId)`;
   `ForemanStatus.restartRequired`, `config.changed` (`ForemanState.configRevision()`, `restartRequired()`,
-  `ForemanListener.onConfigChanged`), `Protocol.RepoAgentFile`.
+  `ForemanListener.onConfigChanged`), `ProtocolSupport.RepoAgentFile`.
 - `ConfigScope` (global, or one repo's `repoSettings`; kept for the session, so staged edits survive closing the hub):
   loads on first show, after `config.changed` and after every new snapshot (reconnect, restart), **rebasing** staged
   edits (an edit is dropped only when it now equals the current value). Edits: `set(key, json)` (the mod validates
@@ -1034,7 +1054,7 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
     change without confirm replies `ok:false, "confirm needed: …"`), `settings_confirm`, `settings_confirm_back`,
     `settings_revert`, `settings_group {group}`, `settings_reload {repoId?}`, `foreman_restart`, `team_select
     {agentId?}`, `team_back`, `team_on {agentId, on}`, `team_lead {agentId, inUse?, move?: -1|1}`, `repo_settings
-    {repoId?}`, `repo_settings_done`, `settings_field {id, text}` (a secret editor's helper field drawn last frame:
+    {repoId?}`, `repo_settings_done`, `settings_scroll {key? | by?}` (scroll the shown form: `key` brings that setting's row to the top, `by` moves by GUI px; chips below the fold are not drawn, so `press` on them fails until they are scrolled in), `settings_field {field, text}` (a secret editor's helper field drawn last frame:
     `repo:env:name`, `repo:env:value`, `mcp:name`, `mcp:command`, `mcp:args`, `mcp:url`, `mcp:env:name`,
     `mcp:env:value`; the text is never echoed); `press {button}` also presses the shown form's chips (`<form>:<key>[:<choice>]`,
     `group:<g>`, `team:on_team:<id>`, `team:lead_up:<id>`, …; see `*.form.chips`) and buttons `settings_apply`,
@@ -1330,6 +1350,13 @@ docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraf
   as that second Enter. A console opened at a terminal sends goals to its building's repo.
 
 ## Tools (repo `tools/`, Node 22, local `ws` dependency: run `npm install` in tools/ once)
+
+**Smoke test** (macOS): `npm run smoke --prefix tools` launches the dev client against the sim in a fresh natural-terrain
+world and runs the main flows through the DevBridge (placement with the server verdict, the board, a road laid and removed
+with an exact block-level restore, walking, night and morning, move and undo, goals and a stand-up, the Inbox with a
+simulated PR, its review and triage, answering, a merge through the diff screen, a goal's trophy, removing a building that
+holds trophies, the MCP editor with a fake secret, layout at 426x240); report and contact sheet in
+`artifacts/shots/smoke/`. Details: tools/README.md "Smoke test".
 
 ```bash
 node tools/devcli.mjs wait                         # wait for the bridge + a ready world (300 s)

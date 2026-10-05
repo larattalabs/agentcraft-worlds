@@ -10,7 +10,7 @@ import dev.agentcraft.Cast;
 import dev.agentcraft.client.console.TextKeys;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.foreman.ProtocolSupport;
 import dev.agentcraft.client.hud.UiBits;
 import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
@@ -505,10 +505,10 @@ final class SettingsForm {
 	 */
 	private int rolePicker(GuiGraphicsExtractor g, Setting s, SettingDef d, int x, int y, int w, boolean editable, int mx, int my) {
 		ConfigScope scope = s.scope();
-		List<Protocol.RepoAgentFile> files = scope.agents();
+		List<ProtocolSupport.RepoAgentFile> files = scope.agents();
 		List<String> ids = new ArrayList<>(d.options());
 		if (ids.isEmpty() && files != null) {
-			for (Protocol.RepoAgentFile f : files) {
+			for (ProtocolSupport.RepoAgentFile f : files) {
 				ids.add(f.id());
 			}
 		}
@@ -1183,6 +1183,25 @@ final class SettingsForm {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Scrolls the rows (DevBridge {@code settings_scroll}): with {@code key}, so that the row of that setting starts at the
+	 * top of the area (as laid out last frame; false when no such row was laid out), else by {@code by} GUI px (negative =
+	 * up). The next draw clamps the offset to the content, as the wheel's scrolling is.
+	 */
+	boolean scroll(@Nullable String key, int by) {
+		if (key != null) {
+			for (JsonObject r : rowsState) {
+				if (r.has("key") && key.equals(r.get("key").getAsString())) {
+					offset = Math.max(0, r.get("y").getAsInt());
+					return true;
+				}
+			}
+			return false;
+		}
+		offset = Math.max(0, offset + by);
+		return true;
 	}
 
 	boolean keyPressed(KeyEvent e) {

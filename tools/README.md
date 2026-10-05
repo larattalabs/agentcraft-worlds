@@ -221,6 +221,39 @@ node tools/record.mjs tools/shots/desk_story.json --port 7889 --hold 3000   # pl
 npm test --prefix tools
 ```
 
+### Smoke test (`npm run smoke`, macOS)
+
+`node tools/smoke.mjs` (or `npm run smoke --prefix tools`) is the end-to-end check of the main flows in a real game:
+it launches the dev client with `mac.mjs` against the sim backend (profile `smoke`, Foreman :7978, DevBridge :7979,
+a new temp Foreman home, `--sim-pr --pr-watch on`, user "Sam") in a fresh natural-terrain world (`mod/run/saves/Smoke`
+and that world's entries in `mod/run/agentcraft/*.json` are deleted first), drives it through the DevBridge with
+assertions and screenshots, then stops it. About 2-3 minutes once Minecraft is built. Steps, each independent and
+logged (a step whose prerequisite failed is skipped):
+
+| step | checks |
+| --- | --- |
+| `preflight` | world, sim backend, the two demo repos, no buildings; a still world (no day cycle, weather or random ticks, so block dumps compare exactly) |
+| `place_buildings`, `village_board` | sites from a candidate list for seed 2026 with no refusal, no site warning and the server verdict ok; the board lists both buildings |
+| `road_lay_remove` | `dev.roads.blocks` before laying = after removing, cell by cell |
+| `agent_walks` | `dev.walk.send`: the trip is a walk and the agent moves |
+| `night_and_morning` | agents lie in beds at night and are up in the morning (`lib/routinesqa.mjs`) |
+| `move_and_undo` | both sites restored exactly |
+| `goals`, `standup` | a goal per repo; the home goal's stand-up starts and ends by itself |
+| `inbox_pr_and_triage` | the PR goal's "open a pull request" answered in the Inbox, the PR item with new review threads, the automated review and triage in the goal thread, the triage decision (Post) and the fold-in push |
+| `answer_decision`, `merge_via_diff_screen` | the home goal's question answered in the Inbox; a merge armed in the diff screen and confirmed with Enter, a merge commit on the demo repo's `main` |
+| `trophy_on_goal_done`, `remove_building_with_trophies` | the "Goal done" sign, the board's milestone; Remove is not blocked by the signs and restores the site exactly |
+| `settings_mcp_secret` | an MCP server with a fake secret added in Settings > Context: stored in the Foreman's config.json, shown as names only, never in any DevBridge state, log or state file |
+| `layout_426x240` | every hub tab at 426x240 GUI px without overflow; a needs-you toast shows before info toasts, the rest on one "+N more" line |
+| `placement_too_far`, `text_depth_closeups` | the "too far" note with the ghost kept; close-ups of a monitor, the task board and lamps |
+
+Output in `artifacts/shots/smoke/`: `report.json` (every step's checks, notes, data and shots), `smoke.log`, the PNGs
+and `contact-sheet.png`. Exit 0 = every step passed, 1 = a step failed or was skipped, 2 = the run could not start.
+Options: `--attach` (use the running client on `--dev-port`; it must be a fresh sim world), `--keep` (leave the launched
+client running), `--port`, `--dev-port`, `--world`, `--seed`, `--speed`, `--home`, `--minutes` (overall deadline, 12).
+Block comparisons count three kinds of change apart (noted, not failures): leaf `distance` recomputed, flowing water or
+lava settling (never a source block), and the live properties of AgentCraft station blocks (a monitor's `lit`).
+Pure parts (dump diff, runner, secret scan) are `lib/smoke.mjs`, tested in `test/smoke.test.mjs`.
+
 The Foreman serves only reads to clients without its client token. `foremancli.mjs`,
 `lib/foremanclient.mjs`, `shoot.mjs` and `qa.mjs` find the token through the Foreman's run file
 under its home: add `--home <dir>` (or set `AGENTCRAFT_HOME`) when the Foreman runs with a home
@@ -246,4 +279,5 @@ Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.
 | `foreman-daemon.sh`, `foreman-daemon.mjs`, `lib/daemonplan.mjs` | keep one Foreman running for a game launched outside a terminal (Prism's PreLaunchCommand) |
 | `blueprints/` | blueprints as code: the parametric kit, `build.mjs`, the checker (`verify.mjs`) and the offline renderer (`render.mjs`); see `blueprints/VERIFY.md` |
 | `agents-live.mjs`, `agents-typing.mjs` | live checks of the agents feature (observe agent life; the agent card's message line by keyboard) |
+| `smoke.mjs`, `lib/smoke.mjs` | end-to-end smoke test of the main flows against the sim ("Smoke test" above) |
 | `routines-qa.mjs`, `lib/routinesqa.mjs` | village routines check against a running dev world: night rest in beds, morning return (mod/DEV.md "Village routines") |

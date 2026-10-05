@@ -6,7 +6,7 @@ import com.google.gson.JsonObject;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Foreman;
-import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.foreman.ProtocolSupport;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
 import java.util.ArrayList;
@@ -25,7 +25,7 @@ final class SettingsDev {
 	/** The contract's names (docs/HUB.md: "set {key, value}, apply, revert, confirm, restart") -> the actions. */
 	static final java.util.Map<String, String> ALIASES = java.util.Map.of("set", "settings_set", "apply", "settings_apply", "revert",
 		"settings_revert", "confirm", "settings_confirm", "restart", "foreman_restart");
-	static final String ACTIONS = "set|apply|revert|confirm|restart|settings_set|settings_text|settings_focus|settings_field|settings_apply|settings_confirm|settings_confirm_back|settings_revert|"
+	static final String ACTIONS = "set|apply|revert|confirm|restart|settings_set|settings_text|settings_focus|settings_scroll|settings_field|settings_apply|settings_confirm|settings_confirm_back|settings_revert|"
 		+ "settings_group|settings_reload|settings_fake|settings_fake_agents|foreman_restart|team_select|team_back|team_on|team_lead|repo_settings|"
 		+ "repo_settings_done";
 	private static final Set<String> NAMES = Set.of(ACTIONS.split("\\|"));
@@ -138,11 +138,23 @@ final class SettingsDev {
 				}
 				return done(action, "focused " + key);
 			}
+			case "settings_scroll" -> {
+				// scroll the shown form: {key} brings that setting's row to the top, {by} moves by GUI px (rows below the fold
+				// draw no chips, so press on them fails until they are scrolled into view)
+				String key = f.optStr("key", null);
+				int by = f.optInt("by", 0, -100_000, 100_000);
+				if (!shown(s).form().scroll(key, by)) {
+					throw new DevBridge.DevException("key: no row for " + key + " was laid out last frame");
+				}
+				return done(action, key != null ? "scrolled to " + key : "scrolled by " + by);
+			}
 			case "settings_field" -> {
-				// a helper field of the secret editors (a variable's name / value, the MCP server form): the text is never echoed
-				String id = f.nonBlank("id");
+				// a helper field of the secret editors (a variable's name / value, the MCP server form): the text is never echoed.
+				// The field is `field`: `id` is the request id the bridge reserves (it used to be read here, so every call
+				// named the request id instead of a field and failed)
+				String id = f.nonBlank("field");
 				if (!shown(s).form().setAux(id, f.str("text"))) {
-					throw new DevBridge.DevException("id: no secret-editor field " + id + " was drawn last frame (form.focus names them: repo:env:name, repo:env:value, "
+					throw new DevBridge.DevException("field: no secret-editor field " + id + " was drawn last frame (form.focus names them: repo:env:name, repo:env:value, "
 						+ "mcp:name, mcp:command, mcp:args, mcp:url, mcp:env:name, mcp:env:value)");
 				}
 				return done(action, "set " + id);
@@ -187,12 +199,12 @@ final class SettingsDev {
 				if (a == null || !a.isJsonArray()) {
 					throw new DevBridge.DevException("field 'agents' must be an array of {name, path?, description?, model?} or names");
 				}
-				List<Protocol.RepoAgentFile> list = new ArrayList<>();
+				List<ProtocolSupport.RepoAgentFile> list = new ArrayList<>();
 				for (JsonElement x : a.getAsJsonArray()) {
 					if (x.isJsonPrimitive()) {
-						list.add(new Protocol.RepoAgentFile(x.getAsString(), x.getAsString(), null, null, null));
+						list.add(new ProtocolSupport.RepoAgentFile(x.getAsString(), x.getAsString(), null, null, null));
 					} else if (x.isJsonObject()) {
-						list.add(dev.agentcraft.client.foreman.ForemanJson.read(x, Protocol.RepoAgentFile.class));
+						list.add(dev.agentcraft.client.foreman.ForemanJson.read(x, ProtocolSupport.RepoAgentFile.class));
 					}
 				}
 				sc.fakeAgents(list);

@@ -1,5 +1,6 @@
 // One realistic example per message type. Used by docs/protocol.md generation and by the
-// protocol round-trip tests (every example must validate against its schema).
+// protocol round-trip tests (every example must validate against its schema), and dumped to
+// mod/src/test/resources/protocol-examples.json (`npm run gen:java-protocol`) for the mod's Gson round trip.
 import type { Agent, ClientMessage, Decision, Design, DesignRequest, MemoryEntry, Repo, ServerMessage, Task } from './protocol.js';
 
 const ts = 1790850000000;

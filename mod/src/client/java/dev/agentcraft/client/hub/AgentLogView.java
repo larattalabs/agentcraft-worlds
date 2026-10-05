@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.foreman.ProtocolSupport;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
 import dev.agentcraft.hub.LogJoin;
 import dev.agentcraft.hub.LogPager;
@@ -79,7 +80,7 @@ final class AgentLogView {
 	private void fillGap(long before, List<LogEntry> collected) {
 		filling = true;
 		Foreman.agentLogs(agentId, before, PAGE).handle((ack, err) -> {
-			Protocol.LogPage page = err == null && ack.ok() ? Foreman.logPageOf(ack) : null;
+			ProtocolSupport.LogPage page = err == null && ack.ok() ? Foreman.logPageOf(ack) : null;
 			if (page == null) {
 				filling = false; // tried for this tail head; the next one tries again
 				return null;
@@ -169,7 +170,7 @@ final class AgentLogView {
 				retryFirst(before);
 				return null;
 			}
-			Protocol.LogPage page = Foreman.logPageOf(ack);
+			ProtocolSupport.LogPage page = Foreman.logPageOf(ack);
 			if (page == null) {
 				error = "the Foreman sent no log page";
 				retryFirst(before);

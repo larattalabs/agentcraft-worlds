@@ -41,7 +41,7 @@ public final class PermissionsFeature {
 			+ "\"" + Protocol.ALWAYS_ALLOW + "\" covers: `npm install` inside this agent's worktree (paths outside still ask); network access to "
 			+ "registry.npmjs.org";
 		return new Decision("preview-permission", "wren", DecisionKind.PERMISSION, "Wren wants to run Bash: npm install chalk@5", List.of(
-			Protocol.ALLOW_ONCE, Protocol.ALWAYS_ALLOW, Protocol.DENY), ctx, DecisionStatus.OPEN, null, "t4", null, null, "Bash", System
-				.currentTimeMillis() - 40_000, null, null);
+			Protocol.ALLOW_ONCE, Protocol.ALWAYS_ALLOW, Protocol.DENY), ctx, DecisionStatus.OPEN, null, "t4", null, null, "Bash", null, null, System
+				.currentTimeMillis() - 40_000);
 	}
 }

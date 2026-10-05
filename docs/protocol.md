@@ -1,6 +1,6 @@
 # AgentCraft protocol v1
 
-> GENERATED from `foreman/src/protocol.ts` and `foreman/src/protocol-examples.ts` by `npm run gen:protocol-doc` (in `foreman/`). Do not edit by hand. The Java mod mirrors these shapes.
+> GENERATED from `foreman/src/protocol.ts` and `foreman/src/protocol-examples.ts` by `npm run gen:protocol-doc` (in `foreman/`). Do not edit by hand. The mod's Java mirror (`Protocol.java`) is generated from the same schemas by `npm run gen:java-protocol`.
 
 ## Transport
 
