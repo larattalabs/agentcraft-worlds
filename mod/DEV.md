@@ -813,9 +813,10 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
 
 ### Hub (`H`, `/hub [tab]`)
 The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
-- `HubScreen` (not pausing): tabs from `HubTab` (Inbox, Buildings, Repos, Goals, Team, Settings, Status). Repos, Goals,
-  Team and Settings are `HubPane`s
-  (`ReposTab`, `GoalsTab`) with their own state: the hub hands them keys, typed characters, clicks and the
+- `HubScreen` (not pausing): tabs from `HubTab` (Inbox, Buildings, Repos, Goals, Team, Settings, Status). Every built
+  tab is a `HubPane` (`InboxTab`, `BuildingsTab` (wave 3: its five lists, selections, armed remove and actions moved out
+  of `HubScreen`, which keeps the frame, tab strip, buttons and thin public delegates; ids unchanged), `ReposTab`,
+  `GoalsTab`, `TeamTab`, `SettingsTab`, `StatusPane`) with its own state: the hub hands them keys, typed characters, clicks and the
   wheel first; while one of their text fields has focus every key goes to it (typing "h" never closes the hub;
   `isInputCaptured`, SDL text input on), Esc unfocuses, Tab moves between the view's fields, Ctrl+Enter sends. Tab / Shift+Tab cycle tabs, Left /
   Right switch buildings/blueprints, Up / Down select, Esc or the hub key close. Selection and the armed
