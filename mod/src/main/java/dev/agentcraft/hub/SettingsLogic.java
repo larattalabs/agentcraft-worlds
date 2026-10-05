@@ -343,9 +343,7 @@ public final class SettingsLogic {
 				return SecretSettings.validatePatch(v, "env".equals(d.key()));
 			}
 			case SettingDef.MCP_SERVERS -> {
-				List<String> names = new ArrayList<>();
-				SecretSettings.servers(d.value()).forEach(s -> names.add(s.name()));
-				return SecretSettings.validateEntries(v, names);
+				return SecretSettings.validateEntries(v, SecretSettings.servers(d.value()));
 			}
 			case SettingDef.STRING_LIST, SettingDef.AGENT_LIST -> {
 				if (!v.isJsonArray()) {

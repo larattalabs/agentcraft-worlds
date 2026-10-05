@@ -145,6 +145,21 @@ class SecretSettingsTest {
 	}
 
 	@Test
+	void aHiddenArgumentMustStayWhereItWas() {
+		List<String> shown = List.of("-y", "fs-mcp", "--token", "(hidden)", "--api-key=(hidden)");
+		assertNull(SecretSettings.hiddenArgsProblem(shown, shown), "untouched");
+		assertNull(SecretSettings.hiddenArgsProblem(shown, List.of("-y", "fs-mcp", "--token", "(hidden)", "--api-key=(hidden)", "--verbose")));
+		assertNull(SecretSettings.hiddenArgsProblem(shown, List.of("-y", "fs-mcp", "--token", "a-new-token")), "re-typed");
+		assertNotNull(SecretSettings.hiddenArgsProblem(shown, List.of("fs-mcp", "--token", "(hidden)")), "moved up one");
+		assertNotNull(SecretSettings.hiddenArgsProblem(shown, List.of("-y", "fs-mcp", "--token", "(hidden)", "--x", "--api-key=(hidden)")));
+		assertNotNull(SecretSettings.hiddenArgsProblem(List.of(), List.of("(hidden)")), "a new server has nothing hidden");
+		SettingDef d = def("{\"key\":\"claude.context.mcpServers\",\"type\":\"mcpServers\",\"value\":" + VIEW + "}");
+		assertNotNull(SettingsLogic.validate(d, j("[{\"name\":\"fs\",\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"--token\",\"(hidden)\"]}]")));
+		assertNull(SettingsLogic.validate(d, j("[{\"name\":\"fs\",\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"fs-mcp\",\"--token\","
+			+ "\"(hidden)\"]}]")));
+	}
+
+	@Test
 	void serversAreCheckedLikeTheForemanDoes() {
 		List<String> names = List.of("fs", "docs");
 		assertNull(SecretSettings.serverProblem(new Server("notes", "stdio", "node server.js", List.of(), null, List.of()), null, true, names));

@@ -541,8 +541,9 @@ the mod fills gaps in this contract (the Foreman side was built in parallel; ali
     Edit, Remove or Undo; "new" / "changed" / "removed"), then "Add server…". The form: name (a new server), type
     chips stdio / http / sse, command + arguments (one per line) and the environment as a secret map (stdio), or the
     URL (http, sse); Add / Done stages the server's entry (`{name, type, command, args, url, env?}`, an edit that
-    changes nothing stages nothing), Cancel drops it. Arguments shown as `(hidden)` go back as shown (the Foreman keeps
-    the original). Checks like the Foreman's: name `[\w-]{1,64}`, not `agentcraft`, free for a new server; stdio needs
+    changes nothing stages nothing), Cancel drops it. Arguments shown as `(hidden)` go back as shown, byte for byte (the
+    Foreman keeps the original in that place); a hidden argument that moved to another index (or a new one) is refused
+    ("type its real value again"), so a placeholder is never written to config.json. Checks like the Foreman's: name `[\w-]{1,64}`, not `agentcraft`, free for a new server; stdio needs
     a one-line command; http/sse an http(s) URL without credentials, query or fragment.
   - After Apply the current value is the names-only view (no value is kept in the mod); `dev.hub.state` and
     `settings_set` replies show staged secret values as `"(staged)"`.

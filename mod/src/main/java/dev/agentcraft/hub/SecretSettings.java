@@ -33,6 +33,8 @@ import org.jspecify.annotations.Nullable;
 public final class SecretSettings {
 	/** What {@code config.get} shows for every variable of a secret map. */
 	public static final String SET = "(set)";
+	/** An argument the Foreman does not show (a credential); sent back in the same place it keeps the original. */
+	public static final String HIDDEN = "(hidden)";
 	/** What the DevBridge shows for a staged secret value. */
 	public static final String STAGED = "(staged)";
 	public static final List<String> SERVER_TYPES = List.of("stdio", "http", "sse");
@@ -414,12 +416,29 @@ public final class SecretSettings {
 		return null;
 	}
 
+	/**
+	 * Why edited arguments would write a placeholder into config.json: the Foreman puts back a hidden argument only where
+	 * the same shown text stands at the same index ({@code shownBefore}: the server's arguments as {@code config.get}
+	 * showed them; a new server has none). A "(hidden)" (or "--x=(hidden)") anywhere else must be typed again. Null = fine.
+	 */
+	public static @Nullable String hiddenArgsProblem(List<String> shownBefore, List<String> edited) {
+		for (int i = 0; i < edited.size(); i++) {
+			String a = edited.get(i);
+			if ((a.equals(HIDDEN) || a.endsWith("=" + HIDDEN)) && (i >= shownBefore.size() || !shownBefore.get(i).equals(a))) {
+				return "args: the hidden argument " + (i + 1) + " moved (or is new): type its real value again";
+			}
+		}
+		return null;
+	}
+
 	private static @Nullable String prefix(String p, @Nullable String why) {
 		return why == null ? null : p + ": " + why;
 	}
 
-	/** The mod's check of the staged entries (each server once, each entry valid), or null. */
-	public static @Nullable String validateEntries(@Nullable JsonElement v, List<String> current) {
+	/** The mod's check of the staged entries (each server once, each entry valid, hidden arguments in place), or null. */
+	public static @Nullable String validateEntries(@Nullable JsonElement v, List<Server> servers) {
+		List<String> current = new ArrayList<>();
+		servers.forEach(s -> current.add(s.name()));
 		if (v == null || v.isJsonNull()) {
 			return null;
 		}
@@ -449,6 +468,15 @@ public final class SecretSettings {
 			String why = s == null ? "name missing" : serverProblem(s, envOf(e), false, List.of());
 			if (s != null && str(e, "type") == null) {
 				why = "type: stdio, http or sse";
+			}
+			if (why == null && s != null) {
+				List<String> before = List.of();
+				for (Server c : servers) {
+					if (c.name().equals(name)) {
+						before = c.args();
+					}
+				}
+				why = hiddenArgsProblem(before, s.args());
 			}
 			if (why != null) {
 				problems.add(name + " " + why);

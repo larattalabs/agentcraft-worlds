@@ -848,8 +848,8 @@ final class SettingsForm {
 		String name = d.original != null ? d.original : aux("mcp:name", false, "", 64).value().strip();
 		List<String> args = new ArrayList<>();
 		for (String a : aux("mcp:args", true, "", 4000).value().split("\n", -1)) {
-			if (!a.strip().isEmpty()) {
-				args.add(a.strip());
+			if (!a.isEmpty()) {
+				args.add(a); // as typed: an untouched argument (a hidden one too) goes back byte for byte
 			}
 		}
 		boolean stdio = "stdio".equals(d.type);
@@ -861,6 +861,15 @@ final class SettingsForm {
 		}
 		JsonObject env = stdio ? d.env : null;
 		String why = SecretSettings.serverProblem(sv, env, d.original == null, others);
+		if (why == null) {
+			List<String> shown = List.of();
+			for (SecretSettings.Server c : cur) {
+				if (c.name().equals(name)) {
+					shown = c.args();
+				}
+			}
+			why = SecretSettings.hiddenArgsProblem(shown, sv.args());
+		}
 		if (why == null && !stdio && d.env != null && !d.env.isEmpty()) {
 			why = "env: only stdio servers have variables";
 		}
