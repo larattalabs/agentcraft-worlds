@@ -10,7 +10,7 @@
 [![Minecraft 26.3](https://img.shields.io/badge/Minecraft-26.3-8fa98b)](https://www.minecraft.net)
 [![Fabric](https://img.shields.io/badge/mod%20loader-Fabric-d97757)](https://fabricmc.net)
 [![Claude Agent SDK](https://img.shields.io/badge/agents-Claude%20Agent%20SDK-2fa3a0)](https://code.claude.com/docs/en/agent-sdk/overview)
-[![Tests](https://img.shields.io/badge/tests-753%20passing-3b2a20)](foreman/test)
+[![Tests](https://img.shields.io/badge/tests-761%20passing-3b2a20)](foreman/test)
 
 <img src="docs/img/fork/hero.jpg" alt="An AgentCraft village: a studio, a campus and two workshops on a hilltop" width="100%">
 
@@ -43,11 +43,12 @@ Close the game and the agents keep working. Open it again and the studio catches
 |---|---|
 | **Buildings for your repos** | Place a building per repository, or one campus for a group of repos (a wing each). Pick a blueprint, steer a translucent ghost into place, confirm. Remove puts the terrain back exactly. |
 | **Generated designs** | Describe a building (style, materials, features, size) or mark a plot on the ground, and a Claude design agent builds a blueprint to fit it. You review it as a ghost before anything is placed. |
+| **Village life** | Roads between buildings with lanterns, a village board in the square, agents sleeping in beds at night, stand-ups when a goal starts, library visits, and a trophy wall for every finished goal and merged PR. |
 | **A lead per building** | Marlow leads home. Ines, Bram and Cass each take a building, plan its goals and review its work, sharing one pool of workers. |
 | **The hub** (<kbd>H</kbd>) | One screen for your inbox, buildings, repos, goals, the team, settings and status. Works without cheats, so it runs a Hardcore world. |
 | **Never miss a call** | One Inbox for decisions, replies, blocked tasks, usage holds and PRs; a HUD line while anything needs you; a "since you were away" catch-up when you come back. |
 | **Goal threads** | Per goal: a conversation with its lead, the plan (editable), standing instructions every task inherits, and a "since you were away" summary. |
-| **Pull requests** | Repos can land work as PRs instead of local merges. The Foreman watches each PR to completion and the lead triages review comments; nothing is posted without your approval. |
+| **Pull requests** | Repos can land work as PRs instead of local merges. The Foreman watches each PR to completion and the lead triages review comments, including which review bots to listen to per repo; nothing is posted without your approval. |
 | **Survival-safe** | Screens pause in singleplayer, buildings use vanilla materials and iron doors, placement checks for chests, mobs, fluids and slopes. A Prism Launcher setup starts the Foreman with the game. |
 | **Unattended running** | Usage-limit holds and resumes, a usage reserve, per-turn budgets, retries on network failures, a usage banner, optional Discord notifications. |
 | **Per-repo settings** | CI and setup commands, protected files, base branch, environment, landing mode, roles and models per agent, curated context (CLAUDE.md, skills, MCP servers). |
@@ -183,11 +184,44 @@ ghost like any other.
 </tr>
 </table>
 
-Agents go to their task's building and idle at home, walking between buildings when there is an
-outdoor route (or appearing at the door when there is not). Each building's lead has their own
-podium, and the task walls, CI lamps and monitors in a building show that building's repo.
+Agents go to their task's building and idle at home. Each building's lead has their own podium, and
+the task walls, CI lamps and monitors in a building show that building's repo. Every building gets a
+short path from its door down to the ground, so agents can walk between buildings even on hills.
 
 <img src="docs/img/fork/desks.jpg" alt="Workers at their desks in a campus wing, monitors streaming their work" width="100%">
+
+<br>
+
+## Village life
+
+A village grows around your buildings. Everything here is placed through the hub, in vanilla blocks,
+and can be removed again with the ground put back exactly.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/img/fork/road-walk.jpg" alt="Juniper walks a road past a lantern post and the village board"></td>
+<td width="50%"><img src="docs/img/fork/board.jpg" alt="The village board"></td>
+</tr>
+<tr>
+<td><b>Roads.</b> Hub, Buildings, Roads lists every pair of buildings with its walking route. Lay a road and it follows the route the agents walk, with lanterns on posts, and agents prefer it from then on.</td>
+<td><b>The village board.</b> Placed from Buildings, Fixtures: each building with its lead and active goal, the newest milestones, and what needs you. Right-click it to open the hub.</td>
+</tr>
+<tr>
+<td><img src="docs/img/fork/beds.jpg" alt="Marlow and Rowan asleep in their beds at night"></td>
+<td><img src="docs/img/fork/trophies.jpg" alt="Trophy signs on a building's trophy wall"></td>
+</tr>
+<tr>
+<td><b>Night.</b> Every blueprint has beds. At night, idle agents go to bed; agents with work keep working. In the morning they are back at their desks.</td>
+<td><b>Trophies.</b> A finished goal or a merged PR hangs a waxed sign on its building's trophy wall.</td>
+</tr>
+</table>
+
+When a goal starts, its lead gathers the team at the meeting table for a short **stand-up**, each
+agent saying what they are taking on. An agent that writes a note to the shared memory walks to the
+**library** with a book first. Night, stand-ups, library visits, trophies and walking each have a
+switch in hub, Buildings, per world.
+
+<img src="docs/img/fork/night.jpg" alt="The village at night: lit windows, the board and lanterns along the roads" width="100%">
 
 <br>
 
@@ -219,7 +253,7 @@ you, unread goal threads, failing CI and blocked agents.
 | Tab | What it holds |
 |---|---|
 | **Inbox** | Everything that needs you or happened while you were busy: decisions (answer them in place, merges open the diff), agents' replies, blocked tasks, usage holds and PRs needing attention. Filter by building or agent |
-| **Buildings** | Your buildings (move, edit repos, make home, remove), the blueprint browser with previews, Place new, Design new, the designs in progress, and whether agents walk between buildings |
+| **Buildings** | Five lists: your **Buildings** (move, edit repos, make home, remove), **Fixtures** such as the village board, the **Blueprints** browser with previews, **Designs** in progress, and **Roads**. Plus the village switches: walking, trophies, night, stand-ups, library |
 | **Repos** | Registered repos, their branch, CI and open PRs, and their settings: landing mode, CI and setup commands, protected files, PR review |
 | **Goals** | New goals (on a repo, continuing a branch, or across several repos) and per goal: the thread with its lead, the plan, standing instructions, tasks and the "since you were away" summary |
 | **Team** | Every lead and worker: role, model, effort, who is on shift, how many work at once, and leads still held by other worlds |
@@ -323,8 +357,9 @@ AgentCraft is built to point at code you care about.
   instead, with deny rules and the git guardrails still enforced.
 - **The Foreman protects itself.** Only clients holding its token can change anything, and agents are
   kept away from the Foreman's own files, token and port.
-- **Clear authorship.** Agents commit as `AgentCraft <Name>`; squash landing makes one commit
-  authored by you. No co-author trailers or tool footers are added to commits or PRs.
+- **Clear authorship.** Agents commit as `AgentCraft <Name>` by default, or with your own git
+  identity if you prefer (Settings, General); merges, squash commits and PRs are always yours. No
+  co-author trailers or tool footers are added to commits or PRs.
 
 <br>
 
@@ -380,10 +415,10 @@ The launchers above run a development client with the studio world. To play in a
 instead, the mod goes into a launcher instance like any Fabric mod, and the Foreman runs beside the
 game. On macOS with Prism Launcher, `node tools/hardcore-setup.mjs` does this: it builds the mod
 from a stable checkout, installs the jar into an instance, backs everything up first, and makes the
-Foreman start whenever the game does. Its defaults (instance name, backup script and folders) are
-the fork author's own, so pass yours with `--instance`, `--backup-dir` and `--backup-script`, and
-run it without `--apply` first to see every change. `--help` lists the options; updating and
-rollback are in [tools/README.md, "Playing in a Hardcore world"](tools/README.md#playing-in-a-hardcore-world-prism-launcher-macos).
+Foreman start whenever the game does. Tell it your instance with `--instance` or once in a
+`hardcore` section of `~/.agentcraft/config.json` (with your own backup script if you have one),
+and run it without `--apply` first to see every change. `--help` lists the options; the config
+keys, updating and rollback are in [tools/README.md, "Playing in a Hardcore world"](tools/README.md#playing-in-a-hardcore-world-prism-launcher-macos).
 On other launchers, build the jar with `./gradlew build` in `mod/`, add it like any Fabric mod and
 start the Foreman yourself (`npm run start` in `foreman/`).
 
@@ -514,7 +549,7 @@ backend is free.
 ## Development
 
 ```sh
-cd foreman && npm test                     # 753 tests
+cd foreman && npm test                     # 761 tests
 cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows)
 npm test --prefix tools                    # launcher, blueprint and QA tool tests
 node tools/qa.mjs --home .agentcraft-home  # capture the 10 shot QA gallery

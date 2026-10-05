@@ -13,7 +13,10 @@ Design new; the Designs list) and the **Status** tab (branch `mod/hub`); the des
 and the design flow (branch `mod/design-form`, see "Generated buildings"); the **Repos** and **Goals**
 tabs (branch `mod/goals-tabs`, see "Repos and Goals tabs" below); the **Team** and **Settings** tabs and the Repos
 tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings tabs" below). Code: `mod/src/client/java/dev/agentcraft/client/hub/` and
-`.../client/design/`, notes in mod/DEV.md "Hub" and "Generated buildings".
+`.../client/design/`, notes in mod/DEV.md "Hub" and "Generated buildings". Later waves added the
+**Inbox** tab (first tab, fix wave 2) and, in the Buildings tab, the **Fixtures** and **Roads** lists and
+the village toggles (walking, trophies, routines; docs/VILLAGE.md). The Buildings tab's switcher has five
+lists, in this order: **Buildings, Fixtures, Blueprints, Designs, Roads** (`HubScreen.Sub`).
 
 - Opened with a key (default `H`, rebindable, AgentCraft category; vanilla binds H only as F3+H) and
   from the console (`/hub [tab]`). *(done)*
@@ -26,7 +29,7 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      user, with the top-down plan and, when present, the rendered previews `<id>.preview-{iso,top,front,
      cutaway}.png` from the user folder, else the mod's `data/<ns>/blueprints/`), Place (repo step with
      the blueprint fixed, then placement mode) and **Design new** (below). *(done)*
-     A third list, **Designs**, shows the building designs (below). *(done)*
+     The fourth list, **Designs**, shows the building designs (below). *(done)*
      **Fixtures** (village stream `board`, docs/VILLAGE.md V2): the second list, "Fixtures N": placed village boards with where
      they stand, Teleport (C7), Remove (asks twice, restores the terrain), Move, Undo move; the top-right button is
      **Place village board…** ("Place board…" when the row is narrow), which puts up the board's ghost at once (no repo step).
@@ -53,6 +56,10 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      agents teleport between buildings with a puff as before. Button id `walk_toggle`
      (`dev.hub.action {action:"press", button:"walk_toggle"}`, or `dev.walk.toggle`); its fit is in
      `dev.walk.state` `ui{needed, available, overflow, compact}`.
+     Trophies (docs/BUILDINGS.md "Trophies"): a toggle under the walking one, **"Trophies for merges and
+     finished goals: On/Off"** ("Trophies: On/Off" when it does not fit, with a short note "signs on the trophy
+     wall" / "no signs are hung"), per world, client side (`<gameDir>/agentcraft/trophies.json`, default on).
+     Button id `trophy_toggle` (or `dev.trophies.toggle {on}`).
      Village routines (docs/VILLAGE.md V3, stream routines): under the trophies toggle, one row of three
      toggles, filled = on: **Night** ("Night routine": idle agents sleep in the building's beds at night),
      **Stand-ups** (a goal's lead and its first workers gather when the tasks are assigned), **Library**
@@ -61,7 +68,7 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      ("tight") and then shorter ("Night Stand Lib", "short") when the column is narrow. Button ids
      `routine_toggle:night|standups|library` (`dev.hub.action {action:"press", button:"routine_toggle:night"}`, or
      `dev.routines.toggle`); the row's fit is in `dev.routines.state` `ui{needed, available, mode, overflow}`.
-     Village V1 (stream roads, docs/VILLAGE.md, docs/BUILDINGS.md "Roads"): a fourth list, **Roads**
+     Village V1 (stream roads, docs/VILLAGE.md, docs/BUILDINGS.md "Roads"): the fifth list, **Roads**
      (`sub:"roads"`): building pairs of the player's dimension (entrances <= 256 blocks apart) with their road route
      (length / planning / no route and why) and road (id pill), roads whose building was removed or moved first ("!
      b3 was removed: remove it?"). A pair without a road: **Width 1-3**, **Lanterns: On/Off**, **Bridges: On/Off**, **Lay
@@ -69,7 +76,8 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      and **Remove road…** (two-step, like Remove); an orphan: **Remove road…** and **Keep it**. "Place new…" is hidden on
      this list. Button ids `road_*`, rows `pair:<a>|<b>` / `road:<id>` (mod/DEV.md "Roads"). When the switch and
      the right button do not fit (GUI scale 4, ~426 px wide) the counts go first ("Buildings", "Roads": each list says
-     them again), then the button reads "Place…" / "Design…" (`dev.roads.state ui.strip.compact`).
+     them again), then the button reads "Place…" / "Design…" / "Place board…", and at ~426 px Fixtures falls back
+to "Place…" too (`dev.roads.state ui.strip.compact`).
   2. **Repos** *(done, branch `mod/goals-tabs`)*: registered repos and their `repoSettings`.
   3. **Goals** *(done in the mod, branch `mod/goals-tabs`; Foreman side in `foreman/goals-tabs`)*: submit a goal (repo, "continue a branch", earlier session) and, per goal:
      - **Thread with the lead**: a conversation about this goal (messages to Marlow tagged with the
@@ -86,7 +94,8 @@ tab's "Edit settings" (mod side in branch `mod/settings`, see "Team and Settings
      Needs Foreman support: goal-scoped messages, goal instructions (stored with the goal, included in
      prompts), plan read/write, and a digest query (`goal.digest {goalId, since}`).
   4. **Team** *(done in the mod, branch `mod/settings`)*: agents, roles, models, effort, the team.
-  5. **Settings** *(done in the mod, branch `mod/settings`)*: permissions, context, connectors, session history, usage.
+  5. **Settings** *(done in the mod, branch `mod/settings`)*: groups General (your name, notifications, merge style,
+     commit identity, cleanup), Permissions, Context (incl. connectors and session history), Subagents, PRs, Usage.
   6. **Status** *(done)*: Foreman connection, backend, auth/account, usage windows (percent, reset
      time), spend, mod and Foreman versions, DevBridge state. Wave 2 (docs/WAVE2.md W7): a second view,
      **Keys & help** (every AgentCraft key with its live binding, every in-world interaction, "Show the
@@ -392,7 +401,7 @@ decisions, and with config.set loosen its own permissions). From now on:
   model,effort}`, `claude.leadModel`, `claude.leadEffort`, `claude.workerModel`, `claude.effort`,
   `claude.taskModels.{small,normal,large}`, `claude.maxConcurrent`, `claude.throttleConcurrent`,
   `claude.maxConcurrentTurns`, `claude.designModel`, `claude.leadReview`.
-- Settings: `userName`, `notify`, `toastSilent`, `mergeStyle`, `signMerges`; permissions
+- Settings: `userName`, `notify`, `toastSilent`, `mergeStyle`, `signMerges`, `commitIdentity`; permissions
   (`claude.permissions.mode`, `allow`, `deny`, `webTools`, `protectCheckouts`); context
   (`claude.context.userInstructions`, `skills`, `sessionHistory.enabled/days`, `maxChars`, `mcpAllow`,
   `connectors`; MCP servers read-only); `claude.subagents` (list); PRs (`claude.prWatch`,
@@ -400,7 +409,7 @@ decisions, and with config.set loosen its own permissions). From now on:
   `sevenDayPct`, `claude.leadSession.maxDays` / `maxTurns`, `claude.useClaudeLogin` - restart); team
   (`claude.leadWorldTtlDays`); general (`cleanupAfterDays`; `notify` writes `notify.desktop` when
   config.json holds `notify: {desktop, discord}`, which stays file-only).
-- Repo settings (Repos tab "Edit settings", now enabled): `land`, `baseBranch`, `ci`, `setup`, `copy`,
+- Repo settings (Repos tab "Edit settings", now enabled): `land`, `commitIdentity`, `baseBranch`, `ci`, `setup`, `copy`,
   `setupTimeoutMs`, `ciTimeoutMs`, `protect`, `roles.<agent>` (picker from `repo.agents`), `subagents`, `pr.*`,
   `prReview.*`; `env` stays read-only (keys only).
 - Not editable in the hub: `repos` (Repos tab add/remove), host/port/home/profile, sim settings.
@@ -429,7 +438,7 @@ decisions, and with config.set loosen its own permissions). From now on:
   Global groups: `team` (workers, leads, leadReview, `claude.agents.<id>.*` for every cast member,
   leads included), `models` (lead/worker/design models and effort, task-size models, concurrency),
   `general`, `permissions`, `context`, `subagents`, `prs`, `usage`. Repository groups: `landing`
-  (`land`, `baseBranch`, `pr.*`), `worktrees` (`ci`, `setup`, `copy`, `setupTimeoutMs`, `ciTimeoutMs`, `protect`,
+  (`land`, `commitIdentity`, `baseBranch`, `pr.*`), `worktrees` (`ci`, `setup`, `copy`, `setupTimeoutMs`, `ciTimeoutMs`, `protect`,
   `env`), `agents` (`roles.<id>` for every cast member, `subagents` as enum `off`/`repo`), `review`
   (`prReview.*`). `claude.subagents` is two keys: `claude.subagents.enabled`, `claude.subagents.agents`.
   `claude.permissions.ask` is not exposed. `claude.maxBudgetUsdPerTurn` is an `int` (whole dollars,

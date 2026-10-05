@@ -21,7 +21,7 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
   (`<world>/agentcraft-roads/<id>.before.nbt`); Remove road restores it; removing or moving a building
   offers to remove its roads (never silently).
 - Agents prefer laid roads (lower cost in the planner).
-- DevBridge: `dev.roads.state`, `dev.roads.preview {a, b}`, `dev.roads.lay {a, b, width?}`, `dev.roads.remove {road}`.
+- DevBridge: `dev.roads.state`, `dev.roads.preview {a, b}`, `dev.roads.lay {a, b, width?}`, `dev.roads.remove {road}`, `dev.roads.plan {a, b}` (the route only), `dev.roads.blocks {x0, y0, z0, x1, y1, z1}` (block ids in a box, for restore checks).
 
 ## V2 Village board (stream `board`)
 - A placeable **fixture**: a small blueprint kind `fixture` (no repos, no lead, not a building for routing,

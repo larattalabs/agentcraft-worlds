@@ -546,7 +546,8 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   change listeners. Errors are `Buildings.BuildingException` with a player-facing message.
 - Commands (gamemaster): `/agentcraft blueprints [reload]`, `/agentcraft buildings`, `/agentcraft build` (the wizard),
   `/agentcraft place <blueprint> <repo>[,<repo>...] [rotation] [force]` (in front of the player,
-  ground at the player's feet), `/agentcraft remove <buildingId> [forget]`, `/agentcraft home <buildingId>`.
+  ground at the player's feet), `/agentcraft place village_board` (a fixture: no repos),
+  `/agentcraft remove <buildingId> [forget]`, `/agentcraft home <buildingId>`.
 - `Anchors.current()` keeps working: in the AgentCraft HQ world it is the studio as today; in any
   world with buildings it is the home building's layout (shown, not saved as
   `agentcraft-anchors.json`). Per-building lookups go through `Buildings`. Buildings placed in the HQ

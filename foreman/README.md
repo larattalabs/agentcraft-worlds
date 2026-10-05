@@ -102,6 +102,8 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | sim: `--speed`, `--seed`, `--autostart`, `--showcase [late]`, `--auto-answer`, `--no-ambient` | | |
 
 `<home>/config.json` can hold the same settings (`{"backend":"claude","claude":{"workers":["kit","wren"]}}`).
+A `hardcore` section in the same file is read by `tools/hardcore-setup.mjs` (tools/README.md "Playing in a
+Hardcore world"); the Foreman ignores it.
 
 ### Unattended running: holds, retries, usage reserve, notifications
 

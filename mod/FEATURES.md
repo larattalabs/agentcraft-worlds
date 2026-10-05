@@ -457,7 +457,9 @@ Repos failing CI, Team blocked agents; `H` reopens the world's last tab, or the 
   card), reply boxes, Retry, and the agent view with the paged full log (`agent.logs.request`). Deep links:
   podium right-click (that podium's decisions), monitor right-click (that agent's log), `/inbox [@agent]`.
   Read state in `hub-seen.json`; the pure model is `dev.agentcraft.hub.InboxModel`.
-- **Buildings**: the world's buildings (blueprint, repos, lead, home), Place new / Place / Place on the plot,
+- **Buildings**: five lists behind a switcher, in order Buildings, Fixtures (the village board: Place village
+  board…, Move, Remove), Blueprints, Designs and Roads (lay a road along a pair's walking route, Remove road…;
+  see "Roads" below). The world's buildings (blueprint, repos, lead, home), Place new / Place / Place on the plot,
   Make home, Teleport (gated: commands or creative), Edit repos…, Move… / Undo move, Remove (twice; "Remove
   anyway" after a "move these first" refusal); the blueprint browser with plan and rendered previews; Design
   new and the Designs list (below); the "Agents walk between buildings" toggle; the trophies toggle; the village routine
@@ -467,7 +469,7 @@ Repos failing CI, Team blocked agents; `H` reopens the world's last tab, or the 
 - **Goals**: submit (repo, continue a branch, instructions); per goal the thread with its lead, the plan
   (editable), standing instructions, tasks with PR state, the "since you were away" digest, Cancel.
 - **Team**: leads and workers (on/off, title, specialty, model, effort, per-repo roles), live state, the agent
-  card, leads held by other worlds (Release). **Settings**: General, Permissions, Context, Subagents, PRs, Usage
+  card, leads held by other worlds (Release). **Settings**: General (incl. commit identity), Permissions, Context, Subagents, PRs, Usage
   as forms (Apply / Revert, second confirm for widening changes, restart banner).
 - **Status**: Foreman link, backend, auth, usage windows, versions, DevBridge; the Keys & help view.
 - DevBridge: `dev.hub.open {tab}`, `dev.hub.state`, `dev.hub.action`; screens `hub`, `hub_<tab>`
@@ -529,7 +531,8 @@ Contract: docs/VILLAGE.md V3 ("As implemented: routines"); notes in mod/DEV.md "
   and those workers gather at the lead's building's `meeting` slots (else the podium's `user` spots), the lead says the
   plan's first line (else the goal's text), each worker its task title (speech bubbles, 3 s apart), 20-30 s, then work.
   Skipped (and recorded) when the player is more than 64 blocks from the building, it is not loaded, it has no spot or
-  the toggle is off. Goals already under way when the client connects never get one.
+  the toggle is off. Goals already under way when the client connects never get one. A goal without a lead gets
+  its building's lead, else Marlow at home (`Routines`).
 - **Library visits**: a `memory.upsert` written by an agent (`author`) queues a visit; between steps (not working,
   thinking or in an error) it walks to its building's `library` slot with a book in its hand, reads ~5 s (READ pose),
   then returns; cancelled the moment work needs it; at most 30 s; a 2 min wait and a 1 min cooldown.
@@ -655,7 +658,7 @@ and ~42 us/frame for all boards, extract + submit, rebuilds included; a full boa
   as if the Foreman sent it (e.g. `foreman.status` with `auth:"failed"`).
 - Foreman for QA (always a project-local home, your own port and **your own profile name**, since
   profiles are locked per running Foreman):
-  `npm run start -- --backend sim --profile <you>-showcase --reset --showcase --home C:\Projects\agentcraft\.agentcraft-home --port <p> --no-notify`
+  `npm run start -- --backend sim --profile <you>-showcase --reset --showcase --home <checkout>/.agentcraft-home --port <p> --no-notify`
   then launch the game with `AGENTCRAFT_PORT=<p>`. The sim's repo id is `sim-demo-<profile>` cut to
   24 characters (`--profile verify2-core-showcase` gives `sim-demo-verify2-core-sh`), so read it from
   the decision (`decision.repoId()`) or `s.repos()` instead of building it (decision `d3` = merge of
