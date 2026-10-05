@@ -226,12 +226,15 @@ final class PillStyle {
 			g.fill(2, 3, 4, PILL_H - 3, UiStyle.withAlpha(UiStyle.CLAY, alpha));
 			x += 3;
 		}
-		g.enableScissor(0, 0, w - 4, PILL_H);
+		// no scissor: nested in the settings form's scroll area an empty intersection crashes the GUI renderer (26.3);
+		// a segment that would run past the edge (only at the narrowest fallback) is left out instead
 		for (Seg s : segs) {
+			if (x + s.w() > w - 4) {
+				break;
+			}
 			s.draw(g, x, alpha);
 			x += s.w();
 		}
-		g.disableScissor();
 	}
 
 	// ------------------------------------------------------------------ Pill+
