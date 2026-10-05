@@ -450,8 +450,9 @@ Mods that skip ticking entities the player can't see would freeze agents, becaus
 moves when it advances. The best known is Entity Culling (tr7zw), whose `tickCulling` is on by default.
 Found in a soak test with a real modpack: an agent walking out of view stopped mid-route, and the
 smoke step `agent_walks` failed. So `AgentManager` (END_CLIENT_TICK) offers every agent a catch-up
-advance after the level's entity ticks, using the same filters as `ClientLevel.tickEntities`: not
-while paused, removed, a passenger or tick-frozen. A per-agent `TickGate` stamps the advance with
+advance after the level's entity ticks, with the same per-entity filters as `ClientLevel.tickEntities`: not
+while paused, removed, a passenger or tick-frozen. (It doesn't check ticking sections, so an agent in an
+unloaded section keeps walking; the walk rules already handle unloaded chunks.) A per-agent `TickGate` stamps the advance with
 `AgentManager.clock()`, so it runs exactly once per client tick, either from the entity tick or from
 the catch-up, never both (`TickGateTest`). The catch-up calls `setOldPosAndRot()` first, as
 `commonTick()` does, so render interpolation stays right. The only effect that is not caught up is
