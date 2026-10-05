@@ -221,6 +221,41 @@ public final class LauncherPlan {
 		return exists.test(foremanDir(checkout).resolve("node_modules").resolve(".package-lock.json"));
 	}
 
+	/** {@code foreman/package-lock.json}: what {@code npm ci} installs. */
+	public static Path lockFile(Path checkout) {
+		return foremanDir(checkout).resolve("package-lock.json");
+	}
+
+	/**
+	 * The launcher's install marker: the hash of the {@code package-lock.json} its last {@code npm ci} installed, inside
+	 * {@code node_modules} (so {@code npm ci}, which replaces the folder, takes it away, and a failed install leaves none).
+	 */
+	public static Path depsMarker(Path checkout) {
+		return foremanDir(checkout).resolve("node_modules").resolve(".agentcraft-lock.sha256");
+	}
+
+	/** The marker's content for a lock file: its SHA-256, hex. */
+	public static String lockHash(byte[] lock) {
+		try {
+			return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(lock));
+		} catch (java.security.NoSuchAlgorithmException e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	/**
+	 * Whether the launcher runs {@code npm ci} before starting the Foreman: nothing installed, or a lock file
+	 * ({@code lockHash}, null when there is none) other than the one the marker ({@code marker}, null when missing) says was
+	 * installed: a pull changed the dependencies, or someone else installed them (no marker). An unchanged lock keeps
+	 * {@code node_modules} (the Agent SDK is large). Pure.
+	 */
+	public static boolean needsInstall(boolean installed, @Nullable String lockHash, @Nullable String marker) {
+		if (!installed) {
+			return true;
+		}
+		return lockHash != null && (marker == null || !lockHash.equals(marker.strip()));
+	}
+
 	// ------------------------------------------------------------------ where the Foreman comes from
 
 	/** A checkout's {@code foreman/}. */

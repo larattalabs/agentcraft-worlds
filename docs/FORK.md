@@ -198,6 +198,16 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   tick culling froze agents -> agents now advance from the client tick; the instance also whitelists
   agentcraft:agent, the pre-rename id: harmless and no longer needed, see "Mod id"). Installed with
   `hardcore-setup --no-prelaunch --apply` (stable checkout, mod-started Foreman, profile hardcore, port 7880); verified to the title screen. Next: play, place buildings, first real goals.
+- **2026-10-05, branch `fix/placement-exactness`** (three fixes ported from Architect): the snapshot box reaches one
+  row below the foundation (grass turned to dirt under it is put back on Remove); **held leaves** (`LeafGuard`): leaves
+  outside a site hanging on logs inside it stay persistent while it stands and get their natural state back on
+  Remove/Move; the launcher reinstalls the Foreman's npm packages when `foreman/package-lock.json` changed. *Decision*:
+  held leaves are journal cells, not a separate per-building record: one entry per hold, kind `leaves`, policy CELL,
+  owned by the building, undone in the site's group. So they get the journal's save/reload and crash safety (drafted
+  site, group release/reactivation at the next world start) for free, and the hand-down rule replaces Architect's
+  release-before-snapshot bookkeeping: a site built over a held leaf undoes in either order to the natural leaf. Matching
+  is by block + `persistent` only (vanilla recomputes a held leaf's distance), writes are quiet; Forget releases the hold
+  (the building stays, so do its leaves). See docs/BUILDINGS.md "Held leaves".
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 

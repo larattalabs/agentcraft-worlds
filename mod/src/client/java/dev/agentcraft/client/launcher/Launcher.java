@@ -64,8 +64,9 @@ import org.jspecify.annotations.Nullable;
  *       the checkout's launcher run file;</li>
  *   <li>decides ({@link LauncherPlan#decide}): reuse a current one, leave one it did not start alone (never stopped, even
  *       when older: "running (older version)"), restart its own stale one, or start one;</li>
- *   <li>starting: finds node 22+, runs {@code npm ci} in foreman/ when node_modules is missing, and spawns the daemon's
- *       command line detached through node, with the login shell's environment and its output in
+ *   <li>starting: finds node 22+, runs {@code npm ci} in foreman/ when node_modules is missing or {@code package-lock.json}
+ *       changed since its last install, and spawns the daemon's command line detached through node, with the login
+ *       shell's environment and its output in
  *       {@code <checkout>/artifacts/logs/foreman-launcher-<profile>.log}. It records what it started (pid and start time)
  *       in {@code <home>/<profile>/launcher.json} and in the checkout's launcher run file (the one tools/mac.mjs and
  *       tools/foreman-daemon.mjs read), so the tools see it too.</li>
@@ -374,7 +375,7 @@ public final class Launcher {
 		}
 		node = nodePath;
 		Map<String, String> env = LauncherPlan.environment(System.getenv(), loginEnv(), nodePath, System.getProperty("user.home", ""), windows());
-		if (!LauncherPlan.depsReady(root, Files::exists) && !install(root, nodePath, env)) {
+		if (needsInstall(root) && !install(root, nodePath, env)) {
 			return;
 		}
 		Path log = logFile();
@@ -442,11 +443,25 @@ public final class Launcher {
 		watch(newPid);
 	}
 
-	/** {@code npm ci} in foreman/ (first use), its output in artifacts/logs/foreman-launcher-npm.log. */
+	/** Whether foreman/ needs {@code npm ci} ({@link LauncherPlan#needsInstall}: not installed, or the lock file changed since). */
+	private static boolean needsInstall(Path root) throws IOException {
+		Path lock = LauncherPlan.lockFile(root);
+		Path marker = LauncherPlan.depsMarker(root);
+		return LauncherPlan.needsInstall(LauncherPlan.depsReady(root, Files::exists),
+			Files.exists(lock) ? LauncherPlan.lockHash(Files.readAllBytes(lock)) : null, Files.exists(marker) ? Files.readString(marker) : null);
+	}
+
+	/**
+	 * {@code npm ci} in foreman/ (first use, and again when {@code package-lock.json} changed), its output in
+	 * artifacts/logs/foreman-launcher-npm.log; on success the lock's hash goes into node_modules ({@link LauncherPlan#depsMarker}).
+	 */
 	private static boolean install(Path root, Path nodePath, Map<String, String> env) throws IOException, InterruptedException {
 		Path dir = LauncherPlan.foremanDir(root);
 		List<String> cmd = LauncherPlan.installCommand(LauncherPlan.npmFor(nodePath, windows()));
-		set(State.INSTALLING, "installing the Foreman's npm packages (npm ci in " + dir + ", first use only)");
+		Path lock = LauncherPlan.lockFile(root);
+		byte[] installing = Files.exists(lock) ? Files.readAllBytes(lock) : null; // read before: what npm ci installs
+		set(State.INSTALLING, "installing the Foreman's npm packages (npm ci in " + dir + (LauncherPlan.depsReady(root, Files::exists)
+			? ", package-lock.json changed)" : ", first use)"));
 		Path log = npmLog();
 		Files.createDirectories(log.getParent());
 		ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile()).redirectErrorStream(true);
@@ -473,6 +488,9 @@ public final class Launcher {
 			logTail = LauncherPlan.tail(lines, 20);
 			set(State.CRASHED, "npm ci failed in " + dir + " (exit " + code + "); see " + log);
 			return false;
+		}
+		if (installing != null) {
+			Files.writeString(LauncherPlan.depsMarker(root), LauncherPlan.lockHash(installing) + "\n", StandardCharsets.UTF_8);
 		}
 		return true;
 	}

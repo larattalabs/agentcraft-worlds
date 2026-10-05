@@ -357,7 +357,8 @@ line, PATH composition) and its settings in `LauncherConfig` (`LauncherConfigTes
    restart; not ours and stale -> reuse, "running (older version)", never stopped; port held by a non-
    Foreman -> blocked; profile running on another port -> blocked; nothing -> start.
 5. Start: node 22+ (`launcher.nodePath`, PATH, Homebrew, mise/volta/nvm/asdf/fnm, `$SHELL -lc 'command -v
-   node'`), `npm ci` when `foreman/node_modules` is missing, then `node -e <spawn helper>` starts
+   node'`), `npm ci` when `foreman/node_modules` is missing or `foreman/package-lock.json` changed since the launcher's
+   last install (its SHA-256 in `node_modules/.agentcraft-lock.sha256`; no marker: installs once), then `node -e <spawn helper>` starts
    `node --import tsx src/main.ts --backend --profile --home --port` detached (own session), output
    appended to `<checkout>/artifacts/logs/foreman-launcher-<profile>.log`, environment = the game's
    without `AGENTCRAFT_*` + the login shell's (`$SHELL -lic`, else `-lc`; PATH composed with node's

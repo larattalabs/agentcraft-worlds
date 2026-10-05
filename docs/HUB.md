@@ -120,7 +120,7 @@ tools/README.md "Playing in a Hardcore world".
   nodePath?, stopOnExit (false) }`; overrides `AGENTCRAFT_LAUNCHER`, `AGENTCRAFT_FOREMAN_DIR`,
   `AGENTCRAFT_NODE`, `AGENTCRAFT_LAUNCHER_STOP_ON_EXIT` (or the `-Dagentcraft.*` spelling).
 - **Source:** `AGENTCRAFT_FOREMAN_DIR`, `launcher.foremanDir`, a dev run's checkout, `hardcore.stable`, the
-  checkout the jar was built from. `npm ci` in `foreman/` on first use.
+  checkout the jar was built from. `npm ci` in `foreman/` on first use and again when `foreman/package-lock.json` changed (a hash marker in `node_modules`).
 - **Same Foreman as the daemon:** the daemon's command line (`--backend --profile --home --port`), the login
   shell's environment, the same stale rule (another checkout or commit; tools/lib/macprocs.mjs
   `staleReasons`) and the same launcher run file (`<checkout>/artifacts/run/mac-foreman-<profile>.json`).

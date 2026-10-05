@@ -99,6 +99,20 @@ class LauncherPlanTest {
 		assertFalse(LauncherPlan.depsReady(Path.of("/r"), p -> false));
 	}
 
+	@Test
+	void npmCiRunsAgainWhenTheLockFileChanged() {
+		String lock = LauncherPlan.lockHash("{\"lockfileVersion\": 3}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		assertEquals(64, lock.length());
+		assertEquals(Path.of("/r/foreman/node_modules/.agentcraft-lock.sha256"), LauncherPlan.depsMarker(Path.of("/r")));
+		assertEquals(Path.of("/r/foreman/package-lock.json"), LauncherPlan.lockFile(Path.of("/r")));
+		assertTrue(LauncherPlan.needsInstall(false, lock, lock), "nothing installed");
+		assertFalse(LauncherPlan.needsInstall(true, lock, lock), "the lock the launcher installed: node_modules is kept");
+		assertFalse(LauncherPlan.needsInstall(true, lock, lock + "\n"), "a trailing newline in the marker");
+		assertTrue(LauncherPlan.needsInstall(true, lock, LauncherPlan.lockHash(new byte[] {1})), "the lock changed (a pull)");
+		assertTrue(LauncherPlan.needsInstall(true, lock, null), "installed by someone else or an older launcher: once");
+		assertFalse(LauncherPlan.needsInstall(true, null, null), "no lock file: npm ci could not run; the install stays");
+	}
+
 	// ------------------------------------------------------------------ source
 
 	private static final Set<Path> CHECKOUTS = Set.of(Path.of("/dev/repo/foreman/package.json"), Path.of("/dev/repo/foreman/src/main.ts"),
