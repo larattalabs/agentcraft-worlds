@@ -568,10 +568,11 @@ decisions, and with config.set loosen its own permissions). From now on:
   while the Foreman's settings load; applies and saves at once, never staged, so Apply / Revert and the group's "•"
   ignore it): the in-game overlay's **Style** (Off, Pill, Pill+, Panel), **Position** (top right, top left, bottom
   left, bottom right, right middle; top left adds a **Top-left offset** for a minimap), **Size** (S, M, L),
-  **Peek on change**, **Auto-hide when idle**, **Hide in combat** and **Toasts** (needs you / all). Under them a live
+  **Peek on change**, **Auto-hide when idle**, **Hide in combat** and **Toasts** (needs you / all). A live
   **Preview**: a small 426x240 screen with a boss bar, an effect icon, the hotbar and chat lines showing where the
   overlay goes (the real layout), and the style at its real size with live data (a sample when no goal runs and
-  nothing needs you). A "Cycle the HUD style" key can be bound in Options > Controls. Details: mod/DEV.md "HUD overlay
+  nothing needs you). With room, the small screen sits beside the Style / Position / Size chips, whole in view without
+  scrolling even at 426x240, and the real-size sample follows under them; on a narrow form everything stacks. A "Cycle the HUD style" key can be bound in Options > Controls. Details: mod/DEV.md "HUD overlay
   styles".
 - DevBridge: `dev.hub.open {tab: team|settings, group?}`, state for both tabs, actions for every
   control; screens `hub_team`, `hub_settings_<group>`.

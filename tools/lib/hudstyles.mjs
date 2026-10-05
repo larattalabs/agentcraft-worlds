@@ -1,6 +1,6 @@
 // HUD overlay styles QA (mod: hub Settings > General > HUD, dev.hud.set / dev.hud.state): the scene that crowds the
-// screen (two boss bars, a beneficial and a harmful effect), the style/position/size matrix, and the pure checks of a
-// dev.hud.state reply. Used by smoke.mjs (step hud_styles_426x240) and hud-shots.mjs (the hud-styles screenshots).
+// screen (two boss bars, a beneficial and a harmful effect; the extras: a scoreboard sidebar, subtitles, a vanilla
+// toast, the auth banner), the style/position/size matrix, and the pure checks of a dev.hud.state reply. Used by smoke.mjs (step hud_styles_426x240) and hud-shots.mjs (the hud-styles screenshots).
 
 export const STYLES = ['pill', 'pill_plus', 'panel'];
 export const POSITIONS = ['top_right', 'top_left', 'bottom_left', 'bottom_right', 'right_middle'];
@@ -18,6 +18,24 @@ export const SCENE = [
   'effect give @s minecraft:weakness 600 0',
 ];
 export const SCENE_UNDO = ['bossbar remove agentcraft_worlds:qa_boss_a', 'bossbar remove agentcraft_worlds:qa_boss_b', 'effect clear @s'];
+
+/** Vanilla's other HUD parts on top of SCENE: a three-row scoreboard sidebar (undone by EXTRAS_UNDO). */
+export const EXTRAS = [
+  'scoreboard objectives add qa_side dummy "Village"',
+  'scoreboard objectives setdisplay sidebar qa_side',
+  'scoreboard players set Kit qa_side 12',
+  'scoreboard players set Juniper qa_side 7',
+  'scoreboard players set Marlow qa_side 3',
+];
+export const EXTRAS_UNDO = ['scoreboard objectives remove qa_side'];
+/** Sounds with subtitles (three rows), played right before a shot: subtitles last about 3 s. */
+export const SUBTITLE_SOUNDS = ['minecraft:entity.cow.ambient', 'minecraft:entity.chicken.ambient', 'minecraft:block.note_block.bell']
+  .map((s) => `playsound ${s} master @s ~ ~ ~ 1 1`);
+/** dev.foreman.inject payloads: the auth banner on, and back to a working sim backend. */
+export const AUTH_FAILED = {
+  message: { type: 'foreman.status', status: { version: 'dev', backend: 'claude', auth: 'failed', message: 'Claude login expired: run claude login in a terminal, then restart the Foreman.' } },
+};
+export const AUTH_OK = { message: { type: 'foreman.status', status: { version: 'dev', backend: 'sim', auth: 'ok' } } };
 
 /** Axis-aligned overlap of two {x, y, w, h} rectangles (touching edges do not overlap); null/empty never overlaps. */
 export function rectsOverlap(a, b) {
@@ -40,7 +58,7 @@ export function hudProblems(label, h, { allowFallback = false } = {}) {
   }
   if (h.rect.w <= 0 || h.rect.h <= 0) out.push(`${label}: empty rectangle`);
   const o = h.overlaps ?? {};
-  for (const k of ['bossbar', 'effects', 'hotbar', 'chat', 'pill', 'minimap', 'offscreen']) {
+  for (const k of ['bossbar', 'effects', 'hotbar', 'chat', 'pill', 'minimap', 'offscreen', 'sidebar', 'subtitles', 'toasts', 'banner']) {
     if (o[k]) out.push(`${label}: overlaps ${k} (rect ${JSON.stringify(h.rect)})`);
   }
   if (!allowFallback && h.overlay?.fallback) out.push(`${label}: no room at ${h.position}, fell back to ${h.overlay.placedAt}`);
@@ -48,7 +66,8 @@ export function hudProblems(label, h, { allowFallback = false } = {}) {
   const env = h.overlay?.env;
   if (col && env && col.bottom > col.top) {
     const probe = { x: col.x, y: col.top, w: h.toasts?.w ?? 196, h: col.bottom - col.top };
-    for (const [k, r] of [['bossbar', env.bossRect], ['effects', env.effectsRect], ['pill', env.pillRect], ['hotbar', env.hotbarRect]]) {
+    for (const [k, r] of [['bossbar', env.bossRect], ['effects', env.effectsRect], ['pill', env.pillRect], ['hotbar', env.hotbarRect],
+      ['sidebar', env.sidebarRect], ['subtitles', env.subtitlesRect], ['vanilla toasts', env.vanillaToastsRect], ['banner', env.bannerRect]]) {
       if (rectsOverlap(probe, r)) out.push(`${label}: toast column ${JSON.stringify(probe)} overlaps ${k} ${JSON.stringify(r)}`);
     }
     if (rectsOverlap(probe, h.rect)) out.push(`${label}: toast column overlaps the overlay`);
@@ -63,6 +82,28 @@ export function sceneProblems(h) {
   const out = [];
   if ((env.bossBarsDrawn ?? 0) < 2) out.push(`boss bars drawn: ${env.bossBarsDrawn} (want 2)`);
   if ((env.beneficialEffects ?? 0) < 1 || (env.harmfulEffects ?? 0) < 1) out.push(`effects: ${env.beneficialEffects} beneficial, ${env.harmfulEffects} harmful (want both rows)`);
+  return out;
+}
+
+/**
+ * What the extras pass must have put on screen (the sidebar, subtitles showing, a vanilla toast and, unless
+ * banner is false, the auth banner) for its checks to mean anything, and the auth banner clear of the boss bars, effect
+ * icons, the pill, the sidebar and the vanilla toasts. [] = fine.
+ */
+export function extrasProblems(h, { banner = true } = {}) {
+  const env = h?.overlay?.env;
+  if (!env) return ['no overlay.env in dev.hud.state'];
+  const out = [];
+  for (const [k, what] of [['sidebarRect', 'scoreboard sidebar'], ['subtitleRowsRect', 'subtitles'], ['vanillaToastsRect', 'vanilla toast']]) {
+    if (!env[k]) out.push(`no ${what} on screen`);
+  }
+  if (banner) {
+    if (!env.bannerRect) out.push('no auth banner on screen');
+    for (const [k, r] of [['bossbar', env.bossRect], ['effects', env.effectsRect], ['pill', env.pillRect], ['sidebar', env.sidebarRect],
+      ['vanilla toasts', env.vanillaToastsRect]]) {
+      if (rectsOverlap(env.bannerRect, r)) out.push(`auth banner ${JSON.stringify(env.bannerRect)} overlaps ${k} ${JSON.stringify(r)}`);
+    }
+  }
   return out;
 }
 

@@ -445,15 +445,18 @@ hard-code colours; ask `UiStyle`. Sprites are 1 texel = 1 GUI px (GUI scale 3 at
 `HudElementRegistry.addLast(AgentCraft.id("hud/<name>"), element)`. Contract: docs/WAVE2.md W5-W7 and
 "As implemented: hud". Pure rules in `dev.agentcraft.hud` (`AlertLine`, `HudRules`, `HudPrefs`; unit-tested).
 - **Connection banner** (top right under the effect icons: "Foreman · sim" / "Reconnecting to the Foreman" /
-  "Foreman not running"; a loud paper banner at the top centre when claude auth failed).
+  "Foreman not running"; a loud paper banner at the top centre when claude auth failed, under the boss bars and
+  narrowed or moved down to keep clear of the pill, the effect icons, the sidebar and vanilla toasts).
 - **Overlay styles** (`HudOverlay`, hub Settings > General > HUD, `hud.json`; mod/DEV.md "HUD overlay styles"): Off,
   **Pill** (default: one compact line, mini bar, "40%", non-zero counts; clay "2 decisions [J]" when something needs
   the player; hidden when idle), **Pill+** (goal dots, title and %, working agents, usage or hold, the next decision),
   **Panel** (the goal bar, badge and alert line below). Position top right (default, under the effect icons and the
   pill), top left (minimap offset), bottom left (above the chat), bottom right, right middle; size S/M/L in whole
   pixels; peek on change (task done, PR merged, new decision, goal done: 5 s); auto-hide when idle; optional hide in
-  combat; never over boss bars, effect icons, the hotbar and status rows or the chat lines on screen (pure
-  `hud.HudLayout`, `HudLayoutTest`; falls back to top right, else hides); F1 hides everything; cycle key (unbound).
+  combat; never over boss bars, effect icons, the hotbar and status rows, the chat lines on screen, the scoreboard
+  sidebar, subtitles (a band above the bottom right is kept while they are on), vanilla advancement / recipe toasts or
+  the auth banner (pure `hud.HudLayout`, `HudLayoutTest`; falls back to top right, else hides); F1 hides everything;
+  cycle key (unbound).
 - **Goal bar** (`GoalBar`, the Panel style): the open goals ranked by urgency (decisions + blocked tasks), an urgent one
   pinned, the others taking turns every 8 s, "+N more"; task counts per goal; the decisions badge (`J`) under it.
 - **Alert line** (W5): one compact row under the goal bar (Panel; the Pills carry the same parts) while anything needs the player: "2 decisions · 1
