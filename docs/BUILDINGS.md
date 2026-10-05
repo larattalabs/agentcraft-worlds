@@ -367,6 +367,11 @@ afterwards. Since 2026-10-05 (`building.LeafGuard.ring`, ported from Architect, 
   `leafring` entry each over the leaves around them that now belong to no entry (the removed site's box, ring and holds
   had them), as they are right after the restore. A moved building's new site is placed before its old site is restored,
   and its placement's leaf ticks run after that, so without this the leaves between the two sites would be in no ring.
+  These entries, and the re-hold's (`leaves`), name the undo they followed (meta `after`: the site's entry id). When the
+  next world start finds that the undo never reached the disk and takes it back (record back, or a move taken back), it
+  releases them in the same commit (`Buildings.followers`): their cells may lie in the box that stands again, and a cell
+  over the box's would turn its next Remove's write into a hand-down that writes nothing (`LeafGuardTest`). A released
+  re-ring changed no block; a released re-hold's leaves stay persistent.
 - **Forget** releases the ring with the site's entry (the building stays; nothing is written).
 - **Cost**: one pass over box + 8 (and loading the active entries near it) per placement; `dev.buildings.timing` reports
   the time in `Buildings.place`, the ring's part and cell count, and the server tick interval around the placement.

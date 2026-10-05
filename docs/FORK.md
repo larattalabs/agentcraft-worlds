@@ -217,7 +217,8 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   in the snapshot tag, so save/reload, crash safety and undo in any order come from the journal's layers and hand-downs;
   "skip other standing sites" became "skip every cell another entry owns", and after a Remove/Move the standing sites
   nearby ring the leaves it gave back (a Move's new site relaxes the old one's surroundings after the old site is
-  restored). A changed leaf is left (same block, `persistent` and `waterlogged`, else no write). QA hooks
+  restored); re-ring and re-hold entries name the undo they followed and are released when the next world start takes
+  that undo back (else their cells would sit over the box that stands again). A changed leaf is left (same block, `persistent` and `waterlogged`, else no write). QA hooks
   `dev.region.capture/diff/hash`, `dev.buildings.timing`, `dev.buildings.move`. See docs/BUILDINGS.md "Leaf ring".
   QA (seed 42, workshop, place / 60 s at random tick speed 300 / remove / 15 s, same pristine world for both builds): leaf
   cells differing afterwards, main -> branch: dark oak 24 -> 0, dark oak slope 1 -> 0, jungle 1 -> 0, jungle edge 198 -> 0;

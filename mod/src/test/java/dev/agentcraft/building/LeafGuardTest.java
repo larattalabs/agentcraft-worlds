@@ -296,6 +296,26 @@ class LeafGuardTest {
 	}
 
 	@Test
+	void aReRingAfterAnUndoThatNeverReachedTheDiskIsReleasedWithIt() {
+		for (boolean release : new boolean[] {false, true}) {
+			Sim s = new Sim();
+			s.place("x", Map.of(R, PLANKS)); // x's box takes the leaf R in
+			s.place("s", Map.of(Journal.pos(40, 64, 40), PLANKS)); // s stands near: R was x's, so s's ring left it out
+			s.remove("x");
+			assertEquals(leaf(5, false), s.world.get(R));
+			s.ring("s", R); // after the Remove, s rings what x gave back (a newer layer than x's box cell)
+			s.entries.putAll(Journal.reactivate(s.entries.values(), "x-box")); // the Remove never reached the disk: x stands
+			s.world.put(R, PLANKS);
+			if (release) {
+				s.entries.remove("s-ring"); // Buildings.followers: released with the reactivation
+			}
+			s.remove("x");
+			assertEquals(release ? leaf(5, false) : PLANKS, s.world.get(R), release ? "released: x's box writes R again"
+				: "kept: s's ring cell over x's box cell swallows its write (why it is released)");
+		}
+	}
+
+	@Test
 	void aRemovalThatNeverReachedTheDiskReactivatesTheRingWithTheSite() {
 		Sim s = new Sim();
 		s.place("a", Map.of(G, PLANKS));
