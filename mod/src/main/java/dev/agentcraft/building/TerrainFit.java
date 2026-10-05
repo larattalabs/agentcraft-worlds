@@ -55,7 +55,7 @@ public final class TerrainFit {
 	 * @param fill foundation cells, top to bottom per column
 	 * @param clear natural terrain cleared above ground inside the box
 	 * @param water / lava cells found (at most {@link #MAX_DRAWN} kept, counts exact)
-	 * @param minY the lowest y the placement touches (the snapshot's bottom)
+	 * @param minY the lowest y the placement touches (the snapshot box reaches one row lower, {@code Buildings.snapshotBox})
 	 */
 	public record Plan(int[] fill, int[] clear, int[] water, int waterCount, int[] lava, int lavaCount, int minY) {
 		public int fillCount() {

@@ -72,6 +72,19 @@ class ApproachTest {
 	}
 
 	@Test
+	void theSnapshotBoxReachesOneRowBelowTheLowestWrittenCell() {
+		// the ground under the floor and the foundation changes while the site stands (grass -> dirt): Remove puts it back
+		Approach.Plan p = south(ground((x, z) -> 10));
+		TerrainFit.Plan noFill = new TerrainFit.Plan(new int[0], new int[0], new int[0], 0, new int[0], 0, BOX.minY());
+		assertEquals(new Anchors.Bounds(0, 9, 0, 9, 19, 15), Buildings.snapshotBox(BOX, noFill, p, -64));
+		TerrainFit.Plan fill = new TerrainFit.Plan(new int[] {4, 7, 4}, new int[0], new int[0], 0, new int[0], 0, 7);
+		assertEquals(new Anchors.Bounds(0, 6, 0, 9, 19, 9), Buildings.snapshotBox(BOX, fill, Approach.Plan.EMPTY, -64));
+		// at the level's floor the extra row is left out (a written cell below it still leaves the build height)
+		assertEquals(new Anchors.Bounds(0, 7, 0, 9, 19, 9), Buildings.snapshotBox(BOX, fill, Approach.Plan.EMPTY, 7));
+		assertEquals(new Anchors.Bounds(0, 6, 0, 9, 19, 9), Buildings.snapshotBox(BOX, fill, Approach.Plan.EMPTY, 6));
+	}
+
+	@Test
 	void aDropIsReachedOneBlockPerRowWithHalfSteps() {
 		// the ground falls away right outside the box: top at y 4 (feet 5), six below the door
 		Approach.Plan p = south(ground((x, z) -> z <= 9 ? 10 : 4));
