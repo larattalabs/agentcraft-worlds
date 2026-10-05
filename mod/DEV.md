@@ -1163,7 +1163,9 @@ name on the screen).
   `AvatarRenderState` to the player renderer: custom avatars need the mixin, or they lose their own
   nameplate and layers.
 - World-space UI: a nine-slice plate and the sprites on top of it z-fight at the same depth, so
-  overlays/text use the polygon-offset variant (`WorldUi.Layer.OVERLAY`, `WorldUi.submitText`).
+  overlays/text use the polygon-offset variant (`WorldUi.Layer.OVERLAY`, `WorldUi.submitText`). Opaque text goes to
+  the solid pass, where that offset does not separate it from a coplanar plate (glyphs went missing): text needs a
+  real lift, `WorldUi.liftText` / `TextDepth` (see FEATURES.md "Nameplates").
 - **Fully opaque world text is drawn in the solid pass**, before every translucent quad
   (`SubmitNodeCollection.canRenderAsSolid`: text alpha 255, no background). Submit order does not
   change that. A translucent plate (`RenderTypes.text(GUI atlas)`, the kit nameplate has alpha 220)

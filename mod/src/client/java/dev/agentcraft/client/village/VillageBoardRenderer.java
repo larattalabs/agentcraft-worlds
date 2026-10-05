@@ -9,6 +9,7 @@ import dev.agentcraft.client.ui.WorldUi;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
 import dev.agentcraft.ui.Guard;
+import dev.agentcraft.ui.TextDepth;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -91,6 +92,9 @@ public class VillageBoardRenderer extends StationRenderer<VillageBoardBlockEntit
 		ps.pushPose();
 		toFace(ps, s.facing, TaskBoardRenderer.LINEN_DEPTH, v.ppb);
 		ps.translate(0, -(s.panelHeight - 1) * v.ppb, 0);
+		// text a hair in front of its card/slate at any distance (TextDepth): the layer steps (cards 2, text 3, the
+		// progress bars 3.6) stretch with the camera distance, within 0.04 of the linen (the task board's frame)
+		ps.scale(1f, 1f, TextDepth.faceDepthScale(WorldUi.eyeDistance(ps), -z, -3.6f * z, TaskBoardRenderer.MAX_STACK_DEPTH));
 		c.order(0).submitCustomGeometry(ps, DisplayDraw.fill(), (pose, vc) -> v.rects.emit(pose, vc, 255, light));
 		if (!v.cards.isEmpty()) {
 			TextureAtlasSprite sprite = WorldUi.sprite(Kit.card("todo"));

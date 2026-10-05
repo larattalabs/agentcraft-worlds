@@ -16,6 +16,7 @@ import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.TextUtil;
 import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.client.ui.WorldUi;
+import dev.agentcraft.ui.TextDepth;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
 import java.util.ArrayList;
@@ -218,6 +219,12 @@ public class ConsoleTerminalRenderer extends StationRenderer<ConsoleTerminalBloc
 		poseStack.translate(-8 / 16f, -9 / 16f, -11 / 16f);
 		poseStack.translate(14 / 16f, 17 / 16f, 9.5f / 16f - 0.0025f);
 		poseStack.scale(-1f / PPB, -1f / PPB, 1f);
+		// text a hair in front of what is under it at any distance (TextDepth): the paper stays where it is (0.0013 in
+		// front of the screen face) and the keycap and text step forward from it in gaps of at least 0.0003 x the camera
+		// distance, at most 0.018 forward (the bezel stands 1/32 in front of the screen face). +z is away from the viewer.
+		float depth = TextDepth.faceDepthScale(WorldUi.eyeDistance(poseStack), 0.0006f, 0.0012f, 0.0012f + 0.018f);
+		poseStack.translate(0, 0, -(depth - 1) * 0.0012f);
+		poseStack.scale(1f, 1f, depth);
 
 		// the warm e-ink paper with its scanlines and a title band, drawn opaque in the solid pass (like
 		// nameplates) a hair behind the text plane, so text, faces and dots always win the depth test

@@ -195,7 +195,7 @@ public final class Nameplate {
 	}
 
 	/** Text lift towards the camera as a fraction of the plate's camera distance (PlateLayout.NUDGE_PER_RANK is 0.0015). */
-	static final float TEXT_LIFT = 0.0003f;
+	static final float TEXT_LIFT = dev.agentcraft.ui.TextDepth.FRACTION;
 
 	/** {@link #TEXT_LIFT} of the plate's camera distance, in plate pixels (plate space +z faces the camera). */
 	static float textLift(AgentRenderState s, CameraRenderState camera) {

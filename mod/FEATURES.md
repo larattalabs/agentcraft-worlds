@@ -314,7 +314,16 @@ plate on screen once settled:
 - Text on a camera-facing plate needs a real lift towards the camera: the font's polygon offset does not
   separate it from a coplanar plate, and at close range whole glyphs lost the depth test ("Marlow" read
   "M r o"). `Nameplate` lifts its text by `TEXT_LIFT` (0.0003) x the camera distance, well under the per-rank
-  nudge; do the same for other billboard text.
+  nudge. Wave 3 applies the same rule to every world UI text (pure `ui.TextDepth`, `TextDepthTest`): billboards and
+  cards call `WorldUi.liftText(poseStack)` after their background (the lift is computed from the pose: its translation
+  is the camera-relative origin, its z column the local z, whichever way faces the camera), face displays stretch their
+  layer steps with `TextDepth.faceDepthScale` so the smallest text-over-background gap is at least that fraction,
+  capped so the front layer stays behind the block's bezel or frame. Per surface: goal hologram (text, ring, rule
+  lifted off the paper), podium bubble (content off the paper, the key off its keycap), merge card and archive pill
+  (text off the card/pill and off the count chip), monitors (min gap half a step, stack 7 steps, at most 0.04 in front
+  of the screen: the bezel lip is 1/16), task board (min gap half a step, stack LIFT + 6 steps, 0.04: the frame is
+  1/16), village board (min gap one step, stack 3.6 steps, 0.04), console terminal (the paper stays, keycap and text
+  step forward, at most 0.018: the bezel is 1/32). Speech bubbles keep their 0.5 px lift.
 
 `dev.agents {settle?}` lists positions/targets/paths and each laid-out plate (`plate{mode, lift,
 rank, rect, ...}`); `settle:true` snaps walkers to their targets and plates to their final layout
