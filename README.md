@@ -10,7 +10,7 @@
 [![Minecraft 26.3](https://img.shields.io/badge/Minecraft-26.3-8fa98b)](https://www.minecraft.net)
 [![Fabric](https://img.shields.io/badge/mod%20loader-Fabric-d97757)](https://fabricmc.net)
 [![Claude Agent SDK](https://img.shields.io/badge/agents-Claude%20Agent%20SDK-2fa3a0)](https://code.claude.com/docs/en/agent-sdk/overview)
-[![Tests](https://img.shields.io/badge/tests-761%20passing-3b2a20)](foreman/test)
+[![Tests](https://img.shields.io/badge/tests-807%20passing-3b2a20)](foreman/test)
 
 <img src="docs/img/fork/hero.jpg" alt="An AgentCraft village: a studio, a campus and two workshops on a hilltop" width="100%">
 
@@ -138,11 +138,11 @@ press **Place new…**.
 <table>
 <tr>
 <td width="50%"><img src="docs/img/fork/welcome.jpg" alt="The welcome card on first join"></td>
-<td width="50%"><img src="docs/img/fork/ghost.jpg" alt="Placing a studio: the ghost on a hillside with the HUD verdict"></td>
+<td width="50%"><img src="docs/img/fork/ghost.jpg" alt="Placing a workshop: the ghost on a terraced meadow with the HUD verdict"></td>
 </tr>
 <tr>
 <td>The welcome card, shown once per world.</td>
-<td>Placing a studio on a hilltop: replaced blocks in orange, the foundation it adds, the entrance bar.</td>
+<td>Placing a workshop on a sloping meadow: replaced blocks in orange, the foundation and the entrance path it adds, the verdict before you press Enter.</td>
 </tr>
 </table>
 
@@ -246,11 +246,11 @@ you, unread goal threads, failing CI and blocked agents.
 </tr>
 <tr>
 <td><img src="docs/img/fork/hub-team.jpg" alt="The Team tab"></td>
-<td><img src="docs/img/fork/hub-settings.jpg" alt="The Settings tab, permissions"></td>
+<td><img src="docs/img/fork/hub-settings-general.jpg" alt="Settings, General: the HUD style picker with a live preview"></td>
 </tr>
 <tr>
 <td><b>Team.</b> Four leads, one per building, and the workers they share.</td>
-<td><b>Settings.</b> Permission mode and rules, applied from the next turn.</td>
+<td><b>Settings.</b> The HUD's style, position and size with a live preview; permissions, context and usage in the other groups.</td>
 </tr>
 </table>
 
@@ -262,9 +262,7 @@ you, unread goal threads, failing CI and blocked agents.
 | **Goals** | New goals (on a repo, continuing a branch, or across several repos) and per goal: the thread with its lead, the plan, standing instructions, tasks and the "since you were away" summary |
 | **Team** | Every lead and worker: role, model, effort, who is on shift, how many work at once, and leads still held by other worlds |
 | **Settings** | The in-game HUD style and position, your name, permission mode, allow and deny rules, context files, subagents, PR watching, per-turn budget and usage reserve; applied live or after a Foreman restart the hub does for you |
-| **Status** | Foreman connection, backend and account, usage windows and spend, and **Keys & help**: every key and in-world interaction |
-
-<img src="docs/img/fork/hud.jpg" alt="The HUD Panel style: goal bar, waiting badge and the alert line" align="right" width="45%">
+| **Status** | Foreman connection, the **Launcher** (the Foreman the game started: Start, Restart, Open log), backend and account, usage windows and spend, and **Keys & help**: every key and in-world interaction |
 
 **Out in the world**, a compact pill in the corner shows the goal's progress and turns clay when
 something needs you: `40% · 2 decisions J · 1 blocked`, plus replies, PRs and usage pauses as they
@@ -273,7 +271,11 @@ sits, in Settings > General; it keeps clear of boss bars, effects, the hotbar an
 away and a toast sums up what moved; <kbd>H</kbd> then opens the Inbox with the catch-up at the top.
 Otherwise <kbd>H</kbd> reopens the tab you used last.
 
-<br clear="right">
+<img src="docs/img/fork/hud.jpg" alt="Out in the village with the default Pill HUD in the top-right corner" width="100%">
+
+<img src="docs/img/fork/hud-styles.jpg" alt="The Pill, Pill+ and Panel HUD styles side by side" width="100%">
+
+<sub>The default Pill on the plaza, then Pill, Pill+ and Panel for the same moment.</sub>
 
 <br>
 
@@ -435,7 +437,14 @@ On other launchers, build the jar with `./gradlew build` in `mod/`, add it like 
 Foreman from the checkout the jar was built from (or set `launcher.foremanDir` in
 `~/.agentcraft/config.json`).
 
+<img src="docs/img/fork/hub-status.jpg" alt="The hub Status tab with the Launcher section" align="right" width="45%">
+
+The hub's **Status** tab shows what the launcher did: whether it started the Foreman or reused one,
+its version and log, and Start or Restart buttons if it stopped.
+
 Then open the hub with <kbd>H</kbd>, register your repos in **Repos** and place their buildings.
+
+<br clear="right">
 
 <br>
 
@@ -452,6 +461,7 @@ Then open the hub with <kbd>H</kbd>, register your repos in **Repos** and place 
 | Right click a monitor (empty hand) | That agent's full log |
 | Right click the merge station, archive or a task card | Diff review, memory library, task details |
 | *(unbound)* | Building wizard; the hub's **Place new…** opens it too |
+| *(unbound)* | Cycle the HUD style (Off, Pill, Pill+, Panel) |
 
 All keys can be rebound in Options, Controls, AgentCraft, and the hub's Status tab lists them all
 under **Keys & help**. In singleplayer, AgentCraft screens pause the game like any vanilla menu.
@@ -562,7 +572,7 @@ backend is free.
 ## Development
 
 ```sh
-cd foreman && npm test                     # 761 tests
+cd foreman && npm test                     # 807 tests
 cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows)
 npm test --prefix tools                    # launcher, blueprint and QA tool tests
 node tools/qa.mjs --home .agentcraft-home  # capture the 10 shot QA gallery
