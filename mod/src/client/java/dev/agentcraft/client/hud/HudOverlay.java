@@ -20,8 +20,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * The in-game overlay in the style chosen in hub Settings > General > HUD ({@link HudConfig}): Off, Pill (default),
  * Pill+ or Panel ({@link PillStyle}, {@link GoalBar}), at its position and size, placed by the pure
- * {@link HudLayout} clear of boss bars, effect icons, the connection pill, a top-left minimap, the hotbar with its status
- * rows and the chat; hidden on F1, when idle (auto-hide), in combat (optional) or when there is no room
+ * {@link HudLayout} clear of boss bars, effect icons, the connection pill and auth banner, a top-left minimap, the hotbar
+ * with its status rows, the chat, the scoreboard sidebar, the subtitles and vanilla toasts; hidden on F1, when idle (auto-hide), in combat (optional) or when there is no room
  * ({@link HudVisibility}). Also says where the toasts stack ({@link #toastColumn}). Registered after the connection
  * banner (reads this frame's pill) and before the toasts. Client thread.
  */
@@ -173,6 +173,10 @@ public final class HudOverlay implements HudElement {
 		overlaps.addProperty("pill", ov.pill());
 		overlaps.addProperty("minimap", ov.minimap());
 		overlaps.addProperty("offscreen", ov.offscreen());
+		overlaps.addProperty("sidebar", ov.sidebar());
+		overlaps.addProperty("subtitles", ov.subtitles());
+		overlaps.addProperty("toasts", ov.toasts());
+		overlaps.addProperty("banner", ov.banner());
 		overlaps.addProperty("any", ov.any());
 		o.add("overlaps", overlaps);
 		JsonObject peek = new JsonObject();
@@ -212,6 +216,12 @@ public final class HudOverlay implements HudElement {
 		en.add("chatRect", rectJson(HudLayout.chat(env)));
 		en.add("pillRect", rectJson(env.pill()));
 		en.add("minimapRect", rectJson(HudLayout.minimap(env)));
+		en.add("sidebarRect", rectJson(env.sidebar()));
+		en.addProperty("subtitlesOn", env.subtitlesOn());
+		en.add("subtitleRowsRect", rectJson(env.subtitleRows()));
+		en.add("subtitlesRect", rectJson(HudLayout.subtitles(env)));
+		en.add("vanillaToastsRect", rectJson(env.toasts()));
+		en.add("bannerRect", rectJson(env.banner()));
 		ovl.add("env", en);
 		JsonObject col = new JsonObject();
 		col.addProperty("x", column.x());

@@ -4,6 +4,7 @@ import dev.agentcraft.hud.HudSettings.Position;
 import dev.agentcraft.hud.HudSettings.Size;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntUnaryOperator;
 
 /**
  * Where the in-game overlay goes (pure, unit-tested in {@code HudLayoutTest}): the overlay's rectangle for a position,
@@ -20,7 +21,13 @@ import java.util.List;
  *   armour, hunger (AppleSkin draws on it) and air rows and the held item's name reach about 62 px up, in creative the
  *   item name about 48 px;</li>
  *   <li>chat: from the left edge, its bottom 40 px above the screen's bottom, as wide and tall as the chat options
- *   say (unfocused height).</li>
+ *   say (unfocused height);</li>
+ *   <li>scoreboard sidebar ({@code Hud.displayScoreboardSidebar}): at the right edge, a 10 px title row over up to 15
+ *   rows of 9 px, its bottom at half the height plus a third of the rows' height;</li>
+ *   <li>subtitles ({@code SubtitleOverlay}): at the right edge, row 0 centred 35 px above the bottom, each next row
+ *   10 px higher;</li>
+ *   <li>toasts ({@code ToastManager}): at the right edge, 160 px wide by default, slot {@code n} at {@code n} times the
+ *   toast's height.</li>
  * </ul>
  */
 public final class HudLayout {
@@ -63,58 +70,113 @@ public final class HudLayout {
 		public boolean within(int guiW, int guiH) {
 			return x >= 0 && y >= 0 && right() <= guiW && bottom() <= guiH;
 		}
+
+		/** The smallest rectangle holding both (an empty one is ignored). */
+		public Rect union(Rect o) {
+			if (o.empty()) {
+				return this;
+			}
+			if (empty()) {
+				return o;
+			}
+			int x0 = Math.min(x, o.x);
+			int y0 = Math.min(y, o.y);
+			return new Rect(x0, y0, Math.max(right(), o.right()) - x0, Math.max(bottom(), o.bottom()) - y0);
+		}
 	}
 
 	/**
 	 * What else is on screen this frame: the GUI size and scale, the effect icons (beneficial / harmful counts with an
 	 * icon), the boss bars (count and widest title), whether the survival status bars are drawn, the chat area (its
 	 * width and unfocused height in GUI px, 0 = no chat), the connection pill drawn this frame (top right), the room
-	 * kept for a top-left minimap and another AgentCraft panel on screen (placement, plot or road panel).
+	 * kept for a top-left minimap and another AgentCraft panel on screen (placement, plot or road panel); and the vanilla
+	 * extras measured by the client: the scoreboard sidebar ({@link #sidebar(int, int, int, int)}), the subtitles showing
+	 * ({@link #subtitleRows(int, int, int, int)}) and whether subtitles are on at all (then a band above the bottom right
+	 * is kept for them, {@link #subtitles(Env)}), the advancement / recipe / system toasts in the top right
+	 * ({@link #vanillaToast}), and the auth banner drawn this frame ({@link #banner}).
 	 */
 	public record Env(int guiW, int guiH, int guiScale, int beneficial, int harmful, boolean demo, int bossBars, int bossTitleW, boolean statusBars,
-		int chatW, int chatH, Rect pill, int minimap, Rect panel, int chatArea) {
+		int chatW, int chatH, Rect pill, int minimap, Rect panel, int chatArea, Rect sidebar, Rect subtitleRows, boolean subtitlesOn, Rect toasts,
+		Rect banner) {
 
-		/** No effects, no boss bars, creative, the default chat (320 x 90), no pill, no minimap. */
+		/** No effects, no boss bars, creative, the default chat (320 x 90), no pill, no minimap, no vanilla extras. */
 		public static Env of(int guiW, int guiH, int guiScale) {
-			return new Env(guiW, guiH, guiScale, 0, 0, false, 0, 0, false, 320, 90, Rect.NONE, 0, Rect.NONE, 90);
+			return new Env(guiW, guiH, guiScale, 0, 0, false, 0, 0, false, 320, 90, Rect.NONE, 0, Rect.NONE, 90, Rect.NONE, Rect.NONE, false, Rect.NONE,
+				Rect.NONE);
 		}
 
 		public Env effects(int beneficialIcons, int harmfulIcons) {
-			return new Env(guiW, guiH, guiScale, beneficialIcons, harmfulIcons, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficialIcons, harmfulIcons, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel,
+				chatArea, sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		public Env boss(int bars, int widestTitle) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bars, widestTitle, statusBars, chatW, chatH, pill, minimap, panel, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bars, widestTitle, statusBars, chatW, chatH, pill, minimap, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		public Env survival(boolean bars) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, bars, chatW, chatH, pill, minimap, panel, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, bars, chatW, chatH, pill, minimap, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		public Env chat(int w, int h) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, w, h, pill, minimap, panel, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, w, h, pill, minimap, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		public Env withPill(Rect r) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, r, minimap, panel, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, r, minimap, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		public Env withMinimap(int px) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, px, panel, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, px, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		/** Another AgentCraft panel on screen (the placement, plot or road panel), NONE = none. */
 		public Env withPanel(Rect r) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, r, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, r, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		/** The chat's full (unfocused) height, lines or not: bottom left always sits above it. */
 		public Env chatArea(int h) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, h);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, h,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
 		}
 
 		public Env withDemo(boolean on) {
-			return new Env(guiW, guiH, guiScale, beneficial, harmful, on, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea);
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, on, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, banner);
+		}
+
+		/** The scoreboard sidebar on screen ({@link HudLayout#sidebar(int, int, int, int)}), NONE = none. */
+		public Env withSidebar(Rect r) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea,
+				r, subtitleRows, subtitlesOn, toasts, banner);
+		}
+
+		/**
+		 * Subtitles: {@code on} = the option is on (a band of {@link HudLayout#SUBTITLE_RESERVE_ROWS} rows is kept free for
+		 * them), {@code rows} = the ones showing this frame ({@link HudLayout#subtitleRows(int, int, int, int)}, NONE = none).
+		 */
+		public Env withSubtitles(boolean on, Rect rows) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea,
+				sidebar, rows, on, toasts, banner);
+		}
+
+		/** The vanilla toasts showing in the top right ({@link HudLayout#vanillaToast}, all of them in one rectangle), NONE = none. */
+		public Env withToasts(Rect r) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, r, banner);
+		}
+
+		/** The auth banner drawn this frame ({@link HudLayout#banner}), NONE = none. */
+		public Env withBanner(Rect r) {
+			return new Env(guiW, guiH, guiScale, beneficial, harmful, demo, bossBars, bossTitleW, statusBars, chatW, chatH, pill, minimap, panel, chatArea,
+				sidebar, subtitleRows, subtitlesOn, toasts, r);
 		}
 	}
 
@@ -177,9 +239,73 @@ public final class HudLayout {
 		return e.minimap() <= 0 ? Rect.NONE : new Rect(0, 0, e.minimap() + MARGIN, e.minimap());
 	}
 
+	/**
+	 * The scoreboard sidebar vanilla draws ({@code Hud.displayScoreboardSidebar}) for {@code rows} entries (at most 15)
+	 * whose widest line (the title, or "name: score") is {@code textW}: right-aligned 3 px from the edge with 2 px of
+	 * background either side, a 10 px title row, rows of 9 px; its bottom at half the height plus a third of the rows'
+	 * height. With no entries the title row still shows. NONE when {@code textW} is negative (no sidebar objective).
+	 */
+	public static Rect sidebar(int guiW, int guiH, int textW, int rows) {
+		if (textW < 0) {
+			return Rect.NONE;
+		}
+		int n = Math.max(0, Math.min(15, rows));
+		int bottom = guiH / 2 + n * 9 / 3;
+		int top = bottom - n * 9 - 10;
+		int left = guiW - textW - 5;
+		return new Rect(left, top, guiW - 1 - left, bottom - top);
+	}
+
+	/** Bottom of the subtitle column: vanilla centres row 0 at 35 px above the bottom, rows 10 px apart, 9 px + 1 px background. */
+	static final int SUBTITLE_BOTTOM = 30;
+	/** Rows kept free above the bottom right while subtitles are on (footsteps alone show one or two). */
+	public static final int SUBTITLE_RESERVE_ROWS = 3;
+	/** The width kept for them (most subtitles with their arrows are narrower). */
+	public static final int SUBTITLE_RESERVE_W = 120;
+
+	/**
+	 * The subtitles vanilla draws ({@code SubtitleOverlay}): {@code rows} lines, each {@code lineW} wide (the widest
+	 * subtitle plus "&lt; " and " &gt;"), right-aligned 2 px from the edge, row 0 centred 35 px above the bottom and each
+	 * next row 10 px higher, with 1 px of background around the 9 px line. NONE without rows.
+	 */
+	public static Rect subtitleRows(int guiW, int guiH, int lineW, int rows) {
+		if (rows <= 0 || lineW <= 0) {
+			return Rect.NONE;
+		}
+		int half = lineW / 2;
+		int left = guiW - 2 * half - 3;
+		return new Rect(left, guiH - SUBTITLE_BOTTOM - 10 * rows, guiW - 1 - left, 10 * rows);
+	}
+
+	/**
+	 * What the subtitles take: with the option on, a band of {@link #SUBTITLE_RESERVE_ROWS} rows {@link #SUBTITLE_RESERVE_W}
+	 * wide above the bottom right (so the overlay does not jump each time a sound plays), plus the rows showing when
+	 * they reach further; NONE with subtitles off.
+	 */
+	public static Rect subtitles(Env e) {
+		if (!e.subtitlesOn()) {
+			return Rect.NONE;
+		}
+		Rect band = new Rect(e.guiW() - SUBTITLE_RESERVE_W, e.guiH() - SUBTITLE_BOTTOM - 10 * SUBTITLE_RESERVE_ROWS, SUBTITLE_RESERVE_W,
+			10 * SUBTITLE_RESERVE_ROWS);
+		return band.union(e.subtitleRows());
+	}
+
+	/**
+	 * A vanilla toast ({@code ToastManager}, {@code Toast.xPos/yPos}): {@code w} x {@code h} at the right edge, {@code slot}
+	 * times its own height down. Counted at its full width while it slides in or out, so what avoids it moves once.
+	 */
+	public static Rect vanillaToast(int guiW, int w, int h, int slot) {
+		if (w <= 0 || h <= 0) {
+			return Rect.NONE;
+		}
+		return new Rect(guiW - w, Math.max(0, slot) * h, w, h);
+	}
+
 	static List<Rect> obstacles(Env e) {
 		List<Rect> out = new ArrayList<>();
-		for (Rect r : new Rect[] {bossBars(e), effects(e), hotbar(e), chat(e), e.pill(), minimap(e), e.panel()}) {
+		for (Rect r : new Rect[] {bossBars(e), effects(e), hotbar(e), chat(e), e.pill(), minimap(e), e.panel(), e.sidebar(), subtitles(e), e.toasts(),
+			e.banner()}) {
 			if (!r.empty()) {
 				out.add(r);
 			}
@@ -297,18 +423,65 @@ public final class HudLayout {
 	// ------------------------------------------------------------------ overlaps
 
 	/** What a rectangle overlaps (no gap: touching is fine). */
-	public record Overlaps(boolean bossbar, boolean effects, boolean hotbar, boolean chat, boolean pill, boolean minimap, boolean offscreen) {
+	public record Overlaps(boolean bossbar, boolean effects, boolean hotbar, boolean chat, boolean pill, boolean minimap, boolean offscreen,
+		boolean sidebar, boolean subtitles, boolean toasts, boolean banner) {
 		public boolean any() {
-			return bossbar || effects || hotbar || chat || pill || minimap || offscreen;
+			return bossbar || effects || hotbar || chat || pill || minimap || offscreen || sidebar || subtitles || toasts || banner;
 		}
 	}
 
 	public static Overlaps overlaps(Env e, Rect r) {
 		if (r.empty()) {
-			return new Overlaps(false, false, false, false, false, false, false);
+			return new Overlaps(false, false, false, false, false, false, false, false, false, false, false);
 		}
 		return new Overlaps(r.intersects(bossBars(e)), r.intersects(effects(e)), r.intersects(hotbar(e)), r.intersects(chat(e)), r.intersects(e.pill()),
-			r.intersects(minimap(e)), !r.within(e.guiW(), e.guiH()));
+			r.intersects(minimap(e)), !r.within(e.guiW(), e.guiH()), r.intersects(e.sidebar()), r.intersects(subtitles(e)),
+			r.intersects(e.toasts()), r.intersects(e.banner()));
+	}
+
+	// ------------------------------------------------------------------ the auth banner
+
+	/** The auth banner's narrowest width (GUI px) before it gives up narrowing and slides down instead. */
+	public static final int BANNER_MIN_W = 150;
+
+	/**
+	 * Where the auth banner goes: centred, as high as it can be while clear of everything in {@code e} by {@link #GAP}
+	 * (boss bars, effect icons, the connection pill, a minimap room, the sidebar, vanilla toasts, ...). Its height depends
+	 * on its width (the message wraps), so it tries widths from {@code wantW} down to {@link #BANNER_MIN_W} in 10 px steps
+	 * and keeps the one whose bottom is highest (the wider on a tie): it narrows to fit between the corners before it
+	 * drops below them. When nothing fits it sits under the boss bars, {@code wantW} wide (clamped to the screen).
+	 */
+	public static Rect banner(Env e, int wantW, IntUnaryOperator heightForWidth) {
+		return banner(e, wantW, BANNER_MIN_W, heightForWidth);
+	}
+
+	/** Ditto, never narrower than {@code minW} (its title on one line) nor {@link #BANNER_MIN_W}. */
+	public static Rect banner(Env e, int wantW, int minW, IntUnaryOperator heightForWidth) {
+		int maxW = Math.min(wantW, maxWidth(e));
+		if (maxW <= 0) {
+			return Rect.NONE;
+		}
+		List<Rect> obs = obstacles(e);
+		Rect best = null;
+		minW = Math.min(Math.max(BANNER_MIN_W, minW), maxW);
+		for (int w = maxW;; w = Math.max(minW, w - 10)) {
+			int h = heightForWidth.applyAsInt(w);
+			if (h > 0) {
+				Rect r = slide(e, obs, new Rect((e.guiW() - w) / 2, MARGIN, w, h), 1);
+				if (r != null && (best == null || r.bottom() < best.bottom())) {
+					best = r;
+				}
+			}
+			if (w == minW) {
+				break;
+			}
+		}
+		if (best != null) {
+			return best;
+		}
+		int h = Math.max(1, heightForWidth.applyAsInt(maxW));
+		Rect boss = bossBars(e);
+		return new Rect((e.guiW() - maxW) / 2, boss.empty() ? MARGIN : boss.bottom() + GAP, maxW, h);
 	}
 
 	// ------------------------------------------------------------------ toasts
@@ -338,6 +511,20 @@ public final class HudLayout {
 				bottom = p.placed() ? p.rect().bottom() : e.guiH() - MARGIN;
 			} else {
 				bottom = overlay.y() - GAP;
+			}
+			// above anything this column meets at its bottom (the auth banner is wider than a narrow overlay's column)
+			for (int guard = 0; guard < 16; guard++) {
+				Rect probe = new Rect(x, bottom - 1, w, 1);
+				int ny = bottom;
+				for (Rect o : obs) {
+					if (probe.intersects(o.grow(GAP))) {
+						ny = Math.min(ny, o.y() - GAP);
+					}
+				}
+				if (ny == bottom) {
+					break;
+				}
+				bottom = ny;
 			}
 			int top = MARGIN;
 			for (Rect o : obs) {
