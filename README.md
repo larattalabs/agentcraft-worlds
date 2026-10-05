@@ -49,9 +49,9 @@ Close the game and the agents keep working. Open it again and the studio catches
 | **Never miss a call** | One Inbox for decisions, replies, blocked tasks, usage holds and PRs; a HUD line while anything needs you; a "since you were away" catch-up when you come back. |
 | **Goal threads** | Per goal: a conversation with its lead, the plan (editable), standing instructions every task inherits, and a "since you were away" summary. |
 | **Pull requests** | Repos can land work as PRs instead of local merges. The Foreman watches each PR to completion and the lead triages review comments, including which review bots to listen to per repo; nothing is posted without your approval. |
-| **Survival-safe** | Screens pause in singleplayer, buildings use vanilla materials and iron doors, placement checks for chests, mobs, fluids and slopes. A Prism Launcher setup starts the Foreman with the game. |
+| **Survival-safe** | Screens pause in singleplayer, buildings use vanilla materials and iron doors, placement checks for chests, mobs, fluids and slopes. The mod starts the Foreman with the game, no terminal needed. |
 | **Unattended running** | Usage-limit holds and resumes, a usage reserve, per-turn budgets, retries on network failures, a usage banner, optional Discord notifications. |
-| **Per-repo settings** | CI and setup commands, protected files, base branch, environment, landing mode, roles and models per agent, curated context (CLAUDE.md, skills, MCP servers). |
+| **Per-repo settings** | CI and setup commands, protected files, base branch, environment, landing mode, roles and models per agent, curated context (CLAUDE.md, skills, MCP servers). MCP servers and environment variables are editable in the hub, with secrets write-only and redacted from logs. |
 | **macOS** | A macOS launcher (`tools/mac.mjs`) alongside the Windows one. |
 
 <br>
@@ -178,6 +178,10 @@ courtyard, a size, a blueprint to remix and free notes. **Fit a plot…** lets y
 the ground instead, and the design is made to fit that space. A Claude design agent writes the
 blueprint in the background, checks it and renders previews; when it is done you place it as a
 ghost like any other.
+
+Want this without the agents? [Architect](https://github.com/larattalabs/architect-mc) is a sister
+mod built on the same generator: Claude-designed buildings of many kinds, a library of designs and
+placement in survival, with no coding team attached.
 
 </td>
 <td width="50%"><img src="docs/img/fork/design.jpg" alt="The design form"></td>
@@ -311,17 +315,19 @@ what. Up close, monitors and screens tell you exactly how.
 
 <br>
 
-## Proven with real agents (upstream)
+## Proven with real agents
 
-These screenshots come from upstream's real run with Claude agents on a sample repo, driven entirely
+**AgentCraft built one of its own features.** The fork's trophy walls were made by its agents on the
+real Claude backend, working on this repository: one goal, three tasks for Kit and Juniper, three merges
+reviewed and approved in game, about 45 minutes and a few percent of a Claude plan's usage windows. The
+fork's other additions run in the test suite and the scripted sim backend, which is also where the fork's
+screenshots come from.
+
+The screenshots below come from upstream's real run with Claude agents on a sample repo, driven entirely
 through the game: a goal typed into the console, questions and permission prompts answered in game,
 merges reviewed in the diff screen, including a merge conflict sent back to the worker and resolved.
 The game was restarted mid run and the Foreman was taken offline and brought back. Six features
 landed in the repo with its tests passing.
-
-The fork's additions (buildings, the hub, several leads, PR watching) have so far been exercised
-against the scripted sim backend and the test suite, not yet in a long real run. The fork's
-screenshots are from the sim backend.
 
 <table>
 <tr>
@@ -411,16 +417,21 @@ with `AGENTCRAFT_USER_NAME`, or with `{"userName": "Sam"}` in `~/.agentcraft/con
 
 ### In your own world
 
-The launchers above run a development client with the studio world. To play in a normal world
-instead, the mod goes into a launcher instance like any Fabric mod, and the Foreman runs beside the
-game. On macOS with Prism Launcher, `node tools/hardcore-setup.mjs` does this: it builds the mod
-from a stable checkout, installs the jar into an instance, backs everything up first, and makes the
-Foreman start whenever the game does. Tell it your instance with `--instance` or once in a
-`hardcore` section of `~/.agentcraft/config.json` (with your own backup script if you have one),
-and run it without `--apply` first to see every change. `--help` lists the options; the config
-keys, updating and rollback are in [tools/README.md, "Playing in a Hardcore world"](tools/README.md#playing-in-a-hardcore-world-prism-launcher-macos).
-On other launchers, build the jar with `./gradlew build` in `mod/`, add it like any Fabric mod and
-start the Foreman yourself (`npm run start` in `foreman/`).
+The launchers above run a development client with the studio world. To play in a normal world, the
+mod goes into a launcher instance like any Fabric mod, and **the mod starts the Foreman itself** when
+the game starts: it finds Node, installs the Foreman's dependencies on first use, reuses a Foreman
+that is already running, and shows all of it in the hub's Status tab (Start, Restart, Open log). No
+terminal is involved, and the Foreman keeps working after you quit unless you set it to stop.
+
+On macOS with Prism Launcher, `node tools/hardcore-setup.mjs --no-prelaunch` sets this up: it builds the
+mod from a stable checkout, installs the jar into an instance, points the mod at that checkout and backs
+everything up first. Tell it your instance with `--instance` or once in a `hardcore` section of
+`~/.agentcraft/config.json` (with your own backup script if you have one), and run it without `--apply`
+first to see every change. The config keys, updating and rollback are in
+[tools/README.md, "Playing in a Hardcore world"](tools/README.md#playing-in-a-hardcore-world-prism-launcher-macos).
+On other launchers, build the jar with `./gradlew build` in `mod/`, add it like any Fabric mod; the mod runs the
+Foreman from the checkout the jar was built from (or set `launcher.foremanDir` in
+`~/.agentcraft/config.json`).
 
 Then open the hub with <kbd>H</kbd>, register your repos in **Repos** and place their buildings.
 
@@ -572,11 +583,11 @@ AgentCraft is young, and this fork younger. Today it is:
   fork's features have been run on macOS (Apple Silicon) only, and its Prism setup is macOS only;
   upstream covers Windows.
 - **Singleplayer,** on **Minecraft 26.3**. Buildings can be placed in any singleplayer world.
-- **Fork features tested against the sim backend.** The buildings, hub, leads and PR watching pass
-  their tests and the sim runs; a long run with real agents is the next step (see
-  [docs/FORK.md](docs/FORK.md)).
+- **Mostly tested against the sim backend.** Every feature passes its tests, the sim runs and an
+  end-to-end smoke test (`npm run smoke`, 18 steps in the game); one real goal has run on the Claude
+  backend so far. A longer real run and a Hardcore playthrough are next (see [docs/FORK.md](docs/FORK.md)).
 
-Issues and ideas are welcome. Generic fixes from this fork are offered upstream.
+Issues and ideas are welcome. Small generic fixes from this fork are meant to go upstream as PRs.
 
 <br>
 
