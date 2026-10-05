@@ -575,7 +575,9 @@ The first hub tab: everything that needs the player or happened for them, in one
   box (`user.message`) and Open card. An older Foreman shows the live tail with "older lines need a newer Foreman".
   A failed first page is asked for again after 5 s. When more entries arrive than the live tail keeps (200) while
   the view is open, it pages back from the tail until it meets the fetched pages, so the log has no hole
-  (`LogJoin`); the fetched pages stop at 2,000 entries (older ones: the Foreman's `logs/<agent>.jsonl`). The
+  (`LogJoin`); the fetched pages stop at 2,000 entries (older ones: the Foreman's `logs/<agent>.jsonl`). The paging
+  state (pages, `more`, the entries put in front, the cap) is the pure `LogPager` (`LogPagerTest` covers the `more`
+  path: older pages asked with `before` = the oldest ts until a page says `more: false`, then no further request). The
   wrapped lines are cached and rebuilt only when the entries or the width change.
 - **Deep links** (W4): podium right-click -> Inbox on that podium's decisions; monitor right-click (empty hand or a
   non-block item; with a block in hand the click places it, so monitor walls still build) -> the Inbox view of the
