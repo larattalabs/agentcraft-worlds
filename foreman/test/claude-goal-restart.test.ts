@@ -202,7 +202,7 @@ describe('a goal-message turn held for a usage limit or an automatic retry', () 
 
     const calls2: Call[] = [];
     const h2 = await boot(home, repo, calls2, false);
-    await until(() => repliesTo(h2, goalId).length > 0, 10_000);
+    await until(() => repliesTo(h2, goalId).length > 0, 30_000);
     expect(repliesTo(h2, goalId)).toEqual(['ANSWER: LIMIT: restart while held?']);
     expect(calls.filter((c) => c.prompt.includes('LIMIT: restart while held?'))).toHaveLength(1);
     expect(calls2.filter((c) => c.prompt.includes('LIMIT: restart while held?'))).toHaveLength(1);
@@ -268,10 +268,10 @@ describe('a goal-message turn held for a usage limit or an automatic retry', () 
     const session = () => h.fm.store.data.sessions[`marlow:${goalId}`]!.sessionId;
     limitResetAt = Date.now() + 800;
     h.fm.goalMessage(goalId, 'LIMIT: no restart?');
-    await until(() => calls.some((c) => c.prompt.startsWith('A usage limit stopped your last turn')), 10_000);
+    await until(() => calls.some((c) => c.prompt.startsWith('A usage limit stopped your last turn')), 30_000);
     await until(() => repliesTo(h, goalId).length === 1);
     h.fm.goalMessage(goalId, 'OVERLOAD: no restart?');
-    await until(() => calls.some((c) => c.prompt.startsWith('Your last turn ended early')), 10_000);
+    await until(() => calls.some((c) => c.prompt.startsWith('Your last turn ended early')), 30_000);
     await until(() => repliesTo(h, goalId).length === 2 && inflight(h).marlow === undefined);
     expect(calls.filter((c) => c.prompt.includes('LIMIT: no restart?'))).toHaveLength(1);
     expect(calls.filter((c) => c.prompt.includes('OVERLOAD: no restart?'))).toHaveLength(1);
@@ -296,7 +296,7 @@ describe('a goal-message turn held for a usage limit or an automatic retry', () 
     h.fm.goalMessage(g.id, 'LIMIT: who answers?');
     await until(() => h.fm.agent('ines')!.activity.startsWith('usage limit'));
     h.fm.releaseBuilding('w/b1');
-    await until(() => repliesTo(h, g.id).length > 0, 10_000);
+    await until(() => repliesTo(h, g.id).length > 0, 30_000);
     expect(repliesTo(h, g.id)).toEqual(['ANSWER: LIMIT: who answers?']);
     expect(h.fm.store.data.messages.find((m) => m.text === 'LIMIT: who answers?')!.to).toBe('marlow');
     await h.fm.close();

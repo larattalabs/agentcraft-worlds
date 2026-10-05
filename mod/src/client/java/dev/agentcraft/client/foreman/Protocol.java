@@ -150,14 +150,18 @@ public final class Protocol {
 	/**
 	 * How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list
 	 * editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map
-	 * (read-only name -&gt; text), secretMap (a repository's `env`: value `{ NAME: "(set)" }`, names only, never
-	 * values; config.set takes a partial update `{ NAME: "value" | null }`, null removes that variable), mcpServers
-	 * (`claude.context.mcpServers`: value `[{ name, type: "stdio"|"http"|"sse", command?, args?, url?, envKeys }]`;
-	 * an argument shows as "(hidden)" unless it clearly holds nothing secret (a bare flag, number, path or name, not
-	 * after a credential flag such as --token, -H/--header, --key or --pat), URLs without credentials or query;
-	 * config.set takes `[{ name, type, command?, args?, url?, env?: { NAME: "value" | null } } | { name, remove:
-	 * true }]`, each an upsert or removal of that one server, the others unchanged; an argument or URL sent back
-	 * exactly as shown keeps the stored original; a hidden or shortened one sent back in another place is refused)
+	 * (read-only name -&gt; text), secretMap (a repository's `env`: value `["NAME", ...]`, the variable names only,
+	 * never values; config.set takes a partial update `{ NAME: "value" | null }`, null removes that variable; a
+	 * placeholder value ("(set)", "(hidden)", "(staged)", "[redacted]") or one with control characters other than
+	 * tab / newline is refused), mcpServers (`claude.context.mcpServers`: value `[{ name, type:
+	 * "stdio"|"http"|"sse", command?, argCount?, url?, urlHasPath?, headerKeys?, envKeys }]`: `command` is the
+	 * executable only, `argCount` how many arguments there are, `url` scheme://host[:port] only (`urlHasPath`: the
+	 * stored URL has a path or query); argument values and the full URL are never sent. config.set takes `[{ name,
+	 * type, command?, args?, url?, env?: { NAME: "value" | null } } | { name, remove: true }]`, each an upsert or
+	 * removal of that one server, the others unchanged: `command`, `args` and `url` left out keep the stored value
+	 * exactly, sent they replace it exactly (`args`: the complete new list); a `command` / `url` equal to what
+	 * config.get shows of a longer stored one is refused; the view's read-only fields may be sent back and are
+	 * ignored; errors name places (server #2), never values)
 	 */
 	public enum SettingType implements Wire {
 		BOOL("bool"), INT("int"), ENUM("enum"), STRING("string"), STRING_LIST("stringList"), MODEL("model"), EFFORT("effort"),
@@ -719,15 +723,18 @@ public final class Protocol {
 	 * landing, worktrees, agents, review</li>
 	 * <li>{@code type}: How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string
 	 * field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for
-	 * claude.leads), map (read-only name -&gt; text), secretMap (a repository's `env`: value `{ NAME: "(set)" }`,
-	 * names only, never values; config.set takes a partial update `{ NAME: "value" | null }`, null removes that
-	 * variable), mcpServers (`claude.context.mcpServers`: value `[{ name, type: "stdio"|"http"|"sse", command?,
-	 * args?, url?, envKeys }]`; an argument shows as "(hidden)" unless it clearly holds nothing secret (a bare flag,
-	 * number, path or name, not after a credential flag such as --token, -H/--header, --key or --pat), URLs without
-	 * credentials or query; config.set takes `[{ name, type, command?, args?, url?, env?: { NAME: "value" | null } }
-	 * | { name, remove: true }]`, each an upsert or removal of that one server, the others unchanged; an argument or
-	 * URL sent back exactly as shown keeps the stored original; a hidden or shortened one sent back in another place
-	 * is refused)</li>
+	 * claude.leads), map (read-only name -&gt; text), secretMap (a repository's `env`: value `["NAME", ...]`, the
+	 * variable names only, never values; config.set takes a partial update `{ NAME: "value" | null }`, null removes
+	 * that variable; a placeholder value ("(set)", "(hidden)", "(staged)", "[redacted]") or one with control
+	 * characters other than tab / newline is refused), mcpServers (`claude.context.mcpServers`: value `[{ name,
+	 * type: "stdio"|"http"|"sse", command?, argCount?, url?, urlHasPath?, headerKeys?, envKeys }]`: `command` is the
+	 * executable only, `argCount` how many arguments there are, `url` scheme://host[:port] only (`urlHasPath`: the
+	 * stored URL has a path or query); argument values and the full URL are never sent. config.set takes `[{ name,
+	 * type, command?, args?, url?, env?: { NAME: "value" | null } } | { name, remove: true }]`, each an upsert or
+	 * removal of that one server, the others unchanged: `command`, `args` and `url` left out keep the stored value
+	 * exactly, sent they replace it exactly (`args`: the complete new list); a `command` / `url` equal to what
+	 * config.get shows of a longer stored one is refused; the view's read-only fields may be sent back and are
+	 * ignored; errors name places (server #2), never values)</li>
 	 * <li>{@code options}: enum / model / effort / agentList / stringList choices (model: the Opus and Sonnet models
 	 * in use and "default"; "default" clears the setting)</li>
 	 * <li>{@code value}: the configured value (what config.json, a flag or the environment says now; may differ from
@@ -1172,8 +1179,12 @@ public final class Protocol {
 	 * turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag
 	 * or variable also sets is written but stays overridden). Then `config.changed` is broadcast and
 	 * `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[&lt;the repo's path as
-	 * config.json spells it, else its absolute path&gt;]`. Secret values sent here (`secretMap`, `mcpServers` env)
-	 * are never echoed in the ack, an error, `config.changed` or a log line.
+	 * config.json spells it, else its absolute path&gt;]`. Secret values sent here (`secretMap`, `mcpServers` env,
+	 * args and URL) are never echoed in the ack, an error, `config.changed` or a log line: errors name setting keys
+	 * and places (`change #2`, `server #1`, `env key #3`, `item #2`), never what was sent, and every secret value
+	 * the Foreman knows (repository and MCP env values, MCP arguments, URL paths and queries, header values, the
+	 * client token) is cut (`[redacted]`, also URL-encoded, JSON-escaped or base64) from agent logs, the feed, acks,
+	 * errors, notifications and console logs.
 	 *
 	 * <ul>
 	 * <li>{@code repoId}: change that repository's repoSettings</li>
