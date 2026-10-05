@@ -120,7 +120,8 @@ covers (tied to key 2). Buttons: Allow once (1), Always allow (2, sends the exac
   ("39% · 2 decisions [J] · 1 blk"); **Pill+** adds the goal title, a progress bar, who is working, usage
   and the next decision's first words; **Panel** is the goal bar and badges below; **Off**. Positions
   top right / top left / bottom left / bottom right / right middle, sizes S/M/L, a 5 s peek on changes;
-  an unbound key cycles the style, F1 hides it all.
+  an unbound key cycles the style, F1 hides it all. It keeps clear of vanilla's HUD (boss bars, effect icons,
+  hotbar, chat, scoreboard sidebar, subtitles, advancement / recipe toasts) and of the auth banner.
 - Panel style: the goal bar (boss-bar style): status dot, goal text, %, progress bar, the open task
   columns that have tasks and "n/m done" ("finished 2m ago" once the goal is done). With no goal
   yet: "No goal yet · press [Backtick] to give the team one" (punctuation keys are spelled out on

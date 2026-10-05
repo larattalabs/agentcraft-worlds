@@ -25,7 +25,9 @@ import net.minecraft.util.Util;
 
 /**
  * Small Foreman status pill in the top-right corner, and a loud banner at the top centre when the
- * claude backend cannot authenticate.
+ * claude backend cannot authenticate (placed by {@link HudLayout#banner}: under the boss bars, narrowed or moved down
+ * to keep clear of the pill, the effect icons, the sidebar, vanilla toasts and a minimap room; the overlay and the
+ * toasts then keep clear of it).
  * <ul>
  *   <li>connected: quiet ink pill, teal dot, "Foreman · sim" (or the claude account); fades to a
  *       lower opacity after a few seconds;</li>
@@ -50,6 +52,8 @@ public final class ConnectionBanner implements HudElement {
 	public static int pillBottom = 0;
 	/** Top edge of the pill drawn this frame (it sits under the effect icons, {@link HudLayout}). */
 	public static int pillTop = 0;
+	/** The auth banner drawn this frame (NONE when none): read by {@link HudEnv}, so the overlay and the toasts avoid it. */
+	public static HudLayout.Rect banner = HudLayout.Rect.NONE;
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
@@ -57,6 +61,7 @@ public final class ConnectionBanner implements HudElement {
 		pillLeft = g.guiWidth();
 		pillBottom = 0;
 		pillTop = 0;
+		banner = HudLayout.Rect.NONE;
 		if (mc.player == null || Foreman.state() == null || mc.gui.hud.isHidden()) {
 			return;
 		}
@@ -128,7 +133,8 @@ public final class ConnectionBanner implements HudElement {
 		int x = g.guiWidth() - w - MARGIN;
 		int y = MARGIN;
 		// top right, under the effect icons and clear of boss bars (the overlay then stacks under it)
-		HudLayout.Rect at = HudLayout.place(HudEnv.current(Minecraft.getInstance(), g.guiWidth(), g.guiHeight()).withPill(HudLayout.Rect.NONE),
+		HudLayout.Rect at = HudLayout.place(HudEnv.current(Minecraft.getInstance(), g.guiWidth(), g.guiHeight()).withPill(HudLayout.Rect.NONE)
+			.withBanner(HudLayout.Rect.NONE),
 			HudSettings.Position.TOP_RIGHT, w, h).rect();
 		if (!at.empty()) {
 			x = at.x();
@@ -158,23 +164,35 @@ public final class ConnectionBanner implements HudElement {
 		return fs.message() != null ? fs.message() : ConnectionHints.authFailed(ClientEnv.DEV_RUN, Launcher.ours());
 	}
 
+	/** The banner's text indent (the dot) plus the paper's padding. */
+	private static int chrome(Kit.Padding p) {
+		return p.left() + 16 + p.right();
+	}
+
 	private static void drawAuthBanner(GuiGraphicsExtractor g, Font font, ForemanStatus fs) {
-		String head = "Claude backend can't authenticate";
+		String head = "Claude can't authenticate";
 		String msg = authMessage(fs);
-		int maxW = Math.min(360, g.guiWidth() - 40);
-		var lines = TextUtil.wrap(font, msg, maxW - 34);
 		Kit.Padding p = Kit.padding("panel_paper");
-		int w = Math.min(maxW, Math.max(font.width(head), lines.stream().mapToInt(font::width).max().orElse(0)) + 34 + p.left() + p.right() - 16);
-		int h = p.top() + 10 + lines.size() * 10 + p.bottom();
-		int x = (g.guiWidth() - w) / 2;
-		int y = MARGIN;
+		int wantW = Math.min(360, Math.max(font.width(head), font.width(msg)) + chrome(p));
+		// centred under the boss bars, clear of the pill (placed this frame), the effect icons, the sidebar and vanilla toasts
+		HudLayout.Env env = HudEnv.current(Minecraft.getInstance(), g.guiWidth(), g.guiHeight()).withBanner(HudLayout.Rect.NONE);
+		HudLayout.Rect at = HudLayout.banner(env, wantW, font.width(head) + chrome(p), bw -> p.top() + 10 + TextUtil.wrap(font, msg, bw - chrome(p)).size() * 10 + p.bottom());
+		if (at.empty()) {
+			return;
+		}
+		banner = at;
+		var lines = TextUtil.wrap(font, msg, at.w() - chrome(p));
+		int w = at.w();
+		int h = at.h();
+		int x = at.x();
+		int y = at.y();
 		Panels.panel(g, x, y, w, h);
 		long now = Util.getMillis();
 		float t = (float) Math.sin((now % 1200) / 1200.0 * Math.PI * 2) * 0.5f + 0.5f;
 		Panels.sprite(g, Kit.dot("error", true), x + p.left(), y + p.top() - 1, 11, 11, ((int) (255 * (0.4f + 0.6f * t)) << 24) | 0xFFFFFF);
 		Panels.dot(g, "error", x + p.left() + 2, y + p.top() + 1, false);
 		int tx = x + p.left() + 16;
-		g.text(font, head, tx, y + p.top(), UiStyle.status("error"), false);
+		g.text(font, TextUtil.ellipsize(font, head, w - chrome(p)), tx, y + p.top(), UiStyle.status("error"), false);
 		int ly = y + p.top() + 11;
 		for (var line : lines) {
 			g.text(font, line, tx, ly, UiStyle.color("paper.text"), false);

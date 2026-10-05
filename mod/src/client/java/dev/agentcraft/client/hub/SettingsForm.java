@@ -73,6 +73,8 @@ final class SettingsForm {
 	}
 
 	static final int CHIP_H = 14;
+	/** A section title row's height. */
+	static final int SECTION_H = 18;
 	private final HubScreen hub;
 	private final String prefix;
 	private final Map<String, HubField> fields = new HashMap<>();
@@ -176,10 +178,20 @@ final class SettingsForm {
 		return content;
 	}
 
+	/** The scrolled area's visible height (GUI px; 0 before the first draw). */
+	int viewHeight() {
+		return area[3];
+	}
+
+	/** The scrolled area's top on screen (GUI px). */
+	int viewTop() {
+		return area[1];
+	}
+
 	private int section(GuiGraphicsExtractor g, String title, int x, int y, int w) {
 		g.text(font(), title, x, y + 3, UiStyle.CLAY_DARK, false);
 		Panels.divider(g, x, y + 13, w);
-		return 18;
+		return SECTION_H;
 	}
 
 	private int text(GuiGraphicsExtractor g, String s, int color, int x, int y, int w) {

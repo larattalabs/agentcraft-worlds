@@ -28,6 +28,10 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
  * {@code hub_status_help}.
  */
 public final class HudFeature {
+	/** dev.hud.vanilla's toast: 10 s. */
+	private static final net.minecraft.client.gui.components.toasts.SystemToast.SystemToastId QA_TOAST =
+		new net.minecraft.client.gui.components.toasts.SystemToast.SystemToastId(10_000L);
+
 	private HudFeature() {
 	}
 
@@ -171,6 +175,24 @@ public final class HudFeature {
 					}
 					if (clearPeek) {
 						HudPeeks.clear();
+					}
+					return hudState();
+				});
+			});
+		DevBridge.register("dev.hud.vanilla", 10_000, "{subtitles?: bool (the Show Subtitles option, this session, not saved), toast?: text (a "
+			+ "vanilla system toast in the top right, 10 s)} - put vanilla's HUD extras on screen for the layout checks; the sidebar comes from "
+			+ "/scoreboard objectives setdisplay sidebar, more toasts from /advancement or /recipe, subtitles from /playsound; replies dev.hud.state",
+			(req, mc) -> {
+				Fields f = Fields.of(req);
+				Boolean subtitles = f.has("subtitles") ? f.optBool("subtitles", true) : null;
+				String toast = f.has("toast") ? f.nonBlank("toast") : null;
+				return DevBridge.onClient(mc, () -> {
+					if (subtitles != null) {
+						mc.options.showSubtitles().set(subtitles);
+					}
+					if (toast != null) {
+						net.minecraft.client.gui.components.toasts.SystemToast.addOrUpdate(mc.gui.toastManager(), QA_TOAST, net.minecraft.network.chat.Component
+							.literal(toast), net.minecraft.network.chat.Component.literal("AgentCraft layout check"));
 					}
 					return hudState();
 				});

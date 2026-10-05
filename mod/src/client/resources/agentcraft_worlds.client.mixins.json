@@ -11,9 +11,14 @@
 		"ClientLevelAccessor",
 		"ClientLevelBlockMixin",
 		"EntityRenderDispatcherMixin",
+		"HudAccessor",
 		"KeyboardHandlerMixin",
 		"MinecraftMixin",
-		"RenderSystemMixin"
+		"RenderSystemMixin",
+		"SubtitleAccessor",
+		"SubtitleOverlayAccessor",
+		"ToastInstanceAccessor",
+		"ToastManagerAccessor"
 	],
 	"injectors": {
 		"defaultRequire": 1

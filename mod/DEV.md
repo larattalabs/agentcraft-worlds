@@ -1208,7 +1208,19 @@ needs_you|all, `topLeftOffset` 0-200; unknown or broken values keep their defaul
   top-left minimap room (`topLeftOffset`, default 72), the hotbar with offhand slots and status rows (survival 62 px,
   creative 48), the chat lines showing right now (`mixin.ChatComponentAccessor`: lines younger than 10 s, or the page
   while chat is open; nothing when the chat is empty, so a full chat moves or hides the overlay only while it shows)
-  and the placement / plot / road panel. No room: falls back to top right, then hides (`no_room`).
+  and the placement / plot / road panel. Vanilla's other parts, measured each frame by `HudEnv` (geometry from the 26.3
+  sources, in `HudLayout`'s javadoc): the scoreboard sidebar (`HudLayout.sidebar`, from the sidebar objective's title and
+  first 15 scores as `Hud.displayScoreboardSidebar` sizes them), the subtitles (`HudLayout.subtitles`: with Show
+  Subtitles on, a band of 3 rows x 120 px above the bottom right is always kept, so footsteps do not make the overlay jump,
+  plus the rows showing when they reach further; `mixin.HudAccessor`, `SubtitleOverlayAccessor`, `SubtitleAccessor`), the
+  advancement / recipe / system toasts in the top right while they show (`HudLayout.vanillaToast`, all of them as one
+  rectangle; `mixin.ToastManagerAccessor`, `ToastInstanceAccessor`; the overlay moves down while one shows and back
+  after), and the auth banner. No room: falls back to top right, then hides (`no_room`).
+- **Auth banner** (`ConnectionBanner`, pure `HudLayout.banner`): centred at the top, placed after the connection pill
+  and clear of the boss bars, effect icons, the pill, the minimap room, the sidebar and vanilla toasts. Its height
+  depends on its width (the message wraps), so it tries widths from 360 px down to its title's width (at least 150) and
+  keeps the one that sits highest: at 426x240 it narrows to fit between the boss bars and the pill rather than covering
+  them. The overlay and the toasts then keep clear of it (`ConnectionBanner.banner`, `env.bannerRect`).
 - **Size**: S/M/L = one framebuffer pixel per overlay pixel less / equal / more than the GUI scale (pose scale
   `effectivePx / guiScale`: whole pixels, crisp); S never below 2 px (at GUI scale 2 S is M). The rectangle is rounded
   out so nothing drawn escapes it.
@@ -1225,24 +1237,39 @@ needs_you|all, `topLeftOffset` 0-200; unknown or broken values keep their defaul
   Panel and says so on the action bar.
 - **DevBridge**:
   - `dev.hud.state` gains `style`, `position`, `size`, `rect{x,y,w,h}` (GUI px, null = not drawn), `hidden` (reason or
-    null), `overlaps{bossbar, effects, hotbar, chat, pill, minimap, offscreen, any}`, `peek{enabled, active, kind,
+    null), `overlaps{bossbar, effects, hotbar, chat, pill, minimap, offscreen, sidebar, subtitles, toasts (vanilla),
+    banner, any}`, `peek{enabled, active, kind,
     text, remainingMs, waiting}`, `overlay{settings, scale, effectivePx, contentW, contentH, placedAt, fallback, text
     (the pill as text), inCombat, hostileNear, lastHurtAt, env{guiWidth, guiHeight, guiScale, bossBars,
     bossBarsDrawn, beneficialEffects, harmfulEffects, survivalBars, bossRect, effectsRect, hotbarRect, chatRect,
-    pillRect, minimapRect}, toastColumn{x, top, bottom, up}, toasts}`, `toasts.x/w`, `hudStyleKey`. The old fields
+    pillRect, minimapRect, sidebarRect, subtitlesOn, subtitleRowsRect (showing), subtitlesRect (with the band),
+    vanillaToastsRect, bannerRect}, toastColumn{x, top, bottom, up}, toasts}`, `toasts.x/w`, `hudStyleKey`. The old fields
     stay (`goalBarBottom`/`Right` = the overlay's rectangle; `alert.layout` = the Panel's alert line, last drawn).
   - `dev.hud.set {style?, position?, size?, peek?, autoHide?, hideInCombat?, toasts?, topLeftOffset?, cycle?,
     clearChat?, clearPeek?}` (saved like the settings); `dev.hud.peek {text, kind?}` (any peek setting).
+  - `dev.hud.vanilla {subtitles?: bool, toast?: text}`: turns Show Subtitles on or off for this session (not saved) and
+    shows a vanilla system toast (10 s) for the layout checks; the sidebar comes from `/scoreboard objectives setdisplay
+    sidebar`, subtitles from `/playsound`, the auth banner from `dev.foreman.inject` with a `foreman.status` of
+    `auth:"failed"` (tools/lib/hudstyles.mjs `AUTH_FAILED` / `AUTH_OK`).
   - `dev.hub.state settingsTab.hud` = the settings and where the preview put the overlay (`preview{sample, placed,
-    x, y, w, h}`); chips `hud:style:<style>`, `hud:position:<pos>`, `hud:size:<s>`, `hud:offset:-|+`, `hud:peek`,
+    x, y, w, h, screenW, screenH, columns, visible (the small screen whole in the visible part of the form),
+    sampleVisible}`). With room for two columns (pure `hud.HudPreviewLayout`, `HudPreviewLayoutTest`) the small screen
+    sits right of the Style / Position / Size chips at the top of the section, sized to be whole in view without scrolling
+    (at 426x240: about 150x84 beside Style, Position in two rows and Size), with the real-size sample under both columns;
+    too narrow, it all stacks as before; chips `hud:style:<style>`, `hud:position:<pos>`, `hud:size:<s>`, `hud:offset:-|+`, `hud:peek`,
     `hud:autoHide`, `hud:hideInCombat`, `hud:toasts:<mode>` (`dev.hub.action {action:"press", button}`).
 - **QA**: smoke step `hud_styles_426x240` (two boss bars, a beneficial and a harmful effect via `/bossbar` and
   `/effect`; auto-hide and peek off; all 45 style / position / size combinations shown with no overlap (the Pill with no
   fallback; Pill+ and Panel may move to top right where a crowded 426x240 screen has no room), the toast column clear; a peek widens the pill; Off and F1 hide it; settings restored). `node
   tools/hud-shots.mjs` (attached to a running dev client) shoots every style at 1278x720 auto (426x240) and at GUI
-  scale 3 into `artifacts/shots/hud-styles/` with `report.json`; checks shared in `tools/lib/hudstyles.mjs`.
-- Not avoided (yet): the scoreboard sidebar (right middle), subtitles (bottom right), vanilla advancement / recipe
-  toasts (top right, transient), the auth banner (top centre over the boss bars: `ConnectionBanner`).
+  scale 3 into `artifacts/shots/hud-styles/` with `report.json`; checks shared in `tools/lib/hudstyles.mjs`. It also
+  shoots every style at every position with vanilla's extras on top (a three-row scoreboard sidebar, subtitles on with
+  three showing, a vanilla toast and the auth banner: `extras_*`, checked by `extrasProblems`: all on screen, the banner
+  clear of the boss bars, effects, pill, sidebar and toasts, the overlay and the toast column clear of all of it) and the
+  Settings tab for each style (the preview must be whole in view).
+- Not avoided: the "now playing" music toast (top left, only with Music Toast = "pause menu and toast"; the default
+  top-left offset of 72 px already clears it), and vanilla's own overlaps (a vanilla toast over the effect icons or a
+  long boss bar title).
 
 ### Generated buildings (design form, plot marking, design progress)
 The contract is docs/HUB.md "Generated buildings"; code in `dev.agentcraft.client.design` plus

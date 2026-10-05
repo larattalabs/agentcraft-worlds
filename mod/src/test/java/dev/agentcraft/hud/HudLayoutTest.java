@@ -231,4 +231,130 @@ class HudLayoutTest {
 		Column hidden = HudLayout.toasts(e, Position.TOP_RIGHT, Rect.NONE, 196);
 		assertTrue(hidden.top() >= e.pill().bottom(), "the overlay hidden: toasts take its place");
 	}
+
+	// ------------------------------------------------------------------ vanilla extras: sidebar, subtitles, toasts, the auth banner
+
+	/** {@link #busy} plus a three-row scoreboard sidebar, subtitles on with two rows showing, a vanilla toast and the auth banner. */
+	static Env crowded(int w, int h, int scale) {
+		Env e = busy(w, h, scale).withSidebar(HudLayout.sidebar(w, h, 60, 3)).withSubtitles(true, HudLayout.subtitleRows(w, h, 90, 2))
+			.withToasts(HudLayout.vanillaToast(w, 160, 32, 0));
+		return e.withBanner(HudLayout.banner(e, 360, bw -> bw >= 250 ? 30 : 40));
+	}
+
+	@Test
+	void sidebarMatchesVanillasGeometry() {
+		assertEquals(new Rect(371, 92, 54, 37), HudLayout.sidebar(426, 240, 50, 3), "3 rows: bottom at 120 + 9, title row 10 px");
+		assertEquals(new Rect(381, 110, 44, 10), HudLayout.sidebar(426, 240, 40, 0), "no entries: the title row still shows");
+		Rect full = HudLayout.sidebar(426, 240, 40, 40);
+		assertEquals(165, full.bottom(), "at most 15 rows");
+		assertEquals(165 - 135 - 10, full.y());
+		assertTrue(HudLayout.sidebar(426, 240, -1, 3).empty(), "no sidebar objective");
+	}
+
+	@Test
+	void subtitlesMatchVanillasGeometryAndKeepABand() {
+		assertEquals(new Rect(343, 190, 82, 20), HudLayout.subtitleRows(426, 240, 81, 2), "two rows, 10 px apart, 30 px above the bottom");
+		assertTrue(HudLayout.subtitleRows(426, 240, 81, 0).empty());
+		Env off = Env.of(426, 240, 3).withSubtitles(false, HudLayout.subtitleRows(426, 240, 81, 2));
+		assertTrue(HudLayout.subtitles(off).empty(), "subtitles off: nothing kept");
+		Env on = Env.of(426, 240, 3).withSubtitles(true, Rect.NONE);
+		assertEquals(new Rect(426 - HudLayout.SUBTITLE_RESERVE_W, 180, HudLayout.SUBTITLE_RESERVE_W, 30), HudLayout.subtitles(on),
+			"on with none showing: the band of three rows");
+		Env many = Env.of(426, 240, 3).withSubtitles(true, HudLayout.subtitleRows(426, 240, 100, 5));
+		assertEquals(new Rect(306, 160, 120, 50), HudLayout.subtitles(many), "more rows than the band: what shows counts");
+	}
+
+	@Test
+	void vanillaToastsSitInTheTopRightBySlot() {
+		assertEquals(new Rect(266, 0, 160, 32), HudLayout.vanillaToast(426, 160, 32, 0));
+		assertEquals(new Rect(266, 32, 160, 32), HudLayout.vanillaToast(426, 160, 32, 1));
+		assertEquals(new Rect(226, 0, 200, 64), HudLayout.vanillaToast(426, 160, 32, 0).union(HudLayout.vanillaToast(426, 200, 32, 1)));
+		assertTrue(HudLayout.vanillaToast(426, 0, 32, 0).empty());
+		assertEquals(new Rect(1, 2, 3, 4), Rect.NONE.union(new Rect(1, 2, 3, 4)));
+	}
+
+	@Test
+	void theOverlayKeepsClearOfTheVanillaExtras() {
+		Env plain = Env.of(426, 240, 3).chat(0, 0);
+		Env side = plain.withSidebar(HudLayout.sidebar(426, 240, 50, 3));
+		assertEquals(new Rect(326, 112, 96, 16), HudLayout.place(plain, Position.RIGHT_MIDDLE, 96, 16).rect());
+		assertEquals(new Rect(326, 132, 96, 16), HudLayout.place(side, Position.RIGHT_MIDDLE, 96, 16).rect(), "right middle: under the sidebar");
+		Env toast = plain.withToasts(HudLayout.vanillaToast(426, 160, 32, 0));
+		assertEquals(35, HudLayout.place(toast, Position.TOP_RIGHT, 96, 16).rect().y(), "top right: under an advancement toast");
+		Env subs = plain.withSubtitles(true, Rect.NONE);
+		assertEquals(173, HudLayout.place(plain, Position.BOTTOM_RIGHT, 96, 16).rect().y(), "above the hotbar");
+		assertEquals(161, HudLayout.place(subs, Position.BOTTOM_RIGHT, 96, 16).rect().y(), "bottom right: above the subtitle band");
+		Env loud = plain.withSubtitles(true, HudLayout.subtitleRows(426, 240, 100, 5));
+		assertEquals(141, HudLayout.place(loud, Position.BOTTOM_RIGHT, 96, 16).rect().y(), "and above more rows when they show");
+		Env banner = plain.withBanner(new Rect(98, 20, 230, 30));
+		assertEquals(53, HudLayout.place(banner, Position.TOP_RIGHT, 96, 16).rect().y(), "under the auth banner where they meet");
+		assertTrue(HudLayout.overlaps(side, new Rect(380, 100, 10, 10)).sidebar());
+		assertTrue(HudLayout.overlaps(subs, new Rect(400, 200, 10, 5)).subtitles());
+		assertTrue(HudLayout.overlaps(toast, new Rect(300, 10, 10, 5)).toasts());
+		assertTrue(HudLayout.overlaps(banner, new Rect(200, 30, 10, 5)).banner());
+		assertTrue(HudLayout.overlaps(banner, new Rect(200, 30, 10, 5)).any());
+	}
+
+	@Test
+	void crowdedScreensAreClearOrHidden() {
+		for (int[] gui : GUIS) {
+			for (Size size : Size.values()) {
+				float k = HudLayout.scale(size, gui[2]);
+				for (int[] c : CONTENT) {
+					int w = HudLayout.scaled(c[0], k);
+					int h = HudLayout.scaled(c[1], k);
+					Env e = crowded(gui[0], gui[1], gui[2]).chat(0, 0);
+					for (Position pos : Position.values()) {
+						Placement p = HudLayout.place(e, pos, w, h);
+						if (p.placed()) {
+							Overlaps o = HudLayout.overlaps(e, p.rect());
+							assertFalse(o.any(), gui[0] + "x" + gui[1] + " " + size + " " + pos + " " + p + " " + o);
+						}
+					}
+				}
+			}
+		}
+		// the default pill still finds room everywhere at 426x240 with all of it on screen (here or top right)
+		Env e = crowded(426, 240, 3).chat(0, 0);
+		for (Position pos : Position.values()) {
+			assertTrue(HudLayout.place(e, pos, 96, 16).placed(), pos.toString());
+		}
+	}
+
+	@Test
+	void toastColumnStopsAboveTheSidebar() {
+		Env e = Env.of(426, 240, 3).chat(0, 0).withSidebar(HudLayout.sidebar(426, 240, 50, 3));
+		Rect pill = HudLayout.place(e, Position.TOP_RIGHT, 96, 16).rect();
+		Column c = HudLayout.toasts(e, Position.TOP_RIGHT, pill, 196);
+		assertEquals(92 - HudLayout.GAP, c.bottom());
+	}
+
+	@Test
+	void toastColumnAboveABottomOverlayStopsAboveTheBannerItMeets() {
+		Env e = Env.of(426, 240, 3).chat(0, 0).withBanner(new Rect(118, 39, 190, 57));
+		Rect low = new Rect(4, 90, 91, 17);
+		Column c = HudLayout.toasts(e, Position.BOTTOM_LEFT, low, 196);
+		assertTrue(c.up());
+		assertEquals(39 - HudLayout.GAP, c.bottom(), "the banner straddles the overlay's top: the column ends above it");
+		assertFalse(new Rect(c.x(), c.top(), 196, Math.max(1, c.height())).intersects(e.banner()));
+	}
+
+	@Test
+	void theAuthBannerNarrowsBetweenTheCornersBeforeItDropsBelowThem() {
+		Env e = Env.of(426, 240, 3).boss(1, 70).effects(1, 0).withPill(new Rect(331, 28, 95, 18));
+		Rect b = HudLayout.banner(e, 360, w -> w >= 200 ? 30 : 40);
+		assertEquals(new Rect(98, 20, 230, 30), b, "under the boss bar, narrowed to clear the pill");
+		assertFalse(HudLayout.overlaps(e, b).any());
+		Env open = Env.of(426, 240, 3);
+		assertEquals(new Rect(33, 4, 360, 30), HudLayout.banner(open, 360, w -> 30), "nothing around: top centre at full width");
+		Env wide = Env.of(960, 540, 2).boss(2, 100).effects(2, 1).withPill(new Rect(864, 54, 92, 18));
+		Rect wb = HudLayout.banner(wide, 360, w -> 30);
+		assertEquals(360, wb.w(), "a wide screen keeps it wide");
+		assertEquals(HudLayout.bossBars(wide).bottom() + HudLayout.GAP, wb.y(), "stacked under the boss bars");
+		assertTrue(HudLayout.banner(Env.of(426, 240, 3), 0, w -> 30).empty());
+		Rect titled = HudLayout.banner(e, 360, 240, w -> 30);
+		assertTrue(titled.w() >= 240, "never narrower than its title: " + titled);
+		assertTrue(titled.y() >= 46 + HudLayout.GAP, "so it goes under the pill instead: " + titled);
+		assertFalse(HudLayout.overlaps(e, titled).any());
+	}
 }
