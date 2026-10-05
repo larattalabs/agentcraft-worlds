@@ -75,6 +75,15 @@ async function send(h: Harness, msg: Record<string, unknown>): Promise<Extract<O
   return replies.find((m) => m.type === 'ack') as Extract<Outbound, { type: 'ack' }>;
 }
 
+describe('the no-network guard', () => {
+  it('is in effect: starting az or gh through the process runner fails the test', async () => {
+    const { run } = await import('../src/util/proc.js');
+    await expect(run('az', ['repos', 'pr', 'list'])).rejects.toThrow(/the sim started az/);
+    await expect(run('gh', ['pr', 'list'])).rejects.toThrow(/the sim started gh/);
+    expect(spawned.splice(0).map((c) => c[0])).toEqual(['az', 'gh']);
+  });
+});
+
 describe('sim review format', () => {
   it("is the review pipeline's format: the real parser reads its findings and verdict", () => {
     const at = new Date('2026-10-04T10:00:00Z');
@@ -176,7 +185,7 @@ describe('sim pull requests', () => {
     expect(spawned).toEqual([]);
   });
 
-  it('--sim-pr autostart: the PR goal runs beside the script, and a restart mid-PR picks it up again', async () => {
+  it('--sim-pr autostart: the PR goal runs beside the script, and a restart during the review fixes picks them up again', async () => {
     const home = tempDir();
     const main = await demoRepo();
     const api = await prRepo();
@@ -193,8 +202,10 @@ describe('sim pull requests', () => {
     expect(g!.repoId).toBe(h.fm.repos.defaultRepo()!.id);
     expect(path.basename(h.fm.repos.require(g!.repoId!).path)).toBe('demo-app');
     expect(prGoal.repoId).toBe(h.fm.repos.list()[0]!.id);
-    // stop once the PR is open and its first review is in
-    await until(() => (sim.prHost.prs()[0]?.reviews ?? 0) >= 1);
+    // stop while the worker is making the review fixes (the PR is open, its first review is in)
+    const sst = () => h.fm.store.data.backend.sim as { folds?: Record<string, unknown> } | undefined;
+    await until(() => Object.keys(sst()?.folds ?? {}).length > 0);
+    expect(sim.prHost.prs()[0]!.reviews).toBe(1);
     await h.fm.close();
 
     const h2 = makeForeman(home, args);
@@ -207,7 +218,11 @@ describe('sim pull requests', () => {
     expect(h2.fm.store.data.feed.filter((f) => f.kind === 'error')).toEqual([]);
     const t = h2.fm.tasks.forGoal(prGoal.id)[0]!;
     expect(t.pr).toMatchObject({ id: 601, status: 'merged' });
-    expect(sim2.prHost.pr(t.pr!.url)!.status).toBe('completed');
+    const host = sim2.prHost.pr(t.pr!.url)!;
+    expect(host.status).toBe('completed');
+    expect(host.reviews).toBe(2); // the review fixes landed after the restart, then a new review
+    expect(h2.fm.store.data.decisions.filter((d) => d.taskId === t.id).map((d) => d.question)).toContainEqual(expect.stringMatching(/^Push the review fixes for /));
+    expect((h2.fm.store.data.backend.sim as { folds?: Record<string, unknown> }).folds).toEqual({});
     expect(spawned).toEqual([]);
   });
 });

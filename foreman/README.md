@@ -807,7 +807,10 @@ have the shapes the claude backend produces, and `pr.refresh` works. Mode: `clau
   profiles), a copy of the demo repo with `land: "pr"`, pushing to a local bare server next to it
   (`sandbox/pocket-api.server.git`; its own git config allows git's file transport for that repo
   only). Both are recreated with `--reset` (or when missing). It is registered before
-  `sim-demo`, which stays the default repo. Only when no `--repo` is given.
+  `sim-demo`, which stays the default repo (the last one registered), so turn it on together with
+  `--reset`: on an existing profile `sim-demo` is registered already and pocket-api would become the
+  default. Only when no `--repo` is given. In game: `node tools/mac.mjs launch --backend sim --dev
+  --reset --foreman-arg --sim-pr --foreman-arg --pr-watch --foreman-arg on`.
 - **Goals**: a goal in a repo that lands as PRs runs as a side flow (any lead, Marlow too, one at a
   time per lead): the lead plans one task, a free worker writes `docs/goals/<goal>.md`, the lead asks
   "Open a pull request for t1 ...?". `--autostart` with `--sim-pr` also submits "Document the notes
@@ -828,7 +831,7 @@ have the shapes the claude backend produces, and `pr.refresh` works. Mode: `clau
     AgentCraft has nothing in flight on it (triage, fold-in, an open decision); 15 s later it is
     completed: the task is `done`, the goal completes, the lead says so.
 - `--auto-answer` also answers the watcher's decisions (first option: Post, Fold in).
-- Restart-safe: the host's PRs and timers, running review fixes and the side flow resume.
+- Restart-safe: the host's PRs and timers, running review fixes and the side flow resume (tested).
 - Caveat: a real repo given with `--repo` and `land: "pr"` under the sim still pushes to its real
   remote (as before); its PR then goes to the fake host, not to Azure DevOps or GitHub.
 
