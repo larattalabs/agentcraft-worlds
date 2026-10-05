@@ -63,8 +63,13 @@ final class LauncherSection {
 			y = hub.fact(g, "PID", Launcher.pid() + version + commit, x, y, w);
 		}
 		LauncherPlan.Source src = Launcher.source();
+		String runs = Launcher.runningRoot();
+		if (runs != null && (src == null || src.root() == null || !java.nio.file.Path.of(runs).equals(src.root()))
+			&& (s == LauncherPlan.State.RUNNING || s == LauncherPlan.State.RUNNING_OLDER)) {
+			y = hub.fact(g, "Runs from", runs, x, y, w);
+		}
 		if (src != null && src.root() != null) {
-			y = hub.fact(g, "From", src.root() + " (" + src.origin() + ")", x, y, w);
+			y = hub.fact(g, "Checkout", src.root() + " (" + src.origin() + ")", x, y, w);
 		}
 		if (s == LauncherPlan.State.NODE_MISSING) {
 			y = hub.fact(g, "Install", "brew install node (or mise use -g node@22, or " + LauncherPlan.NODE_INSTALL_URL + "), then Start", x, y, w);
@@ -87,7 +92,7 @@ final class LauncherSection {
 			hub.button(g, "launcher_restart", l, bx, y, hub.bw(l), false, busy, false, mx, my, Launcher::restart);
 			bx += hub.bw(l) + 4;
 		}
-		if (log != null) {
+		if (log != null && (Launcher.ours() || s == LauncherPlan.State.CRASHED)) {
 			String l = "Open log";
 			hub.button(g, "launcher_log", l, bx, y, hub.bw(l), false, !java.nio.file.Files.exists(log), false, mx, my, Launcher::openLog);
 			bx += hub.bw(l) + 4;

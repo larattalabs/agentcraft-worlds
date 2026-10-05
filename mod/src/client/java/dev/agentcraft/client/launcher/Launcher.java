@@ -164,6 +164,10 @@ public final class Launcher {
 		return runningVersion;
 	}
 
+	public static @Nullable String runningRoot() {
+		return runningRoot;
+	}
+
 	public static @Nullable String runningCommit() {
 		return runningCommit;
 	}
@@ -331,7 +335,7 @@ public final class Launcher {
 			}
 			case REUSE_OLDER -> {
 				pid = running != null ? running.pid() : 0;
-				set(State.RUNNING_OLDER, "running (older version): " + String.join("; ", reasons) + ". Started by " + who()
+				set(State.RUNNING_OLDER, String.join("; ", reasons) + ". Started by " + who()
 					+ ", so the game leaves it alone; restart it with the tool that started it");
 				watch(pid);
 				return;
@@ -658,12 +662,21 @@ public final class Launcher {
 		if (rec != null && rec.has("pid") && rec.get("pid").getAsLong() == r.pid()) {
 			by = LauncherPlan.BY;
 		}
+		// the launcher run file of our checkout, or of the checkout the Foreman says it runs from (who started it)
+		List<Path> roots = new ArrayList<>();
 		if (root != null) {
-			JsonObject t = readJson(checkoutRunFile(root));
+			roots.add(root);
+		}
+		if (r.root() != null && (root == null || !Path.of(r.root()).equals(root))) {
+			roots.add(Path.of(r.root()));
+		}
+		for (Path co : roots) {
+			JsonObject t = readJson(checkoutRunFile(co));
 			if (t != null && t.has("pid") && t.get("pid").getAsLong() == r.pid()) {
 				rootOf = rootOf != null ? rootOf : str(t, "root");
 				commit = commit != null ? commit : str(t, "commit");
 				by = by != null ? by : str(t, "by") != null ? str(t, "by") : "tools/mac.mjs";
+				break;
 			}
 		}
 		runningRoot = rootOf;
