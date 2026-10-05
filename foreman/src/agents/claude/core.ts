@@ -548,5 +548,6 @@ export abstract class BackendCore {
   protected abstract inflightOf(job: Job): Omit<Inflight, 'startedAt'>;
   protected abstract replyToGoal(lead: string, job: Job, stats: TurnStats | undefined): void;
   protected abstract requeueGoalMessage(agentId: string, inf: Inflight, handOver?: boolean): boolean;
+  protected abstract offerHeldGoalMessages(job: Job): void;
   abstract runAuxTurn(spec: AuxTurnSpec): AuxTurn;
 }

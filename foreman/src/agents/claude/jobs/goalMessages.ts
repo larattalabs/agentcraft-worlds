@@ -1,6 +1,7 @@
 // Claude backend, goal messages (Goals tab): goal.message runs as a turn of the lead's session for that
 // goal, built from the goal's unread messages when it starts; its reply goes to the goal's thread.
-// A restart, stop or release before the lead answered offers the messages again.
+// A restart, stop or release before the lead answered (also while the turn is paused, held for the
+// usage limit or waiting for its automatic retry) offers the messages again.
 import type { Goal } from '../../../protocol.js';
 import { truncate } from '../../../util/text.js';
 import { type TurnStats } from '../stream.js';
@@ -97,11 +98,23 @@ export abstract class GoalMessageJobs extends FollowupJobs {
   }
 
   /**
-   * The lead is stopped or released: the goal messages its running, paused or delayed goal-message
-   * turn had taken (and not answered) are unread again, so they are not lost with the turn.
+   * A goal-message turn that ended unfinished and runs again later (paused, held for the usage limit,
+   * waiting for its automatic retry) lives in memory only, and its inflight record is gone. When the
+   * lead has not answered yet, its messages are unread again meanwhile, so a restart, stop or release
+   * before it runs still asks them (queueGoalMessages / the handover); the job itself is unchanged and
+   * marks them read again when it starts (runJob).
+   */
+  protected override offerHeldGoalMessages(job: Job): void {
+    if (!job.goalReply || !job.messageIds?.length) return;
+    if (this.requeueGoalMessage(job.agentId, { ...this.inflightOf(job), startedAt: job.startedAt ?? 0 })) this.fm.store.markDirty();
+  }
+
+  /**
+   * The lead is stopped or released: the goal messages its running, queued, paused or delayed
+   * goal-message turn had taken (and not answered) are unread again, so they are not lost with the turn.
    */
   protected releaseGoalMessages(agentId: string): void {
-    const recs: Inflight[] = [this.pausedJobs.get(agentId), this.delayed.get(agentId)?.job].filter((j): j is Job => !!j?.goalReply).map((j) => ({ ...this.inflightOf(j), startedAt: j.startedAt ?? 0 }));
+    const recs: Inflight[] = [...(this.queues.get(agentId) ?? []), this.pausedJobs.get(agentId), this.delayed.get(agentId)?.job].filter((j): j is Job => !!j?.goalReply).map((j) => ({ ...this.inflightOf(j), startedAt: j.startedAt ?? 0 }));
     const inf = this.st.inflight[agentId];
     if (inf?.goalReply) recs.push(inf);
     for (const rec of recs) this.requeueGoalMessage(agentId, rec);

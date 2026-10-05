@@ -266,6 +266,7 @@ export abstract class HoldsLayer extends BackendCore {
     const next: Job = hasSession
       ? { ...job, fresh: false, resumed: true, prompt: 'A usage limit stopped your last turn; it has reset now. Re-check where you were (your worktree, the task board) and continue your current job.' }
       : job;
+    this.offerHeldGoalMessages(next);
     const until = this.st.limit?.until;
     this.fm.setAgent(job.agentId, { state: 'blocked', activity: `usage limit - resumes ${until ? clock(until) : 'later'}` });
     this.fm.agentLog(job.agentId, 'error', `usage limit: this ${job.kind} resumes when it resets${until ? ` (${clock(until)})` : ''}`);

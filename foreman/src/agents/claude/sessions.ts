@@ -131,6 +131,8 @@ export abstract class SessionsLayer extends TurnSetupLayer {
         }
       }
       this.st.inflight[agentId] = { ...this.inflightOf(job), startedAt: job.goalReply && job.startedAt ? job.startedAt : Date.now() };
+      // a goal-message turn that was held (offerHeldGoalMessages): its messages are its own again
+      if (job.goalReply && job.messageIds?.length) this.fm.bus.markRead(agentId, job.messageIds);
       this.fm.store.markDirty();
 
       let systemAppend: string;
@@ -252,6 +254,7 @@ export abstract class SessionsLayer extends TurnSetupLayer {
     this.fm.store.markDirty();
     if (reason === 'pause') {
       const next: Job = { ...job, fresh: false, resumed: true, prompt: `${userName()} paused you and has now resumed you. Any question you had open was withdrawn; ask again if you still need it. Continue your current job.` };
+      this.offerHeldGoalMessages(next);
       // resume may already have arrived while the aborted turn was unwinding
       if (this.fm.agent(agentId)?.paused) {
         this.pausedJobs.set(agentId, next);

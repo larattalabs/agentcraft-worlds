@@ -44,6 +44,7 @@ export abstract class OutcomesLayer extends SessionsLayer {
     const next: Job = fresh
       ? { ...job, fresh: true, resumed: true, prompt: `${kind === 'context' ? 'Your previous session for this job ran out of room (the prompt grew too long), so this is a fresh one. Re-check where things stand (the task board; workers: git status and git log in your worktree) before you continue.\n\n' : ''}${job.prompt}` }
       : { ...job, fresh: false, resumed: true, prompt: `Your last turn ended early (${why}). Re-check where you were (${lead ? 'the task board' : 'your worktree and the task board'}) and continue your current job.` };
+    this.offerHeldGoalMessages(next);
     const delay = this.opts.transientRetryMs ?? 2 * 60_000 + Math.floor(Math.random() * 3 * 60_000);
     const at = Date.now() + delay;
     const name = this.fm.nameOf(job.agentId);
