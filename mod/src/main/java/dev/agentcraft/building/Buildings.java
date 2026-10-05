@@ -2,6 +2,7 @@ package dev.agentcraft.building;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.agentcraft.AgentCraft;
 import dev.agentcraft.block.PanelBlock;
@@ -20,9 +21,11 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -115,6 +118,7 @@ public final class Buildings {
 			notifyListeners();
 		});
 		ServerTickEvents.END_SERVER_TICK.register(server -> Drops.tick());
+		PlaceTiming.init();
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			state = State.EMPTY;
 			reports.clear();
@@ -320,6 +324,7 @@ public final class Buildings {
 	 */
 	public static Building place(ServerLevel level, Blueprint bp, BlockPos origin, Rotation rotation, List<String> repos, boolean force)
 		throws BuildingException {
+		long t0 = System.nanoTime();
 		MinecraftServer server = level.getServer();
 		if (bp.isFixture()) {
 			if (!repos.isEmpty()) {
@@ -357,6 +362,7 @@ public final class Buildings {
 		AgentCraft.LOGGER.info("Placed {} {} ({}) for {} at {} rotation {}: box {}, journal {} over {}, {} anchors{}{}", bp.isFixture() ? "fixture" : "building", id,
 			bp.id(), repos, origin.toShortString(), b.rotation(), str(b.box()), built.entry().id(), str(b.restoreBox()), b.anchors().size(), force ? " (forced)" : "",
 			built.note() == null ? "" : "; " + built.note());
+		PlaceTiming.placed(System.nanoTime() - t0);
 		return b;
 	}
 
@@ -396,16 +402,22 @@ public final class Buildings {
 	/**
 	 * A template put into the world (not recorded yet): {@code entry} its journal entry (drafted, with every cell's after;
 	 * not committed), {@code leaves} the leaves outside it the placement holds ({@link LeafGuard}; not committed, null when
-	 * none), {@code before} the site as captured before (to put back when the change is rolled back).
+	 * none), {@code ring} the leaves around it as they were ({@link LeafGuard#ring}; not committed, null when none; it
+	 * changed nothing, so it needs no draft), {@code before} the site as captured before (to put back when the change is
+	 * rolled back).
 	 */
 	private record Built(int turns, Anchors.Bounds box, Anchors.Bounds snapshotBox, Anchors.Bounds bounds, Map<String, Anchor> anchors,
-		Building.Pin pin, @Nullable String note, Journal.Entry entry, Journal.@Nullable Entry leaves, CompoundTag before) {
-		/** The entries a commit records: the site's (with {@code record} as its meta) and its held leaves'. */
+		Building.Pin pin, @Nullable String note, Journal.Entry entry, Journal.@Nullable Entry leaves, Journal.@Nullable Entry ring,
+		CompoundTag before) {
+		/** The entries a commit records: the site's (with {@code record} as its meta), its held leaves' and its leaf ring's. */
 		Map<String, Journal.Entry> entries(Building record) {
 			Map<String, Journal.Entry> m = new LinkedHashMap<>();
 			m.put(entry.id(), entry.withMeta(record.toJson()));
 			if (leaves != null) {
 				m.put(leaves.id(), leaves);
+			}
+			if (ring != null) {
+				m.put(ring.id(), ring);
 			}
 			return m;
 		}
@@ -735,7 +747,12 @@ public final class Buildings {
 		// changes; their own journal entry, committed with the site's)
 		List<Journal.Cell> held = List.of();
 		try {
+			// the leaves around the box as they are, before anything changes: Remove gives them their distances back
+			long r0 = System.nanoTime();
+			List<Journal.Cell> ring = ringLeaves(level, snapBox, here, Set.of());
+			PlaceTiming.ring(System.nanoTime() - r0, ring.size());
 			held = holdLeaves(level, snapBox, here);
+			ring = without(ring, held);
 			int removed = 0;
 			for (Entity e : level.getEntities((Entity) null, Occupancy.aabb(snapBox), e -> !(e instanceof Player) && e.isAlive())) {
 				if (Occupancy.classify(e).removable()) {
@@ -807,7 +824,8 @@ public final class Buildings {
 			return new Built(turns, box, snapBox, BlueprintTransform.worldBounds(bp, turns, box.minX(), box.minY(), box.minZ()),
 				BedSafety.withoutBeds(BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), beds.heads()),
 				BedSafety.strip(pinFor(bp, grid, turns, box), beds.cells(), beds.heads(), box), notes.isEmpty() ? null : String.join("; ", notes),
-				WorldJournal.withAfter(draft, snapBox, after), leavesEntry(owner, here, held), before);
+				WorldJournal.withAfter(draft, snapBox, after), cellEntry(LeafGuard.KIND, owner, here, held),
+				cellEntry(LeafGuard.RING_KIND, owner, here, ring), before);
 		} catch (RuntimeException e) {
 			// never leave a half-built, unrecorded box behind: put the site back as it was captured
 			AgentCraft.LOGGER.error("Placing {} at {} failed; restoring box {}", bp.id(), origin.toShortString(), str(snapBox), e);
@@ -834,14 +852,30 @@ public final class Buildings {
 		}
 	}
 
-	/** The journal entry of a building's held leaves ({@link LeafGuard#KIND}, CELL: a leaf the player changed is left), or null for none. */
-	private static Journal.@Nullable Entry leavesEntry(String owner, String dimension, List<Journal.Cell> held) {
-		if (held.isEmpty()) {
+	/**
+	 * A CELL journal entry of a building's leaves ({@link LeafGuard#KIND} held leaves, {@link LeafGuard#RING_KIND} its leaf
+	 * ring; CELL: a leaf the player changed is left), or null for none.
+	 */
+	private static Journal.@Nullable Entry cellEntry(String kind, String owner, String dimension, List<Journal.Cell> cells) {
+		return cellEntry(kind, owner, dimension, cells, null);
+	}
+
+	/** The meta key naming the undo group a re-hold or re-ring followed ({@link #followers}). */
+	static final String AFTER = "after";
+
+	/** {@link #cellEntry(String, String, String, List)} made after the undo {@code after} (a re-hold, a re-ring), recorded in its meta. */
+	private static Journal.@Nullable Entry cellEntry(String kind, String owner, String dimension, List<Journal.Cell> cells, @Nullable String after) {
+		if (cells.isEmpty()) {
 			return null;
 		}
+		JsonObject meta = null;
+		if (after != null) {
+			meta = new JsonObject();
+			meta.addProperty(AFTER, after);
+		}
 		try {
-			return new Journal.Entry(WorldJournal.newId(), LeafGuard.KIND, owner, dimension, Journal.Policy.CELL, System.currentTimeMillis(),
-				Journal.Status.ACTIVE, held, null, null);
+			return new Journal.Entry(WorldJournal.newId(), kind, owner, dimension, Journal.Policy.CELL, System.currentTimeMillis(),
+				Journal.Status.ACTIVE, cells, null, meta);
 		} catch (IOException e) {
 			throw new IllegalStateException("no world journal: " + e.getMessage(), e);
 		}
@@ -852,7 +886,7 @@ public final class Buildings {
 	 * them now (restored leaves whose logs a standing site cleared, leaves a removed neighbour held), each as a new entry
 	 * of its own. A failure is logged and the hold taken back: those leaves then decay as they would without the mod.
 	 */
-	private static void rehold(ServerLevel level, Anchors.Bounds box) {
+	private static void rehold(ServerLevel level, Anchors.Bounds box, String after) {
 		String here = dimensionId(level);
 		List<Anchors.Bounds> skip = standingBoxes(here);
 		Map<String, Journal.Entry> up = new LinkedHashMap<>();
@@ -861,7 +895,8 @@ public final class Buildings {
 				if (!x.dimensionOrDefault().equals(here) || !LeafGuard.near(x.restoreBox(), box, 2 * LeafGuard.RADIUS)) {
 					continue;
 				}
-				Journal.Entry e = leavesEntry(x.id(), here, LeafGuard.hold(level, x.restoreBox(), skip, WorldJournal.newLayer(), FLAGS));
+				Journal.Entry e = cellEntry(LeafGuard.KIND, x.id(), here, LeafGuard.hold(level, x.restoreBox(), skip, WorldJournal.newLayer(), FLAGS),
+					after);
 				if (e != null) {
 					up.put(e.id(), e);
 				}
@@ -876,6 +911,74 @@ public final class Buildings {
 			for (Journal.Entry x : up.values()) {
 				LeafGuard.release(level, x.cells(), FLAGS);
 			}
+		}
+	}
+
+	// ------------------------------------------------------------------ leaf ring (LeafGuard.ring)
+
+	/**
+	 * {@link LeafGuard#ring} around {@code box} at a new layer. Left out: the cells of every active journal entry near it
+	 * (a site's box, held leaves, another ring, a road: those cells are theirs, and a ring cell over them would take their
+	 * undo's write as a hand-down), the standing sites' boxes and {@code taken}. Before the box changes; changes nothing.
+	 */
+	private static List<Journal.Cell> ringLeaves(ServerLevel level, Anchors.Bounds box, String dimension, Set<Long> taken) {
+		Anchors.Bounds rb = LeafGuard.ringBounds(box);
+		Set<Long> owned = new HashSet<>(taken);
+		List<Anchors.Bounds> standing = standingBoxes(dimension);
+		try {
+			for (Journal.Entry e : WorldJournal.activeTouching(dimension, new int[] {rb.minX(), rb.minY(), rb.minZ(), rb.maxX(), rb.maxY(), rb.maxZ()})) {
+				for (Journal.Cell c : e.cells()) {
+					owned.add(c.pos());
+				}
+			}
+			return LeafGuard.ring(level, box, pos -> owned.contains(pos)
+				|| standing.stream().anyMatch(b -> b.contains(BlockPos.getX(pos), BlockPos.getY(pos), BlockPos.getZ(pos))), WorldJournal.newLayer());
+		} catch (IOException e) {
+			throw new IllegalStateException("no world journal: " + e.getMessage(), e);
+		}
+	}
+
+	/** {@code ring} without the positions of {@code held} (a held leaf's natural state comes back with its hold). */
+	private static List<Journal.Cell> without(List<Journal.Cell> ring, List<Journal.Cell> held) {
+		if (held.isEmpty()) {
+			return ring;
+		}
+		Set<Long> h = new HashSet<>();
+		held.forEach(c -> h.add(c.pos()));
+		return ring.stream().filter(c -> !h.contains(c.pos())).toList();
+	}
+
+	/**
+	 * After {@code box} got its old terrain back (Remove, Move): the sites standing near it ring the leaves around them that
+	 * belong to no journal entry now (the removed site's box, ring and holds had them), as they are now (just restored),
+	 * each as a new entry of its own, undone with the site. Without it such a leaf would be in no ring, and what a site
+	 * standing next to it changes later (a moved building's new site: its placement's leaf ticks run after the old site is
+	 * restored) would stay after that site's Remove. Each new entry names the undo group it followed ({@link #AFTER}): when
+	 * the next world start brings that undo back ({@link #followers}), it is released. A failure is logged (nothing changed).
+	 */
+	private static void rering(ServerLevel level, Anchors.Bounds box, String after) {
+		String here = dimensionId(level);
+		Map<String, Journal.Entry> up = new LinkedHashMap<>();
+		Set<Long> taken = new HashSet<>();
+		try {
+			for (Building x : state.byId().values()) {
+				if (!x.dimensionOrDefault().equals(here) || !LeafGuard.near(x.restoreBox(), box, 2 * LeafGuard.RING)) {
+					continue;
+				}
+				List<Journal.Cell> cells = ringLeaves(level, x.restoreBox(), here, taken);
+				cells.forEach(c -> taken.add(c.pos()));
+				Journal.Entry e = cellEntry(LeafGuard.RING_KIND, x.id(), here, cells, after);
+				if (e != null) {
+					up.put(e.id(), e);
+				}
+			}
+			if (!up.isEmpty()) {
+				WorldJournal.commit(up, List.of());
+				AgentCraft.LOGGER.info("Ringing {} more leaves for {} after {} got its terrain back", taken.size(),
+					up.values().stream().map(Journal.Entry::owner).toList(), str(box));
+			}
+		} catch (IOException | RuntimeException e) {
+			AgentCraft.LOGGER.warn("Could not ring the leaves near {} again; removing the sites near it may leave leaf distances changed", str(box), e);
 		}
 	}
 
@@ -1066,7 +1169,8 @@ public final class Buildings {
 		List<Building.Pending> pending = new ArrayList<>(s.pending());
 		pending.add(new Building.Pending(b, entry, System.currentTimeMillis(), "removed"));
 		commit(server, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
-		rehold(level, b.restoreBox());
+		rehold(level, b.restoreBox(), entry);
+		rering(level, b.restoreBox(), entry);
 		Journal.Stats st = plan.stats().get(entry);
 		AgentCraft.LOGGER.info("Removed building {} ({}): restored box {}{}; journal {} kept until the next world start{}", id, b.blueprint(),
 			str(b.restoreBox()), force ? " (forced)" : "", entry, st == null || st.covered() == 0 ? ""
@@ -1097,7 +1201,7 @@ public final class Buildings {
 	private static Journal.UndoPlan planSite(ServerLevel level, Building b, String entry) throws IOException {
 		List<String> ids = new ArrayList<>();
 		ids.add(entry);
-		for (String kind : new String[] {"trophy", LeafGuard.KIND}) {
+		for (String kind : new String[] {"trophy", LeafGuard.KIND, LeafGuard.RING_KIND}) {
 			for (JournalStore.Meta m : WorldJournal.find(kind, b.id(), Journal.Status.ACTIVE)) {
 				ids.add(m.id());
 			}
@@ -1247,8 +1351,10 @@ public final class Buildings {
 		for (JournalStore.Meta m : WorldJournal.find("trophy", id, Journal.Status.ACTIVE)) {
 			release.add(m.id());
 		}
-		for (JournalStore.Meta m : WorldJournal.find(LeafGuard.KIND, id, Journal.Status.ACTIVE)) {
-			release.add(m.id());
+		for (String kind : new String[] {LeafGuard.KIND, LeafGuard.RING_KIND}) {
+			for (JournalStore.Meta m : WorldJournal.find(kind, id, Journal.Status.ACTIVE)) {
+				release.add(m.id());
+			}
 		}
 		try {
 			WorldJournal.commit(Map.of(), release);
@@ -1367,6 +1473,7 @@ public final class Buildings {
 	 * the old site in {@link Building#movedFrom()} (the hub's "Undo move" moves it back). Server thread.
 	 */
 	public static Building move(ServerLevel level, String id, BlockPos origin, Rotation rotation, boolean force) throws BuildingException {
+		long t0 = System.nanoTime();
 		MinecraftServer server = level.getServer();
 		Building b = get(id);
 		if (b == null) {
@@ -1453,11 +1560,13 @@ public final class Buildings {
 		pending.add(new Building.Pending(b, oldEntry, now, "moved"));
 		reports.remove(id);
 		commit(server, new State(Collections.unmodifiableMap(map), s.next(), List.copyOf(pending)));
-		rehold(oldLevel, b.restoreBox());
+		rehold(oldLevel, b.restoreBox(), oldEntry);
+		rering(oldLevel, b.restoreBox(), oldEntry);
 		Trophies.rehang(server, nb);
 		lastNote = built.note();
 		AgentCraft.LOGGER.info("Moved building {} from {} ({}) to {} ({}){}", id, str(b.box()), b.dimensionOrDefault(), str(nb.box()),
 			nb.dimensionOrDefault(), built.note() == null ? "" : "; " + built.note());
+		PlaceTiming.placed(System.nanoTime() - t0);
 		return nb;
 	}
 
@@ -1723,7 +1832,7 @@ public final class Buildings {
 						try {
 							Map<String, Journal.Entry> up = new LinkedHashMap<>(reactivation(entry));
 							long now = System.currentTimeMillis();
-							for (String kind : new String[] {"building", "trophy", LeafGuard.KIND}) {
+							for (String kind : new String[] {"building", "trophy", LeafGuard.KIND, LeafGuard.RING_KIND}) {
 								for (JournalStore.Meta m : WorldJournal.find(kind, gone.id(), Journal.Status.ACTIVE)) {
 									if (!up.containsKey(m.id())) {
 										Journal.Entry e = WorldJournal.load(m.id());
@@ -1731,7 +1840,7 @@ public final class Buildings {
 									}
 								}
 							}
-							WorldJournal.commit(up, List.of());
+							WorldJournal.commit(up, followers(entry, up.keySet()));
 						} catch (IOException | RuntimeException e) {
 							AgentCraft.LOGGER.error("Buildings check {}: could not put the journal back", gone.id(), e);
 							report(gone.id(), true, gone.id() + "'s move was not saved before the game stopped and it could not be put back; its old "
@@ -1742,7 +1851,8 @@ public final class Buildings {
 						report(gone.id(), false, gone.id() + "'s move was not saved before the game stopped: it is back at its old site");
 					} else {
 						try {
-							WorldJournal.commit(reactivation(entry), List.of());
+							Map<String, Journal.Entry> up = reactivation(entry);
+							WorldJournal.commit(up, followers(entry, up.keySet()));
 						} catch (IOException | RuntimeException e) {
 							AgentCraft.LOGGER.error("Buildings check {}: could not put the journal back", gone.id(), e);
 							continue;
@@ -1831,6 +1941,31 @@ public final class Buildings {
 		}
 		if (!out.contains(e.id())) {
 			out.add(e.id());
+		}
+		return out;
+	}
+
+	/**
+	 * The active held-leaves and leaf-ring entries made after {@code e}'s undo (a re-hold, a re-ring: {@link #AFTER} names
+	 * its group), not in {@code keep}. When that undo is reactivated (it never reached the disk) they are released with it:
+	 * their cells may lie in the box that stands again, and a cell over the box's would turn its next undo's write into a
+	 * hand-down that writes nothing. A re-ring changed no block; a re-hold's leaves stay as they are.
+	 */
+	private static List<String> followers(Journal.Entry e, java.util.Set<String> keep) throws IOException {
+		String g = e.undo() == null ? e.id() : e.undo().group();
+		List<String> out = new ArrayList<>();
+		JournalStore s = WorldJournal.store();
+		for (JournalStore.Meta m : s.find(m -> m.active() && (m.kind().equals(LeafGuard.KIND) || m.kind().equals(LeafGuard.RING_KIND)))) {
+			if (keep.contains(m.id())) {
+				continue;
+			}
+			Journal.Entry x = s.load(m.id());
+			if (x.meta() != null && x.meta().has(AFTER) && g.equals(x.meta().get(AFTER).getAsString())) {
+				out.add(m.id());
+			}
+		}
+		if (!out.isEmpty()) {
+			AgentCraft.LOGGER.info("Buildings check: releasing {} (made after the undo {}, which is taken back)", out, g);
 		}
 		return out;
 	}

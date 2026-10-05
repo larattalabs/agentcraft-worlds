@@ -61,6 +61,11 @@ public final class WorldJournal {
 	 * stands. {@link #apply} writes their cells without shape updates, so neighbouring leaves keep their {@code distance}.
 	 */
 	public static final String LEAVES = "leaves";
+	/**
+	 * The kind of a building's leaf ring ({@code building.LeafGuard#ring}): the leaves around a site as they were before it,
+	 * so Remove can give them back the {@code distance} they had. {@link #apply} writes their cells without shape updates.
+	 */
+	public static final String LEAF_RING = "leafring";
 
 	private static volatile @Nullable JournalStore store;
 	private static volatile @Nullable String unavailable;
@@ -238,12 +243,20 @@ public final class WorldJournal {
 		return tag;
 	}
 
-	/** Puts a captured template back over {@code box} (a placement that failed half way): the old snapshot restore, unchanged. */
+	/**
+	 * Puts a captured template back over {@code box} (a placement that failed half way): the old snapshot restore, with the
+	 * leaf ticks it schedules dropped ({@link LeafTicks}).
+	 */
 	public static void restoreTemplate(ServerLevel level, Anchors.Bounds box, CompoundTag tpl, int flags) {
 		StructureTemplate t = new StructureTemplate();
 		t.load(level.registryAccess().lookupOrThrow(Registries.BLOCK), tpl);
 		BlockPos min = new BlockPos(box.minX(), box.minY(), box.minZ());
-		t.placeInWorld(level, min, min, settings(), level.getRandom(), flags);
+		LeafTicks.quietly(() -> t.placeInWorld(level, min, min, settings(), level.getRandom(), flags));
+	}
+
+	/** Whether {@code kind}'s cells are written without shape updates (held leaves, leaf rings). */
+	public static boolean quietKind(@Nullable String kind) {
+		return LEAVES.equals(kind) || LEAF_RING.equals(kind);
 	}
 
 	private static StructurePlaceSettings settings() {
@@ -330,9 +343,14 @@ public final class WorldJournal {
 	/**
 	 * Writes an undo's blocks: a BOX writer's through a structure template over its entry's box ({@code boxFlags}, the
 	 * buildings' restore exactly), then the CELL writers' cell by cell, lowest first ({@code cellFlags}; {@link #LEAVES}
-	 * cells without shape updates), their block entity data loaded after. Server thread.
+	 * and {@link #LEAF_RING} cells without shape updates), their block entity data loaded after. The leaf ticks all this
+	 * schedules are dropped ({@link LeafTicks}): leaves keep the distances the undo wrote. Server thread.
 	 */
 	public static void apply(ServerLevel level, Journal.UndoPlan plan, int boxFlags, int cellFlags) {
+		LeafTicks.quietly(() -> write(level, plan, boxFlags, cellFlags));
+	}
+
+	private static void write(ServerLevel level, Journal.UndoPlan plan, int boxFlags, int cellFlags) {
 		Map<String, Map<Long, Value>> boxes = new LinkedHashMap<>();
 		List<Journal.Write> cells = new ArrayList<>();
 		for (Journal.Write w : plan.writes()) {
@@ -356,7 +374,7 @@ public final class WorldJournal {
 		for (Journal.Write w : cells) {
 			m.set(Journal.x(w.pos()), Journal.y(w.pos()), Journal.z(w.pos()));
 			Entry by = plan.updated().get(w.by());
-			int flags = by != null && LEAVES.equals(by.kind()) ? cellFlags | Block.UPDATE_KNOWN_SHAPE : cellFlags;
+			int flags = by != null && quietKind(by.kind()) ? cellFlags | Block.UPDATE_KNOWN_SHAPE : cellFlags;
 			level.setBlock(m, state(level, w.value()), flags);
 			if (w.value().nbt() != null) {
 				BlockEntity be = level.getBlockEntity(m);

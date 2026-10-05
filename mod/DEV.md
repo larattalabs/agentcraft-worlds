@@ -830,6 +830,15 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
   block states read on the integrated server (palette index per cell, x fastest, then z, then y). Dump a road's box before laying and
   after removing it and compare: an exact restore is 0 differing cells (vanilla `/execute if blocks` is capped at 32 768 cells and a
   `/clone` copy settles differently: water, falling blocks, leaves).
+- `dev.region.capture {name, x0, y0, z0, x1, y1, z1}` / `dev.region.diff {name, limit?}` / `dev.region.hash {x0..z1}` (QA,
+  `client.world.RegionDev`, at most 4M cells): the overworld's block states **and block entity data**, kept in memory and
+  compared on the integrated server (`{differ, diffs: [{pos, was, now}]}`) or hashed (SHA-256). For exact restores of a
+  building's site and the leaves around it (docs/BUILDINGS.md "Leaf ring": capture box + 7, place, soak, remove, diff).
+- `dev.buildings.timing {reset?}` (QA, `building.PlaceTiming`): the last placement's (or move's) time in `Buildings.place`,
+  the leaf ring's part of it and its cell count, the interval between the server ticks around it (a command runs between
+  ticks, so this is the stall), the longest tick interval since the last reset, and how many leaf ticks restores dropped.
+- `dev.buildings.move {building, x, y, z, turns?, force?}` (QA): `Buildings.move` to a rotated box minimum in the overworld,
+  as the hub's Move does but without the ghost -> `{building, box, restoreBox}`.
 - `dev.roads.preview {a, b, width?, lanterns?, bridge?}` plans the route and shows the ghost (closes screens; Enter lays,
   Esc cancels); `{cancel:true}` hides it. Replies with the client's plan (what the server will do unless the world changes).
 - `dev.roads.lay {a?, b?, width?, lanterns?, bridge?}`: lays through the integrated server (it checks and plans again);

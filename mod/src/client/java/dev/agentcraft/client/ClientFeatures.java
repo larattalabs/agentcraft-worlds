@@ -23,6 +23,7 @@ import dev.agentcraft.client.village.VillageBoardFeature;
 import dev.agentcraft.client.ui.UiDev;
 import dev.agentcraft.client.world.AnchorsDev;
 import dev.agentcraft.client.world.ItemsDev;
+import dev.agentcraft.client.world.RegionDev;
 
 /**
  * The one place that wires every client feature. Each feature lives in its own package with an
@@ -41,6 +42,7 @@ public final class ClientFeatures {
 		AnchorsDev.init();       // dev.anchors, dev.camera {anchor}
 		UiDev.init();            // dev.state ui (pause, parent, crash guards), dev.ui.pause, dev.guard.inject
 		ItemsDev.init();         // dev.screen creative_agentcraft
+		RegionDev.init();        // dev.region.capture/diff/hash, dev.buildings.timing (QA of exact restores)
 		AgentsFeature.init();    // agent NPCs, nameplates, dev.agents
 		HudFeature.init();       // connection banner (+ Phase 3: goal boss bar, toasts)
 		HqClientFeature.init();  // lamps / podium / atrium driven by state (Phase 3)

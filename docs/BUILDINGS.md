@@ -336,12 +336,58 @@ kind `leaves`, policy CELL, owned by the building, each cell's `before` the natu
   what now hangs on them: restored leaves whose logs a standing site cleared, leaves the removed site held.
 - **Forget** releases the hold with the site's entry: the building stays, so its held leaves stay persistent.
 
+### Leaf ring
+
+World generation leaves many leaf `distance`s larger than their nearest log gives (trees generated over each other: dark
+oak, jungle edges, overlapping canopies). Any shape update next to such a leaf lets the canopy relax to the true distances,
+so placing a site (and the decay and holds around it) and then removing it changed leaf distances up to about 7 blocks
+outside the box, held leaves or not, and the box restore's own shape updates scheduled leaf ticks that changed more
+afterwards. Since 2026-10-05 (`building.LeafGuard.ring`, ported from Architect, `LeafGuardTest`) Remove is exact there too:
+- **Recorded**: placement reads, before the box changes, every leaf within 8 of the snapshot box but outside it (persistent
+  or not) and records it as a journal entry of its own: kind `leafring`, policy CELL, owned by the building, each cell's
+  `before` and `after` the leaf as it was (nothing is written). Left out: cells of any other active journal entry (a
+  standing site's box, held leaves, another site's ring, a road: they are theirs, and a ring cell over them would turn
+  their undo's write into a hand-down that writes nothing), the leaves this placement holds (their hold gives their natural
+  state back), cells in unloaded chunks. It commits with the site's entry, so it has the journal's save/reload and crash
+  safety (a crash before the commit leaves nothing: the ring changed no block).
+- **Remove / Move** undo the ring with the site's entry, trophies and holds (one group): each ring cell that still holds
+  the same leaf (same block, same `persistent` and `waterlogged`; `LeafGuard.sameLeaf`, the `distance` may differ) gets
+  its recorded state back, quietly (`UPDATE_KNOWN_SHAPE`, as held leaves). A leaf the player broke, replaced, placed by hand
+  or waterlogged is left (the CELL rule).
+- **Restores drop their leaf ticks** (`journal.LeafTicks`, `mixin.LevelTicksMixin`): `WorldJournal.apply` (every undo:
+  Remove, Move, roads, trophies) and `restoreTemplate` (a rolled-back placement) cancel the leaf ticks scheduled while
+  they write, so the restored leaves keep the distances the undo wrote instead of relaxing again. A leaf's scheduled tick
+  only recomputes its `distance` (decay is a random tick); every other block and fluid tick is scheduled as usual.
+  Placement keeps its leaf ticks (vanilla behaviour while the site stands; the ring puts it back on Remove).
+- **Any order**: a later site whose box takes in a ring leaf records it (maybe relaxed) as its `before`; when the ring's
+  site goes first the hand-down gives the later box the recorded leaf, when the later site goes first its box writes what
+  it found and the ring then writes the recorded leaf. A later hold over a ring leaf (a re-hold, its own or a neighbour's)
+  works the same way. Every order is in `LeafGuardTest`; a reactivated removal (crash safety) reverses the hand-downs.
+- **Ring again**: after a Remove or Move, the sites standing near the restored box (within 16 of it) record a new
+  `leafring` entry each over the leaves around them that now belong to no entry (the removed site's box, ring and holds
+  had them), as they are right after the restore. A moved building's new site is placed before its old site is restored,
+  and its placement's leaf ticks run after that, so without this the leaves between the two sites would be in no ring.
+  These entries, and the re-hold's (`leaves`), name the undo they followed (meta `after`: the site's entry id). When the
+  next world start finds that the undo never reached the disk and takes it back (record back, or a move taken back), it
+  releases them in the same commit (`Buildings.followers`): their cells may lie in the box that stands again, and a cell
+  over the box's would turn its next Remove's write into a hand-down that writes nothing (`LeafGuardTest`). A released
+  re-ring changed no block; a released re-hold's leaves stay persistent.
+- **Forget** releases the ring with the site's entry (the building stays; nothing is written).
+- **Cost**: one pass over box + 8 (and loading the active entries near it) per placement; `dev.buildings.timing` reports
+  the time in `Buildings.place`, the ring's part and cell count, and the server tick interval around the placement.
+- Not covered: leaves next to a road or trophy that are undone on their own (only a building's Remove and Move ring
+  again), leaves past 8 of the box (a relaxation that travels further through one canopy), and leaves whose distance
+  vanilla changes while no site holds them.
+
+QA: `dev.region.capture {name, x0..z1}` then `dev.region.diff {name}` (block states plus block entity data, at most 4M
+cells) or `dev.region.hash`; capture box + 7 before placing, place, soak, remove, wait, diff: 0 cells.
+
 ### Crash safety
 
 Removing a building (or moving it away) restores its site at once, but the restored chunks only reach the disk
 with some later save, and a save does not promise it: an autosave or a pause save (singleplayer saves every time
 the game pauses: the Esc menu, any AgentCraft screen) skips chunks saved in the last few seconds and does not
-wait for the writes. So the site's journal entry is kept undone (with its trophies' and held leaves' entries, one group), and the site
+wait for the writes. So the site's journal entry is kept undone (with its trophies', held leaves' and leaf ring's entries, one group), and the site
 recorded under `pending` in `agentcraft-buildings.json` (`snapshot` names the entry, `j<n>`; an imported pending site
 keeps its old file name, which the journal's `legacy` map resolves), until the **next world start**, which settles each
 pending site on evidence (`Reconcile.decide`, unit-tested), never on a count of saves:
@@ -502,7 +548,7 @@ verdict's notes; `dev.build.state.conflicts.site {water, lava, drops, maxDrop, o
 
 Every AgentCraft world change is an entry of one per-world journal, `<world>/agentcraft-journal/` (package
 `dev.agentcraft.journal`, wave 3): buildings and fixtures (their whole site: template box, foundation and entrance
-approach), roads, trophy signs, the leaves a site holds ("Held leaves"), anything later. An entry is `{id: "j<n>", kind, owner, dimension, policy, createdAt,
+approach), roads, trophy signs, the leaves a site holds ("Held leaves") and the leaves around it ("Leaf ring"), anything later. An entry is `{id: "j<n>", kind, owner, dimension, policy, createdAt,
 status, cells: [{pos, layer, before, after}], meta}`: `owner` is the record it belongs to (`b3`, `r2`; a trophy's is its
 building), `before`/`after` a block state with its block entity data, `meta` the owner's record when it was made (crash
 repair rebuilds a lost record from it).
