@@ -1,6 +1,6 @@
 // Claude backend, goal messages (Goals tab): goal.message runs as a turn of the lead's session for that
 // goal, built from the goal's unread messages when it starts; its reply goes to the goal's thread.
-// A restart before the lead answered offers the messages again.
+// A restart, stop or release before the lead answered offers the messages again.
 import type { Goal } from '../../../protocol.js';
 import { truncate } from '../../../util/text.js';
 import { type TurnStats } from '../stream.js';
@@ -92,8 +92,19 @@ export abstract class GoalMessageJobs extends FollowupJobs {
       for (const m of this.fm.store.data.messages) if (inf.messageIds.includes(m.id) && m.to === agentId) m.to = now;
       this.fm.store.markDirty();
     }
-    this.fm.log.info(`recover: ${agentId}'s answer about ${inf.goalId ?? 'a goal'} was interrupted; the message${inf.messageIds?.length === 1 ? '' : 's'} will be asked again`);
+    this.fm.log.info(`${agentId}'s answer about ${inf.goalId ?? 'a goal'} was interrupted; the message${inf.messageIds?.length === 1 ? '' : 's'} will be asked again`);
     return true;
+  }
+
+  /**
+   * The lead is stopped or released: the goal messages its running, paused or delayed goal-message
+   * turn had taken (and not answered) are unread again, so they are not lost with the turn.
+   */
+  protected releaseGoalMessages(agentId: string): void {
+    const recs: Inflight[] = [this.pausedJobs.get(agentId), this.delayed.get(agentId)?.job].filter((j): j is Job => !!j?.goalReply).map((j) => ({ ...this.inflightOf(j), startedAt: j.startedAt ?? 0 }));
+    const inf = this.st.inflight[agentId];
+    if (inf?.goalReply) recs.push(inf);
+    for (const rec of recs) this.requeueGoalMessage(agentId, rec);
   }
 
   /** goal.cancel: the lead stops planning / reviewing / triaging that goal (its goal messages still run). */

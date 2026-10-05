@@ -300,7 +300,16 @@ export function mergeMcpServers(current: unknown, entries: Entry[]): Checked {
       if (before?.type === 'http' || before?.type === 'sse') delete next.type;
       if (before?.type === 'stdio') next.type = 'stdio';
       next.command = e.command;
-      if (e.args) next.args = restoreArgs(e.args, Array.isArray(before?.args) ? (before.args as unknown[]).filter((a): a is string => typeof a === 'string') : []);
+      if (e.args) {
+        const args = restoreArgs(e.args, Array.isArray(before?.args) ? (before.args as unknown[]).filter((a): a is string => typeof a === 'string') : []);
+        // a hidden argument that moved (one inserted or removed before it) cannot be restored: never written as "(hidden)"
+        const lost = args.map((a, i) => (a === HIDDEN || a.endsWith(`=${HIDDEN}`) ? i + 1 : 0)).filter(Boolean);
+        if (lost.length) {
+          problems.push(`${e.name}: argument${lost.length > 1 ? 's' : ''} ${lost.join(', ')} ${lost.length > 1 ? 'are' : 'is'} hidden and moved; enter ${lost.length > 1 ? 'them' : 'it'} again`);
+          continue;
+        }
+        next.args = args;
+      }
       const env = mergeSecretMap(before?.env, e.env ?? {});
       if (env) next.env = env;
       else delete next.env;

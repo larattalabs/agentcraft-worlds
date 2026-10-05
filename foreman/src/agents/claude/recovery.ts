@@ -23,14 +23,15 @@ export abstract class RecoveryLayer extends OutcomesLayer {
         delete st.inflight[agentId];
         continue;
       }
-      if (inf.goalReply && this.requeueGoalMessage(agentId, inf)) {
-        delete st.inflight[agentId];
-        continue;
-      }
+      // (a question the turn asked: the answer resumes it, as a goal-message turn still)
       const openQ = this.openQuestion(agentId);
       if (openQ) {
         this.fm.log.info(`recover: ${agentId} is waiting on ${openQ.id}; will resume after the answer`);
         this.fm.setAgent(agentId, { state: 'waiting_user', station: 'user', activity: 'waiting for your answer' });
+        continue;
+      }
+      if (inf.goalReply && this.requeueGoalMessage(agentId, inf)) {
+        delete st.inflight[agentId];
         continue;
       }
       const session = this.fm.store.data.sessions[inf.sessionKey];

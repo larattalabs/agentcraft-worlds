@@ -232,6 +232,10 @@ describe('S2 MCP servers', () => {
     // removal of a server that is not there: refused on its own too
     const ghost = await call(h, { type: 'config.set', changes: [{ key: 'claude.context.mcpServers', value: [{ name: 'ghost', remove: true }] }] });
     expect(ghost.error).toContain('ghost: no such MCP server');
+    // a hidden argument that moved (an argument inserted before it) is refused, never written as "(hidden)"
+    const moved = await call(h, { type: 'config.set', changes: [{ key: 'claude.context.mcpServers', value: [{ name: 'gh', type: 'stdio', command: 'npx', args: ['--first', '-y', 'gh-mcp', '--token', '(hidden)', '--api-key=(hidden)', '(hidden)'] }] }] });
+    expect(moved.ok).toBe(false);
+    expect(moved.error).toContain('gh: arguments 5, 6, 7 are hidden and moved; enter them again');
     expect(fs.readFileSync(h.file, 'utf8')).toBe(before);
     expect(h.fm.status.restartRequired).toBeUndefined();
     await expectNoSecrets(h, [...all, 'bad-secret-1', 'bad-secret-2', 'bad-secret-3', 'bad-secret-4', 'bad-secret-5', 'bad-secret-6']);

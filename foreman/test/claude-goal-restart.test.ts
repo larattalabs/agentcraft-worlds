@@ -31,7 +31,8 @@ interface Call {
  * The lead: plans "New goal" prompts (a plan note and one task) unless the goal text says HOLD-PLAN
  * (then it hangs until aborted); answers "Message from" prompts with its final text "ANSWER: ...",
  * except (first run only) HANG (hangs after it has a session), EARLY (hangs before it has one) and
- * REPLY-THEN-HANG (answers with send_message, then hangs).
+ * REPLY-THEN-HANG (answers with send_message, then hangs) and ASK (asks the user, then waits). A resumed
+ * turn after an answer ("Earlier you asked") ends with "ANSWER after the question".
  */
 function fake(calls: Call[], firstRun: boolean) {
   return ({ prompt, options }: { prompt: string; options: Options }) => {
@@ -51,14 +52,26 @@ function fake(calls: Call[], firstRun: boolean) {
         if (goal) await callTool(options, 'write_memory', { title: `Plan: ${goal}`, body: `PLAN ${goal}`, scope: 'shared' });
         if (goal || /no tasks/i.test(await callTool(options, 'list_tasks', {}))) await callTool(options, 'create_task', { title: `Task for ${goal ?? 'resumed plan'}`, description: 'x', assignee: 'kit' });
         text = p === RESUME_PROMPT ? 'RESUMED' : 'planned';
-      } else if (p.startsWith('Message from')) {
-        const asked = /:\n([\s\S]*?)\n\n/.exec(p)?.[1] ?? '';
+      } else if (p.startsWith('Earlier you asked')) {
+        text = 'ANSWER after the question';
+      } else if (/Message from \w+ about goal/.test(p)) {
+        // (a lead taking the goal over gets a takeover note first)
+        const asked = /Message from \w+ about goal [^\n]*:\n([\s\S]*?)\n\n/.exec(p)?.[1] ?? '';
         if (firstRun && asked.includes('REPLY-THEN-HANG')) {
           await callTool(options, 'send_message', { to: 'user', text: `Replied before the restart to: ${asked}` });
           await aborted;
           return;
         }
         if (firstRun && asked.includes('HANG')) await aborted;
+        if (asked.includes('STOPME') && !stopped.has(asked)) {
+          stopped.add(asked);
+          await aborted;
+          return;
+        }
+        if (firstRun && asked.includes('ASK')) {
+          await Promise.race([callTool(options, 'ask_user', { question: 'Which parser?', options: ['regex', 'tokenizer'] }), aborted]);
+          return;
+        }
         if (options.abortController!.signal.aborted) return;
         text = `ANSWER: ${asked}`;
       }
@@ -67,6 +80,9 @@ function fake(calls: Call[], firstRun: boolean) {
     return Object.assign(run(), { close() {}, accountInfo: async () => ({ email: 'x' }) });
   };
 }
+
+/** STOPME messages already hung on once (the lead was stopped mid-answer) */
+const stopped = new Set<string>();
 
 const cleanup: string[] = [];
 afterAll(() => cleanup.forEach(rmrf));
@@ -150,6 +166,66 @@ describe('goal messages across a full Foreman restart', () => {
     // the lead had answered: its resumed turn's final text is not posted as a second answer
     expect(repliesTo(h2, goalId)).toEqual(['Replied before the restart to: REPLY-THEN-HANG status?']);
     await h2.fm.close();
+  });
+});
+
+describe('a goal-message turn waiting on a question across a restart', () => {
+  it('resumes with the answer as a goal-message turn (the message is not asked again)', async () => {
+    const { h, home, repo, goalId, calls } = await planned('theta');
+    h.fm.goalMessage(goalId, 'ASK: which parser should it use?');
+    await until(() => h.fm.decisions.open().some((d) => d.kind === 'question' && d.agentId === 'marlow'));
+    await h.fm.close();
+    expect(calls.filter((c) => c.prompt.includes('ASK: which parser'))).toHaveLength(1);
+
+    const calls2: Call[] = [];
+    const h2 = await boot(home, repo, calls2, false);
+    const q = h2.fm.decisions.open().find((d) => d.kind === 'question' && d.agentId === 'marlow')!;
+    expect(q.goalId).toBe(goalId);
+    expect(h2.fm.agent('marlow')!.state).toBe('waiting_user');
+    await h2.fm.answerDecision(q.id, 'tokenizer');
+    await until(() => repliesTo(h2, goalId).length > 0);
+    expect(repliesTo(h2, goalId)).toEqual(['ANSWER after the question']);
+    expect(calls2.some((c) => c.prompt.includes('ASK: which parser'))).toBe(false);
+    expect(calls2.find((c) => c.prompt.startsWith('Earlier you asked'))!.resume).toBe(h2.fm.store.data.sessions[`marlow:${goalId}`]!.sessionId);
+    await h2.fm.close();
+  });
+});
+
+describe('a goal-message turn stopped mid-answer (no restart)', () => {
+  it('leaves the message unread for the resume, which answers it', async () => {
+    const { h, goalId, calls } = await planned('iota');
+    h.fm.goalMessage(goalId, 'STOPME: one more thing?');
+    await until(() => calls.some((c) => c.prompt.includes('STOPME: one more thing?')));
+    expect(h.fm.bus.goalInbox('marlow')).toEqual([]);
+    await h.fm.agentAction('marlow', 'stop');
+    expect(h.fm.bus.goalInbox('marlow').map((m) => m.text)).toEqual(['STOPME: one more thing?']);
+    await h.fm.agentAction('marlow', 'resume');
+    await until(() => repliesTo(h, goalId).length > 0);
+    expect(repliesTo(h, goalId)).toEqual(['ANSWER: STOPME: one more thing?']);
+    expect(calls.filter((c) => c.prompt.includes('STOPME: one more thing?'))).toHaveLength(2);
+    await h.fm.close();
+  });
+});
+
+describe('a building lead released mid-answer (no restart)', () => {
+  it("hands the goal message to the goal's new lead, who answers it", async () => {
+    const home = tempDir();
+    const repo = await demoRepo();
+    cleanup.push(home, path.dirname(repo));
+    const calls: Call[] = [];
+    const h = await boot(home, repo, calls, true);
+    await h.fm.agentAction('kit', 'stop');
+    expect(h.fm.assignLead('w/b1', [h.fm.repos.list()[0]!.id]).leadId).toBe('ines');
+    const g = await h.fm.submitGoal('kappa');
+    expect(g.leadId).toBe('ines');
+    await until(() => h.fm.goal(g.id)!.status === 'active');
+    h.fm.goalMessage(g.id, 'STOPME: who takes this?');
+    await until(() => calls.some((c) => c.prompt.includes('STOPME: who takes this?')));
+    h.fm.releaseBuilding('w/b1');
+    await until(() => h.fm.store.data.messages.some((m) => m.from === 'marlow' && m.to === 'user' && m.goalId === g.id));
+    expect(h.fm.store.data.messages.filter((m) => m.from === 'marlow' && m.to === 'user' && m.goalId === g.id).map((m) => m.text)).toEqual(['ANSWER: STOPME: who takes this?']);
+    expect(h.fm.store.data.messages.find((m) => m.text === 'STOPME: who takes this?')!.to).toBe('marlow');
+    await h.fm.close();
   });
 });
 

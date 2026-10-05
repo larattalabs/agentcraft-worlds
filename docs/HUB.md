@@ -461,7 +461,8 @@ decisions, and with config.set loosen its own permissions). From now on:
   shown. `config.set` takes `[{name, type, command?, args?, url?, env?: {NAME: "value" | null}} | {name,
   remove: true}]`: each entry adds or replaces that one server (the others stay; fields the hub does
   not edit, such as headers, are kept); an argument or URL sent back exactly as shown keeps the stored
-  original in that place. Checks: name `[\w-]{1,64}` (not `agentcraft`), type, stdio needs a one-line
+  original in that place; a hidden argument that moved (one inserted or removed before it) is refused
+  (enter it again), never written as "(hidden)". Checks: name `[\w-]{1,64}` (not `agentcraft`), type, stdio needs a one-line
   `command` (no `url`), http/sse an http(s) `url` without credentials, query or fragment (no
   `command`/`args`/`env`), each name once, removing a server that is not there is refused. A change
   of any value (an env value too) puts the key into `foreman.status.restartRequired`.

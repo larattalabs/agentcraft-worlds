@@ -98,6 +98,8 @@ export class ClaudeBackend extends DesignTurns implements Backend {
     } else if (action === 'stop') {
       this.setStopped(agentId, true);
       if (r) this.abortTurn(r, 'stop');
+      // goal messages a stopped answer had taken wait for the resume (queueGoalMessages)
+      this.releaseGoalMessages(agentId);
       this.queues.delete(agentId);
       this.pausedJobs.delete(agentId);
       this.dropDelayed((id) => id === agentId);
@@ -178,6 +180,8 @@ export class ClaudeBackend extends DesignTurns implements Backend {
   onLeadReleased(leadId: string, goals: Goal[] = []): void {
     const r = this.running.get(leadId);
     if (r) this.abortTurn(r, 'stop');
+    // goal messages its stopped answer had taken: unread again, so the Foreman hands them on with the goals
+    this.releaseGoalMessages(leadId);
     this.queues.delete(leadId);
     this.pausedJobs.delete(leadId);
     this.dropDelayed((id) => id === leadId);
