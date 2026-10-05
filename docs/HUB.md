@@ -476,9 +476,10 @@ decisions, and with config.set loosen its own permissions). From now on:
   once; removing a server that is not there is refused. Errors name places (`server #2: ...`), never
   names or values. A change of any value (an env value too) puts the key into
   `foreman.status.restartRequired`.
-- **Redaction**: every secret value the Foreman knows (repository and MCP env values, MCP arguments, URL
-  paths and queries, header values, the rest of a command line, the client token; at least 6
-  characters) is replaced by `[redacted]` - also URL-encoded, JSON-escaped or base64 - in agent logs,
+- **Redaction** (best-effort defense for display and log channels; see docs/WAVE3.md for what it does
+  not cover): every secret value the Foreman knows (repository and MCP env values, header values, URL
+  userinfo / query / fragment, MCP arguments after a credential flag or credential-like `NAME=value`,
+  the client token, inherited Claude credentials; at least 6 characters, multi-line ones per line too) is replaced by `[redacted]` - also URL-encoded, JSON-escaped or base64 - in agent logs,
   the feed, `agent.say`, `notify`, desktop / Discord notifications, ack and error texts, setup / test output
   and console logs (foreman/src/redact.ts); stored feed and log text is cut again when the snapshot,
   `agent.logs.request` or `goal.digest` replays it (it may predate a secret).

@@ -342,7 +342,26 @@ export abstract class SessionsLayer extends TurnSetupLayer {
     return (o) => {
       const child = spawn(o.command, o.args, { cwd: o.cwd, env: scrubEnv(o.env as NodeJS.ProcessEnv), stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
       child.stderr?.setEncoding('utf8');
-      child.stderr?.on('data', (s: string) => this.fm.log.debug(`[${label} stderr] ${this.fm.redact(s).trim().slice(0, 300)}`));
+      // whole lines only: a secret split across two chunks is still one line when it is redacted
+      let pending = '';
+      const line = (l: string) => {
+        if (l.trim()) this.fm.log.debug(`[${label} stderr] ${this.fm.redact(l).trim().slice(0, 300)}`);
+      };
+      child.stderr?.on('data', (s: string) => {
+        pending += s;
+        const lines = pending.split('\n');
+        pending = lines.pop() ?? '';
+        // an endless line is flushed in large pieces (redacted whole up to there)
+        if (pending.length > 64_000) {
+          lines.push(pending);
+          pending = '';
+        }
+        for (const l of lines) line(l);
+      });
+      child.stderr?.on('end', () => {
+        line(pending);
+        pending = '';
+      });
       child.on('error', (e) => this.fm.log.debug(`[${label}] CLI process error: ${e.message}`));
       entry.child = child;
       entry.spawnedAt = Date.now();

@@ -530,10 +530,15 @@ character is refused); MCP servers are listed as `[{name, type, command, argCoun
 headerKeys, envKeys}]` - the executable, how many arguments, scheme://host - because arguments and the
 full URL are write-only: left out of a `config.set` entry they are kept exactly, sent they replace
 exactly (`{name, remove: true}` removes one; src/settings-secrets.ts). Errors name places (`server #2`,
-`env key #1`, `change #3`), never what was sent, and every secret value the Foreman knows (env values,
-MCP arguments, URL paths and queries, headers, the client token) is cut as `[redacted]` - also
-URL-encoded, JSON-escaped or base64 - from agent logs, the feed, notifications, acks, errors and console
-logs (src/redact.ts). `config.set` validates every change first (types, enums, ranges, agent ids of the cast,
+`env key #1`, `change #3`), never what was sent. As best-effort defense for display and log channels
+(the guarantee is the secret-free settings view), every secret value the Foreman knows (env values,
+headers, URL userinfo / query / fragment, MCP arguments after a credential flag such as `--token` or a
+credential-like `NAME=value`, the client token, inherited `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` /
+`CLAUDE_CODE_OAUTH_TOKEN`) is cut as `[redacted]` - also URL-encoded, JSON-escaped or base64 - from agent
+logs, the feed, structured text (blocked reasons, agent messages, notes), activity and status lines,
+notifications, acks, errors, the session-history index and console logs (src/redact.ts). Not covered:
+task titles / descriptions, decision options, goal text, diffs, values under 6 characters, other
+encodings. `config.set` validates every change first (types, enums, ranges, agent ids of the cast,
 model names; all or nothing), then the whole new file the way the Foreman loads it, writes it
 atomically with the previous file kept as `config.json.bak` (unknown keys, other sections, key
 order and an existing key's spelling such as `merge-style` kept), applies the live keys and

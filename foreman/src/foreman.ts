@@ -8,7 +8,7 @@ import { LEAD_ID, loadCast, type CastMember } from './cast.js';
 import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, redactingLogger, type Ctx, type Logger } from './context.js';
-import { configSecrets, Redactor } from './redact.js';
+import { configSecrets, INHERITED_SECRET_VARS, Redactor } from './redact.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
@@ -196,8 +196,10 @@ export class Foreman {
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
     this.redactor.add(configSecrets(opts.config));
+    // the Claude credentials the Foreman inherited (an API key, an OAuth token): never printed
+    this.redactor.add(INHERITED_SECRET_VARS.map((k) => process.env[k]));
     this.log = redactingLogger(opts.logger ?? consoleLogger('foreman', { debug: opts.config.debug, quiet: opts.config.quiet }), (s) => this.redact(s));
-    this.store = new Store(opts.config.dataDir);
+    this.store = new Store(opts.config.dataDir, { log: this.log });
     const now = opts.now ?? Date.now;
     this.ctx = { store: this.store, emit: (m) => this.emit(m), now, log: this.log, redact: (s) => this.redact(s) };
     this.tasks = new TaskGraph(this.ctx);
@@ -384,7 +386,7 @@ export class Foreman {
     };
     set('state', patch.state);
     set('station', patch.station);
-    if (patch.activity !== undefined) set('activity', truncate(patch.activity.replace(/\s+/g, ' ').trim(), 48));
+    if (patch.activity !== undefined) set('activity', truncate(this.redact(patch.activity).replace(/\s+/g, ' ').trim(), 48));
     set('paused', patch.paused);
     set('active', patch.active);
     set('title', patch.title);
@@ -1181,7 +1183,8 @@ export class Foreman {
   // ---- foreman status -------------------------------------------------------------------------
 
   setStatus(patch: Partial<ForemanStatus>): void {
-    const next = { ...this.status, ...patch };
+    // a status / hold message can quote an auth probe's error
+    const next = { ...this.status, ...patch, ...(patch.message !== undefined ? { message: this.redact(patch.message) } : {}), ...(patch.account !== undefined ? { account: this.redact(patch.account) } : {}) };
     for (const k of Object.keys(next) as Array<keyof ForemanStatus>) if (next[k] === undefined) delete next[k];
     if (JSON.stringify(next) === JSON.stringify(this.status)) return;
     this.status = next;

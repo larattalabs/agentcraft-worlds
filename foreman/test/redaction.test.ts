@@ -13,6 +13,7 @@ import type { Logger } from '../src/context.js';
 import { Foreman } from '../src/foreman.js';
 import { Notifier } from '../src/notifier.js';
 import { ServerMessage, type Outbound } from '../src/protocol.js';
+import { encodeDir, SessionHistory } from '../src/history.js';
 import { configSecrets, MIN_SECRET, REDACTED, Redactor, secretVariants } from '../src/redact.js';
 import { ForemanServer } from '../src/server.js';
 import { demoRepo, rmrf, tempDir, testConfig, until } from './helpers.js';
@@ -75,13 +76,92 @@ describe('Redactor', () => {
     expect(o.a[0]).toBe('x sk-live-0123456789');
   });
 
-  it('collects repository env, MCP env, args, URL paths / queries, headers and the rest of a command line', () => {
+  it('collects only real secrets: env values, headers, URL userinfo / query / fragment, credential arguments', () => {
     const got = configSecrets({
       repoSettings: { '/r': { env: { A: 'repo-env-1' } } },
-      claude: { context: { mcpServers: { s: { command: 'node /srv/x.js', args: ['--token', 'arg-val-2', 'KEY=kv-val-3'], env: { B: 'mcp-env-4' } }, h: { type: 'http', url: 'https://h.example/p/path-tok-5?k=query-tok-6', headers: { Authorization: 'Bearer hdr-tok-7' } }, plain: { type: 'http', url: 'https://plain.example' } } } },
+      claude: {
+        context: {
+          mcpServers: {
+            s: { command: 'node /srv/x.js --api-key cmd-key-8', args: ['/srv/review-project', '--branch', 'feature/notes', '-y', '@scope/server-notes', '--token', 'arg-val-2', 'API_KEY=kv-val-3', '--password=pw-val-9', '-p', 'p-val-10', '-H', 'X-Api: hdr-arg-11', '--auth-bearer', 'auth-val-12', 'LOG_LEVEL=verbose-debug'], env: { B: 'mcp-env-4' } },
+            h: { type: 'http', url: 'https://u:userinfo-pw-13@h.example/p/path-segment-5?k=query-tok-6#frag-tok-14', headers: { Authorization: 'Bearer hdr-tok-7' } },
+          },
+        },
+      },
     } as never);
-    for (const s of ['repo-env-1', 'arg-val-2', 'kv-val-3', 'mcp-env-4', 'path-tok-5', 'query-tok-6', 'hdr-tok-7', 'Bearer hdr-tok-7', '/srv/x.js']) expect(got).toContain(s);
-    expect(got).not.toContain('https://plain.example');
+    for (const s of ['repo-env-1', 'arg-val-2', 'kv-val-3', 'mcp-env-4', 'query-tok-6', 'hdr-tok-7', 'cmd-key-8', 'pw-val-9', 'p-val-10', 'hdr-arg-11', 'auth-val-12', 'userinfo-pw-13', 'frag-tok-14']) expect(got, s).toContain(s);
+    for (const s of ['/srv/review-project', 'feature/notes', '@scope/server-notes', '/srv/x.js', 'path-segment-5', 'verbose-debug']) expect(got.some((g) => g.includes(s)), s).toBe(false);
+  });
+
+  it('over-redaction: a plain path / branch argument stays readable, a --token value is still cut', () => {
+    const home = tempDir();
+    dirs.push(home);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ claude: { context: { mcpServers: { fs: { command: 'npx', args: ['-y', 'fs-mcp', '/srv/review-project', '--branch', 'feature/notes', '--token', 'tok-value-123456'] } } } } }));
+    const fm = new Foreman({ config: testConfig(home, ['--backend', 'claude']), logger: capture().logger, notifier: new Notifier({ enabled: false, bell: false }) });
+    foremen.push(fm);
+    expect(fm.redact('Use /srv/review-project on feature/notes')).toBe('Use /srv/review-project on feature/notes');
+    expect(fm.redact('auth with tok-value-123456 failed')).toBe(`auth with ${REDACTED} failed`);
+  });
+
+  it('a multi-line secret is cut whole and line by line (each line on its own length)', () => {
+    const r = new Redactor();
+    r.add(['-----BEGIN KEY-----\nline-two-of-the-key\nab\n-----END KEY-----']);
+    expect(r.redact('saw line-two-of-the-key in stderr')).toBe(`saw ${REDACTED} in stderr`);
+    expect(r.redact('ab cd')).toBe('ab cd');
+  });
+
+  it('inherited Claude credentials, agent activity and status messages are cut', () => {
+    const home = tempDir();
+    dirs.push(home);
+    const before = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-inherited-key-0001';
+    try {
+      const { logs, logger } = capture();
+      const fm = new Foreman({ config: testConfig(home, ['--backend', 'claude']), logger, notifier: new Notifier({ enabled: false, bell: false }) });
+      foremen.push(fm);
+      const out: Outbound[] = [];
+      fm.subscribe((x) => out.push(x));
+      fm.setAgent('marlow', { activity: 'probing sk-ant-inherited-key-0001' });
+      fm.setStatus({ auth: 'failed', message: 'auth probe: 401 for sk-ant-inherited-key-0001' });
+      fm.log.error('x-api-key: sk-ant-inherited-key-0001');
+      expect(fm.agent('marlow')!.activity).toBe(`probing ${REDACTED}`);
+      expect(fm.status.message).toBe(`auth probe: 401 for ${REDACTED}`);
+      expectAbsent([JSON.stringify(out), JSON.stringify(fm.snapshot()), logs.join('\n')].join('\n'), ['sk-ant-inherited-key-0001']);
+    } finally {
+      if (before === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = before;
+    }
+  });
+
+  it('a corrupt state file is reported through the redacting logger', () => {
+    const home = tempDir();
+    dirs.push(home);
+    const secret = 'sk-corrupt-state-secret-0011';
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ repoSettings: { '/r': { env: { K: secret } } } }));
+    const cfg = testConfig(home, ['--backend', 'claude']);
+    fs.mkdirSync(cfg.dataDir, { recursive: true });
+    fs.writeFileSync(path.join(cfg.dataDir, 'state.json'), `${secret} not json`);
+    const { logs, logger } = capture();
+    const fm = new Foreman({ config: cfg, logger, notifier: new Notifier({ enabled: false, bell: false }) });
+    foremen.push(fm);
+    expect(logs.some((l) => l.includes('[store] could not read'))).toBe(true);
+    expectAbsent(logs.join('\n'), [secret]);
+  });
+
+  it('the session-history index keeps prompts and titles redacted', async () => {
+    const root = tempDir();
+    const ws = fs.realpathSync(tempDir());
+    dirs.push(root, ws);
+    const dir = path.join(root, encodeDir(ws));
+    fs.mkdirSync(dir, { recursive: true });
+    const now = new Date().toISOString();
+    fs.writeFileSync(path.join(dir, 'abcd1234.jsonl'), JSON.stringify({ cwd: ws, sessionId: 'abcd1234', type: 'user', timestamp: now, message: { role: 'user', content: 'export API_KEY=sk-history-secret-0009 and run it' } }) + '\n');
+    const r = new Redactor();
+    r.add(['sk-history-secret-0009']);
+    const indexFile = path.join(root, 'history-index.json');
+    const h = new SessionHistory({ root, within: () => [ws], exclude: [], days: 30, indexFile, redact: (t) => r.redact(t) });
+    expect((await h.find()).length).toBe(1);
+    expect(fs.readFileSync(indexFile, 'utf8')).toContain(`API_KEY=${REDACTED}`);
+    expectAbsent(fs.readFileSync(indexFile, 'utf8'), ['sk-history-secret-0009']);
   });
 });
 
@@ -101,7 +181,7 @@ describe('runtime diagnostics (finding 3)', () => {
     const urlSecret = 'url-path-secret-0003';
     fs.writeFileSync(
       path.join(home, 'config.json'),
-      JSON.stringify({ repoSettings: { [repoPath]: { env: { API_KEY: envSecret } } }, claude: { context: { mcpServers: { gh: { command: 'npx', args: ['--token', argSecret] }, web: { type: 'http', url: `https://mcp.example/mcp/${urlSecret}` } } } } }),
+      JSON.stringify({ repoSettings: { [repoPath]: { env: { API_KEY: envSecret } } }, claude: { context: { mcpServers: { gh: { command: 'npx', args: ['--token', argSecret] }, web: { type: 'http', url: `https://mcp.example/mcp?key=${urlSecret}` } } } } }),
     );
     const { logs, logger } = capture();
     const fm = new Foreman({ config: testConfig(home, ['--backend', 'claude', '--repo', repoPath, '--workers', 'kit', '--debug']), logger, notifier: new Notifier({ enabled: false, bell: false }) });
@@ -115,10 +195,10 @@ describe('runtime diagnostics (finding 3)', () => {
         yield m({ type: 'system', subtype: 'init', session_id: s, model: 'fake' });
         // an MCP server's error result quoting its credentials (plain, URL-encoded, JSON-escaped, base64, at the cut)
         yield m({ type: 'assistant', session_id: s, message: { content: [{ type: 'tool_use', id: 'tu-mcp', name: 'mcp__gh__get_issue', input: {} }] } });
-        const quoted = `401 for token=${argSecret} url=${encodeURIComponent(`https://mcp.example/mcp/${urlSecret}`)} body={"key":${JSON.stringify(envSecret)}} b64=${Buffer.from(envSecret).toString('base64')}`;
+        const quoted = `401 for token=${argSecret} url=${encodeURIComponent(`https://mcp.example/mcp?key=${urlSecret}`)} body={"key":${JSON.stringify(envSecret)}} b64=${Buffer.from(envSecret).toString('base64')}`;
         yield m({ type: 'user', session_id: s, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-mcp', is_error: true, content: `${quoted} ${'x'.repeat(580)}${argSecret}` }] } });
         // the CLI process the session spawns writes the secret to stderr
-        const child = options.spawnClaudeCodeProcess!({ command: process.execPath, args: ['-e', `process.stderr.write('auth failed: ' + ${JSON.stringify(envSecret)} + '\\n')`], cwd: options.cwd!, env: { ...process.env }, signal: new AbortController().signal } as never) as unknown as NodeJS.EventEmitter;
+        const child = options.spawnClaudeCodeProcess!({ command: process.execPath, args: ['-e', `const s = ${JSON.stringify(envSecret)}; process.stderr.write('auth failed: ' + s.slice(0, 10)); setTimeout(() => process.stderr.write(s.slice(10) + '\\n'), 80)`], cwd: options.cwd!, env: { ...process.env }, signal: new AbortController().signal } as never) as unknown as NodeJS.EventEmitter;
         await new Promise((r) => child.once('exit', r));
         await new Promise((r) => setTimeout(r, 50));
         stderrDone = true;

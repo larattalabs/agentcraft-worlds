@@ -157,8 +157,9 @@ export async function main(argv: string[]): Promise<void> {
       if (d.trim() === 'q') void shutdown('quit');
     });
   }
-  process.on('uncaughtException', (e) => log.error(`uncaught: ${e.stack ?? e}`));
-  process.on('unhandledRejection', (e) => log.error(`unhandled rejection: ${(e as Error)?.stack ?? e}`));
+  // through the redacting logger: an error can quote a secret
+  process.on('uncaughtException', (e) => foreman.log.error(`uncaught: ${e.stack ?? e}`));
+  process.on('unhandledRejection', (e) => foreman.log.error(`unhandled rejection: ${(e as Error)?.stack ?? e}`));
 
   await foreman.start(backend);
   if (backend instanceof SimBackend && (cfg.autostart || cfg.goal)) {

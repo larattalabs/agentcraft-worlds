@@ -122,14 +122,15 @@ public final class SecretSettings {
 
 	/** Why {@code name} cannot be set, or null. {@code repo}: a repository's env (git's variables are refused too). */
 	public static @Nullable String nameProblem(String name, boolean repo) {
+		// never quotes the name: whatever was typed there may be a secret
 		if (name == null || !ENV_NAME.matcher(name).matches()) {
-			return "\"" + (name == null ? "" : name.length() > 40 ? name.substring(0, 40) : name) + "\" is not a variable name (letters, digits, _)";
+			return "not a variable name (letters, digits, _)";
 		}
 		if (repo && name.toUpperCase(Locale.ROOT).startsWith("GIT_")) {
-			return name + ": git variables cannot be set for a repository";
+			return "git variables cannot be set for a repository";
 		}
 		if (name.equals(CLIENT_TOKEN)) {
-			return name + ": the client token never reaches agents";
+			return "the client token never reaches agents";
 		}
 		return null;
 	}
@@ -143,10 +144,12 @@ public final class SecretSettings {
 			return "variables are needed";
 		}
 		List<String> problems = new ArrayList<>();
+		int i = 0;
 		for (var e : v.getAsJsonObject().entrySet()) {
+			String at = "variable " + ++i; // places, never names or values
 			String why = nameProblem(e.getKey(), repo);
 			if (why != null) {
-				problems.add(why);
+				problems.add(at + ": " + why);
 				continue;
 			}
 			JsonElement x = e.getValue();
@@ -154,13 +157,13 @@ public final class SecretSettings {
 				continue;
 			}
 			if (!x.isJsonPrimitive() || !x.getAsJsonPrimitive().isString()) {
-				problems.add(e.getKey() + ": must be text");
+				problems.add(at + ": must be text");
 			} else if (x.getAsString().length() > MAX_VALUE) {
-				problems.add(e.getKey() + ": is too long");
+				problems.add(at + ": is too long");
 			} else if (CONTROL.matcher(x.getAsString()).find()) {
-				problems.add(e.getKey() + ": must not contain control characters");
+				problems.add(at + ": must not contain control characters");
 			} else if (placeholder(x.getAsString())) {
-				problems.add(e.getKey() + ": type the real value (a placeholder is not one)");
+				problems.add(at + ": type the real value (a placeholder is not one)");
 			}
 		}
 		return problems.isEmpty() ? null : String.join("; ", problems);
@@ -180,14 +183,25 @@ public final class SecretSettings {
 		return out;
 	}
 
-	/** A staged update with every value replaced by {@link #STAGED} (removals stay null): for the DevBridge and logs. */
+	/**
+	 * A staged update as the DevBridge and logs may show it: every value {@link #STAGED} (removals stay null), anything
+	 * that is not a variable name or a text value - and a staged value that is not an object - {@link #HIDDEN}. Never a
+	 * copy of what was typed.
+	 */
 	public static JsonElement maskPatch(@Nullable JsonElement patch) {
-		if (patch == null || !patch.isJsonObject()) {
-			return patch == null ? JsonNull.INSTANCE : patch.deepCopy();
+		if (patch == null || patch.isJsonNull()) {
+			return JsonNull.INSTANCE;
+		}
+		if (!patch.isJsonObject()) {
+			return new JsonPrimitive(HIDDEN);
 		}
 		JsonObject out = new JsonObject();
+		int i = 0;
 		for (var e : patch.getAsJsonObject().entrySet()) {
-			out.add(e.getKey(), e.getValue().isJsonNull() ? JsonNull.INSTANCE : new JsonPrimitive(STAGED));
+			i++;
+			String k = ENV_NAME.matcher(e.getKey()).matches() ? e.getKey() : HIDDEN + " " + i;
+			JsonElement v = e.getValue();
+			out.add(k, v.isJsonNull() ? JsonNull.INSTANCE : new JsonPrimitive(v.isJsonPrimitive() && v.getAsJsonPrimitive().isString() ? STAGED : HIDDEN));
 		}
 		return out;
 	}
@@ -525,7 +539,7 @@ public final class SecretSettings {
 			return "name: agentcraft is the team tools server";
 		}
 		if (isNew && others.contains(n)) {
-			return "name: " + n + " is already a server";
+			return "name: already a server";
 		}
 		if (!SERVER_TYPES.contains(type)) {
 			return "type: stdio, http or sse";
@@ -597,15 +611,17 @@ public final class SecretSettings {
 		}
 		Set<String> seen = new LinkedHashSet<>();
 		List<String> problems = new ArrayList<>();
+		int i = 0;
 		for (JsonElement x : v.getAsJsonArray()) {
+			String at = "server " + ++i; // places, never names or values
 			if (!x.isJsonObject()) {
-				problems.add("every entry must be a server");
+				problems.add(at + ": must be a server");
 				continue;
 			}
 			JsonObject e = x.getAsJsonObject();
 			String name = str(e, "name");
 			if (name == null || !seen.add(name)) {
-				problems.add(name == null ? "an entry has no name" : name + ": listed twice");
+				problems.add(at + (name == null ? ": has no name" : ": listed twice"));
 				continue;
 			}
 			Server cur = null;
@@ -616,7 +632,7 @@ public final class SecretSettings {
 			}
 			if (e.has("remove")) {
 				if (cur == null) {
-					problems.add(name + ": no such MCP server");
+					problems.add(at + ": no such MCP server");
 				}
 				continue;
 			}
@@ -624,7 +640,7 @@ public final class SecretSettings {
 			String why = type == null ? "type: stdio, http or sse" : serverProblem(name, type, e.has("command") ? str(e, "command") : null,
 				e.has("args") ? strings(e, "args") : null, e.has("url") ? str(e, "url") : null, envOf(e), cur, false, List.of());
 			if (why != null) {
-				problems.add(name + " " + why);
+				problems.add(at + " " + why);
 			}
 		}
 		return problems.isEmpty() ? null : String.join("; ", problems);
@@ -666,37 +682,51 @@ public final class SecretSettings {
 	}
 
 	/**
-	 * Staged entries as the DevBridge and logs may show them: env values, every argument and the URL replaced by
-	 * {@link #STAGED}, a command line cut to its executable.
+	 * Staged entries as the DevBridge and logs may show them: env values, every argument and the URL {@link #STAGED}, a
+	 * command line cut to its executable, and anything malformed or unknown (a bad name, a field this mod does not send,
+	 * a value of the wrong kind) {@link #HIDDEN}. Never a copy of what was typed.
 	 */
 	public static JsonElement maskEntries(@Nullable JsonElement staged) {
-		if (staged == null || !staged.isJsonArray()) {
-			return staged == null ? JsonNull.INSTANCE : staged.deepCopy();
+		if (staged == null || staged.isJsonNull()) {
+			return JsonNull.INSTANCE;
+		}
+		if (!staged.isJsonArray()) {
+			return new JsonPrimitive(HIDDEN);
 		}
 		JsonArray out = new JsonArray();
 		for (JsonElement x : staged.getAsJsonArray()) {
 			if (!x.isJsonObject()) {
-				out.add(x.deepCopy());
+				out.add(HIDDEN);
 				continue;
 			}
-			JsonObject o = x.getAsJsonObject().deepCopy();
-			if (o.has("env")) {
-				o.add("env", maskPatch(o.get("env")));
-			}
-			if (o.has("args") && o.get("args").isJsonArray()) {
-				JsonArray a = new JsonArray();
-				for (int i = 0; i < o.getAsJsonArray("args").size(); i++) {
-					a.add(STAGED);
+			JsonObject o = new JsonObject();
+			for (var f : x.getAsJsonObject().entrySet()) {
+				String k = f.getKey();
+				JsonElement v = f.getValue();
+				String text = v.isJsonPrimitive() && v.getAsJsonPrimitive().isString() ? v.getAsString() : null;
+				switch (k) {
+					case "name" -> o.addProperty(k, text != null && SERVER_NAME.matcher(text).matches() ? text : HIDDEN);
+					case "type" -> o.addProperty(k, text != null && SERVER_TYPES.contains(text) ? text : HIDDEN);
+					case "remove" -> o.add(k, v.isJsonPrimitive() && v.getAsJsonPrimitive().isBoolean() ? v.deepCopy() : new JsonPrimitive(HIDDEN));
+					case "env" -> o.add(k, maskPatch(v));
+					case "args" -> {
+						if (v.isJsonArray()) {
+							JsonArray a = new JsonArray();
+							for (int i = 0; i < v.getAsJsonArray().size(); i++) {
+								a.add(STAGED);
+							}
+							o.add(k, a);
+						} else {
+							o.addProperty(k, HIDDEN);
+						}
+					}
+					case "url" -> o.addProperty(k, text != null ? STAGED : HIDDEN);
+					case "command" -> {
+						String exe = executable(text);
+						o.addProperty(k, text == null ? HIDDEN : !exe.equals(text.strip()) ? exe + " " + STAGED : exe);
+					}
+					default -> o.addProperty(HIDDEN + " " + (o.size() + 1), HIDDEN);
 				}
-				o.add("args", a);
-			}
-			if (o.has("url")) {
-				o.addProperty("url", STAGED);
-			}
-			if (o.has("command")) {
-				String c = str(o, "command");
-				String exe = executable(c);
-				o.addProperty("command", c != null && !exe.equals(c.strip()) ? exe + " " + STAGED : exe);
 			}
 			out.add(o);
 		}

@@ -1,7 +1,12 @@
-// The central redactor (docs/WAVE3.md S1/S2): every secret value the Foreman knows - repository env
-// values, MCP server env values, MCP arguments (all of them: they are write-only), MCP URL paths and
-// queries, header values, the client token - is cut out of the text that leaves the Foreman or is
-// kept by it: agent log entries, feed items, ack / error texts, notifications and console logs.
+// The central redactor (docs/WAVE3.md S1/S2): best-effort defense for display and log channels (the
+// settings view itself never holds a secret). Every secret value the Foreman knows - repository env
+// values, MCP server env values, header values, URL userinfo / query / fragment, MCP arguments that
+// follow a credential flag or are credential-like NAME=value, the client token, the inherited Claude
+// credentials - is cut out of the text that leaves the Foreman or is kept by it: agent log entries,
+// feed items, structured text (blocked reasons, messages, notes), ack / error texts, notifications
+// and console logs. Not covered: secrets shorter than MIN_SECRET, other case / encoding variants,
+// and text the user or the lead writes (task titles and descriptions, decision options, goal text,
+// diffs).
 //
 // A value is matched as it is and in the encodings it most often travels in: URL-encoded,
 // JSON-escaped and base64 (standard and URL-safe, with and without padding). Values shorter than
@@ -54,9 +59,14 @@ export class Redactor {
   add(values: Iterable<string | undefined>): void {
     let changed = false;
     for (const v of values) {
-      if (typeof v !== 'string' || v.length < MIN_SECRET || this.values.has(v)) continue;
-      this.values.add(v);
-      changed = true;
+      if (typeof v !== 'string') continue;
+      // a multi-line secret (a PEM key) is also cut line by line (each line on its own length)
+      const lines = /[\r\n]/.test(v) ? v.split(/\r?\n|\r/).map((l) => l.trim()) : [];
+      for (const x of [v, ...lines]) {
+        if (x.length < MIN_SECRET || this.values.has(x)) continue;
+        this.values.add(x);
+        changed = true;
+      }
     }
     if (!changed) return;
     const all = new Set<string>();
@@ -106,48 +116,68 @@ export class Redactor {
   }
 }
 
-/** The parts of a URL that may carry a credential: the whole URL, its path, its path segments, its query and query values. */
+/** The parts of a URL that are credentials: userinfo, the query (and each value), the fragment. */
 function urlSecrets(u: string): string[] {
   let p: URL;
   try {
     p = new URL(u);
   } catch {
-    return [u];
+    return [];
   }
-  // scheme://host[:port] is what config.get shows: nothing secret in it
-  const out = (p.pathname && p.pathname !== '/') || p.search || p.hash || p.username ? [u, p.href] : [];
-  if (p.pathname && p.pathname !== '/') {
-    out.push(p.pathname, p.pathname + p.search);
-    for (const seg of p.pathname.split('/')) {
-      out.push(seg);
-      try {
-        out.push(decodeURIComponent(seg));
-      } catch {
-        /* not decodable */
-      }
-    }
-  }
+  const out: string[] = [];
+  if (p.username) out.push(p.username, safeDecode(p.username));
+  if (p.password) out.push(p.password, safeDecode(p.password));
   if (p.search) {
     out.push(p.search, p.search.slice(1));
     for (const [, val] of p.searchParams) out.push(val);
   }
-  if (p.username) out.push(p.username);
-  if (p.password) out.push(p.password, decodeURIComponent(p.password));
+  if (p.hash) out.push(p.hash, p.hash.slice(1));
   return out;
 }
 
-/** A value and the parts of it that are a credential on their own ("Bearer x" -> x; "--token=x" -> x). */
-function withParts(v: string): string[] {
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/** A header or credential value and the parts of it that are a credential on their own ("Bearer x" -> x; "X-Key: x" -> x). */
+function valueParts(v: string): string[] {
   const out = [v];
-  const eq = /^[^=\s]+=([\s\S]+)$/.exec(v);
-  if (eq) out.push(eq[1]!);
-  const words = v.trim().split(/\s+/);
+  const colon = /^[\w-]+:\s*([\s\S]+)$/.exec(v);
+  const value = colon ? colon[1]! : v;
+  if (colon) out.push(value);
+  const words = value.trim().split(/\s+/);
   if (words.length > 1) out.push(words.slice(1).join(' '), ...words.slice(1));
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) out.push(...urlSecrets(v));
   return out;
 }
 
-/** Every secret value a configuration holds (repository env, MCP servers' env, args, URL parts, headers). */
+/** A flag whose value is a credential: --token, --key, --password / --pass / --passphrase, --secret, -p, -H / --header, --auth*, *key / *token / *secret / *pass. */
+export const CREDENTIAL_FLAG = /^(-p|-H|--?(token|key|password|pass|passphrase|passwd|secret|headers?|auth[\w-]*|[\w-]*(key|keys|token|tokens|secret|secrets|pass|passwd|password|passphrase)))$/i;
+/** A NAME=value whose name looks like a credential. */
+const CREDENTIAL_NAME = /token|secret|passw(or)?d|passwd|passphrase|pwd|pass$|^pass|api[-_]?key|apikey|[-_]key$|^key$|auth|credential|bearer|private|cookie|session/i;
+
+/** The credentials among MCP arguments: values after a credential flag, --flag=value of one, NAME=value with a credential-like name. */
+export function argSecrets(args: string[]): string[] {
+  const out: string[] = [];
+  for (const [i, a] of args.entries()) {
+    const prev = args[i - 1];
+    if (prev !== undefined && CREDENTIAL_FLAG.test(prev)) out.push(...valueParts(a));
+    const eq = /^(--?[\w-]+|[A-Za-z_][\w.-]*)=([\s\S]+)$/.exec(a);
+    if (eq && (CREDENTIAL_FLAG.test(eq[1]!) || CREDENTIAL_NAME.test(eq[1]!.replace(/^-+/, '')))) out.push(...valueParts(eq[2]!));
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(a)) out.push(...urlSecrets(a));
+  }
+  return out;
+}
+
+/**
+ * The secret values a configuration holds: repository env values, MCP env values, header values, URL
+ * userinfo / query / fragment, and MCP arguments that are credentials (argSecrets). Plain arguments
+ * (paths, branch names, package names) are not secrets: the view hides them, the redactor leaves them.
+ */
 export function configSecrets(cfg: Pick<Config, 'repoSettings' | 'claude'>): string[] {
   const out: string[] = [];
   for (const rs of Object.values(cfg.repoSettings ?? {})) {
@@ -157,14 +187,13 @@ export function configSecrets(cfg: Pick<Config, 'repoSettings' | 'claude'>): str
   for (const def of Object.values(servers)) {
     if (!isObject(def)) continue;
     if (isObject(def.env)) for (const v of Object.values(def.env)) if (typeof v === 'string') out.push(v);
-    if (isObject(def.headers)) for (const v of Object.values(def.headers)) if (typeof v === 'string') out.push(...withParts(v));
-    if (Array.isArray(def.args)) for (const a of def.args) if (typeof a === 'string') out.push(...withParts(a));
+    if (isObject(def.headers)) for (const v of Object.values(def.headers)) if (typeof v === 'string') out.push(...valueParts(v));
+    const words = typeof def.command === 'string' ? def.command.trim().split(/\s+/).slice(1) : [];
+    out.push(...argSecrets([...words, ...(Array.isArray(def.args) ? def.args.filter((a): a is string => typeof a === 'string') : [])]));
     if (typeof def.url === 'string') out.push(...urlSecrets(def.url));
-    // the view shows the executable only: the rest of a command line is write-only like the args
-    if (typeof def.command === 'string') {
-      const words = def.command.trim().split(/\s+/);
-      if (words.length > 1) out.push(words.slice(1).join(' '), ...words.slice(1).flatMap(withParts));
-    }
   }
   return out;
 }
+
+/** Credentials the Foreman inherited from its environment (never printed). */
+export const INHERITED_SECRET_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];

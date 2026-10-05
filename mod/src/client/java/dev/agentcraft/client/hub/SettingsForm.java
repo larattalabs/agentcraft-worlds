@@ -548,14 +548,23 @@ final class SettingsForm {
 
 	// ------------------------------------------------------------------ secret settings (wave 3 S1/S2)
 
-	/** A secret setting's update staged in its scope; an empty update stages nothing. */
-	private static void stageSecret(ConfigScope scope, String key, JsonElement update) {
+	/**
+	 * A secret setting's update staged in its scope, checked first: an update that does not check is not staged (the
+	 * problem is returned, naming places, never values); an empty update stages nothing.
+	 */
+	private static @Nullable String stageSecret(ConfigScope scope, String key, JsonElement update) {
 		boolean empty = update.isJsonObject() && update.getAsJsonObject().isEmpty() || update.isJsonArray() && update.getAsJsonArray().isEmpty();
 		if (empty) {
 			scope.unstage(key);
-		} else {
-			scope.set(key, update);
+			return null;
 		}
+		SettingDef d = scope.def(key);
+		String why = d == null ? null : SettingsLogic.validate(d, update);
+		if (why != null) {
+			return why;
+		}
+		scope.set(key, update);
+		return null;
 	}
 
 	/** A helper field of the secret editors (not bound to a setting: typing in it stages nothing). */
@@ -642,13 +651,17 @@ final class SettingsForm {
 				String n = nameF.value().strip();
 				String why = SecretSettings.nameProblem(n, repo);
 				if (why == null && valueF.value().isEmpty()) {
-					why = (n.isEmpty() ? "the variable" : n) + ": type a value (Remove takes a variable out)";
+					why = "type a value (Remove takes a variable out)";
+				}
+				JsonObject next = SecretSettings.withVar(update.get(), current, n, valueF.value());
+				if (why == null) {
+					why = SecretSettings.validatePatch(next, repo); // checked before it is staged
 				}
 				if (why != null) {
 					auxProblems.put(id, why);
 					return;
 				}
-				stage.accept(SecretSettings.withVar(update.get(), current, n, valueF.value()));
+				stage.accept(next);
 				nameF.set("");
 				valueF.set(""); // write-only: the value is not kept in the field
 				auxProblems.remove(id);
@@ -942,8 +955,12 @@ final class SettingsForm {
 		}
 		JsonElement staged = stagedNow.get();
 		boolean unchanged = d.cur != null && (env == null || env.isEmpty()) && d.cur.type().equals(d.type) && command == null && args == null && url == null;
-		stageSecret(scope, key, unchanged ? SecretSettings.without(staged, name) : SecretSettings.withEntry(staged, SecretSettings.entry(name, d.type, command,
-			args, url, env)));
+		String refused = stageSecret(scope, key, unchanged ? SecretSettings.without(staged, name) : SecretSettings.withEntry(staged, SecretSettings.entry(name,
+			d.type, command, args, url, env)));
+		if (refused != null) {
+			auxProblems.put("mcp", refused);
+			return;
+		}
 		draft = null;
 		auxProblems.remove("mcp");
 	}

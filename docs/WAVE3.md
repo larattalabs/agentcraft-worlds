@@ -45,8 +45,11 @@ Wave A runs four streams in parallel; wave B (codegen + smoke test) starts after
 - **S1/S2 errors and redaction** (after the wave-3 security review). Errors name setting keys and places
   (`change #2`, `server #1`, `env key #3`, `item #2`), never what the caller sent. A central redactor
   (`foreman/src/redact.ts`) holds every secret value the Foreman knows - repository and MCP env values,
-  MCP arguments, URL paths / queries, header values, the rest of a command line, the client token - and
-  cuts them (`[redacted]`; also URL-encoded, JSON-escaped and base64; values of at least 6 characters)
+  header values, URL userinfo / query / fragment, MCP arguments that follow a credential flag (`--token`,
+  `--key`, `--password` / `--pass` / `--passphrase`, `--secret`, `-p`, `-H` / `--header`, `--auth*`,
+  `*key` / `*token` / `*secret` / `*pass`, also as `--flag=value`) or are a `NAME=value` with a
+  credential-like name, the client token, inherited `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` /
+  `CLAUDE_CODE_OAUTH_TOKEN`; a multi-line value also line by line - and cuts them (`[redacted]`; also URL-encoded, JSON-escaped and base64; values of at least 6 characters)
   from agent log entries, feed items, `agent.say`, notifications (desktop, Discord, `notify`), ack /
   error texts, setup / test output and console logs, before they are truncated, persisted or broadcast;
   stored feed and log text is cut again when the snapshot, `agent.logs.request` or `goal.digest` replays it.
@@ -54,6 +57,14 @@ Wave A runs four streams in parallel; wave B (codegen + smoke test) starts after
   decision's question, context and answer text, agent messages (bus), memory notes and a design's step /
   error are redacted when written and again in `*.upsert`, the snapshot and the digest. Values with a NUL in
   config.json are dropped at load (a spawn error would quote them).
+  Agent activity lines, `foreman.status` / hold messages, the CLI's stderr (by whole line), the
+  session-history index, a corrupt state file's report and uncaught errors go through it too. Plain
+  arguments (paths, branch names, package names) are not secrets: the settings view hides them, the
+  redactor leaves them readable.
+  **The redactor is best-effort defense for display and log channels.** The guarantee is the settings
+  view, which never holds a secret. Not covered by design: task titles and descriptions, decision
+  options, goal text, diffs (written by the user or the lead), secrets shorter than 6 characters, and
+  case or encoding variants beyond the ones above.
 - **S3 Sim PRs.** Sim repos marked `land: "pr"` (sim config or a sim-only demo repo setting) produce
   `Task.pr` like the real backend, a fake host (no `az`/`gh` calls), review threads with the parser's
   real format (use the test fixtures' format), the same triage decision shapes, and merge after approval

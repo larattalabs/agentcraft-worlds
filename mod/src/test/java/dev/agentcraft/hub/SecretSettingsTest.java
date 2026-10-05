@@ -239,4 +239,26 @@ class SecretSettingsTest {
 		assertEquals(new SecretSettings.Send("", List.of(), null), SecretSettings.toSend("stdio", docs, url, "", "", false, List.of(), false, ""));
 		assertNull(SecretSettings.stagedArgs(url, "stdio"));
 	}
+
+	@Test
+	void maskingNeverCopiesWhatWasTypedAndMessagesNeverQuoteIt() {
+		// malformed / unknown values are hidden, not copied
+		assertEquals(j("\"(hidden)\""), SecretSettings.maskPatch(j("\"API_KEY=hunter2-a\"")));
+		assertEquals(j("\"(hidden)\""), SecretSettings.maskPatch(j("[\"hunter2-b\"]")));
+		JsonElement p = SecretSettings.maskPatch(j("{\"OK\":\"hunter2-c\",\"API_KEY=hunter2-d\":null,\"N\":5,\"O\":{\"x\":\"hunter2-e\"}}"));
+		assertEquals(j("{\"OK\":\"(staged)\",\"(hidden) 2\":null,\"N\":\"(hidden)\",\"O\":\"(hidden)\"}"), p);
+		JsonElement m = SecretSettings.maskEntries(j("[\"hunter2-f\",{\"name\":\"hunter2 g\",\"type\":\"hunter2-h\",\"args\":\"hunter2-i\",\"url\":5,"
+			+ "\"command\":\"node --token hunter2-j\",\"hunter2-k\":\"hunter2-l\",\"remove\":\"hunter2-m\",\"env\":[\"hunter2-n\"]}]"));
+		assertFalse(m.toString().contains("hunter2"), m.toString());
+		assertEquals(j("\"(hidden)\""), SecretSettings.maskEntries(j("{\"name\":\"hunter2-o\"}")));
+		// validation names places, never names
+		String why = SecretSettings.validatePatch(j("{\"GOOD\":\"x\",\"API_KEY=hunter2-p\":\"v\",\"GIT_DIR\":\"v\"}"), true);
+		assertEquals("variable 2: not a variable name (letters, digits, _); variable 3: git variables cannot be set for a repository", why);
+		String entries = SecretSettings.validateEntries(j("[{\"name\":\"hunter2-q\",\"remove\":true},{\"name\":\"bad name hunter2\",\"type\":\"stdio\",\"command\":\"x\"}]"),
+			SecretSettings.servers(j(VIEW)));
+		assertNotNull(entries);
+		assertFalse(entries.contains("hunter2"), entries);
+		assertTrue(entries.startsWith("server 1: no such MCP server"), entries);
+		assertFalse(String.valueOf(SecretSettings.nameProblem("hunter2-r=x", false)).contains("hunter2"));
+	}
 }
