@@ -125,6 +125,12 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   windows); `commitIdentity` (agents' commits as the user); the repo's history was rewritten to drop client and
   personal details (upstream's signed commits kept); village features merged and QA'd in game (docs/VILLAGE.md:
   roads, village board, beds and routines). Open: docs/README/screenshot pass, soak + Hardcore install.
+- **Wave 3 merged 2026-10-04 (docs/WAVE3.md):** leftovers fixed (text depth everywhere, toast priority, site
+  warnings, server verdict, natural drops, stand-up rules), one layered world journal for buildings/fixtures/
+  roads/trophies, sim PRs, editable MCP servers and repo env with write-only secrets (two GPT reviews; the log
+  redactor is best-effort by decision), the Foreman's Claude backend split into modules, one shell lexer,
+  the mod's protocol mirror generated from protocol.ts, and `npm run smoke` (18 in-game steps, ~2 min, all
+  passing). Queued: the mod launching the Foreman itself (reuse Architect's launcher when it exists).
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
