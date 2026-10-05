@@ -548,14 +548,23 @@ final class SettingsForm {
 
 	// ------------------------------------------------------------------ secret settings (wave 3 S1/S2)
 
-	/** A secret setting's update staged in its scope; an empty update stages nothing. */
-	private static void stageSecret(ConfigScope scope, String key, JsonElement update) {
+	/**
+	 * A secret setting's update staged in its scope, checked first: an update that does not check is not staged (the
+	 * problem is returned, naming places, never values); an empty update stages nothing.
+	 */
+	private static @Nullable String stageSecret(ConfigScope scope, String key, JsonElement update) {
 		boolean empty = update.isJsonObject() && update.getAsJsonObject().isEmpty() || update.isJsonArray() && update.getAsJsonArray().isEmpty();
 		if (empty) {
 			scope.unstage(key);
-		} else {
-			scope.set(key, update);
+			return null;
 		}
+		SettingDef d = scope.def(key);
+		String why = d == null ? null : SettingsLogic.validate(d, update);
+		if (why != null) {
+			return why;
+		}
+		scope.set(key, update);
+		return null;
 	}
 
 	/** A helper field of the secret editors (not bound to a setting: typing in it stages nothing). */
@@ -642,13 +651,17 @@ final class SettingsForm {
 				String n = nameF.value().strip();
 				String why = SecretSettings.nameProblem(n, repo);
 				if (why == null && valueF.value().isEmpty()) {
-					why = (n.isEmpty() ? "the variable" : n) + ": type a value (Remove takes a variable out)";
+					why = "type a value (Remove takes a variable out)";
+				}
+				JsonObject next = SecretSettings.withVar(update.get(), current, n, valueF.value());
+				if (why == null) {
+					why = SecretSettings.validatePatch(next, repo); // checked before it is staged
 				}
 				if (why != null) {
 					auxProblems.put(id, why);
 					return;
 				}
-				stage.accept(SecretSettings.withVar(update.get(), current, n, valueF.value()));
+				stage.accept(next);
 				nameF.set("");
 				valueF.set(""); // write-only: the value is not kept in the field
 				auxProblems.remove(id);
@@ -669,20 +682,49 @@ final class SettingsForm {
 		return y - y0;
 	}
 
-	/** The MCP server form's state: a new server or an edit of {@code original}. */
+	/**
+	 * The MCP server form's state: a new server or an edit of {@code original} ({@code cur}: as the Foreman shows it,
+	 * null when not stored yet; {@code staged}: its entry from an earlier Done). Arguments and the URL are write-only:
+	 * never pre-filled. Unless "Replace arguments…" / "Replace URL…" is on, the stored ones (or the staged ones) are kept
+	 * ({@link SecretSettings#toSend}).
+	 */
 	private static final class McpDraft {
 		final String scopeKey;
 		final @Nullable String original;
+		final SecretSettings.@Nullable Server cur;
+		final @Nullable JsonObject staged;
 		String type;
 		final List<String> envKeys;
 		@Nullable JsonObject env;
+		/** the command field's starting text (the executable shown): sent only when it changed */
+		final String commandShown;
+		boolean replaceArgs;
+		boolean replaceUrl;
 
-		McpDraft(String scopeKey, @Nullable String original, String type, List<String> envKeys, @Nullable JsonObject env) {
+		McpDraft(String scopeKey, @Nullable String original, SecretSettings.@Nullable Server cur, @Nullable JsonObject staged, String type,
+			List<String> envKeys, @Nullable JsonObject env, String commandShown) {
 			this.scopeKey = scopeKey;
 			this.original = original;
+			this.cur = cur;
+			this.staged = staged == null ? null : staged.deepCopy();
 			this.type = type;
 			this.envKeys = envKeys;
 			this.env = env;
+			this.commandShown = commandShown;
+		}
+
+		/** Not stored yet, or changing between stdio and http: there is nothing to keep. */
+		boolean fresh() {
+			return cur == null || cur.stdio() != "stdio".equals(type);
+		}
+
+		/** The arguments field is open (else: kept, with "Replace arguments…"). */
+		boolean argsOpen() {
+			return replaceArgs || fresh() && SecretSettings.stagedArgs(staged, type) == null;
+		}
+
+		boolean urlOpen() {
+			return replaceUrl || fresh() && SecretSettings.stagedUrl(staged, type) == null;
 		}
 	}
 
@@ -729,7 +771,7 @@ final class SettingsForm {
 				}
 				cx -= 3 + chipW("Edit");
 				rowChip(g, id + ":edit:" + n, "Edit", cx, y, draft != null && n.equals(draft.original), editable, mx, my, () -> startDraft(scopeKey, r,
-					cur));
+					cur, stagedNow.get()));
 			}
 			String badge = r.added() ? "new" : r.edited() ? "changed" : r.removed() ? "removed" : "";
 			int room = cx - x - 6;
@@ -742,7 +784,8 @@ final class SettingsForm {
 				}
 			}
 			y += CHIP_H + 1;
-			String detail = sv.target() + (sv.envKeys().isEmpty() ? "" : "  ·  env: " + String.join(", ", sv.envKeys()));
+			String detail = sv.target() + (r.argsReplaced() || r.urlReplaced() ? " (replaced)" : "") + (sv.envKeys().isEmpty() ? "" : "  ·  env: "
+				+ String.join(", ", sv.envKeys())) + (sv.headerKeys().isEmpty() ? "" : "  ·  headers: " + String.join(", ", sv.headerKeys()));
 			if (visible(y, 10)) {
 				g.text(font(), TextUtil.ellipsize(font(), detail, w - 8), x + 8, y, muted, false);
 			}
@@ -750,7 +793,7 @@ final class SettingsForm {
 		}
 		if (draft == null || !draft.scopeKey.equals(scopeKey)) {
 			rowChip(g, id + ":add", "Add server…", x, y, false, editable, mx, my, () -> {
-				draft = new McpDraft(scopeKey, null, "stdio", List.of(), null);
+				draft = new McpDraft(scopeKey, null, null, null, "stdio", List.of(), null, "");
 				for (String f : List.of("name", "command", "args", "url")) {
 					aux("mcp:" + f, f.equals("args"), "", 4000).set("");
 				}
@@ -762,20 +805,26 @@ final class SettingsForm {
 		return y - y0 + mcpDraft(g, scope, key, stagedNow, cur, x, y, w, editable, mx, my);
 	}
 
-	/** Opens the form on a listed server (its staged change, if any, else as the Foreman shows it). */
-	private void startDraft(String scopeKey, SecretSettings.Row r, List<SecretSettings.Server> cur) {
+	/**
+	 * Opens the form on a listed server: name, type and the executable as the Foreman shows them; arguments and the URL
+	 * are never pre-filled (they are write-only: kept unless replaced).
+	 */
+	private void startDraft(String scopeKey, SecretSettings.Row r, List<SecretSettings.Server> cur, @Nullable JsonElement staged) {
 		SecretSettings.Server sv = r.server();
-		List<String> envKeys = List.of(); // the variables it has now (an added server: none yet)
+		SecretSettings.Server was = null;
 		for (SecretSettings.Server c : cur) {
 			if (c.name().equals(sv.name())) {
-				envKeys = c.envKeys();
+				was = c;
 			}
 		}
-		draft = new McpDraft(scopeKey, sv.name(), sv.type(), envKeys, r.envPatch() == null ? null : r.envPatch().deepCopy());
+		List<String> envKeys = was == null ? List.of() : was.envKeys(); // the variables it has now (an added server: none yet)
+		JsonObject entry = SecretSettings.stagedEntry(staged, sv.name());
+		String shown = entry != null && entry.has("command") ? SecretSettings.executable(entry.get("command").getAsString()) : sv.command() == null ? "" : sv.command();
+		draft = new McpDraft(scopeKey, sv.name(), was, entry, sv.type(), envKeys, r.envPatch() == null ? null : r.envPatch().deepCopy(), shown);
 		aux("mcp:name", false, "", 64).set(sv.name());
-		aux("mcp:command", false, "", 1000).set(sv.command() == null ? "" : sv.command());
-		aux("mcp:args", true, "", 4000).set(String.join("\n", sv.args()));
-		aux("mcp:url", false, "", 2000).set(sv.url() == null ? "" : sv.url());
+		aux("mcp:command", false, "", 1000).set(shown);
+		aux("mcp:args", true, "", 4000).set("");
+		aux("mcp:url", false, "", 2000).set("");
 		auxProblems.remove("mcp");
 	}
 
@@ -800,9 +849,9 @@ final class SettingsForm {
 			cx += rowChip(g, "mcp:type:" + t, t, cx, y, t.equals(d.type), editable, mx, my, () -> d.type = t) + 3;
 		}
 		y += CHIP_H + 3;
-		HubField commandF = aux("mcp:command", false, "e.g. npx -y @modelcontextprotocol/server-filesystem", 1000);
-		HubField argsF = aux("mcp:args", true, "arguments, one per line", 4000);
-		HubField urlF = aux("mcp:url", false, "https://host/path (no credentials, no query)", 2000);
+		HubField commandF = aux("mcp:command", false, "e.g. npx", 1000);
+		HubField argsF = aux("mcp:args", true, "the complete new arguments, one per line", 4000);
+		HubField urlF = aux("mcp:url", false, "the complete new URL: https://host/path (no credentials)", 2000);
 		Runnable done = () -> commitDraft(scope, key, stagedNow, cur);
 		auxSubmit.put(nameF, () -> setFocus("stdio".equals(d.type) ? commandF : urlF));
 		auxSubmit.put(commandF, done);
@@ -813,17 +862,46 @@ final class SettingsForm {
 			y += commandF.draw(g, font(), x + labelW, y, w - labelW, 1, commandF == focus) + 3;
 			drawn(commandF, editable, fy);
 			g.text(font(), "Args", x, y + 3, muted, false);
-			fy = y;
-			y += argsF.draw(g, font(), x + labelW, y, w - labelW, compact ? 2 : 3, argsF == focus) + 3;
-			drawn(argsF, editable, fy);
+			if (d.argsOpen()) {
+				fy = y;
+				y += argsF.draw(g, font(), x + labelW, y, w - labelW, compact ? 2 : 3, argsF == focus) + 3;
+				drawn(argsF, editable, fy);
+				if (d.replaceArgs) {
+					y += rowChip(g, "mcp:keepArgs", "Keep the stored arguments", x + labelW, y, false, editable, mx, my, () -> {
+						d.replaceArgs = false;
+						argsF.set("");
+					}) + 3;
+				}
+			} else {
+				List<String> sa = SecretSettings.stagedArgs(d.staged, d.type);
+				int count = sa != null ? sa.size() : d.cur == null ? 0 : d.cur.argCount();
+				String what = (count == 0 ? "none" : count + (count == 1 ? " argument" : " arguments")) + (sa != null ? " (new, staged)" : " (kept, never shown)");
+				g.text(font(), what, x + labelW, y + 3, muted, false);
+				y += CHIP_H + 1;
+				y += rowChip(g, "mcp:replaceArgs", "Replace arguments…", x + labelW, y, false, editable, mx, my, () -> d.replaceArgs = true) + 3;
+			}
 			g.text(font(), "Environment (values are never shown)", x, y + 1, muted, false);
 			y += 12;
 			y += secretMap(g, "mcp:env", d.envKeys, () -> d.env, false, x, y, w, editable, mx, my, p -> d.env = p.isEmpty() ? null : p);
 		} else {
 			g.text(font(), "URL", x, y + 3, muted, false);
-			int fy = y;
-			y += urlF.draw(g, font(), x + labelW, y, w - labelW, 1, urlF == focus) + 3;
-			drawn(urlF, editable, fy);
+			if (d.urlOpen()) {
+				int fy = y;
+				y += urlF.draw(g, font(), x + labelW, y, w - labelW, 1, urlF == focus) + 3;
+				drawn(urlF, editable, fy);
+				if (d.replaceUrl) {
+					y += rowChip(g, "mcp:keepUrl", "Keep the stored URL", x + labelW, y, false, editable, mx, my, () -> {
+						d.replaceUrl = false;
+						urlF.set("");
+					}) + 3;
+				}
+			} else {
+				String su = SecretSettings.stagedUrl(d.staged, d.type);
+				String shown = su != null ? SecretSettings.origin(su) + "/… (new, staged)" : (d.cur == null ? "" : d.cur.target()) + " (kept, the rest never shown)";
+				g.text(font(), TextUtil.ellipsize(font(), shown, w - labelW), x + labelW, y + 3, muted, false);
+				y += CHIP_H + 1;
+				y += rowChip(g, "mcp:replaceUrl", "Replace URL…", x + labelW, y, false, editable, mx, my, () -> d.replaceUrl = true) + 3;
+			}
 		}
 		String why = auxProblems.get("mcp");
 		if (why != null) {
@@ -839,37 +917,35 @@ final class SettingsForm {
 		return y - y0;
 	}
 
-	/** Done / Add: checks the form and stages the server's entry (an edit that changes nothing stages nothing). */
+	/**
+	 * Done / Add: checks the form and stages the server's entry (an edit that changes nothing stages nothing). Only what
+	 * changed is sent: the command when it differs from the executable shown, the arguments / URL when replaced (the
+	 * complete new value); anything else keeps what the Foreman stores.
+	 */
 	private void commitDraft(ConfigScope scope, String key, java.util.function.Supplier<@Nullable JsonElement> stagedNow, List<SecretSettings.Server> cur) {
 		McpDraft d = draft;
 		if (d == null) {
 			return;
 		}
 		String name = d.original != null ? d.original : aux("mcp:name", false, "", 64).value().strip();
-		List<String> args = new ArrayList<>();
+		boolean stdio = "stdio".equals(d.type);
+		List<String> typedArgs = new ArrayList<>();
 		for (String a : aux("mcp:args", true, "", 4000).value().split("\n", -1)) {
 			if (!a.isEmpty()) {
-				args.add(a); // as typed: an untouched argument (a hidden one too) goes back byte for byte
+				typedArgs.add(a);
 			}
 		}
-		boolean stdio = "stdio".equals(d.type);
-		SecretSettings.Server sv = new SecretSettings.Server(name, d.type, stdio ? aux("mcp:command", false, "", 1000).value().strip() : null, stdio ? args
-			: List.of(), stdio ? null : aux("mcp:url", false, "", 2000).value().strip(), d.envKeys);
+		SecretSettings.Send send = SecretSettings.toSend(d.type, d.cur, d.staged, aux("mcp:command", false, "", 1000).value().strip(), d.commandShown,
+			d.replaceArgs, typedArgs, d.replaceUrl, aux("mcp:url", false, "", 2000).value().strip());
+		String command = send.command();
+		List<String> args = send.args();
+		String url = send.url();
 		List<String> others = new ArrayList<>();
 		for (SecretSettings.Row r : SecretSettings.rows(cur, stagedNow.get())) {
 			others.add(r.server().name());
 		}
 		JsonObject env = stdio ? d.env : null;
-		String why = SecretSettings.serverProblem(sv, env, d.original == null, others);
-		if (why == null) {
-			List<String> shown = List.of();
-			for (SecretSettings.Server c : cur) {
-				if (c.name().equals(name)) {
-					shown = c.args();
-				}
-			}
-			why = SecretSettings.hiddenArgsProblem(shown, sv.args());
-		}
+		String why = SecretSettings.serverProblem(name, d.type, command, args, url, env, d.cur, d.original == null, others);
 		if (why == null && !stdio && d.env != null && !d.env.isEmpty()) {
 			why = "env: only stdio servers have variables";
 		}
@@ -878,15 +954,13 @@ final class SettingsForm {
 			return;
 		}
 		JsonElement staged = stagedNow.get();
-		SecretSettings.Server was = null;
-		for (SecretSettings.Server c : cur) {
-			if (c.name().equals(name)) {
-				was = c;
-			}
+		boolean unchanged = d.cur != null && (env == null || env.isEmpty()) && d.cur.type().equals(d.type) && command == null && args == null && url == null;
+		String refused = stageSecret(scope, key, unchanged ? SecretSettings.without(staged, name) : SecretSettings.withEntry(staged, SecretSettings.entry(name,
+			d.type, command, args, url, env)));
+		if (refused != null) {
+			auxProblems.put("mcp", refused);
+			return;
 		}
-		boolean unchanged = was != null && (env == null || env.isEmpty()) && was.type().equals(sv.type()) && java.util.Objects.equals(was.command(),
-			sv.command()) && was.args().equals(sv.args()) && java.util.Objects.equals(was.url(), sv.url());
-		stageSecret(scope, key, unchanged ? SecretSettings.without(staged, name) : SecretSettings.withEntry(staged, SecretSettings.entry(sv, env)));
 		draft = null;
 		auxProblems.remove("mcp");
 	}

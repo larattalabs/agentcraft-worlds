@@ -44,6 +44,7 @@ export abstract class TurnSetupLayer extends HoldsLayer {
         exclude: [this.fm.config.home],
         indexFile: path.join(this.fm.config.dataDir, 'history-index.json'),
         days: c.sessionHistory.days,
+        redact: (t) => this.fm.redact(t),
       });
       what.push(`session history (${c.sessionHistory.days} days)`);
     }

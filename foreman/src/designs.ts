@@ -72,7 +72,9 @@ export class DesignBook {
     let changed = false;
     for (const [k, v] of Object.entries(patch) as Array<[keyof DesignPatch, unknown]>) {
       if (v === undefined) continue;
-      const val = k === 'step' || k === 'error' ? truncate(String(v).replace(/\s+/g, ' ').trim(), k === 'step' ? 120 : 1500) : v;
+      // redacted before it is cut (an error is the tail of the checker's output)
+      const red = (x: string) => (this.ctx.redact ? this.ctx.redact(x) : x);
+      const val = k === 'step' || k === 'error' ? truncate(red(String(v)).replace(/\s+/g, ' ').trim(), k === 'step' ? 120 : 1500) : v;
       if (JSON.stringify(d[k]) !== JSON.stringify(val)) {
         (d as Record<string, unknown>)[k] = val;
         changed = true;

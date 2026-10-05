@@ -161,7 +161,11 @@ export class Store {
   private readonly debounceMs: number;
   private readonly logMaxBytes: number;
 
-  constructor(dir: string, opts: { debounceMs?: number; now?: number; logMaxBytes?: number } = {}) {
+  /** where a corrupt state file is reported (the Foreman's redacting logger; console otherwise) */
+  private readonly log: { error(m: string): void };
+
+  constructor(dir: string, opts: { debounceMs?: number; now?: number; logMaxBytes?: number; log?: { error(m: string): void } } = {}) {
+    this.log = opts.log ?? { error: (m) => console.error(m) };
     this.dir = path.resolve(dir);
     this.file = path.join(this.dir, 'state.json');
     this.debounceMs = opts.debounceMs ?? 100;
@@ -188,7 +192,8 @@ export class Store {
       } catch {
         /* ignore */
       }
-      console.error(`[store] could not read ${this.file} (${(e as Error).message}); moved to ${bad}`);
+      // a JSON error can quote the file's text: through the redacting logger
+      this.log.error(`[store] could not read ${this.file} (${(e as Error).message}); moved to ${bad}`);
       return undefined;
     }
   }

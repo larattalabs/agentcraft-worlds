@@ -28,7 +28,8 @@ export class MessageBus {
   feed(kind: FeedKind, text: string, extra: FeedExtra = {}): FeedItem {
     // a goal's thread (goal messages and the lead's replies) keeps longer messages
     const max = kind === 'message' && this.goalOf(extra) ? GOAL_MESSAGE_MAX : 400;
-    const item: FeedItem = { ts: this.ctx.now(), kind, text: truncate(text, max) };
+    // redacted before it is cut: a secret at the cut would otherwise survive in part
+    const item: FeedItem = { ts: this.ctx.now(), kind, text: truncate(this.ctx.redact ? this.ctx.redact(text) : text, max) };
     if (extra.agentId) item.agentId = extra.agentId;
     if (extra.to) item.to = extra.to;
     const goalId = this.goalOf(extra);
@@ -54,6 +55,8 @@ export class MessageBus {
    */
   send(from: string, to: string, text: string, opts: { goalId?: string; taskId?: string; goalMessage?: boolean; feedText?: string } = {}): BusMessage {
     const goalId = this.goalOf(opts);
+    // what an agent says can quote a secret it saw: stored, said and fed without it
+    if (from !== 'user' && this.ctx.redact) text = this.ctx.redact(text);
     const msg: BusMessage = { id: this.ctx.store.nextId('m'), ts: this.ctx.now(), from, to, text, readBy: [], ...(goalId ? { goalId } : {}), ...(opts.goalMessage && goalId ? { goalMessage: true } : {}) };
     this.ctx.store.pushMessage(msg);
     if (from !== 'user') {

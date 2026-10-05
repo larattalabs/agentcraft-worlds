@@ -11,8 +11,10 @@
 //
 // No secret ever leaves through here: environment values are never read (only which variables are
 // set); secret maps (a repository's env, an MCP server's env) show variable names only and take
-// partial updates; MCP servers show no env values, no credential-looking arguments and URLs without
-// credentials or query (settings-secrets.ts). Errors, acks, broadcasts and logs name keys only.
+// partial updates; MCP servers show the executable, the number of arguments and the URL's scheme://host
+// only - arguments and the URL are write-only (settings-secrets.ts). Errors name setting keys and
+// places (item #2, server #1), never what the caller sent; whatever still carries a known secret is
+// cut by the central redactor (redact.ts).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -82,6 +84,13 @@ interface Spec {
 
 const optionsOf = (s: Spec, x: SpecCtx): string[] | undefined => (typeof s.options === 'function' ? s.options(x) : s.options);
 
+/** 1-based places of the items `bad` matches (errors name places, never what the caller sent). */
+function positions<T>(items: T[], bad: (i: T) => boolean): number[] {
+  return items.flatMap((i, n) => (bad(i) ? [n + 1] : []));
+}
+
+const items_ = (places: number[]) => `item${places.length > 1 ? 's' : ''} #${places.join(', #')} ${places.length > 1 ? 'are' : 'is'}`;
+
 function checkType(s: Spec, v: unknown, x: SpecCtx): Checked {
   const opts = optionsOf(s, x);
   switch (s.type) {
@@ -101,22 +110,22 @@ function checkType(s: Spec, v: unknown, x: SpecCtx): Checked {
     case 'stringList': {
       if (!Array.isArray(v) || v.some((i) => typeof i !== 'string')) return { error: 'must be a list of text' };
       const items = [...new Set((v as string[]).map((i) => i.trim()).filter(Boolean))];
-      const bad = opts ? items.filter((i) => !opts.includes(i)) : [];
-      if (bad.length) return { error: `unknown ${bad.map((b) => `"${b}"`).join(', ')} (use ${opts!.join(', ')})` };
+      const bad = opts ? positions(items, (i) => !opts.includes(i)) : [];
+      if (bad.length) return { error: `${items_(bad)} not one of ${opts!.join(', ')}` };
       return { value: items };
     }
     case 'model':
       if (typeof v !== 'string') return { error: 'must be a model name' };
       if (v.trim() === '' || v.trim() === 'default') return { value: undefined };
-      return MODEL_RE.test(v.trim()) ? { value: v.trim() } : { error: `"${v}" is not a model name` };
+      return MODEL_RE.test(v.trim()) ? { value: v.trim() } : { error: 'is not a model name' };
     case 'effort':
       if (typeof v !== 'string' || !opts?.includes(v)) return { error: `must be one of ${opts?.join(', ')}` };
       return { value: v === 'default' ? undefined : v };
     case 'agentList': {
       if (!Array.isArray(v) || v.some((i) => typeof i !== 'string')) return { error: 'must be a list of agent ids' };
       const ids = [...new Set((v as string[]).map((i) => i.trim().toLowerCase()).filter(Boolean))];
-      const bad = ids.filter((i) => !opts?.includes(i));
-      return bad.length ? { error: `no such agent ${bad.map((b) => `"${b}"`).join(', ')} (agents: ${opts?.join(', ')})` } : { value: ids };
+      const bad = positions(ids, (i) => !opts?.includes(i));
+      return bad.length ? { error: `${items_(bad)} not an agent (agents: ${opts?.join(', ')})` } : { value: ids };
     }
     case 'map':
       return { error: 'is read-only' };
@@ -204,8 +213,8 @@ function globalSpecs(x: SpecCtx): Spec[] {
       def: [],
       get: g('claude.context.mcpAllow'),
       normalize: (v) => {
-        const bad = (v as string[]).filter((p) => !p.startsWith('mcp__') || p.startsWith('mcp__agentcraft__'));
-        return bad.length ? { error: `${bad.join(', ')}: must start with mcp__ (and not mcp__agentcraft__)` } : { value: v };
+        const bad = positions(v as string[], (p) => !p.startsWith('mcp__') || p.startsWith('mcp__agentcraft__'));
+        return bad.length ? { error: `${items_(bad)} must start with mcp__ (and not mcp__agentcraft__)` } : { value: v };
       },
     },
     { key: 'claude.context.connectors', group: 'context', type: 'stringList', label: 'claude.ai connectors', help: 'claude.ai connectors (by name, e.g. monday.com) the agents may use; none when empty. From the next turn.', live: true, def: [], get: g('claude.context.connectors') },
@@ -214,7 +223,7 @@ function globalSpecs(x: SpecCtx): Spec[] {
       group: 'context',
       type: 'mcpServers',
       label: 'MCP servers',
-      help: 'Your MCP servers the agents may use (their tools still ask unless allowed above): a command (stdio) or a URL (http, sse), with environment variables whose values are never shown. After a restart.',
+      help: 'Your MCP servers the agents may use (their tools still ask unless allowed above): a command (stdio) or a URL (http, sse). Arguments, the URL\'s path and environment values are never shown: replace them with a complete new value, or leave them as they are. After a restart.',
       live: false,
       def: [],
       get: (cfg) => mcpServersView(cfg.claude.context.mcpServers as Record<string, unknown>),
@@ -275,8 +284,8 @@ function repoSpecs(x: SpecCtx): Spec[] {
       def: [],
       get: (_c, rs) => rs.protect ?? [],
       normalize: (v) => {
-        const bad = (v as string[]).filter((p) => p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.split(/[\\/]/).includes('..'));
-        return bad.length ? { error: `${bad.join(', ')}: must be relative to the repository, without ..` } : { value: v };
+        const bad = positions(v as string[], (p) => p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.split(/[\\/]/).includes('..'));
+        return bad.length ? { error: `${items_(bad)} must be relative to the repository, without ..` } : { value: v };
       },
     },
     {
@@ -312,7 +321,7 @@ function repoSpecs(x: SpecCtx): Spec[] {
         const hit = y.repo?.agents.find((a) => a.id === s || a.name === s || a.path === s);
         if (hit) return { value: hit.id };
         if (!/^[\w./-]+$/.test(s)) return { error: 'must be one of the repository\'s agent files' };
-        return { error: `no agent file "${s}" in .claude/agents (files: ${agentIds(y).join(', ') || 'none'})` };
+        return { error: `is not an agent file in .claude/agents (files: ${agentIds(y).join(', ') || 'none'})` };
       },
     });
   }
@@ -549,14 +558,11 @@ export function configSet(t: ConfigTarget, changes: Array<{ key: string; value: 
   const seen = new Set<string>();
   const sectionPath = t.repo ? ['repoSettings', repoFileKey(raw, t.repo.path)] : [];
   const section = getPath(raw, sectionPath);
-  for (const { key, value } of changes) {
-    if (key.split('.').some((k) => RESERVED_KEYS.has(k))) {
-      errors.push(`${key}: not an editable setting`);
-      continue;
-    }
-    const s = specs.get(key);
+  for (const [i, { key, value }] of changes.entries()) {
+    // an unknown key is never echoed (it is whatever the caller sent: it could be a secret)
+    const s = typeof key === 'string' && !key.split('.').some((k) => RESERVED_KEYS.has(k)) ? specs.get(key) : undefined;
     if (!s) {
-      errors.push(`${key}: not an editable setting`);
+      errors.push(`change #${i + 1}: not an editable setting`);
       continue;
     }
     if (seen.has(key)) {
@@ -591,7 +597,8 @@ export function configSet(t: ConfigTarget, changes: Array<{ key: string; value: 
   try {
     next = configFrom(t.cfg.argv, envFor(t.cfg), candidate);
   } catch (e) {
-    throw new ConfigError(`the new configuration is not valid: ${(e as Error).message}`);
+    // configFrom may quote a value it refused: never forwarded
+    throw new ConfigError(`the new configuration is not valid: ${(e as Error).message.replace(/"[^"]*"/g, '(a value)')}`);
   }
   writeRawConfig(t.cfg.configFile, candidate, text);
 

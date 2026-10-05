@@ -173,6 +173,8 @@ export class SessionHistory {
       indexFile?: string;
       /** default look-back in days */
       days?: number;
+      /** cuts known secrets out of the prompts and titles the cache keeps (redact.ts) */
+      redact?: (text: string) => string;
     },
   ) {
     const saved = opts.indexFile ? readJson<Record<string, CacheEntry>>(opts.indexFile) : undefined;
@@ -308,7 +310,13 @@ export class SessionHistory {
     if (!this.dirty || !this.opts.indexFile) return;
     this.dirty = false;
     try {
-      writeJsonAtomic(this.opts.indexFile, Object.fromEntries(this.cache));
+      // prompts and titles can quote a secret: the index file keeps them redacted
+      const r = this.opts.redact;
+      const red = (v: string | undefined) => (r && v !== undefined ? r(v) : v);
+      const out = Object.fromEntries(
+        [...this.cache].map(([k, e]) => [k, { ...e, summary: { ...e.summary, title: red(e.summary.title)!, ...(e.summary.firstPrompt !== undefined ? { firstPrompt: red(e.summary.firstPrompt) } : {}), ...(e.summary.lastPrompt !== undefined ? { lastPrompt: red(e.summary.lastPrompt) } : {}) } }]),
+      );
+      writeJsonAtomic(this.opts.indexFile, out);
     } catch {
       /* a cache only */
     }

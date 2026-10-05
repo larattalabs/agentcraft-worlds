@@ -7,7 +7,8 @@ import { MessageBus } from './bus.js';
 import { LEAD_ID, loadCast, type CastMember } from './cast.js';
 import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
-import { consoleLogger, type Ctx, type Logger } from './context.js';
+import { consoleLogger, redactingLogger, type Ctx, type Logger } from './context.js';
+import { configSecrets, INHERITED_SECRET_VARS, Redactor } from './redact.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
@@ -24,6 +25,7 @@ import type {
   ForemanStatus,
   Goal,
   GoalStatus,
+  FeedItem,
   LogEntry,
   LogKind,
   MemoryEntry,
@@ -177,6 +179,8 @@ export class Foreman {
   restarter: (() => void) | undefined;
   /** the restart-only settings as this Foreman started (settings.ts pendingRestart) */
   private restartBase: Map<string, string>;
+  /** every secret value this Foreman knows (redact.ts): cut out of logs, feed, acks, errors and notifications */
+  readonly redactor = new Redactor();
 
   private listeners = new Set<(m: Outbound) => void>();
   private logBuffers = new Map<string, LogEntry[]>();
@@ -191,10 +195,13 @@ export class Foreman {
 
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
-    this.log = opts.logger ?? consoleLogger('foreman', { debug: opts.config.debug, quiet: opts.config.quiet });
-    this.store = new Store(opts.config.dataDir);
+    this.redactor.add(configSecrets(opts.config));
+    // the Claude credentials the Foreman inherited (an API key, an OAuth token): never printed
+    this.redactor.add(INHERITED_SECRET_VARS.map((k) => process.env[k]));
+    this.log = redactingLogger(opts.logger ?? consoleLogger('foreman', { debug: opts.config.debug, quiet: opts.config.quiet }), (s) => this.redact(s));
+    this.store = new Store(opts.config.dataDir, { log: this.log });
     const now = opts.now ?? Date.now;
-    this.ctx = { store: this.store, emit: (m) => this.emit(m), now, log: this.log };
+    this.ctx = { store: this.store, emit: (m) => this.emit(m), now, log: this.log, redact: (s) => this.redact(s) };
     this.tasks = new TaskGraph(this.ctx);
     this.bus = new MessageBus(this.ctx);
     this.memory = new Memory(this.ctx, path.join(opts.config.dataDir, 'memory'));
@@ -222,6 +229,50 @@ export class Foreman {
 
   // ---- event plumbing ---------------------------------------------------------------------
 
+  /** `text` without any secret this Foreman knows (redact.ts). */
+  redact(text: string): string {
+    return this.redactor.redact(text);
+  }
+
+  /** Copies of feed items / log entries with their text redacted (stored text may predate a secret). */
+  private redactFeed(items: FeedItem[]): FeedItem[] {
+    return items.map((f) => ({ ...f, text: this.redact(f.text) }));
+  }
+
+  private redactLog(entries: LogEntry[]): LogEntry[] {
+    return entries.map((e) => ({ ...e, text: this.redact(e.text) }));
+  }
+
+  /** Copies with the text fields built from errors, tool output or agents' words redacted (ids, paths and branches untouched). */
+  private redactTask(t: Task): Task {
+    const o = { ...t };
+    if (o.blockedReason !== undefined) o.blockedReason = this.redact(o.blockedReason);
+    if (o.summary !== undefined) o.summary = this.redact(o.summary);
+    return o;
+  }
+
+  private redactDecision(d: Decision): Decision {
+    const o = { ...d, question: this.redact(d.question) };
+    if (o.context !== undefined) o.context = this.redact(o.context);
+    if (o.answer?.text !== undefined) o.answer = { ...o.answer, text: this.redact(o.answer.text) };
+    return o;
+  }
+
+  private redactMemory(e: MemoryEntry): MemoryEntry {
+    return { ...e, title: this.redact(e.title), body: this.redact(e.body) };
+  }
+
+  private redactDesign(d: Design): Design {
+    const o = { ...d, step: this.redact(d.step) };
+    if (o.error !== undefined) o.error = this.redact(o.error);
+    return o;
+  }
+
+  /** More secret values to redact (the client token, set up after the Foreman). */
+  addSecrets(values: Iterable<string | undefined>): void {
+    this.redactor.add(values);
+  }
+
   subscribe(l: (m: Outbound) => void): () => void {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
@@ -236,6 +287,12 @@ export class Foreman {
     }
     // a building lead exists for the mod only while it is assigned
     if (m.type === 'agent.upsert' && !this.visible(m.agent)) return;
+    // text fields go out without a known secret (copies; stored text may predate a secret learnt later)
+    if (m.type === 'agent.say') m = { ...m, text: this.redact(m.text) };
+    else if (m.type === 'task.upsert') m = { ...m, task: this.redactTask(m.task) };
+    else if (m.type === 'decision.upsert') m = { ...m, decision: this.redactDecision(m.decision) };
+    else if (m.type === 'memory.upsert') m = { ...m, entry: this.redactMemory(m.entry) };
+    else if (m.type === 'design.upsert') m = { ...m, design: this.redactDesign(m.design) };
     for (const l of this.listeners) {
       try {
         l(m);
@@ -329,7 +386,7 @@ export class Foreman {
     };
     set('state', patch.state);
     set('station', patch.station);
-    if (patch.activity !== undefined) set('activity', truncate(patch.activity.replace(/\s+/g, ' ').trim(), 48));
+    if (patch.activity !== undefined) set('activity', truncate(this.redact(patch.activity).replace(/\s+/g, ' ').trim(), 48));
     set('paused', patch.paused);
     set('active', patch.active);
     set('title', patch.title);
@@ -363,7 +420,8 @@ export class Foreman {
   /** Append a log line to an agent monitor. Batched (~30ms) into agent.log frames. */
   agentLog(agentId: string, kind: LogKind, text: string): void {
     if (this.closed) return;
-    const entry: LogEntry = { ts: this.ctx.now(), kind, text: truncate(text.replace(/\r\n/g, '\n'), LOG_TEXT_MAX) };
+    // redacted before it is cut, persisted and broadcast
+    const entry: LogEntry = { ts: this.ctx.now(), kind, text: truncate(this.redact(text.replace(/\r\n/g, '\n')), LOG_TEXT_MAX) };
     this.store.appendLog(agentId, [entry]);
     const buf = this.logBuffers.get(agentId) ?? [];
     buf.push(entry);
@@ -544,7 +602,7 @@ export class Foreman {
   digest(since: number, goalId?: string): Digest {
     if (goalId) this.requireGoal(goalId);
     const d = this.store.data;
-    return buildDigest({ goals: d.goals, tasks: d.tasks, decisions: d.decisions, feed: d.feed }, { since, until: this.ctx.now(), ...(goalId ? { goalId } : {}), nameOf: (id) => (id === 'user' ? userName() : this.nameOf(id)) });
+    return buildDigest({ goals: d.goals, tasks: d.tasks.map((t) => this.redactTask(t)), decisions: d.decisions.map((x) => this.redactDecision(x)), feed: this.redactFeed(d.feed) }, { since, until: this.ctx.now(), ...(goalId ? { goalId } : {}), nameOf: (id) => (id === 'user' ? userName() : this.nameOf(id)) });
   }
 
   /** repo.remove: refused while it has open tasks or a goal still being planned. */
@@ -939,7 +997,7 @@ export class Foreman {
     this.bus.feed('decision', `${who} needs you (${label}): ${d.question}`, { agentId: d.agentId, to: 'user', goalId: d.goalId });
     this.notify('need_user', `${who}: ${truncate(d.question, 120)}`, d.id);
     this.notifyExternal('need_user', `${who}: ${truncate(d.question, 200)}`);
-    this.notifier.needUser(`${who}: ${d.question}`);
+    this.notifier.needUser(this.redact(`${who}: ${d.question}`));
   }
 
   /**
@@ -948,7 +1006,7 @@ export class Foreman {
    */
   notifyExternal(kind: ExternalNotifyKind, text: string): void {
     try {
-      this.discord.send(kind, text);
+      this.discord.send(kind, this.redact(text));
     } catch (e) {
       this.log.warn(`notify.discord: ${(e as Error).message}`);
     }
@@ -958,7 +1016,7 @@ export class Foreman {
     const m: Outbound = {
       type: 'notify',
       level,
-      text,
+      text: this.redact(text),
       ts: this.ctx.now(),
       ...(decisionId ? { decisionId } : {}),
     };
@@ -1125,7 +1183,8 @@ export class Foreman {
   // ---- foreman status -------------------------------------------------------------------------
 
   setStatus(patch: Partial<ForemanStatus>): void {
-    const next = { ...this.status, ...patch };
+    // a status / hold message can quote an auth probe's error
+    const next = { ...this.status, ...patch, ...(patch.message !== undefined ? { message: this.redact(patch.message) } : {}), ...(patch.account !== undefined ? { account: this.redact(patch.account) } : {}) };
     for (const k of Object.keys(next) as Array<keyof ForemanStatus>) if (next[k] === undefined) delete next[k];
     if (JSON.stringify(next) === JSON.stringify(this.status)) return;
     this.status = next;
@@ -1144,15 +1203,16 @@ export class Foreman {
       type: 'snapshot',
       foreman: { ...this.status },
       agents: this.agents().map((a) => ({ ...a })),
-      tasks: this.tasks.list().map((t) => ({ ...t, deps: [...t.deps] })),
-      decisions: [...recent, ...open].sort((a, b) => a.createdAt - b.createdAt),
+      tasks: this.tasks.list().map((t) => this.redactTask({ ...t, deps: [...t.deps] })),
+      decisions: [...recent, ...open].sort((a, b) => a.createdAt - b.createdAt).map((d) => this.redactDecision(d)),
       repos: this.repos.list().map((r) => this.repos.view(r)),
-      memory: this.memory.list(),
+      memory: this.memory.list().map((e) => this.redactMemory(e)),
       ...(goal ? { goal: goalCopy(goal) } : {}),
       goals: this.goals().map(goalCopy),
-      feed: this.store.data.feed.slice(-200),
-      logs: this.agents().map((a) => ({ agentId: a.id, entries: this.store.logTail(a.id).slice(-60) })),
-      designs: this.designs.recent(),
+      // stored text is cut again on the way out: it may predate a secret the Foreman learnt later
+      feed: this.redactFeed(this.store.data.feed.slice(-200)),
+      logs: this.agents().map((a) => ({ agentId: a.id, entries: this.redactLog(this.store.logTail(a.id).slice(-60)) })),
+      designs: this.designs.recent().map((d) => this.redactDesign(d)),
       leads: this.leads.list(),
     };
   }
@@ -1170,7 +1230,8 @@ export class Foreman {
     } catch (e) {
       const known = e instanceof ClientError || e instanceof ConfigError || e instanceof TaskError || e instanceof RepoError || e instanceof DecisionError || e instanceof MemoryError;
       // a JSON.parse message can quote the text it failed on (a file with secrets): never forwarded
-      const message = known ? (e as Error).message : e instanceof SyntaxError ? 'internal error: invalid JSON' : `internal error: ${(e as Error).message}`;
+      // and whatever a message still carries of a known secret (a spawn error quoting a value) is cut
+      const message = this.redact(known ? (e as Error).message : e instanceof SyntaxError ? 'internal error: invalid JSON' : `internal error: ${(e as Error).message}`);
       if (!known) this.log.error(`${msg.type}: ${(e as Error).stack ?? e}`);
       reply({ type: 'error', message, ...(msg.id ? { re: msg.id } : {}) });
       ack(false, { error: message });
@@ -1216,7 +1277,8 @@ export class Foreman {
       case 'agent.logs.request': {
         const id = this.resolveAgentId(msg.agentId);
         if (!id) throw new ClientError(`no agent named "${msg.agentId}"`);
-        return { agentId: id, ...this.store.readLog(id, msg.before, msg.limit ?? 200) };
+        const page = this.store.readLog(id, msg.before, msg.limit ?? 200);
+        return { agentId: id, ...page, entries: this.redactLog(page.entries) };
       }
       case 'diff.request': {
         try {
@@ -1282,6 +1344,8 @@ export class Foreman {
   setConfig(repoId: string | undefined, changes: Array<{ key: string; value: unknown }>): Record<string, unknown> {
     const repo = repoId ? this.repoTarget(repoId) : undefined;
     const res = configSet({ cfg: this.config, cast: this.cast, ...(repo ? { repo } : {}) }, changes);
+    // the new values are secrets from now on (restart-only ones too: the file holds them)
+    this.addSecrets(configSecrets(res.next));
     const before = { titles: Object.fromEntries(this.cast.map((c) => [c.id, this.config.claude.agents[c.id]?.title])) };
     applyLive(this.config, res.next);
     this.afterConfigApplied(before.titles);

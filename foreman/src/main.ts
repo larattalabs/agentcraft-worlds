@@ -82,8 +82,9 @@ export async function main(argv: string[]): Promise<void> {
   const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : new ClaudeBackend(foreman, cfg.claude);
   // a new client token every start (after --reset wiped the profile); never logged
   const client = cfg.clientToken ? createClientToken(cfg.dataDir) : undefined;
+  if (client) foreman.addSecrets([client.token]);
   if (!client) log.warn('--no-client-token: every local WebSocket client may drive the Foreman (dev only)');
-  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, ...(client ? { token: client.token } : {}), log });
+  const server = new ForemanServer(foreman, { host: cfg.host, port: cfg.port, allowBrowserOrigins: cfg.allowBrowserOrigins, validateOutbound: cfg.debug, ...(client ? { token: client.token } : {}), log: foreman.log });
 
   try {
     await server.start();
@@ -156,8 +157,9 @@ export async function main(argv: string[]): Promise<void> {
       if (d.trim() === 'q') void shutdown('quit');
     });
   }
-  process.on('uncaughtException', (e) => log.error(`uncaught: ${e.stack ?? e}`));
-  process.on('unhandledRejection', (e) => log.error(`unhandled rejection: ${(e as Error)?.stack ?? e}`));
+  // through the redacting logger: an error can quote a secret
+  process.on('uncaughtException', (e) => foreman.log.error(`uncaught: ${e.stack ?? e}`));
+  process.on('unhandledRejection', (e) => foreman.log.error(`unhandled rejection: ${(e as Error)?.stack ?? e}`));
 
   await foreman.start(backend);
   if (backend instanceof SimBackend && (cfg.autostart || cfg.goal)) {

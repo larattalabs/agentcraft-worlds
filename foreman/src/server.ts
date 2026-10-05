@@ -131,8 +131,10 @@ export class ForemanServer {
         } catch {
           /* ignore */
         }
-        this.send(client, { type: 'error', message: `bad message: ${parsed.error}`, ...(re ? { re } : {}) });
-        if (re) this.send(client, { type: 'ack', re, ok: false, error: parsed.error });
+        // a schema error can quote what was sent: cut any known secret
+        const why = this.foreman.redact(parsed.error);
+        this.send(client, { type: 'error', message: `bad message: ${why}`, ...(re ? { re } : {}) });
+        if (re) this.send(client, { type: 'ack', re, ok: false, error: why });
         return;
       }
       const msg = parsed.msg;

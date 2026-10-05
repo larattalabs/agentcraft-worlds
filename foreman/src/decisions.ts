@@ -56,6 +56,11 @@ export class DecisionQueue {
     this.createdListeners.push(l);
   }
 
+  /** Text built from exceptions or tool output is stored without any known secret (redact.ts). */
+  private red(s: string): string {
+    return this.ctx.redact ? this.ctx.redact(s) : s;
+  }
+
   create(input: CreateDecisionInput): Decision {
     if (!input.question.trim()) throw new DecisionError('decision question is empty');
     const options = input.options.map((o) => o.trim()).filter(Boolean);
@@ -64,12 +69,12 @@ export class DecisionQueue {
       id: this.ctx.store.nextId('d'),
       agentId: input.agentId,
       kind: input.kind,
-      question: input.question.trim(),
+      question: this.red(input.question.trim()),
       options,
       status: 'open',
       createdAt: this.ctx.now(),
     };
-    if (input.context) d.context = input.context;
+    if (input.context) d.context = this.red(input.context);
     if (input.taskId) d.taskId = input.taskId;
     if (input.repoId) d.repoId = input.repoId;
     if (input.worktree) d.worktree = input.worktree;
@@ -119,7 +124,7 @@ export class DecisionQueue {
     d.status = 'answered';
     d.answer = { ts: this.ctx.now() };
     if (opt) d.answer.option = opt;
-    if (freeText) d.answer.text = freeText;
+    if (freeText) d.answer.text = this.red(freeText);
     this.unsettled.add(d.id);
     this.touch(d);
     return d;
@@ -132,7 +137,7 @@ export class DecisionQueue {
     d.status = 'open';
     delete d.answer;
     this.unsettled.delete(id);
-    if (context !== undefined) d.context = context;
+    if (context !== undefined) d.context = this.red(context);
     this.touch(d);
     return d;
   }
@@ -140,8 +145,8 @@ export class DecisionQueue {
   /** Replace an open decision's context (e.g. a note added after it was created). */
   setContext(id: string, context: string): void {
     const d = this.get(id);
-    if (!d || d.context === context) return;
-    d.context = context;
+    if (!d || d.context === this.red(context)) return;
+    d.context = this.red(context);
     this.touch(d);
   }
 
@@ -149,7 +154,7 @@ export class DecisionQueue {
     const d = this.get(id);
     if (!d || d.status !== 'open') return d;
     d.status = 'cancelled';
-    if (reason) d.context = d.context ? `${d.context}\n(cancelled: ${reason})` : `(cancelled: ${reason})`;
+    if (reason) d.context = this.red(d.context ? `${d.context}\n(cancelled: ${reason})` : `(cancelled: ${reason})`);
     this.touch(d);
     this.settle(id);
     return d;

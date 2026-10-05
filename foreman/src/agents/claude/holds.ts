@@ -65,7 +65,8 @@ export abstract class HoldsLayer extends BackendCore {
     }
   }
 
-  protected markAuthFailed(message: string): void {
+  protected markAuthFailed(raw: string): void {
+    const message = this.fm.redact(raw);
     this.authFailed = true;
     this.authMessage = message;
     this.offline = undefined;
@@ -85,6 +86,8 @@ export abstract class HoldsLayer extends BackendCore {
     const delayMs = this.offline ? Math.min(AUTH_RETRY_MAX_MS, this.offline.delayMs * 2) : (this.opts.authRetryMs ?? AUTH_RETRY_MS);
     const first = !this.offline;
     const retryAt = Date.now() + delayMs;
+    // the probe's error can quote a credential: redacted before it is cut
+    why = this.fm.redact(why);
     this.offline = { delayMs, retryAt, message: `Claude could not be reached (${truncate(why, 120)}); trying again at ${clock(retryAt)}. Work waits meanwhile.` };
     this.fm.setStatus({ auth: 'checking', message: this.offline.message });
     if (first) {

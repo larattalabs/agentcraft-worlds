@@ -135,7 +135,9 @@ export class Memory {
     const id = `${scope}/${slug}`;
     const prev = this.entries.get(id);
     const body = input.mode === 'append' && prev ? `${prev.body.replace(/\n+$/, '')}\n\n${input.body}` : input.body;
-    const e: MemoryEntry = { id, scope, title: input.title.trim() || slug, body, updated: this.ctx.now(), author: input.author };
+    // an agent's note can quote a secret it saw (tool output, an error): never written to disk or sent
+    const red = (x: string) => (this.ctx.redact ? this.ctx.redact(x) : x);
+    const e: MemoryEntry = { id, scope, title: red(input.title.trim()) || slug, body: red(body), updated: this.ctx.now(), author: input.author };
     writeFileAtomic(this.fileFor(id), serialize(e));
     this.entries.set(id, e);
     this.ctx.emit({ type: 'memory.upsert', entry: e });

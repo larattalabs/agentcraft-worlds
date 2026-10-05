@@ -524,11 +524,21 @@ the Repos tab's "Edit settings") edit `config.json` through the Foreman. `config
 `SettingDef` per editable key (label, help, group, type, options, the configured value, default,
 source `file`/`flag`/`env`/`default`, `overriddenBy`, `live`). It never returns secrets:
 environment values are never read (only which `AGENTCRAFT_*` variables are set); a repository's
-`env` and each MCP server's `env` are secret maps (variable names only, `{NAME: "(set)"}`; set with a
-partial update `{NAME: "value" | null}`, null removes one); MCP servers are listed as `[{name, type,
-command, args, url, envKeys}]` with credential-looking arguments shown as `(hidden)` and URLs without
-credentials or query, never headers (an entry sent back as shown keeps the stored originals; `{name,
-remove: true}` removes one). Values sent in are never logged, echoed or broadcast (src/settings-secrets.ts). `config.set` validates every change first (types, enums, ranges, agent ids of the cast,
+`env` and each MCP server's `env` are secret maps (variable names only, `["NAME", ...]`; set with a
+partial update `{NAME: "value" | null}`, null removes one; a placeholder such as `"(set)"` or a control
+character is refused); MCP servers are listed as `[{name, type, command, argCount, url, urlHasPath,
+headerKeys, envKeys}]` - the executable, how many arguments, scheme://host - because arguments and the
+full URL are write-only: left out of a `config.set` entry they are kept exactly, sent they replace
+exactly (`{name, remove: true}` removes one; src/settings-secrets.ts). Errors name places (`server #2`,
+`env key #1`, `change #3`), never what was sent. As best-effort defense for display and log channels
+(the guarantee is the secret-free settings view), every secret value the Foreman knows (env values,
+headers, URL userinfo / query / fragment, MCP arguments after a credential flag such as `--token` or a
+credential-like `NAME=value`, the client token, inherited `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` /
+`CLAUDE_CODE_OAUTH_TOKEN`) is cut as `[redacted]` - also URL-encoded, JSON-escaped or base64 - from agent
+logs, the feed, structured text (blocked reasons, agent messages, notes), activity and status lines,
+notifications, acks, errors, the session-history index and console logs (src/redact.ts). Not covered:
+task titles / descriptions, decision options, goal text, diffs, values under 6 characters, other
+encodings. `config.set` validates every change first (types, enums, ranges, agent ids of the cast,
 model names; all or nothing), then the whole new file the way the Foreman loads it, writes it
 atomically with the previous file kept as `config.json.bak` (unknown keys, other sections, key
 order and an existing key's spelling such as `merge-style` kept), applies the live keys and

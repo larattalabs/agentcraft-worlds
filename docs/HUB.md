@@ -449,25 +449,43 @@ decisions, and with config.set loosen its own permissions). From now on:
   repository's `subagents`. Per-agent model/effort show `"default"` when unset; `claude.designModel`
   shows `"default"` while it follows the worker model. Secret settings (wave 3, S1/S2): a repository's
   `env` is a `secretMap` (below); `claude.context.mcpServers` is `mcpServers` (below).
-- **secretMap** (S1; a repository's `env`, and each MCP server's `env`): `value` is `{NAME: "(set)"}`,
-  names only. `config.set` takes a partial update `{NAME: "value" | null}`: listed variables are set or
-  (null) removed, the others stay; the last one removed removes the key; `value: null` removes them all.
-  Names are `[A-Za-z_][A-Za-z0-9_]*`; a repository refuses `GIT_*` and `AGENTCRAFT_CLIENT_TOKEN` (an MCP
-  server the token). Values are never logged, echoed in acks or errors, or broadcast.
+- **secretMap** (S1; a repository's `env`, and each MCP server's `env`): `value` is the list of variable
+  names (`["NAME", ...]`), never values. `config.set` takes a partial update `{NAME: "value" | null}`:
+  listed variables are set or (null) removed, the others stay; the last one removed removes the key;
+  `value: null` removes them all. Names are `[A-Za-z_][A-Za-z0-9_]*`; a repository refuses `GIT_*` and
+  `AGENTCRAFT_CLIENT_TOKEN` (an MCP server the token). A placeholder value (`"(set)"`, `"(hidden)"`,
+  `"(staged)"`, `"[redacted]"`) or one with control characters other than tab / newline / CR is refused.
+  Errors name places (`env key #2 is not a valid variable name`), never names or values.
 - **mcpServers** (S2; `claude.context.mcpServers`, restart-required): `value` is `[{name, type:
-  "stdio"|"http"|"sse", command?, args?, url?, envKeys: string[]}]`. An argument is shown only when it clearly
-  holds nothing secret (a bare flag, a number, a path, a package or file name, a URL without
-  credentials, query or fragment) and is not the value of a credential flag (`--token`, `--api-key`,
-  `-H`/`--header`, `--key`, `--pat`, `-u`, `-e`, ...); everything else (`X-API-Key: ...`, `Bearer ...`,
-  a token-shaped word, `NAME=value` with an unsafe value) shows as `"(hidden)"` (`--api-key=(hidden)`);
-  the server's headers are never shown. `config.set` takes `[{name, type, command?, args?, url?, env?: {NAME: "value" | null}} | {name,
-  remove: true}]`: each entry adds or replaces that one server (the others stay; fields the hub does
-  not edit, such as headers, are kept); an argument or URL sent back exactly as shown keeps the stored
-  original in that place; a hidden or shortened argument that moved (one inserted or removed before it) is
-  refused (enter it again), never written as "(hidden)" or without what config.get left out. Checks: name `[\w-]{1,64}` (not `agentcraft`), type, stdio needs a one-line
-  `command` (no `url`), http/sse an http(s) `url` without credentials, query or fragment (no
-  `command`/`args`/`env`), each name once, removing a server that is not there is refused. A change
-  of any value (an env value too) puts the key into `foreman.status.restartRequired`.
+  "stdio"|"http"|"sse", command?, argCount?, url?, urlHasPath?, headerKeys?, envKeys: string[]}]`:
+  `command` is the executable only (the first word of the stored command), `argCount` how many arguments
+  are stored, `url` scheme://host[:port] (`urlHasPath`: the stored URL has a path, query or more; no `url`:
+  the stored one does not parse), `headerKeys` the names of config.json's headers. Argument values, the
+  rest of a command line, URL paths and header values are never returned: they are write-only.
+  `config.set` takes `[{name, type, command?, args?, url?, env?: {NAME: "value" | null}} | {name,
+  remove: true}]`: each entry adds or changes that one server (the others stay; fields the hub does not
+  edit, such as headers, are kept). `command`, `args` and `url` left out keep the stored value exactly;
+  sent, they replace it exactly (`args`: the complete new list, `[]` clears it). There are no
+  placeholders: an argument that is one (`"(hidden)"`, `--x=(hidden)`, ...) is refused, and a `command` /
+  `url` equal to what config.get shows of a longer stored one is refused (it would cut the stored value
+  down to its view). The view's read-only fields (`envKeys`, `headerKeys`, `argCount`, `urlHasPath`) may
+  be sent back and are ignored (type-checked). Checks: name `[\w-]{1,64}` (not `agentcraft`), type; a new
+  server, or one changing between stdio and http, needs a one-line `command` (stdio) or a `url`
+  (http/sse); stdio has no `url`, http/sse no `command`/`args`/`env`; a `url` is http(s) without spaces,
+  control characters, credentials or a fragment (a query is fine) and is stored normalized; each name
+  once; removing a server that is not there is refused. Errors name places (`server #2: ...`), never
+  names or values. A change of any value (an env value too) puts the key into
+  `foreman.status.restartRequired`.
+- **Redaction** (best-effort defense for display and log channels; see docs/WAVE3.md for what it does
+  not cover): every secret value the Foreman knows (repository and MCP env values, header values, URL
+  userinfo / query / fragment, MCP arguments after a credential flag or credential-like `NAME=value`,
+  the client token, inherited Claude credentials; at least 6 characters, multi-line ones per line too) is replaced by `[redacted]` - also URL-encoded, JSON-escaped or base64 - in agent logs,
+  the feed, `agent.say`, `notify`, desktop / Discord notifications, ack and error texts, setup / test output
+  and console logs (foreman/src/redact.ts); stored feed and log text is cut again when the snapshot,
+  `agent.logs.request` or `goal.digest` replays it (it may predate a secret).
+  Structured text is stored and sent without them too: a task's `blockedReason` and `summary`, a
+  decision's question, context and answer text, agent messages (bus), memory notes and a design's step /
+  error are redacted when written and again in `*.upsert`, the snapshot and the digest.
 - **config.set ack**: a key a flag or variable overrides is listed only under `overridden`
   (`by`: the flag as given, e.g. `"--no-notify"`, or the variable name), not under `applied` or
   `restartRequired`. `config.changed.keys` are the keys as sent, repository keys as
@@ -550,21 +568,29 @@ the mod fills gaps in this contract (the Foreman side was built in parallel; ali
   whose key ends in `mcpServers`. Maps are always read-only in the hub. Wave 3 (S1/S2, pure `SecretSettings`,
   `SecretSettingsTest`): a `secretMap` setting (a repo's `env` in its Edit settings form) and the `mcpServers` setting
   (Settings > Context, restart-required) are edited; an older Foreman's plain map is still listed read-only.
-  - **Secret map**: one line per variable, `NAME (set)` with Replace / Remove, or the staged change ("new value",
+  - **Secret map**: one line per variable (the view is the list of names; an older Foreman's `{NAME: "(set)"}`
+    still reads), `NAME (set)` with Replace / Remove, or the staged change ("new value",
     "new value (replaces)", "removed") with Undo; then a name field, a value field and Set (Enter in the value field).
     Values are write-only: typed, staged on Set (the field clears), never shown again; the staged value is the
     partial update `{NAME: "value" | null}`. Checks before staging: a variable name, a repo refuses `GIT_*`, nobody
-    takes `AGENTCRAFT_CLIENT_TOKEN`.
-  - **MCP servers**: one entry per server (name, type, its command and arguments or URL, `env:` its variable names;
-    Edit, Remove or Undo; "new" / "changed" / "removed"), then "Add server…". The form: name (a new server), type
-    chips stdio / http / sse, command + arguments (one per line) and the environment as a secret map (stdio), or the
-    URL (http, sse); Add / Done stages the server's entry (`{name, type, command, args, url, env?}`, an edit that
-    changes nothing stages nothing), Cancel drops it. Arguments shown as `(hidden)` go back as shown, byte for byte (the
-    Foreman keeps the original in that place); a hidden argument that moved to another index (or a new one) is refused
-    ("type its real value again"), so a placeholder is never written to config.json. Checks like the Foreman's: name `[\w-]{1,64}`, not `agentcraft`, free for a new server; stdio needs
-    a one-line command; http/sse an http(s) URL without credentials, query or fragment.
+    takes `AGENTCRAFT_CLIENT_TOKEN`, no placeholder value, no control characters (tab / newline excepted).
+  - **MCP servers**: one entry per server (name, type, `npx + 3 arguments` or `https://host/…`, `env:` its
+    variable names, `headers:` their names; Edit, Remove or Undo; "new" / "changed" / "removed", "(replaced)" when
+    the staged change replaces the arguments or URL), then "Add server…". The form: name (a new server), type chips
+    stdio / http / sse, the command (pre-filled with the executable the Foreman shows; sent only when edited) and
+    the environment as a secret map (stdio), or the URL (http, sse). Arguments and the URL are write-only and never
+    pre-filled: an existing server shows "3 arguments (kept, never shown)" / "https://host/… (kept)" with
+    **Replace arguments…** / **Replace URL…**, which open an empty field for the complete new value (one argument
+    per line; empty clears them) and **Keep the stored …** to go back; a new server, or one changing between stdio
+    and http, gets the fields at once. Opening a staged change again shows its arguments / URL as "(new, staged)"
+    and keeps them (and its whole command line) unless replaced (pure `SecretSettings.toSend`). Add / Done stages the server's entry with only what changed (`{name, type,
+    command?, args?, url?, env?}`, an edit that changes nothing stages nothing), Cancel drops it. Checks like the
+    Foreman's: name `[\w-]{1,64}`, not `agentcraft`, free for a new server; a one-line command; no placeholder
+    argument (`(hidden)`, `(set)`, `(staged)`, `[redacted]`, also after `=`); an http(s) URL without spaces,
+    credentials or fragment.
   - After Apply the current value is the names-only view (no value is kept in the mod); `dev.hub.state` and
-    `settings_set` replies show staged secret values as `"(staged)"`.
+    `settings_set` replies show staged secret values, arguments and URLs as `"(staged)"` (a command line as its
+    executable + `"(staged)"`).
 - Widening (second confirm): permission mode away from `policy` (strict -> loose: policy, auto; unknown modes count
   as loosest), a deny rule removed, an allow rule added, any change of `claude.useClaudeLogin`.
 - Restart: a `foreman.restart` whose ack is lost to the closing socket counts as restarting; "reconnecting" lasts

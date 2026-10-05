@@ -25,15 +25,46 @@ Wave A runs four streams in parallel; wave B (codegen + smoke test) starts after
   the Buildings tab extracted from HubScreen into its own class like the other tabs; the mod side of S1/S2.
 
 ## Contracts
-- **S1 Secret maps.** A new SettingDef type `secretMap`: `value` is `{ KEY: "(set)" }` (keys only, never
-  values); `config.set` takes `{ KEY: string | null }` as a partial update (null removes a key). Used for
-  `repoSettings.<repo>.env` (no longer read-only) and each MCP server's `env`. Values are never logged,
-  echoed in acks or broadcast.
+- **S1 Secret maps.** A new SettingDef type `secretMap`: `value` is the list of variable names
+  (`["KEY", ...]`, never values); `config.set` takes `{ KEY: string | null }` as a partial update (null
+  removes a key). A value that is a placeholder (`"(set)"`, `"(hidden)"`, `"(staged)"`, `"[redacted]"`) or
+  holds control characters (tab / newline / CR excepted) is refused, so echoing a view can never overwrite
+  a secret. Used for `repoSettings.<repo>.env` (no longer read-only) and each MCP server's `env`.
 - **S2 MCP servers.** `claude.context.mcpServers` becomes editable: SettingDef type `mcpServers`, value =
-  `[{ name, type: "stdio"|"http"|"sse", command?, args?: string[], url?: string (no credentials, no query),
-  envKeys: string[] }]`; `config.set` takes the same entries (env through the S1 partial form, under
-  `env`) plus `{ name, remove: true }`. Restart-required. The hub shows a list with add/edit/remove and the
-  env as a secret map; `mcpAllow` stays where it is.
+  `[{ name, type: "stdio"|"http"|"sse", command?, argCount?, url?, urlHasPath?, headerKeys?, envKeys }]`:
+  `command` is the executable only, `argCount` how many arguments are stored, `url` scheme://host[:port]
+  (`urlHasPath`: the stored URL has more). Argument values, the rest of a command line and the full URL are
+  never returned: they are write-only. `config.set` takes `{ name, type, command?, args?, url?, env? }` (env
+  through the S1 partial form) or `{ name, remove: true }`: a field left out keeps the stored value exactly,
+  a field sent replaces it exactly (`args`: the complete new list); there are no placeholders and no
+  restoration. A `command` / `url` equal to its own view of a longer stored value is refused; a new server
+  (or one changing between stdio and http) needs its command / URL; the view's read-only fields may come
+  back and are ignored (type-checked); URLs refuse spaces, control characters, credentials and fragments
+  and are stored normalized. Restart-required. The hub shows a list with add/edit/remove, "Replace
+  arguments…" / "Replace URL…" and the env as a secret map; `mcpAllow` stays where it is.
+- **S1/S2 errors and redaction** (after the wave-3 security review). Errors name setting keys and places
+  (`change #2`, `server #1`, `env key #3`, `item #2`), never what the caller sent. A central redactor
+  (`foreman/src/redact.ts`) holds every secret value the Foreman knows - repository and MCP env values,
+  header values, URL userinfo / query / fragment, MCP arguments that follow a credential flag (`--token`,
+  `--key`, `--password` / `--pass` / `--passphrase`, `--secret`, `-p`, `-H` / `--header`, `--auth*`,
+  `*key` / `*token` / `*secret` / `*pass`, also as `--flag=value`) or are a `NAME=value` with a
+  credential-like name, the client token, inherited `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` /
+  `CLAUDE_CODE_OAUTH_TOKEN`; a multi-line value also line by line - and cuts them (`[redacted]`; also URL-encoded, JSON-escaped and base64; values of at least 6 characters)
+  from agent log entries, feed items, `agent.say`, notifications (desktop, Discord, `notify`), ack /
+  error texts, setup / test output and console logs, before they are truncated, persisted or broadcast;
+  stored feed and log text is cut again when the snapshot, `agent.logs.request` or `goal.digest` replays it.
+  Structured text is stored and sent without them too: a task's `blockedReason` and `summary`, a
+  decision's question, context and answer text, agent messages (bus), memory notes and a design's step /
+  error are redacted when written and again in `*.upsert`, the snapshot and the digest. Values with a NUL in
+  config.json are dropped at load (a spawn error would quote them).
+  Agent activity lines, `foreman.status` / hold messages, the CLI's stderr (by whole line), the
+  session-history index, a corrupt state file's report and uncaught errors go through it too. Plain
+  arguments (paths, branch names, package names) are not secrets: the settings view hides them, the
+  redactor leaves them readable.
+  **The redactor is best-effort defense for display and log channels.** The guarantee is the settings
+  view, which never holds a secret. Not covered by design: task titles and descriptions, decision
+  options, goal text, diffs (written by the user or the lead), secrets shorter than 6 characters, and
+  case or encoding variants beyond the ones above.
 - **S3 Sim PRs.** Sim repos marked `land: "pr"` (sim config or a sim-only demo repo setting) produce
   `Task.pr` like the real backend, a fake host (no `az`/`gh` calls), review threads with the parser's
   real format (use the test fixtures' format), the same triage decision shapes, and merge after approval

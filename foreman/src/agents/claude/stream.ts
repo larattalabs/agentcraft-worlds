@@ -202,7 +202,8 @@ export class StreamMapper {
         for (const b of content as Block[]) {
           if (b.type !== 'tool_result' || !b.tool_use_id) continue;
           const tool = this.toolNames.get(b.tool_use_id) ?? '?';
-          const text = resultText(b.content);
+          // a tool's output (an MCP server's error above all) can quote a secret: cut before it is clipped
+          const text = fm.redact(resultText(b.content));
           if (tool.startsWith('mcp__') && !b.is_error) {
             fm.agentLog(id, 'result', headLines(text, 3, 300) || 'ok');
           } else {
@@ -221,7 +222,7 @@ export class StreamMapper {
           this.stats.resultText = msg.result;
           if (msg.is_error && isAuthText(msg.result)) this.stats.authFailed = firstLine(msg.result, 200);
         } else {
-          this.stats.errors.push(...(msg.errors ?? []));
+          this.stats.errors.push(...(msg.errors ?? []).map((x) => fm.redact(x)));
           const joined = (msg.errors ?? []).join(' ');
           if (isAuthText(joined)) this.stats.authFailed = firstLine(joined, 200);
         }

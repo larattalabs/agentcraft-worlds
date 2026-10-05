@@ -17,23 +17,25 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The hub's side of the settings that hold secrets (docs/WAVE3.md contracts S1 and S2), pure, unit-tested in
- * {@code SecretSettingsTest}.
+ * {@code SecretSettingsTest}. Secrets are write-only: the Foreman never sends one, so the hub never shows, keeps or
+ * echoes one.
  * <ul>
  *   <li><b>Secret maps</b> ({@link SettingDef#SECRET_MAP}: a repository's {@code env}, each MCP server's env):
- *       {@code config.get} shows {@code {NAME: "(set)"}}, names only. The form stages a partial update
+ *       {@code config.get} shows the names only ({@code ["NAME", ...]}). The form stages a partial update
  *       {@code {NAME: "value" | null}} (null removes the variable); values are write-only: once staged they are never
  *       shown again (the row says "new value" / "replaced"), and the DevBridge sees them masked.</li>
  *   <li><b>MCP servers</b> ({@link SettingDef#MCP_SERVERS}: {@code claude.context.mcpServers}): the view is
- *       {@code [{name, type, command?, args?, url?, envKeys}]}; the form stages entries, each an upsert of one server
- *       ({@code {name, type, command?, args?, url?, env?}}, env in the partial form above) or {@code {name, remove: true}}.
- *       Arguments the Foreman shows as "(hidden)" go back as shown: it keeps the stored original in that place.</li>
+ *       {@code [{name, type, command?, argCount?, url?, urlHasPath?, headerKeys?, envKeys}]} - the executable, how many
+ *       arguments, scheme://host. The form stages entries, each an upsert of one server ({@code {name, type, command?,
+ *       args?, url?, env?}}: a part left out keeps the stored one, a part sent replaces it - args as the complete new
+ *       list) or {@code {name, remove: true}}.</li>
  * </ul>
  * The checks mirror the Foreman's (it checks again, and its errors win).
  */
 public final class SecretSettings {
-	/** What {@code config.get} shows for every variable of a secret map. */
+	/** What an older Foreman showed for every variable of a secret map (a placeholder: never sent as a value). */
 	public static final String SET = "(set)";
-	/** An argument the Foreman does not show (a credential); sent back in the same place it keeps the original. */
+	/** What an older Foreman showed for a hidden argument (a placeholder: never sent as a value). */
 	public static final String HIDDEN = "(hidden)";
 	/** What the DevBridge shows for a staged secret value. */
 	public static final String STAGED = "(staged)";
@@ -42,17 +44,29 @@ public final class SecretSettings {
 	private static final Pattern SERVER_NAME = Pattern.compile("[\\w-]{1,64}");
 	private static final String CLIENT_TOKEN = "AGENTCRAFT_CLIENT_TOKEN";
 	private static final int MAX_VALUE = 20_000;
+	/** Control characters a value may not hold (tab, newline and carriage return are fine: a PEM key has lines). */
+	private static final Pattern CONTROL = Pattern.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]");
+	private static final Pattern CONTROL_ANY = Pattern.compile("[\\x00-\\x1f\\x7f]");
 
 	private SecretSettings() {
 	}
 
 	// ------------------------------------------------------------------ secret maps (S1)
 
-	/** The variable names of a secret map's view ({@code {NAME: "(set)"}}; anything else: none). */
+	/**
+	 * The variable names of a secret map's view (a list of names; an older Foreman's {@code {NAME: "(set)"}}) or of a
+	 * staged update ({@code {NAME: value | null}}); anything else: none.
+	 */
 	public static List<String> keys(@Nullable JsonElement view) {
 		List<String> out = new ArrayList<>();
 		if (view != null && view.isJsonObject()) {
 			out.addAll(view.getAsJsonObject().keySet());
+		} else if (view != null && view.isJsonArray()) {
+			for (JsonElement x : view.getAsJsonArray()) {
+				if (x.isJsonPrimitive() && !out.contains(x.getAsString())) {
+					out.add(x.getAsString());
+				}
+			}
 		}
 		return out;
 	}
@@ -108,14 +122,15 @@ public final class SecretSettings {
 
 	/** Why {@code name} cannot be set, or null. {@code repo}: a repository's env (git's variables are refused too). */
 	public static @Nullable String nameProblem(String name, boolean repo) {
+		// never quotes the name: whatever was typed there may be a secret
 		if (name == null || !ENV_NAME.matcher(name).matches()) {
-			return "\"" + (name == null ? "" : name.length() > 40 ? name.substring(0, 40) : name) + "\" is not a variable name (letters, digits, _)";
+			return "not a variable name (letters, digits, _)";
 		}
 		if (repo && name.toUpperCase(Locale.ROOT).startsWith("GIT_")) {
-			return name + ": git variables cannot be set for a repository";
+			return "git variables cannot be set for a repository";
 		}
 		if (name.equals(CLIENT_TOKEN)) {
-			return name + ": the client token never reaches agents";
+			return "the client token never reaches agents";
 		}
 		return null;
 	}
@@ -129,10 +144,12 @@ public final class SecretSettings {
 			return "variables are needed";
 		}
 		List<String> problems = new ArrayList<>();
+		int i = 0;
 		for (var e : v.getAsJsonObject().entrySet()) {
+			String at = "variable " + ++i; // places, never names or values
 			String why = nameProblem(e.getKey(), repo);
 			if (why != null) {
-				problems.add(why);
+				problems.add(at + ": " + why);
 				continue;
 			}
 			JsonElement x = e.getValue();
@@ -140,38 +157,51 @@ public final class SecretSettings {
 				continue;
 			}
 			if (!x.isJsonPrimitive() || !x.getAsJsonPrimitive().isString()) {
-				problems.add(e.getKey() + ": must be text");
+				problems.add(at + ": must be text");
 			} else if (x.getAsString().length() > MAX_VALUE) {
-				problems.add(e.getKey() + ": is too long");
-			} else if (x.getAsString().indexOf('\0') >= 0) {
-				problems.add(e.getKey() + ": must not contain a NUL character");
+				problems.add(at + ": is too long");
+			} else if (CONTROL.matcher(x.getAsString()).find()) {
+				problems.add(at + ": must not contain control characters");
+			} else if (placeholder(x.getAsString())) {
+				problems.add(at + ": type the real value (a placeholder is not one)");
 			}
 		}
 		return problems.isEmpty() ? null : String.join("; ", problems);
 	}
 
-	/** The view after a staged update applied: {@code {NAME: "(set)"}} (current names in order, removed ones out, new ones last). */
-	public static JsonObject appliedView(List<String> current, @Nullable JsonElement patch) {
-		JsonObject out = new JsonObject();
+	/** The view after a staged update applied: the names (current ones in order, removed ones out, new ones last). */
+	public static JsonArray appliedView(List<String> current, @Nullable JsonElement patch) {
+		JsonArray out = new JsonArray();
 		if (patch != null && patch.isJsonNull()) {
 			return out; // everything removed
 		}
 		for (Var v : vars(current, patch)) {
 			if (v.state() != VarState.REMOVED) {
-				out.addProperty(v.name(), SET);
+				out.add(v.name());
 			}
 		}
 		return out;
 	}
 
-	/** A staged update with every value replaced by {@link #STAGED} (removals stay null): for the DevBridge and logs. */
+	/**
+	 * A staged update as the DevBridge and logs may show it: every value {@link #STAGED} (removals stay null), anything
+	 * that is not a variable name or a text value - and a staged value that is not an object - {@link #HIDDEN}. Never a
+	 * copy of what was typed.
+	 */
 	public static JsonElement maskPatch(@Nullable JsonElement patch) {
-		if (patch == null || !patch.isJsonObject()) {
-			return patch == null ? JsonNull.INSTANCE : patch.deepCopy();
+		if (patch == null || patch.isJsonNull()) {
+			return JsonNull.INSTANCE;
+		}
+		if (!patch.isJsonObject()) {
+			return new JsonPrimitive(HIDDEN);
 		}
 		JsonObject out = new JsonObject();
+		int i = 0;
 		for (var e : patch.getAsJsonObject().entrySet()) {
-			out.add(e.getKey(), e.getValue().isJsonNull() ? JsonNull.INSTANCE : new JsonPrimitive(STAGED));
+			i++;
+			String k = ENV_NAME.matcher(e.getKey()).matches() ? e.getKey() : HIDDEN + " " + i;
+			JsonElement v = e.getValue();
+			out.add(k, v.isJsonNull() ? JsonNull.INSTANCE : new JsonPrimitive(v.isJsonPrimitive() && v.getAsJsonPrimitive().isString() ? STAGED : HIDDEN));
 		}
 		return out;
 	}
@@ -182,24 +212,31 @@ public final class SecretSettings {
 
 	// ------------------------------------------------------------------ MCP servers (S2)
 
-	/** One MCP server as {@code config.get} shows it (args may hold "(hidden)", the URL has no credentials or query). */
-	public record Server(String name, String type, @Nullable String command, List<String> args, @Nullable String url, List<String> envKeys) {
+	/**
+	 * One MCP server as {@code config.get} shows it: the executable only, how many arguments are stored, the URL as
+	 * scheme://host[:port] ({@code urlHasPath}: the stored one has more), the env and header names. Argument values and
+	 * the full URL are never shown: they are write-only.
+	 */
+	public record Server(String name, String type, @Nullable String command, int argCount, @Nullable String url, boolean urlHasPath,
+		List<String> envKeys, List<String> headerKeys) {
 		public Server {
 			type = type == null || !SERVER_TYPES.contains(type) ? (url != null && command == null ? "http" : "stdio") : type;
-			args = args == null ? List.of() : List.copyOf(args);
+			argCount = Math.max(0, argCount);
 			envKeys = envKeys == null ? List.of() : List.copyOf(envKeys);
+			headerKeys = headerKeys == null ? List.of() : List.copyOf(headerKeys);
 		}
 
-		/** "npx -y fs-mcp /tmp" or the URL: what the list shows after the name. */
+		public boolean stdio() {
+			return "stdio".equals(type);
+		}
+
+		/** "npx + 3 arguments" or "https://host/…": what the list shows after the name (never a secret). */
 		public String target() {
-			if (!"stdio".equals(type)) {
-				return url == null ? "" : url;
+			if (!stdio()) {
+				return url == null ? (urlHasPath ? "(URL not shown)" : "") : url + (urlHasPath ? "/…" : "");
 			}
-			StringBuilder b = new StringBuilder(command == null ? "" : command);
-			for (String a : args) {
-				b.append(' ').append(a);
-			}
-			return b.toString();
+			String c = command == null ? "" : command;
+			return argCount == 0 ? c : c + " + " + argCount + (argCount == 1 ? " argument" : " arguments");
 		}
 	}
 
@@ -226,45 +263,69 @@ public final class SecretSettings {
 		if (name == null || name.isBlank()) {
 			return null;
 		}
-		List<String> args = new ArrayList<>();
-		if (o.has("args") && o.get("args").isJsonArray()) {
-			for (JsonElement a : o.getAsJsonArray("args")) {
-				if (a.isJsonPrimitive()) {
-					args.add(a.getAsString());
-				}
+		JsonElement n = o.get("argCount");
+		int argCount = n != null && n.isJsonPrimitive() && n.getAsJsonPrimitive().isNumber() ? n.getAsInt() : 0;
+		JsonElement h = o.get("urlHasPath");
+		boolean hasPath = h != null && h.isJsonPrimitive() && h.getAsJsonPrimitive().isBoolean() && h.getAsBoolean();
+		return new Server(name, str(o, "type"), str(o, "command"), argCount, str(o, "url"), hasPath, strings(o, "envKeys"), strings(o, "headerKeys"));
+	}
+
+	/** The executable of a command line (what the Foreman shows of it). */
+	public static String executable(@Nullable String command) {
+		String c = command == null ? "" : command.strip();
+		int sp = c.indexOf(' ');
+		int tab = c.indexOf('\t');
+		int cut = sp < 0 ? tab : tab < 0 ? sp : Math.min(sp, tab);
+		return cut < 0 ? c : c.substring(0, cut);
+	}
+
+	/** scheme://host[:port] of a URL (what the Foreman shows of it), or null. */
+	public static @Nullable String origin(@Nullable String url) {
+		try {
+			URI p = new URI(url == null ? "" : url.strip());
+			if (p.getScheme() == null || p.getHost() == null) {
+				return null;
 			}
+			return p.getScheme().toLowerCase(Locale.ROOT) + "://" + p.getHost().toLowerCase(Locale.ROOT) + (p.getPort() >= 0 ? ":" + p.getPort() : "");
+		} catch (URISyntaxException e) {
+			return null;
 		}
-		List<String> envKeys = new ArrayList<>();
-		if (o.has("envKeys") && o.get("envKeys").isJsonArray()) {
-			for (JsonElement a : o.getAsJsonArray("envKeys")) {
-				if (a.isJsonPrimitive()) {
-					envKeys.add(a.getAsString());
-				}
-			}
+	}
+
+	private static boolean hasPath(@Nullable String url) {
+		try {
+			URI p = new URI(url == null ? "" : url.strip());
+			String path = p.getRawPath();
+			return (path != null && !path.isEmpty() && !path.equals("/")) || p.getRawQuery() != null || p.getRawFragment() != null;
+		} catch (URISyntaxException e) {
+			return true;
 		}
-		return new Server(name, str(o, "type"), str(o, "command"), args, str(o, "url"), envKeys);
 	}
 
 	/**
-	 * The {@code config.set} entry that adds or replaces {@code s}: name, type, then command + args (stdio) or url (http,
-	 * sse), and the env update (stdio only; null or empty: the variables stay as they are).
+	 * The {@code config.set} entry that adds or changes server {@code name}: name and type, then only what is sent -
+	 * {@code command}, {@code args} (the complete new list) and {@code url} replace the stored value exactly, null keeps
+	 * it - and the env update (stdio only; null or empty: the variables stay as they are).
 	 */
-	public static JsonObject entry(Server s, @Nullable JsonElement envPatch) {
+	public static JsonObject entry(String name, String type, @Nullable String command, @Nullable List<String> args, @Nullable String url,
+		@Nullable JsonElement envPatch) {
 		JsonObject e = new JsonObject();
-		e.addProperty("name", s.name());
-		e.addProperty("type", s.type());
-		if ("stdio".equals(s.type())) {
-			e.addProperty("command", s.command() == null ? "" : s.command());
-			if (!s.args().isEmpty()) {
+		e.addProperty("name", name);
+		e.addProperty("type", type);
+		if ("stdio".equals(type)) {
+			if (command != null) {
+				e.addProperty("command", command);
+			}
+			if (args != null) {
 				JsonArray a = new JsonArray();
-				s.args().forEach(a::add);
+				args.forEach(a::add);
 				e.add("args", a);
 			}
 			if (envPatch != null && envPatch.isJsonObject() && !envPatch.getAsJsonObject().isEmpty()) {
 				e.add("env", envPatch.deepCopy());
 			}
-		} else {
-			e.addProperty("url", s.url() == null ? "" : s.url());
+		} else if (url != null) {
+			e.addProperty("url", url);
 		}
 		return e;
 	}
@@ -319,8 +380,12 @@ public final class SecretSettings {
 		return null;
 	}
 
-	/** One line of the MCP servers list: the server as it will be (after its staged change) and what changed. */
-	public record Row(Server server, boolean added, boolean edited, boolean removed, @Nullable JsonObject envPatch) {
+	/**
+	 * One line of the MCP servers list: the server as it will be (after its staged change), what changed, and which
+	 * write-only parts the staged change replaces.
+	 */
+	public record Row(Server server, boolean added, boolean edited, boolean removed, @Nullable JsonObject envPatch, boolean commandReplaced,
+		boolean argsReplaced, boolean urlReplaced) {
 	}
 
 	/** The servers as the list shows them: the current ones in order with their staged change, then the added ones. */
@@ -331,11 +396,11 @@ public final class SecretSettings {
 			names.add(s.name());
 			JsonObject e = stagedEntry(staged, s.name());
 			if (e == null) {
-				out.add(new Row(s, false, false, false, null));
+				out.add(new Row(s, false, false, false, null, false, false, false));
 			} else if (e.has("remove")) {
-				out.add(new Row(s, false, false, true, null));
+				out.add(new Row(s, false, false, true, null, false, false, false));
 			} else {
-				out.add(new Row(fromEntry(e, s.envKeys()), false, true, false, envOf(e)));
+				out.add(row(e, s, false));
 			}
 		}
 		for (JsonElement x : entries(staged)) {
@@ -345,58 +410,174 @@ public final class SecretSettings {
 			JsonObject e = x.getAsJsonObject();
 			String name = str(e, "name");
 			if (name != null && !names.contains(name) && !e.has("remove")) {
-				out.add(new Row(fromEntry(e, List.of()), true, false, false, envOf(e)));
+				out.add(row(e, null, true));
 			}
 		}
 		return out;
 	}
 
-	/** A staged entry as a server (env names: the current ones with the update applied). */
-	private static Server fromEntry(JsonObject e, List<String> envKeys) {
-		Server s = server(e);
-		JsonObject env = envOf(e);
-		List<String> keys = "stdio".equals(s == null ? null : s.type()) ? keys(appliedView(envKeys, env)) : List.of();
-		return s == null ? new Server("?", "stdio", "", List.of(), null, keys) : new Server(s.name(), s.type(), s.command(), s.args(), s.url(), keys);
+	private static Row row(JsonObject e, @Nullable Server cur, boolean added) {
+		return new Row(fromEntry(e, cur), added, !added, false, envOf(e), e.has("command"), e.has("args"), e.has("url"));
+	}
+
+	/** A staged entry as the view will show it: what it sends, else what the current server of the same kind has. */
+	public static Server fromEntry(JsonObject e, @Nullable Server cur) {
+		String name = str(e, "name");
+		String type = str(e, "type");
+		boolean stdio = !"http".equals(type) && !"sse".equals(type);
+		boolean same = cur != null && cur.stdio() == stdio;
+		if (stdio) {
+			String command = e.has("command") ? executable(str(e, "command")) : same ? cur.command() : null;
+			int argCount = e.has("args") && e.get("args").isJsonArray() ? e.getAsJsonArray("args").size() : same ? cur.argCount() : 0;
+			List<String> keys = keys(appliedView(same ? cur.envKeys() : List.of(), envOf(e)));
+			return new Server(name == null ? "?" : name, "stdio", command, argCount, null, false, keys, cur == null ? List.of() : cur.headerKeys());
+		}
+		String url = e.has("url") ? str(e, "url") : null;
+		return new Server(name == null ? "?" : name, type, null, 0, url != null ? origin(url) : same ? cur.url() : null,
+			url != null ? hasPath(url) : same && cur.urlHasPath(), List.of(), cur == null ? List.of() : cur.headerKeys());
 	}
 
 	private static @Nullable JsonObject envOf(JsonObject e) {
 		return e.has("env") && e.get("env").isJsonObject() ? e.getAsJsonObject("env") : null;
 	}
 
+	/** Values the Foreman refuses as a secret (what a view or the DevBridge shows in its place). */
+	public static boolean placeholder(@Nullable String v) {
+		if (v == null) {
+			return false;
+		}
+		String t = v.strip().toLowerCase(Locale.ROOT);
+		return t.equals(SET) || t.equals(HIDDEN) || t.equals(STAGED) || t.equals("(not shown)") || t.equals("[redacted]");
+	}
+
+	/** Why arguments are refused (too many, a placeholder, a control character), or null. Places, never values. */
+	public static @Nullable String argsProblem(@Nullable List<String> args) {
+		if (args == null) {
+			return null;
+		}
+		if (args.size() > 100) {
+			return "args: at most 100";
+		}
+		for (int i = 0; i < args.size(); i++) {
+			String a = args.get(i);
+			if (a.length() > 4000 || CONTROL.matcher(a).find()) {
+				return "args: argument " + (i + 1) + " is too long or holds a control character";
+			}
+			int eq = a.indexOf('=');
+			if (placeholder(a) || eq >= 0 && placeholder(a.substring(eq + 1))) {
+				return "args: argument " + (i + 1) + " is a placeholder: type the real value";
+			}
+		}
+		return null;
+	}
+
+	/** The parts of a staged entry for a server of {@code type}'s kind (a staged url is no use to a stdio server). */
+	private static @Nullable JsonObject stagedOfKind(@Nullable JsonObject staged, String type) {
+		if (staged == null || staged.has("remove")) {
+			return null;
+		}
+		return "stdio".equals(str(staged, "type")) == "stdio".equals(type) ? staged : null;
+	}
+
+	/** The command an earlier Done staged for this server, or null. */
+	public static @Nullable String stagedCommand(@Nullable JsonObject staged, String type) {
+		JsonObject s = stagedOfKind(staged, type);
+		return s != null && s.has("command") ? str(s, "command") : null;
+	}
+
+	/** The arguments an earlier Done staged for this server (the complete new list), or null. */
+	public static @Nullable List<String> stagedArgs(@Nullable JsonObject staged, String type) {
+		JsonObject s = stagedOfKind(staged, type);
+		return s != null && s.has("args") && s.get("args").isJsonArray() ? strings(s, "args") : null;
+	}
+
+	/** The URL an earlier Done staged for this server, or null. */
+	public static @Nullable String stagedUrl(@Nullable JsonObject staged, String type) {
+		JsonObject s = stagedOfKind(staged, type);
+		return s != null && s.has("url") ? str(s, "url") : null;
+	}
+
+	/** What a server form sends: null = left out (the Foreman keeps the stored value). */
+	public record Send(@Nullable String command, @Nullable List<String> args, @Nullable String url) {
+	}
+
 	/**
-	 * The mod's check of one server before it is staged (the Foreman's rules), or null. {@code others}: the names of
-	 * the other servers (a new server's name must be free).
+	 * What the server form sends on Done. {@code cur}: the server as the Foreman shows it (null: not stored yet);
+	 * {@code staged}: its entry from an earlier Done, if any; {@code typedCommand} / {@code commandShown}: the command
+	 * field and the text it started with. The command goes when edited (else the staged one, else - a server that is
+	 * new or changes between stdio and http - the field); args / url go when "Replace…" is on (the field: the complete
+	 * new value), else the staged ones, else the field for such a fresh server; otherwise nothing (kept).
 	 */
-	public static @Nullable String serverProblem(Server s, @Nullable JsonElement envPatch, boolean isNew, List<String> others) {
-		String name = s.name() == null ? "" : s.name().strip();
-		if (!SERVER_NAME.matcher(name).matches()) {
+	public static Send toSend(String type, @Nullable Server cur, @Nullable JsonObject staged, String typedCommand, String commandShown,
+		boolean replaceArgs, List<String> typedArgs, boolean replaceUrl, String typedUrl) {
+		boolean stdio = "stdio".equals(type);
+		boolean fresh = cur == null || cur.stdio() != stdio;
+		if (stdio) {
+			String sc = stagedCommand(staged, type);
+			String command = !typedCommand.equals(commandShown) ? typedCommand : sc != null ? sc : fresh ? typedCommand : null;
+			List<String> sa = stagedArgs(staged, type);
+			List<String> args = replaceArgs ? List.copyOf(typedArgs) : sa != null ? sa : fresh ? List.copyOf(typedArgs) : null;
+			return new Send(command, args, null);
+		}
+		String su = stagedUrl(staged, type);
+		return new Send(null, null, replaceUrl ? typedUrl : su != null ? su : fresh ? typedUrl : null);
+	}
+
+	/**
+	 * The mod's check of one server change before it is staged (the Foreman's rules), or null. {@code cur}: the server
+	 * as the Foreman shows it (null: not stored yet); one not stored or changing between stdio and http needs its command
+	 * or URL; otherwise null command / args / url keep the stored ones. {@code isNew}: added in this form (its name must
+	 * not be one of {@code others}).
+	 */
+	public static @Nullable String serverProblem(String name, String type, @Nullable String command, @Nullable List<String> args, @Nullable String url,
+		@Nullable JsonElement envPatch, @Nullable Server cur, boolean isNew, List<String> others) {
+		String n = name == null ? "" : name.strip();
+		if (!SERVER_NAME.matcher(n).matches()) {
 			return "name: letters, digits, _ or - (at most 64)";
 		}
-		if (name.equalsIgnoreCase("agentcraft")) {
+		if (n.equalsIgnoreCase("agentcraft")) {
 			return "name: agentcraft is the team tools server";
 		}
-		if (isNew && others.contains(name)) {
-			return "name: " + name + " is already a server";
+		if (isNew && others.contains(n)) {
+			return "name: already a server";
 		}
-		if (!SERVER_TYPES.contains(s.type())) {
+		if (!SERVER_TYPES.contains(type)) {
 			return "type: stdio, http or sse";
 		}
-		if ("stdio".equals(s.type())) {
-			String c = s.command() == null ? "" : s.command().strip();
-			if (c.isEmpty() || c.length() > 1000 || c.indexOf('\n') >= 0 || c.indexOf('\r') >= 0 || c.indexOf('\0') >= 0) {
-				return "command: a stdio server needs a command (one line)";
+		boolean stdio = "stdio".equals(type);
+		boolean same = cur != null && cur.stdio() == stdio;
+		if (stdio) {
+			if (command == null) {
+				if (!same) {
+					return "command: a stdio server needs a command";
+				}
+			} else {
+				String c = command.strip();
+				if (c.isEmpty() || c.length() > 1000 || CONTROL_ANY.matcher(c).find()) {
+					return "command: a stdio server needs a command (one line)";
+				}
+				if (placeholder(c)) {
+					return "command: a placeholder is not a command";
+				}
 			}
-			if (s.args().size() > 100) {
-				return "args: at most 100";
+			String why = argsProblem(args);
+			if (why != null) {
+				return why;
 			}
 			return envPatch == null || envPatch.isJsonNull() ? null : prefix("env", validatePatch(envPatch, false));
 		}
-		return urlProblem(s.url());
+		if (url == null) {
+			return same ? null : "url: an http(s) URL is needed";
+		}
+		return urlProblem(url);
 	}
 
-	/** Why an http/sse URL is refused (not http(s), credentials, a query or fragment), or null. */
+	/** Why an http/sse URL is refused (not http(s), spaces or control characters, credentials, a fragment), or null. */
 	public static @Nullable String urlProblem(@Nullable String url) {
-		String u = url == null ? "" : url.strip();
+		String u = url == null ? "" : url;
+		if (CONTROL_ANY.matcher(u).find() || u.chars().anyMatch(Character::isWhitespace)) {
+			return "url: no spaces or control characters";
+		}
 		URI p;
 		try {
 			p = new URI(u);
@@ -410,23 +591,8 @@ public final class SecretSettings {
 		if (p.getRawUserInfo() != null) {
 			return "url: no credentials in the URL (put them into config.json headers)";
 		}
-		if (p.getRawQuery() != null || p.getRawFragment() != null) {
-			return "url: no query or fragment";
-		}
-		return null;
-	}
-
-	/**
-	 * Why edited arguments would write a placeholder into config.json: the Foreman puts back a hidden argument only where
-	 * the same shown text stands at the same index ({@code shownBefore}: the server's arguments as {@code config.get}
-	 * showed them; a new server has none). A "(hidden)" (or "--x=(hidden)") anywhere else must be typed again. Null = fine.
-	 */
-	public static @Nullable String hiddenArgsProblem(List<String> shownBefore, List<String> edited) {
-		for (int i = 0; i < edited.size(); i++) {
-			String a = edited.get(i);
-			if ((a.equals(HIDDEN) || a.endsWith("=" + HIDDEN)) && (i >= shownBefore.size() || !shownBefore.get(i).equals(a))) {
-				return "args: the hidden argument " + (i + 1) + " moved (or is new): type its real value again";
-			}
+		if (p.getRawFragment() != null) {
+			return "url: no fragment";
 		}
 		return null;
 	}
@@ -435,10 +601,8 @@ public final class SecretSettings {
 		return why == null ? null : p + ": " + why;
 	}
 
-	/** The mod's check of the staged entries (each server once, each entry valid, hidden arguments in place), or null. */
+	/** The mod's check of the staged entries (each server once, each entry valid), or null. */
 	public static @Nullable String validateEntries(@Nullable JsonElement v, List<Server> servers) {
-		List<String> current = new ArrayList<>();
-		servers.forEach(s -> current.add(s.name()));
 		if (v == null || v.isJsonNull()) {
 			return null;
 		}
@@ -447,45 +611,42 @@ public final class SecretSettings {
 		}
 		Set<String> seen = new LinkedHashSet<>();
 		List<String> problems = new ArrayList<>();
+		int i = 0;
 		for (JsonElement x : v.getAsJsonArray()) {
+			String at = "server " + ++i; // places, never names or values
 			if (!x.isJsonObject()) {
-				problems.add("every entry must be a server");
+				problems.add(at + ": must be a server");
 				continue;
 			}
 			JsonObject e = x.getAsJsonObject();
 			String name = str(e, "name");
 			if (name == null || !seen.add(name)) {
-				problems.add(name == null ? "an entry has no name" : name + ": listed twice");
+				problems.add(at + (name == null ? ": has no name" : ": listed twice"));
 				continue;
+			}
+			Server cur = null;
+			for (Server c : servers) {
+				if (c.name().equals(name)) {
+					cur = c;
+				}
 			}
 			if (e.has("remove")) {
-				if (!current.contains(name)) {
-					problems.add(name + ": no such MCP server");
+				if (cur == null) {
+					problems.add(at + ": no such MCP server");
 				}
 				continue;
 			}
-			Server s = server(e);
-			String why = s == null ? "name missing" : serverProblem(s, envOf(e), false, List.of());
-			if (s != null && str(e, "type") == null) {
-				why = "type: stdio, http or sse";
-			}
-			if (why == null && s != null) {
-				List<String> before = List.of();
-				for (Server c : servers) {
-					if (c.name().equals(name)) {
-						before = c.args();
-					}
-				}
-				why = hiddenArgsProblem(before, s.args());
-			}
+			String type = str(e, "type");
+			String why = type == null ? "type: stdio, http or sse" : serverProblem(name, type, e.has("command") ? str(e, "command") : null,
+				e.has("args") ? strings(e, "args") : null, e.has("url") ? str(e, "url") : null, envOf(e), cur, false, List.of());
 			if (why != null) {
-				problems.add(name + " " + why);
+				problems.add(at + " " + why);
 			}
 		}
 		return problems.isEmpty() ? null : String.join("; ", problems);
 	}
 
-	/** The view after the staged entries applied ({@code envKeys} only, never values). */
+	/** The view after the staged entries applied (names, counts and origins only, never values). */
 	public static JsonArray appliedServers(List<Server> current, @Nullable JsonElement staged) {
 		JsonArray out = new JsonArray();
 		for (Row r : rows(current, staged)) {
@@ -496,16 +657,21 @@ public final class SecretSettings {
 			JsonObject o = new JsonObject();
 			o.addProperty("name", s.name());
 			o.addProperty("type", s.type());
-			if (s.command() != null && "stdio".equals(s.type())) {
-				o.addProperty("command", s.command());
+			if (s.stdio()) {
+				if (s.command() != null) {
+					o.addProperty("command", s.command());
+				}
+				o.addProperty("argCount", s.argCount());
+			} else {
+				if (s.url() != null) {
+					o.addProperty("url", s.url());
+				}
+				o.addProperty("urlHasPath", s.urlHasPath());
 			}
-			if (!s.args().isEmpty() && "stdio".equals(s.type())) {
-				JsonArray a = new JsonArray();
-				s.args().forEach(a::add);
-				o.add("args", a);
-			}
-			if (s.url() != null && !"stdio".equals(s.type())) {
-				o.addProperty("url", s.url());
+			if (!s.headerKeys().isEmpty()) {
+				JsonArray k = new JsonArray();
+				s.headerKeys().forEach(k::add);
+				o.add("headerKeys", k);
 			}
 			JsonArray k = new JsonArray();
 			s.envKeys().forEach(k::add);
@@ -515,19 +681,65 @@ public final class SecretSettings {
 		return out;
 	}
 
-	/** Staged entries with every env value replaced by {@link #STAGED}: for the DevBridge and logs. */
+	/**
+	 * Staged entries as the DevBridge and logs may show them: env values, every argument and the URL {@link #STAGED}, a
+	 * command line cut to its executable, and anything malformed or unknown (a bad name, a field this mod does not send,
+	 * a value of the wrong kind) {@link #HIDDEN}. Never a copy of what was typed.
+	 */
 	public static JsonElement maskEntries(@Nullable JsonElement staged) {
-		if (staged == null || !staged.isJsonArray()) {
-			return staged == null ? JsonNull.INSTANCE : staged.deepCopy();
+		if (staged == null || staged.isJsonNull()) {
+			return JsonNull.INSTANCE;
+		}
+		if (!staged.isJsonArray()) {
+			return new JsonPrimitive(HIDDEN);
 		}
 		JsonArray out = new JsonArray();
 		for (JsonElement x : staged.getAsJsonArray()) {
-			if (x.isJsonObject() && x.getAsJsonObject().has("env")) {
-				JsonObject o = x.getAsJsonObject().deepCopy();
-				o.add("env", maskPatch(o.get("env")));
-				out.add(o);
-			} else {
-				out.add(x.deepCopy());
+			if (!x.isJsonObject()) {
+				out.add(HIDDEN);
+				continue;
+			}
+			JsonObject o = new JsonObject();
+			for (var f : x.getAsJsonObject().entrySet()) {
+				String k = f.getKey();
+				JsonElement v = f.getValue();
+				String text = v.isJsonPrimitive() && v.getAsJsonPrimitive().isString() ? v.getAsString() : null;
+				switch (k) {
+					case "name" -> o.addProperty(k, text != null && SERVER_NAME.matcher(text).matches() ? text : HIDDEN);
+					case "type" -> o.addProperty(k, text != null && SERVER_TYPES.contains(text) ? text : HIDDEN);
+					case "remove" -> o.add(k, v.isJsonPrimitive() && v.getAsJsonPrimitive().isBoolean() ? v.deepCopy() : new JsonPrimitive(HIDDEN));
+					case "env" -> o.add(k, maskPatch(v));
+					case "args" -> {
+						if (v.isJsonArray()) {
+							JsonArray a = new JsonArray();
+							for (int i = 0; i < v.getAsJsonArray().size(); i++) {
+								a.add(STAGED);
+							}
+							o.add(k, a);
+						} else {
+							o.addProperty(k, HIDDEN);
+						}
+					}
+					case "url" -> o.addProperty(k, text != null ? STAGED : HIDDEN);
+					case "command" -> {
+						String exe = executable(text);
+						o.addProperty(k, text == null ? HIDDEN : !exe.equals(text.strip()) ? exe + " " + STAGED : exe);
+					}
+					default -> o.addProperty(HIDDEN + " " + (o.size() + 1), HIDDEN);
+				}
+			}
+			out.add(o);
+		}
+		return out;
+	}
+
+	private static List<String> strings(JsonObject o, String k) {
+		List<String> out = new ArrayList<>();
+		if (o.has(k) && o.get(k).isJsonArray()) {
+			for (JsonElement a : o.getAsJsonArray(k)) {
+				if (a.isJsonPrimitive()) {
+					out.add(a.getAsString());
+				}
 			}
 		}
 		return out;
