@@ -274,6 +274,19 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 10. **Survival-obtainable blocks** — recipes + loot tables under `data/agentcraft_worlds/` (none exist).
 11. **Iris compatibility** for the custom pipelines (`DisplayDraw`, `WorldUi`).
 12. **More useful displays** — usage/model/context badges, branch/dependency view, repo ↔ building.
+13. **Ticked placement (deferred, 2026-10-05)** — `Buildings.place` and Remove write a whole site in
+    one server tick. Measured on campus5 (105x18x34, the largest bundled design; `dev.buildings.timing`):
+    place about 390–400 ms warm and 600 ms cold, Remove 410–500 ms, against a 57 ms baseline tick, so
+    a visible half-second hitch. Acceptable for now (singleplayer, one-off). If it starts to matter:
+    port Architect's TemplateWriter/PlaceJob (architect-mc `272122f`, `185765e`), which writes in the
+    atomic order under a per-tick budget, holds scheduled ticks until done, and measured identical
+    results to the atomic write with a 34 ms max tick at 4 ms/tick. The journal entry would have to
+    commit before the first slice, and undo would have to wait for an unfinished job.
+14. **Vines and plants on Remove (known gap)** — box+7 checks on jungle sites (fix/leaf-ring) leave
+    80–220 cells different after place + remove, the same on main and with the leaf ring: vines in
+    the box are not brought back by the restore, vines outside it that hang on blocks inside are lost
+    at placement, plus a few mushrooms. Not a leaf issue. Likely fix: hold vines like LeafGuard's held
+    leaves and restore the box with a quiet second pass.
 
 ### Hardcore 26.3 instance
 
