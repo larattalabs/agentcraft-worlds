@@ -27,7 +27,7 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
 - A placeable **fixture**: a small blueprint kind `fixture` (no repos, no lead, not a building for routing,
   leads or trophies; does not count against "one building per repo"), placed and removed with the same
   wizard/ghost/snapshot machinery as buildings (hub > Buildings > **Place village board…**, near spawn or
-  anywhere), vanilla frame (dark oak/stone) with one functional AgentCraft block: `agentcraft:village_board`
+  anywhere), vanilla frame (dark oak/stone) with one functional AgentCraft block: `agentcraft_worlds:village_board`
   (a wall display, multi-block like the task board: same facing, adjacent, connections recomputed).
 - Shows: every building (name, repos, lead portrait/name, active goal + progress, CI/PR state: open PRs,
   merged this week), the newest milestones (goals done, PRs merged, trophies hung; newest first), holds
@@ -94,7 +94,7 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
   "village_board"}` (no repos). The ghost and the HUD say "Placing Village board" (no "for"); the ghost's overlap check covers
   buildings and fixtures (`GhostModel.refusals(fixture, ...)`). The repo and blueprint wizard steps never offer fixtures.
 
-**The block** `agentcraft:village_board` (`VillageBoardBlock extends PanelBlock`, depth 3, own block entity
+**The block** `agentcraft_worlds:village_board` (`VillageBoardBlock extends PanelBlock`, depth 3, own block entity
 `VillageBoardBlockEntity`, binding empty): connects like the task board (same block, same facing, adjacent; recomputed after
 placement by `Buildings.connectPanels`), never to a task board. Its blockstate and item reuse the task board's models (the
 renderer draws its own slate over the linen); no loot table, so breaking it drops nothing (no free items in survival).

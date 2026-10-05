@@ -69,8 +69,8 @@ export function flowOnly(a, b) {
  * `status`): the game sets those from the Foreman's state, they are not part of what a restore puts back.
  */
 export function liveStateOnly(a, b) {
-  const ida = a.match(/^Block\{(agentcraft:[a-z_]+)\}/)?.[1];
-  return !!ida && ida === b.match(/^Block\{(agentcraft:[a-z_]+)\}/)?.[1];
+  const ida = a.match(/^Block\{(agentcraft_worlds:[a-z_]+)\}/)?.[1];
+  return !!ida && ida === b.match(/^Block\{(agentcraft_worlds:[a-z_]+)\}/)?.[1];
 }
 
 /**
@@ -110,7 +110,7 @@ export function diffDumps(a, b, { max = 12 } = {}) {
   return { cells: a.cells.length, differ, leafDistance, flow, live, diffs, settled };
 }
 
-/** Counts the cells of a dump whose state matches `re` (e.g. /agentcraft:/). */
+/** Counts the cells of a dump whose state matches `re` (e.g. /agentcraft_worlds:/). */
 export function countStates(dump, re) {
   let n = 0;
   for (const c of dump.cells) if (re.test(dump.palette[c])) n++;

@@ -44,6 +44,7 @@ final class PlanStore {
 		}
 		try {
 			CompoundTag root = NbtIo.readCompressed(f, NbtAccounter.unlimitedHeap());
+			dev.agentcraft.compat.LegacyIds.remap(root);
 			if (!builder.equals(root.getStringOr("builder", "")) || !java.util.Arrays.equals(box, root.getIntArray("box").orElse(new int[0]))) {
 				return null;
 			}

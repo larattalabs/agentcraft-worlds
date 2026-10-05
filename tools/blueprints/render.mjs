@@ -15,8 +15,8 @@ import { buildScene, renderIso, renderTop, renderFront } from './lib/render.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
-const NBT_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft/structure');
-const JSON_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft/blueprints');
+const NBT_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft_worlds/structure');
+const JSON_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft_worlds/blueprints');
 const DEFAULT_OUT = path.join(REPO, 'artifacts/blueprint-preview');
 
 /** Resolve `<path.nbt | id>` (+ optional sidecar override) to files. */

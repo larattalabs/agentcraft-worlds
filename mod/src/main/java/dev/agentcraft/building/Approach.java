@@ -91,7 +91,7 @@ public final class Approach {
 			if (s.isEmpty()) {
 				return def;
 			}
-			return s.indexOf(':') < 0 ? "minecraft:" + s : s;
+			return s.indexOf(':') < 0 ? "minecraft:" + s : dev.agentcraft.compat.LegacyIds.id(s);
 		}
 
 		public JsonObject toJson() {

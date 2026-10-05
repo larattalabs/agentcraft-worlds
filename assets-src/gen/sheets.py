@@ -195,32 +195,32 @@ def cast_sheet(rd):
 # ======================================================================= blocks
 OURS = [
     # (render name, entry, flat textures to show, label, note)
-    ("monitor_on", {"block": "agentcraft:monitor", "props": {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "false", "right": "false"}},
+    ("monitor_on", {"block": "agentcraft_worlds:monitor", "props": {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "false", "right": "false"}},
      ["monitor_screen_on", "monitor_frame", "monitor_back"], "Monitor (on)", "connectable panel, emissive screen"),
-    ("monitor_off", {"block": "agentcraft:monitor", "props": {"facing": "north", "lit": "false", "up": "false", "down": "false", "left": "false", "right": "false"}},
+    ("monitor_off", {"block": "agentcraft_worlds:monitor", "props": {"facing": "north", "lit": "false", "up": "false", "down": "false", "left": "false", "right": "false"}},
      ["monitor_screen_off", "monitor_screen_off_glint", "monitor_side"], "Monitor (off)", "smoked glass, one glint per pane"),
-    ("task_board", {"block": "agentcraft:task_board", "props": {"facing": "north", "up": "false", "down": "false", "left": "false", "right": "false"}},
+    ("task_board", {"block": "agentcraft_worlds:task_board", "props": {"facing": "north", "up": "false", "down": "false", "left": "false", "right": "false"}},
      ["task_board_surface", "task_board_frame"], "Task Board", "walnut pinboard, brass trim, connectable"),
-    ("decision_podium_open", {"block": "agentcraft:decision_podium", "props": {"facing": "north", "open": "true"}},
+    ("decision_podium_open", {"block": "agentcraft_worlds:decision_podium", "props": {"facing": "north", "open": "true"}},
      ["decision_podium_front_lit", "decision_podium_top_lit", "decision_podium_column"], "Decision Podium (open)", "desk glows, bell + lens lit"),
-    ("decision_podium_closed", {"block": "agentcraft:decision_podium", "props": {"facing": "north", "open": "false"}},
+    ("decision_podium_closed", {"block": "agentcraft_worlds:decision_podium", "props": {"facing": "north", "open": "false"}},
      ["decision_podium_front", "decision_podium_top"], "Decision Podium (closed)", ""),
-    ("memory_archive", {"block": "agentcraft:memory_archive", "props": {"facing": "north"}},
+    ("memory_archive", {"block": "agentcraft_worlds:memory_archive", "props": {"facing": "north"}},
      ["memory_archive_front", "memory_archive_side", "memory_archive_top"], "Memory Archive", "shelf: books + archive boxes"),
-    ("memory_catalog", {"block": "agentcraft:memory_catalog", "props": {"facing": "north"}},
+    ("memory_catalog", {"block": "agentcraft_worlds:memory_catalog", "props": {"facing": "north"}},
      ["memory_catalog_front"], "Memory Catalog", "card-index drawers"),
-    ("merge_station_active", {"block": "agentcraft:merge_station", "props": {"facing": "north", "active": "true"}},
+    ("merge_station_active", {"block": "agentcraft_worlds:merge_station", "props": {"facing": "north", "active": "true"}},
      ["merge_station_top", "merge_station_front", "merge_station_side"], "Merge Station (active)", "brass merge inlay glows"),
-    ("console_terminal", {"block": "agentcraft:console_terminal", "props": {"facing": "north"}},
+    ("console_terminal", {"block": "agentcraft_worlds:console_terminal", "props": {"facing": "north"}},
      ["console_screen", "console_top", "console_front"], "Console Terminal", "keyboard deck + leaning screen"),
-    ("glow_panel", {"block": "agentcraft:glow_panel", "props": {}}, ["glow_panel"], "Glow Panel", "ceiling light, emissive panes"),
-    ("glow_strip", {"block": "agentcraft:glow_strip", "props": {"facing": "up", "axis": "x"}}, ["glow_strip"], "Glow Strip", "brass channel + diffuser"),
-    ("plaster_panel", {"block": "agentcraft:plaster_panel", "props": {}}, ["plaster_panel"], "Plaster Panel", "warm calcite-like wall"),
-    ("plaster_frame", {"block": "agentcraft:plaster_frame", "props": {}}, ["plaster_frame"], "Framed Plaster", "wall articulation"),
-    ("walnut_panel", {"block": "agentcraft:walnut_panel", "props": {}}, ["walnut_panel"], "Walnut Panel", "dark-oak companion"),
-    ("walnut_trim", {"block": "agentcraft:walnut_trim", "props": {}}, ["walnut_trim"], "Walnut Brass Trim", "wainscot cap rail"),
-    ("terracotta_tile", {"block": "agentcraft:terracotta_tile", "props": {}}, ["terracotta_tile"], "Terracotta Tile", "clay floor/wall tile"),
-    ("oak_parquet", {"block": "agentcraft:oak_parquet", "props": {}}, ["oak_parquet"], "Oak Parquet", "stripped-oak basketweave"),
+    ("glow_panel", {"block": "agentcraft_worlds:glow_panel", "props": {}}, ["glow_panel"], "Glow Panel", "ceiling light, emissive panes"),
+    ("glow_strip", {"block": "agentcraft_worlds:glow_strip", "props": {"facing": "up", "axis": "x"}}, ["glow_strip"], "Glow Strip", "brass channel + diffuser"),
+    ("plaster_panel", {"block": "agentcraft_worlds:plaster_panel", "props": {}}, ["plaster_panel"], "Plaster Panel", "warm calcite-like wall"),
+    ("plaster_frame", {"block": "agentcraft_worlds:plaster_frame", "props": {}}, ["plaster_frame"], "Framed Plaster", "wall articulation"),
+    ("walnut_panel", {"block": "agentcraft_worlds:walnut_panel", "props": {}}, ["walnut_panel"], "Walnut Panel", "dark-oak companion"),
+    ("walnut_trim", {"block": "agentcraft_worlds:walnut_trim", "props": {}}, ["walnut_trim"], "Walnut Brass Trim", "wainscot cap rail"),
+    ("terracotta_tile", {"block": "agentcraft_worlds:terracotta_tile", "props": {}}, ["terracotta_tile"], "Terracotta Tile", "clay floor/wall tile"),
+    ("oak_parquet", {"block": "agentcraft_worlds:oak_parquet", "props": {}}, ["oak_parquet"], "Oak Parquet", "stripped-oak basketweave"),
 ]
 LAMPS = ["off", "idle", "thinking", "working", "waiting", "error", "done"]
 VANILLA_REFS = [
@@ -259,60 +259,60 @@ def vignette_blocks():
             if x >= 7:
                 add((x, 0, z), inline=V("cube_all", all="birch_planks"))
             elif z <= 1:
-                add((x, 0, z), "agentcraft:terracotta_tile")
+                add((x, 0, z), "agentcraft_worlds:terracotta_tile")
             else:
-                add((x, 0, z), "agentcraft:oak_parquet")
+                add((x, 0, z), "agentcraft_worlds:oak_parquet")
     # south wall (z=7) facing the camera; east wall (x=10)
     for x in range(-0, 10):
-        add((x, 1, 7), "agentcraft:walnut_panel")
-        add((x, 2, 7), "agentcraft:walnut_trim")
+        add((x, 1, 7), "agentcraft_worlds:walnut_panel")
+        add((x, 2, 7), "agentcraft_worlds:walnut_trim")
         for y in (3, 4, 5):
             if x in (0, 9):
                 add((x, y, 7), inline=V("cube_column", side="stripped_oak_log", end="stripped_oak_log_top"))
             elif x == 6:
                 add((x, y, 7), inline=V("cube_all", all="calcite"))
             else:
-                add((x, y, 7), "agentcraft:plaster_frame" if y == 5 else "agentcraft:plaster_panel")
+                add((x, y, 7), "agentcraft_worlds:plaster_frame" if y == 5 else "agentcraft_worlds:plaster_panel")
     for z in range(0, 7):
-        add((10, 1, z), "agentcraft:walnut_panel")
-        add((10, 2, z), "agentcraft:walnut_trim")
+        add((10, 1, z), "agentcraft_worlds:walnut_panel")
+        add((10, 2, z), "agentcraft_worlds:walnut_trim")
         for y in (3, 4, 5):
-            add((10, y, z), inline=V("cube_all", all="white_concrete") if z == 3 else None, block=None if z == 3 else "agentcraft:plaster_panel")
+            add((10, y, z), inline=V("cube_all", all="white_concrete") if z == 3 else None, block=None if z == 3 else "agentcraft_worlds:plaster_panel")
     # desk with 2 connected monitors + console
     for x in (1, 2, 3):
         add((x, 1, 6), inline=V("cube_column", side="stripped_dark_oak_log", end="stripped_dark_oak_log_top"))
-    add((3, 2, 6), "agentcraft:monitor", {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "false", "right": "true"})
-    add((2, 2, 6), "agentcraft:monitor", {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "true", "right": "true"})
-    add((1, 2, 6), "agentcraft:monitor", {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "true", "right": "false"})
-    add((1, 2, 5), "agentcraft:console_terminal", {"facing": "north"})
+    add((3, 2, 6), "agentcraft_worlds:monitor", {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "false", "right": "true"})
+    add((2, 2, 6), "agentcraft_worlds:monitor", {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "true", "right": "true"})
+    add((1, 2, 6), "agentcraft_worlds:monitor", {"facing": "north", "lit": "true", "up": "false", "down": "false", "left": "true", "right": "false"})
+    add((1, 2, 5), "agentcraft_worlds:console_terminal", {"facing": "north"})
     # an unlit 2x2 wall screen on the east wall (faces west; viewer's left = north): one pane,
     # one reflection - the glint sits only on the top-left block
     for y, u, dn in ((4, "false", "true"), (3, "true", "false")):
         for z, l, r in ((4, "false", "true"), (5, "true", "false")):
-            add((9, y, z), "agentcraft:monitor", {"facing": "west", "lit": "false", "up": u, "down": dn,
+            add((9, y, z), "agentcraft_worlds:monitor", {"facing": "west", "lit": "false", "up": u, "down": dn,
                                                  "left": l, "right": r})
     # task board 3x2 on the wall
     for x in (4, 5, 7, 8):
         pass
     for x, l, r in ((5, "false", "true"), (4, "true", "false")):
         for y, u, dn in ((4, "false", "true"), (3, "true", "false")):
-            add((x, y, 6), "agentcraft:task_board", {"facing": "north", "up": u, "down": dn, "left": l, "right": r})
+            add((x, y, 6), "agentcraft_worlds:task_board", {"facing": "north", "up": u, "down": dn, "left": l, "right": r})
     # CI lamps on the wall trim
     for i, s in enumerate(["working", "thinking", "waiting", "done", "error", "idle"]):
-        add((7 + (i % 2), 3 + i // 2, 6), "agentcraft:status_lamp", {"status": s})
+        add((7 + (i % 2), 3 + i // 2, 6), "agentcraft_worlds:status_lamp", {"status": s})
     # library along the east wall (facing west)
     for z in (1, 2):
-        add((9, 1, z), "agentcraft:memory_archive", {"facing": "west"})
-        add((9, 2, z), "agentcraft:memory_catalog" if z == 1 else "agentcraft:memory_archive", {"facing": "west"})
+        add((9, 1, z), "agentcraft_worlds:memory_archive", {"facing": "west"})
+        add((9, 2, z), "agentcraft_worlds:memory_catalog" if z == 1 else "agentcraft_worlds:memory_archive", {"facing": "west"})
     add((9, 1, 3), inline=V("cube_column", side="bookshelf", end="oak_planks"))
     add((9, 2, 3), inline=V("cube_column", side="bookshelf", end="oak_planks"))
     add((9, 1, 0), inline=V("cube_all", all="cut_copper"))
     add((9, 2, 0), inline=V("cube_all", all="cut_copper"))
     # podium + merge station
-    add((5, 1, 2), "agentcraft:decision_podium", {"facing": "north", "open": "true"})
-    add((7, 1, 4), "agentcraft:merge_station", {"facing": "north", "active": "true"})
-    add((3, 1, 2), "agentcraft:glow_strip", {"facing": "up", "axis": "z"})
-    add((0, 1, 3), "agentcraft:glow_panel")
+    add((5, 1, 2), "agentcraft_worlds:decision_podium", {"facing": "north", "open": "true"})
+    add((7, 1, 4), "agentcraft_worlds:merge_station", {"facing": "north", "active": "true"})
+    add((3, 1, 2), "agentcraft_worlds:glow_strip", {"facing": "up", "axis": "z"})
+    add((0, 1, 3), "agentcraft_worlds:glow_panel")
     add((0, 1, 1), inline=V("cube_all", all="moss_block"))
     return B
 
@@ -320,10 +320,10 @@ def vignette_blocks():
 def block_renders(samples=64):
     rd = ensure_dir(ART / "blocks")
     blocks = [{"name": n, **e} for n, e, *_ in OURS]
-    blocks += [{"name": f"status_lamp_{s}", "block": "agentcraft:status_lamp", "props": {"status": s}} for s in LAMPS]
+    blocks += [{"name": f"status_lamp_{s}", "block": "agentcraft_worlds:status_lamp", "props": {"status": s}} for s in LAMPS]
     blocks += [{"name": n, "inline": _inline(p, tx)} for n, p, tx, _ in VANILLA_REFS]
     jobs = {"out_dir": str(rd), "size": [256, 256], "samples": samples,
-            "roots": {"agentcraft": str(OUT), "minecraft": str(VANILLA_ASSETS)},
+            "roots": {"agentcraft_worlds": str(OUT), "minecraft": str(VANILLA_ASSETS)},
             "blocks": blocks,
             "scenes": [
                 {"name": "vignette_day", "size": [1600, 1000], "ortho": 228.0, "az": 215, "el": 30,

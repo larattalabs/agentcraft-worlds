@@ -58,12 +58,12 @@ python assets-src\sync.py --check     # exit 1 if the mod copy is stale (use bef
 ```
 
 `sync.py` is stdlib-only. It never deletes files it did not put there (ledger:
-`mod/src/main/resources/assets/agentcraft/.art-sync.json`), so mod-owned files such as `icon.png` are safe.
+`mod/src/main/resources/assets/agentcraft_worlds/.art-sync.json`), so mod-owned files such as `icon.png` are safe.
 
 **Lang files are merged, not copied.** Minecraft loads one `lang/<locale>.json` per namespace per pack, so the
 mod's own keys (keybinds, screen titles, messages) and the generated block/item names share
-`assets/agentcraft/lang/en_us.json`. Edit that file in `mod/` as usual: sync owns only the keys it generates
-(`block.agentcraft.*`, `item.agentcraft.*`, `itemGroup.agentcraft`), updates them in place, removes ones
+`assets/agentcraft_worlds/lang/en_us.json`. Edit that file in `mod/` as usual: sync owns only the keys it generates
+(`block.agentcraft_worlds.*`, `item.agentcraft_worlds.*`, `itemGroup.agentcraft_worlds`), updates them in place, removes ones
 assets-src stopped generating, and keeps every other key verbatim in the file's order (a mod value for a
 generated key is overwritten with a warning). `--check` compares the merged result by content, so mod-added keys
 or CRLF line endings never count as stale.
@@ -123,7 +123,7 @@ Measured: min CIEDE2000 identity-vs-status **25.2**, min agent-vs-agent **18.2**
 | bram | Bram | lead (Lead · platform) | default | `#2C0E3F` | `#AFA3B6` | Tan skin, heavy brows and a thick walrus moustache under a tweed flat cap in deep aubergine with a brass button |
 | cass | Cass | lead (Lead · product) | slim | `#E14CA7` | `#EB85C3` | Light skin with freckles and rosy cheeks, auburn hair in a high ponytail with a fuchsia scrunchie (the tail hangs down the back), long side-swept bangs and a fuchsia clip |
 
-Skins: `agentcraft:textures/entity/agent/<id>.png`. Base-layer faces are fully opaque (vanilla strips their
+Skins: `agentcraft_worlds:textures/entity/agent/<id>.png`. Base-layer faces are fully opaque (vanilla strips their
 alpha), overlay alpha is binary. Render agents with the player model (`model` = default -> wide arms, slim -> 3 px).
 
 ## Block contract (what the Java side must declare)
@@ -139,38 +139,38 @@ the quads end up. Non-cube shapes still need `noOcclusion()`. Suggested luminanc
 
 | block id | properties | render layer (auto) | luminance | shape | notes |
 |---|---|---|---|---|---|
-| `agentcraft:monitor` | `facing=north\|east\|south\|west, lit=bool, up\|down\|left\|right=bool` | solid | lit ? 7 : 0 | thin panel (back 4 px), nonOpaque | Connectable screen. up/down/left/right = true when the neighbour on that side (as seen by a viewer looking at the screen) is a monitor with the same facing; the bezel on that side is then omitted, so NxM monitors read as one screen. left = facing.getClockWise(), right = facing.getCounterClockWise(). Screen surface is the plane z = 12/16 from the front of a north-facing model (recessed 1 px behind the 2 px bezel); draw text there in the BER, inside the bezel (2 px inset on unconnected sides). |
-| `agentcraft:task_board` | `facing, up\|down\|left\|right=bool` | solid | 0 | thin panel (back 2 px), nonOpaque | Task Wall surface (walnut pinboard); same connection rules as monitor. Cards are drawn by the BER on the plane z = 14/16 (just proud of the board). |
-| `agentcraft:decision_podium` | `facing, open=bool` | solid + cutout (auto) | open ? 9 : 0 | lectern-like, nonOpaque | Front (emblem) faces the player who placed it (vanilla lectern rule). open=true lights the desk paper, the clay lens and the desk bell. |
-| `agentcraft:memory_archive` | `facing` | solid | 0 | full cube | Library shelf: books + archive boxes. |
-| `agentcraft:memory_catalog` | `facing` | solid | 0 | full cube | Card-index drawers (memory index). |
-| `agentcraft:merge_station` | `facing, active=bool` | solid + cutout (auto) | active ? 6 : 0 | full cube | Worktop with brass branch-merge inlay; active=true when a merge review is waiting. |
-| `agentcraft:status_lamp` | `status=off\|idle\|thinking\|working\|waiting\|error\|done` | solid + cutout (auto) | off ? 0 : 12 | full cube | CI / agent status lamp; colours are the status palette. Animate 'waiting' in-world with particles, not by flipping states. |
-| `agentcraft:console_terminal` | `facing` | solid | 6 | cabinet + leaning screen, nonOpaque | Command console; use (Enter) opens the console screen. |
-| `agentcraft:glow_panel` | `(none)` | solid + cutout (auto) | 15 | full cube | Ceiling light: plaster frame, brass mullions, glowing panes. |
-| `agentcraft:glow_strip` | `facing=up\|down\|north\|south\|east\|west, axis=x\|z` | solid | 12 | 2 px strip, nonOpaque, no collision | facing = direction the lit face points (vanilla end_rod rotation table); it attaches to the opposite neighbour. axis = the run direction on a floor/ceiling (set from the placer's horizontal facing axis); on walls it always runs horizontally and axis is ignored. |
-| `agentcraft:plaster_panel` | `(none)` | solid | 0 | full cube | Warm plaster wall (calcite / white concrete companion). |
-| `agentcraft:plaster_frame` | `(none)` | solid | 0 | full cube | Raised-molding plaster panel for wall articulation. |
-| `agentcraft:walnut_panel` | `(none)` | solid | 0 | full cube | Vertical walnut boards (dark oak companion). |
-| `agentcraft:walnut_trim` | `(none)` | solid | 0 | full cube (column) | Walnut with a brass cap rail: wainscot top course. |
-| `agentcraft:terracotta_tile` | `(none)` | solid | 0 | full cube | 2x2 clay tiles with cream grout. |
-| `agentcraft:oak_parquet` | `(none)` | solid | 0 | full cube | Stripped-oak basketweave parquet floor. |
+| `agentcraft_worlds:monitor` | `facing=north\|east\|south\|west, lit=bool, up\|down\|left\|right=bool` | solid | lit ? 7 : 0 | thin panel (back 4 px), nonOpaque | Connectable screen. up/down/left/right = true when the neighbour on that side (as seen by a viewer looking at the screen) is a monitor with the same facing; the bezel on that side is then omitted, so NxM monitors read as one screen. left = facing.getClockWise(), right = facing.getCounterClockWise(). Screen surface is the plane z = 12/16 from the front of a north-facing model (recessed 1 px behind the 2 px bezel); draw text there in the BER, inside the bezel (2 px inset on unconnected sides). |
+| `agentcraft_worlds:task_board` | `facing, up\|down\|left\|right=bool` | solid | 0 | thin panel (back 2 px), nonOpaque | Task Wall surface (walnut pinboard); same connection rules as monitor. Cards are drawn by the BER on the plane z = 14/16 (just proud of the board). |
+| `agentcraft_worlds:decision_podium` | `facing, open=bool` | solid + cutout (auto) | open ? 9 : 0 | lectern-like, nonOpaque | Front (emblem) faces the player who placed it (vanilla lectern rule). open=true lights the desk paper, the clay lens and the desk bell. |
+| `agentcraft_worlds:memory_archive` | `facing` | solid | 0 | full cube | Library shelf: books + archive boxes. |
+| `agentcraft_worlds:memory_catalog` | `facing` | solid | 0 | full cube | Card-index drawers (memory index). |
+| `agentcraft_worlds:merge_station` | `facing, active=bool` | solid + cutout (auto) | active ? 6 : 0 | full cube | Worktop with brass branch-merge inlay; active=true when a merge review is waiting. |
+| `agentcraft_worlds:status_lamp` | `status=off\|idle\|thinking\|working\|waiting\|error\|done` | solid + cutout (auto) | off ? 0 : 12 | full cube | CI / agent status lamp; colours are the status palette. Animate 'waiting' in-world with particles, not by flipping states. |
+| `agentcraft_worlds:console_terminal` | `facing` | solid | 6 | cabinet + leaning screen, nonOpaque | Command console; use (Enter) opens the console screen. |
+| `agentcraft_worlds:glow_panel` | `(none)` | solid + cutout (auto) | 15 | full cube | Ceiling light: plaster frame, brass mullions, glowing panes. |
+| `agentcraft_worlds:glow_strip` | `facing=up\|down\|north\|south\|east\|west, axis=x\|z` | solid | 12 | 2 px strip, nonOpaque, no collision | facing = direction the lit face points (vanilla end_rod rotation table); it attaches to the opposite neighbour. axis = the run direction on a floor/ceiling (set from the placer's horizontal facing axis); on walls it always runs horizontally and axis is ignored. |
+| `agentcraft_worlds:plaster_panel` | `(none)` | solid | 0 | full cube | Warm plaster wall (calcite / white concrete companion). |
+| `agentcraft_worlds:plaster_frame` | `(none)` | solid | 0 | full cube | Raised-molding plaster panel for wall articulation. |
+| `agentcraft_worlds:walnut_panel` | `(none)` | solid | 0 | full cube | Vertical walnut boards (dark oak companion). |
+| `agentcraft_worlds:walnut_trim` | `(none)` | solid | 0 | full cube (column) | Walnut with a brass cap rail: wainscot top course. |
+| `agentcraft_worlds:terracotta_tile` | `(none)` | solid | 0 | full cube | 2x2 clay tiles with cream grout. |
+| `agentcraft_worlds:oak_parquet` | `(none)` | solid | 0 | full cube | Stripped-oak basketweave parquet floor. |
 
 ## GUI kit
 
-Sprites live in the vanilla GUI sprite atlas: `assets/agentcraft/textures/gui/sprites/kit/<name>.png`. Draw them
+Sprites live in the vanilla GUI sprite atlas: `assets/agentcraft_worlds/textures/gui/sprites/kit/<name>.png`. Draw them
 with the Minecraft 26.3 (Mojang-named) API:
 
 ```java
 // graphics: net.minecraft.client.gui.GuiGraphicsExtractor
 graphics.blitSprite(RenderPipelines.GUI_TEXTURED,
-        Identifier.fromNamespaceAndPath("agentcraft", "kit/panel_paper"), x, y, w, h);
+        Identifier.fromNamespaceAndPath("agentcraft_worlds", "kit/panel_paper"), x, y, w, h);
 ```
 
 36 of the 78 sprites are stretchable and ship a `.png.mcmeta` with `gui.scaling` nine_slice insets, so
 vanilla nine-slices them; the other 42 (icons, dots, ring frames, grip, bubble tail, checkboxes) are
 fixed-size and drawn at their own size. 1 texel = 1 GUI px. Full manifest with content padding and text colours:
-`assets/agentcraft/gui/kit.json`. Colour/typography rules: `ui-style.md`.
+`assets/agentcraft_worlds/gui/kit.json`. Colour/typography rules: `ui-style.md`.
 
 | sprite | size | 9-slice (l,t,r,b) | use |
 |---|---|---|---|
@@ -249,7 +249,7 @@ fixed-size and drawn at their own size. 1 texel = 1 GUI px. Full manifest with c
 
 ## Asset manifest (every shipped file)
 
-291 files under `out/assets/agentcraft/`.
+291 files under `out/assets/agentcraft_worlds/`.
 
 ### blockstates/console_terminal.json
 

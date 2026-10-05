@@ -1,12 +1,12 @@
 """AgentCraft GUI kit: 9-slice-friendly sprites for the vanilla GUI sprite atlas.
 
-Output: out/assets/agentcraft/textures/gui/sprites/kit/<name>.png (+ .png.mcmeta with
+Output: out/assets/agentcraft_worlds/textures/gui/sprites/kit/<name>.png (+ .png.mcmeta with
 vanilla "gui.scaling" nine_slice metadata for the stretchable ones) so the mod can draw them with
 the 26.3 (Mojang-named) API
     graphics.blitSprite(RenderPipelines.GUI_TEXTURED,
-                        Identifier.fromNamespaceAndPath("agentcraft", "kit/<name>"), x, y, w, h)
+                        Identifier.fromNamespaceAndPath("agentcraft_worlds", "kit/<name>"), x, y, w, h)
 (graphics = net.minecraft.client.gui.GuiGraphicsExtractor) and get correct 9-slice scaling for free. A full manifest (sizes, insets, content padding,
-text colours) is written to out/assets/agentcraft/gui/kit.json.
+text colours) is written to out/assets/agentcraft_worlds/gui/kit.json.
 
 python gen/gui.py
 """
@@ -669,8 +669,8 @@ def build():
     task_cards()
     bubble_and_widgets()
     base = OUT / "textures" / "gui" / "sprites" / "kit"
-    manifest = {"version": 1, "atlas_prefix": "agentcraft:kit/",
-                "how_to_draw": "graphics.blitSprite(RenderPipelines.GUI_TEXTURED, Identifier.fromNamespaceAndPath(\"agentcraft\", "
+    manifest = {"version": 1, "atlas_prefix": "agentcraft_worlds:kit/",
+                "how_to_draw": "graphics.blitSprite(RenderPipelines.GUI_TEXTURED, Identifier.fromNamespaceAndPath(\"agentcraft_worlds\", "
                                "\"kit/<name>\"), x, y, w, h) with graphics = net.minecraft.client.gui.GuiGraphicsExtractor "
                                "(Minecraft 26.3, Mojang names). Sprites with a 'slice' entry ship <name>.png.mcmeta "
                                "(gui.scaling nine_slice) so vanilla nine-slices them; the rest (icons, dots, ring "
@@ -684,7 +684,7 @@ def build():
             mc = {"gui": {"scaling": {"type": meta["scaling"], "width": img.width, "height": img.height,
                                       "border": {"left": s["left"], "top": s["top"], "right": s["right"], "bottom": s["bottom"]}}}}
             write_json(base / f"{name}.png.mcmeta", mc)
-        manifest["sprites"][name] = {"id": f"agentcraft:kit/{name}", **meta}
+        manifest["sprites"][name] = {"id": f"agentcraft_worlds:kit/{name}", **meta}
     write_json(OUT / "gui" / "kit.json", manifest)
     print(f"{len(SPRITES)} gui sprites ->", base)
     return SPRITES

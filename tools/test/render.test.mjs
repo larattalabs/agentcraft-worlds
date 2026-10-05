@@ -46,7 +46,7 @@ test('render: the front option turns the building (north-front view differs from
   const a = renderStructure('workshop', { out, cutaway: false });
   const sc = tmp();
   const repo = path.resolve(import.meta.dirname, '..', '..');
-  const sidecar = JSON.parse(fs.readFileSync(path.join(repo, 'mod/src/main/resources/data/agentcraft/blueprints/workshop.blueprint.json'), 'utf8'));
+  const sidecar = JSON.parse(fs.readFileSync(path.join(repo, 'mod/src/main/resources/data/agentcraft_worlds/blueprints/workshop.blueprint.json'), 'utf8'));
   sidecar.front = 'north';
   const sp = path.join(sc, 'workshop.blueprint.json');
   fs.writeFileSync(sp, JSON.stringify(sidecar));

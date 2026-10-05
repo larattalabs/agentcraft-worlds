@@ -66,7 +66,7 @@ BLOCK_CONTRACT = OrderedDict([
     ,
 ])
 
-# glob (relative to out/assets/agentcraft) -> description; first match wins
+# glob (relative to out/assets/agentcraft_worlds) -> description; first match wins
 DESCRIBE = [
     ("textures/entity/agent/*.png", "64x64 player-format agent skin (base + overlay layers; see cast.json for model)"),
     ("textures/gui/portrait/*_framed.png", "20x20 framed portrait (brass rim + identity ring + 2x face) for GUI lists"),
@@ -186,12 +186,12 @@ def build():
     w("```")
     w("")
     w("`sync.py` is stdlib-only. It never deletes files it did not put there (ledger:")
-    w("`mod/src/main/resources/assets/agentcraft/.art-sync.json`), so mod-owned files such as `icon.png` are safe.")
+    w("`mod/src/main/resources/assets/agentcraft_worlds/.art-sync.json`), so mod-owned files such as `icon.png` are safe.")
     w("")
     w("**Lang files are merged, not copied.** Minecraft loads one `lang/<locale>.json` per namespace per pack, so the")
     w("mod's own keys (keybinds, screen titles, messages) and the generated block/item names share")
-    w("`assets/agentcraft/lang/en_us.json`. Edit that file in `mod/` as usual: sync owns only the keys it generates")
-    w("(`block.agentcraft.*`, `item.agentcraft.*`, `itemGroup.agentcraft`), updates them in place, removes ones")
+    w("`assets/agentcraft_worlds/lang/en_us.json`. Edit that file in `mod/` as usual: sync owns only the keys it generates")
+    w("(`block.agentcraft_worlds.*`, `item.agentcraft_worlds.*`, `itemGroup.agentcraft_worlds`), updates them in place, removes ones")
     w("assets-src stopped generating, and keeps every other key verbatim in the file's order (a mod value for a")
     w("generated key is overwritten with a warning). `--check` compares the merged result by content, so mod-added keys")
     w("or CRLF line endings never count as stale.")
@@ -249,7 +249,7 @@ def build():
         w(f"| {a['id']} | {a['name']} | {a['role']} ({a['title']}) | {a['model']} | `{a['color']}` | `{a['text_on_dark']}` | "
           f"{a['description'].split('. ')[1] if '. ' in a['description'] else a['description']} |")
     w("")
-    w("Skins: `agentcraft:textures/entity/agent/<id>.png`. Base-layer faces are fully opaque (vanilla strips their")
+    w("Skins: `agentcraft_worlds:textures/entity/agent/<id>.png`. Base-layer faces are fully opaque (vanilla strips their")
     w("alpha), overlay alpha is binary. Render agents with the player model (`model` = default -> wide arms, slim -> 3 px).")
     w("")
     w("## Block contract (what the Java side must declare)")
@@ -267,24 +267,24 @@ def build():
     w("|---|---|---|---|---|---|")
     for bid, (props, layer, lum, shape, notes) in BLOCK_CONTRACT.items():
         esc = lambda v: v.replace("|", "\\|")  # noqa: E731  (pipes inside cells break GFM tables)
-        w(f"| `agentcraft:{bid}` | `{esc(props)}` | {layer} | {esc(lum)} | {shape} | {esc(notes)} |")
+        w(f"| `agentcraft_worlds:{bid}` | `{esc(props)}` | {layer} | {esc(lum)} | {shape} | {esc(notes)} |")
     w("")
     w("## GUI kit")
     w("")
     n9 = sum(1 for m in kit.values() if "slice" in m)
-    w("Sprites live in the vanilla GUI sprite atlas: `assets/agentcraft/textures/gui/sprites/kit/<name>.png`. Draw them")
+    w("Sprites live in the vanilla GUI sprite atlas: `assets/agentcraft_worlds/textures/gui/sprites/kit/<name>.png`. Draw them")
     w("with the Minecraft 26.3 (Mojang-named) API:")
     w("")
     w("```java")
     w("// graphics: net.minecraft.client.gui.GuiGraphicsExtractor")
     w("graphics.blitSprite(RenderPipelines.GUI_TEXTURED,")
-    w("        Identifier.fromNamespaceAndPath(\"agentcraft\", \"kit/panel_paper\"), x, y, w, h);")
+    w("        Identifier.fromNamespaceAndPath(\"agentcraft_worlds\", \"kit/panel_paper\"), x, y, w, h);")
     w("```")
     w("")
     w(f"{n9} of the {len(kit)} sprites are stretchable and ship a `.png.mcmeta` with `gui.scaling` nine_slice insets, so")
     w(f"vanilla nine-slices them; the other {len(kit) - n9} (icons, dots, ring frames, grip, bubble tail, checkboxes) are")
     w("fixed-size and drawn at their own size. 1 texel = 1 GUI px. Full manifest with content padding and text colours:")
-    w("`assets/agentcraft/gui/kit.json`. Colour/typography rules: `ui-style.md`.")
+    w("`assets/agentcraft_worlds/gui/kit.json`. Colour/typography rules: `ui-style.md`.")
     w("")
     w("| sprite | size | 9-slice (l,t,r,b) | use |")
     w("|---|---|---|---|")
@@ -310,7 +310,7 @@ def build():
     w("")
     w("## Asset manifest (every shipped file)")
     w("")
-    w(f"{len(files)} files under `out/assets/agentcraft/`.")
+    w(f"{len(files)} files under `out/assets/agentcraft_worlds/`.")
     w("")
     for g, rels in groups.items():
         w(f"### {g}")

@@ -170,6 +170,7 @@ public final class Blueprints {
 		CompoundTag tag = NbtIo.readCompressed(nbt, NbtAccounter.unlimitedHeap());
 		int version = NbtUtils.getDataVersion(tag, 500);
 		tag = DataFixTypes.STRUCTURE.updateToCurrentVersion(server.getFixerUpper(), tag, version);
+		dev.agentcraft.compat.LegacyIds.remap(tag); // blueprints written before the mod id rename name agentcraft:<x>
 		StructureTemplate t = new StructureTemplate();
 		t.load(server.registryAccess().lookupOrThrow(Registries.BLOCK), tag);
 		return t;

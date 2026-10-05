@@ -2,8 +2,8 @@
 // node tools/blueprints/build.mjs [id... | --all]   (no ids or --all: every design)
 // Builds designs/<id>.mjs (default export = () => Blueprint) into the mod's bundled resources, checks them and
 // renders the previews (render.mjs) next to the sidecar:
-//   mod/src/main/resources/data/agentcraft/structure/<id>.nbt
-//   mod/src/main/resources/data/agentcraft/blueprints/<id>.blueprint.json
+//   mod/src/main/resources/data/agentcraft_worlds/structure/<id>.nbt
+//   mod/src/main/resources/data/agentcraft_worlds/blueprints/<id>.blueprint.json
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,8 +13,8 @@ import { renderStructure } from './render.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
-export const NBT_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft/structure');
-export const JSON_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft/blueprints');
+export const NBT_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft_worlds/structure');
+export const JSON_DIR = path.join(REPO, 'mod/src/main/resources/data/agentcraft_worlds/blueprints');
 const DESIGNS = path.join(HERE, 'designs');
 
 export function listDesigns() {

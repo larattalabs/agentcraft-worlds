@@ -1,4 +1,4 @@
-// The village board (docs/VILLAGE.md V2): a fixture, not a building. A 5 x 3 agentcraft:village_board display under a
+// The village board (docs/VILLAGE.md V2): a fixture, not a building. A 5 x 3 agentcraft_worlds:village_board display under a
 // dark-oak hood, between two stripped dark-oak posts with lanterns on top, on a stone-brick plinth; a paved strip in
 // front where the player stands to read it. Everything but the display is vanilla, and the display has a dark-oak
 // wall behind every cell, so the frame stays whole in a world opened without the mod.

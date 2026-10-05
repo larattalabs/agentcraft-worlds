@@ -99,7 +99,7 @@ final class PreviewImages {
 		String ns = AgentCraft.MOD_ID;
 		boolean bundled = e == null || e.source().startsWith("bundled");
 		if (e != null && bundled) {
-			// "bundled agentcraft:blueprints/studio.blueprint.json"
+			// "bundled agentcraft_worlds:blueprints/studio.blueprint.json"
 			String src = e.source().substring("bundled".length()).strip();
 			int colon = src.indexOf(':');
 			if (colon > 0) {

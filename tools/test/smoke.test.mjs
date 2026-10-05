@@ -72,9 +72,9 @@ test('flowing fluid settling and station live states are counted apart, source b
   assert.equal(flowOnly(w(1), w(7)), true);
   assert.equal(flowOnly(AIR, w(0)), false, 'a source block appearing is a real difference');
   assert.equal(flowOnly(STONE, w(2)), false);
-  const lamp = (st) => `Block{agentcraft:monitor}[facing=east,lit=${st}]`;
+  const lamp = (st) => `Block{agentcraft_worlds:monitor}[facing=east,lit=${st}]`;
   assert.equal(liveStateOnly(lamp('false'), lamp('true')), true);
-  assert.equal(liveStateOnly(lamp('false'), 'Block{agentcraft:status_lamp}[status=done]'), false);
+  assert.equal(liveStateOnly(lamp('false'), 'Block{agentcraft_worlds:status_lamp}[status=done]'), false);
   assert.equal(liveStateOnly(STONE, 'Block{minecraft:dirt}'), false);
   const d = diffDumps(dump([AIR, lamp('false'), STONE, ...Array(9).fill(AIR)]), dump([w(3), lamp('true'), 'Block{minecraft:dirt}', ...Array(9).fill(AIR)]));
   assert.equal(d.flow, 1);

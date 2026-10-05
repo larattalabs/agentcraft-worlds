@@ -8,16 +8,16 @@ export const SIZES = ['s', 'm', 'l'];
 
 /** Commands that put two boss bars (one with a long title) and both effect rows on screen; undone by SCENE_UNDO. */
 export const SCENE = [
-  'bossbar add agentcraft:qa_boss_a "Ender Dragon"',
-  'bossbar set agentcraft:qa_boss_a players @a',
-  'bossbar set agentcraft:qa_boss_a value 70',
-  'bossbar add agentcraft:qa_boss_b "Raid - Wave 3 of 7: Pillagers and Vindicators"',
-  'bossbar set agentcraft:qa_boss_b players @a',
-  'bossbar set agentcraft:qa_boss_b color red',
+  'bossbar add agentcraft_worlds:qa_boss_a "Ender Dragon"',
+  'bossbar set agentcraft_worlds:qa_boss_a players @a',
+  'bossbar set agentcraft_worlds:qa_boss_a value 70',
+  'bossbar add agentcraft_worlds:qa_boss_b "Raid - Wave 3 of 7: Pillagers and Vindicators"',
+  'bossbar set agentcraft_worlds:qa_boss_b players @a',
+  'bossbar set agentcraft_worlds:qa_boss_b color red',
   'effect give @s minecraft:speed 600 0',
   'effect give @s minecraft:weakness 600 0',
 ];
-export const SCENE_UNDO = ['bossbar remove agentcraft:qa_boss_a', 'bossbar remove agentcraft:qa_boss_b', 'effect clear @s'];
+export const SCENE_UNDO = ['bossbar remove agentcraft_worlds:qa_boss_a', 'bossbar remove agentcraft_worlds:qa_boss_b', 'effect clear @s'];
 
 /** Axis-aligned overlap of two {x, y, w, h} rectangles (touching edges do not overlap); null/empty never overlaps. */
 export function rectsOverlap(a, b) {

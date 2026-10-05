@@ -1,6 +1,7 @@
 # AgentCraft mod: developer notes
 
-Fabric mod `agentcraft` (package `dev.agentcraft`). Common entrypoint `dev.agentcraft.AgentCraft`,
+Fabric mod `agentcraft_worlds` (package `dev.agentcraft`; the id was `agentcraft` until the fork renamed
+it, docs/FORK.md "Mod id": old ids are aliased and remapped by `dev.agentcraft.compat`). Common entrypoint `dev.agentcraft.AgentCraft`,
 client entrypoint `dev.agentcraft.client.AgentCraftClient`. Loom's split source sets are used:
 `src/main` (both sides) and `src/client` (client only).
 
@@ -458,8 +459,10 @@ the catch-up, never both (`TickGateTest`). The catch-up calls `setOldPosAndRot()
 `commonTick()` does, so render interpolation stays right. The only effect that is not caught up is
 `tickCount` (the clock behind `AgentRenderer`'s `timeSeconds`), and only while a culler skips the whole
 tick, that is, while the agent is out of view. No user configuration is needed.
-Entity Culling is not a dependency and is not touched at runtime. With an older AgentCraft build, the
-workaround is to add `"agentcraft:agent"` to `tickCullingWhitelist` in `config/entityculling.json`.
+Entity Culling is not a dependency and is not touched at runtime. With an older AgentCraft build (from
+before the catch-up, so still mod id `agentcraft`), the workaround is to add `"agentcraft:agent"` to
+`tickCullingWhitelist` in `config/entityculling.json`; since the mod id rename the agent is
+`"agentcraft_worlds:agent"` (docs/FORK.md "Mod id"), which needs no whitelist entry.
 To check without the mod, run `dev.agents.freezeEntityTick {on:true}`, make an agent walk (for example
 `dev.routines.library {agent}`), and confirm that it still arrives, `entityAdvances` stays flat and
 `catchUpAdvances` grows by about 20 per agent per second.
@@ -789,7 +792,7 @@ relayout snap, a building change, a released lead leaving, the level or the link
   roads use it, so a new spatial caller is safe by default). Never home; `setHome`/`setRepos` refuse them;
   `place` refuses repos for a fixture blueprint; `move` skips the repo checks. `/agentcraft place village_board [-] [rotation]`
   places one in front of the player; `/agentcraft buildings` lists fixtures too; `/agentcraft remove <id>` suggests them.
-- `agentcraft:village_board` (`VillageBoardBlock`/`VillageBoardBlockEntity`, a `PanelBlock` like the task board, models
+- `agentcraft_worlds:village_board` (`VillageBoardBlock`/`VillageBoardBlockEntity`, a `PanelBlock` like the task board, models
   borrowed from the task board) drawn by `client.village.VillageBoardRenderer` from a `BoardView` (prepared per panel origin,
   rebuilt only when the content, page, size or density changes; swept after 30 s unseen). Content: `village.VillageBoard`
   (pure), rebuilt when buildings, world, hung trophies, the Inbox or the link change, every 30 s, and on a Foreman revision
@@ -928,7 +931,7 @@ The contract is docs/HUB.md "Hub screen"; code in `dev.agentcraft.client.hub`.
   `<id>.preview-{iso,top,front,cutaway}.png` from `Blueprints.userDir()` first, then (bundled
   blueprints) the class-path resource `/data/<ns>/blueprints/`. Discovery is cached 2 s per blueprint;
   bytes are read on `Util.ioPool()`, decoded and registered as `DynamicTexture`s
-  (`agentcraft:hub_preview/<n>`) on the client thread, only for the view shown; max 2048 px a side,
+  (`agentcraft_worlds:hub_preview/<n>`) on the client thread, only for the view shown; max 2048 px a side,
   LRU-evicted beyond 8 textures / 48 MB, all released when the hub closes; keyed by path + mtime + size
   so a regenerated PNG shows. Missing previews just leave the Plan chip. "Design new…" calls
   `HubFeature.designNew` (a `Consumer<Screen>` called with the hub as parent), set by `DesignFeature`.

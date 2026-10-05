@@ -35,15 +35,15 @@ export const B = {
   seaLantern: 'minecraft:sea_lantern',
   glowStrip: 'minecraft:end_rod', // legacy name (older designs): a strip light is an end rod now
   button: 'minecraft:stone_button',
-  monitor: 'agentcraft:monitor',
-  taskBoard: 'agentcraft:task_board',
-  villageBoard: 'agentcraft:village_board',
-  podium: 'agentcraft:decision_podium',
-  archive: 'agentcraft:memory_archive',
-  catalog: 'agentcraft:memory_catalog',
-  mergeStation: 'agentcraft:merge_station',
-  statusLamp: 'agentcraft:status_lamp',
-  console: 'agentcraft:console_terminal',
+  monitor: 'agentcraft_worlds:monitor',
+  taskBoard: 'agentcraft_worlds:task_board',
+  villageBoard: 'agentcraft_worlds:village_board',
+  podium: 'agentcraft_worlds:decision_podium',
+  archive: 'agentcraft_worlds:memory_archive',
+  catalog: 'agentcraft_worlds:memory_catalog',
+  mergeStation: 'agentcraft_worlds:merge_station',
+  statusLamp: 'agentcraft_worlds:status_lamp',
+  console: 'agentcraft_worlds:console_terminal',
   pane: 'minecraft:glass_pane',
   glass: 'minecraft:glass',
   deskSlab: 'minecraft:dark_oak_slab',
@@ -485,7 +485,7 @@ export class Blueprint {
   }
 
   /**
-   * A village board display (docs/VILLAGE.md V2): `agentcraft:village_board` blocks over the segment (x0,z0)-(x1,z1),
+   * A village board display (docs/VILLAGE.md V2): `agentcraft_worlds:village_board` blocks over the segment (x0,z0)-(x1,z1),
    * rows y..y+height-1, facing `facing`, with a full vanilla block behind every cell (`backing`, so the fixture keeps
    * its shape without the mod). Anchor `board` = the centre of the display surface (yaw = the facing).
    */

@@ -51,7 +51,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `title` | string | no | short descriptive role from cast.json, e.g. "Backend tinkerer" |
 | `color` | string (#RRGGBB) | yes | agent color (scarf/badge/nameplate) |
 | `accent` | string (#RRGGBB) | no | "#RRGGBB" |
-| `skin` | string | yes | skin id -> assets/agentcraft/textures/entity/agent/<skin>.png |
+| `skin` | string | yes | skin id -> assets/agentcraft_worlds/textures/entity/agent/<skin>.png |
 | `state` | [AgentState](#agentstate) | yes | What the agent is doing right now; drives nameplate dot color, particles and animation. |
 | `activity` | string | yes | one short line for the nameplate, e.g. "editing src/cli.ts" (<= 48 chars) |
 | `station` | [Station](#station) | yes | Where in the HQ the agent should walk to. `user` = next to the player / Decision Podium. |

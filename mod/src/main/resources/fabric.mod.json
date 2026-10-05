@@ -1,6 +1,6 @@
 {
 	"schemaVersion": 1,
-	"id": "agentcraft",
+	"id": "agentcraft_worlds",
 	"version": "${version}",
 	"name": "AgentCraft Worlds",
 	"description": "Teams of Claude agents doing real work on your code, in Minecraft buildings you place in your own world. A fork of AgentCraft by blendi-remade.",
@@ -9,7 +9,7 @@
 		"Laratta Labs"
 	],
 	"license": "MIT",
-	"icon": "assets/agentcraft/icon.png",
+	"icon": "assets/agentcraft_worlds/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
@@ -20,9 +20,9 @@
 		]
 	},
 	"mixins": [
-		"agentcraft.mixins.json",
+		"agentcraft_worlds.mixins.json",
 		{
-			"config": "agentcraft.client.mixins.json",
+			"config": "agentcraft_worlds.client.mixins.json",
 			"environment": "client"
 		}
 	],

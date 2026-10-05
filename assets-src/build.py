@@ -5,7 +5,7 @@
     assets-src/.venv/Scripts/python assets-src/build.py --verify   # rebuild in 2 fresh processes with different
                                                                    # PYTHONHASHSEEDs, assert byte-identical output
 
-Outputs land in assets-src/out/assets/agentcraft (mirrors the mod's resources); review renders
+Outputs land in assets-src/out/assets/agentcraft_worlds (mirrors the mod's resources); review renders
 and sheets in artifacts/art/. Nothing here writes into mod/ - use sync.py for that.
 """
 from __future__ import annotations

@@ -30,17 +30,17 @@ const yawDiff = (a, b) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
 
 /** AgentCraft blocks a bundled/designed building may use: the functional station blocks (contract C5). */
 export const FUNCTIONAL_BLOCKS = new Set([
-  'agentcraft:monitor', 'agentcraft:task_board', 'agentcraft:decision_podium', 'agentcraft:console_terminal',
-  'agentcraft:status_lamp', 'agentcraft:merge_station', 'agentcraft:memory_archive', 'agentcraft:memory_catalog',
-  'agentcraft:village_board',
+  'agentcraft_worlds:monitor', 'agentcraft_worlds:task_board', 'agentcraft_worlds:decision_podium', 'agentcraft_worlds:console_terminal',
+  'agentcraft_worlds:status_lamp', 'agentcraft_worlds:merge_station', 'agentcraft_worlds:memory_archive', 'agentcraft_worlds:memory_catalog',
+  'agentcraft_worlds:village_board',
 ]);
 const VANILLA_FOR = {
-  'agentcraft:plaster_panel': 'minecraft:smooth_quartz (B.plaster)', 'agentcraft:plaster_frame': 'minecraft:calcite (B.plasterFrame)',
-  'agentcraft:walnut_panel': 'minecraft:stripped_dark_oak_log (B.walnut)', 'agentcraft:walnut_trim': 'minecraft:dark_oak_planks (B.walnutTrim)',
-  'agentcraft:terracotta_tile': 'minecraft:terracotta (B.tile)', 'agentcraft:oak_parquet': 'minecraft:oak_planks (B.parquet)',
-  'agentcraft:glow_panel': 'minecraft:ochre_froglight (B.glowPanel)', 'agentcraft:glow_strip': 'a froglight band, end rods or lanterns',
+  'agentcraft_worlds:plaster_panel': 'minecraft:smooth_quartz (B.plaster)', 'agentcraft_worlds:plaster_frame': 'minecraft:calcite (B.plasterFrame)',
+  'agentcraft_worlds:walnut_panel': 'minecraft:stripped_dark_oak_log (B.walnut)', 'agentcraft_worlds:walnut_trim': 'minecraft:dark_oak_planks (B.walnutTrim)',
+  'agentcraft_worlds:terracotta_tile': 'minecraft:terracotta (B.tile)', 'agentcraft_worlds:oak_parquet': 'minecraft:oak_planks (B.parquet)',
+  'agentcraft_worlds:glow_panel': 'minecraft:ochre_froglight (B.glowPanel)', 'agentcraft_worlds:glow_strip': 'a froglight band, end rods or lanterns',
 };
-const isAC = (name) => name.startsWith('agentcraft:');
+const isAC = (name) => name.startsWith('agentcraft_worlds:');
 const DIRS6 = [['east', 1, 0, 0], ['west', -1, 0, 0], ['up', 0, 1, 0], ['down', 0, -1, 0], ['south', 0, 0, 1], ['north', 0, 0, -1]];
 const OPP = { east: 'west', west: 'east', up: 'down', down: 'up', south: 'north', north: 'south' };
 const H_VEC = { north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0] };
@@ -51,7 +51,7 @@ const NON_CONDUCTORS = new Set(['minecraft:glowstone', 'minecraft:sea_lantern'])
 /**
  * Shell integrity (C5): flood-fills the outside of the building (the padded template box above ground; rows below
  * groundY are ground) through everything a mob could pass, once with AgentCraft blocks in place and once with
- * every agentcraft:* cell turned to air (a world opened without the mod). Walk cells reached only in the second pass
+ * every agentcraft_worlds:* cell turned to air (a world opened without the mod). Walk cells reached only in the second pass
  * mean a functional block is part of the outer shell. Unwritten cells above ground count as open (placement
  * clears the box). Errors: walk reachable through the walls (a flood capped at walk.maxY: a doorway without
  * a closed door, a gap) and any cell that only becomes reachable without the mod (walk, attic or cavity).
@@ -386,7 +386,7 @@ export function checkStructure(sidecar, structure) {
       }
     } else if (name.startsWith('monitor_')) {
       const c = cellAt(cx, Math.floor(a.y - 0.01), cz);
-      if (!c || c.name !== 'agentcraft:monitor') err(`anchor ${full}: not on an agentcraft:monitor block (found ${c?.name ?? 'nothing'} at ${cx},${Math.floor(a.y - 0.01)},${cz})`);
+      if (!c || c.name !== 'agentcraft_worlds:monitor') err(`anchor ${full}: not on an agentcraft_worlds:monitor block (found ${c?.name ?? 'nothing'} at ${cx},${Math.floor(a.y - 0.01)},${cz})`);
       else {
         if (YAW_OF_FACING[c.props.facing] !== undefined && yawDiff(a.yaw, YAW_OF_FACING[c.props.facing]) > 1) err(`anchor ${full}: yaw ${a.yaw} does not match monitor facing ${c.props.facing}`);
         const id = name.slice('monitor_'.length);
@@ -394,7 +394,7 @@ export function checkStructure(sidecar, structure) {
       }
     } else if (name === 'task_wall' && full !== name) {
       const c = cellAt(cx, cy, cz);
-      if (!c || c.name !== 'agentcraft:task_board') err(`anchor ${full}: not on an agentcraft:task_board block (found ${c?.name ?? 'nothing'})`);
+      if (!c || c.name !== 'agentcraft_worlds:task_board') err(`anchor ${full}: not on an agentcraft_worlds:task_board block (found ${c?.name ?? 'nothing'})`);
       else {
         if (yawDiff(a.yaw, YAW_OF_FACING[c.props.facing]) > 1) err(`anchor ${full}: yaw ${a.yaw} does not match board facing ${c.props.facing}`);
         const n = full.slice('task_wall@'.length);
@@ -443,13 +443,13 @@ export function checkStructure(sidecar, structure) {
         bedCells.set(fmt(...footAt), full);
       }
     } else if (name === 'board') {
-      // a fixture's display: the anchor is the centre of an agentcraft:village_board surface, yaw = the board's facing
+      // a fixture's display: the anchor is the centre of an agentcraft_worlds:village_board surface, yaw = the board's facing
       const c = cellAt(cx, cy, cz);
-      if (!c || c.name !== 'agentcraft:village_board') err(`anchor ${full}: not on an agentcraft:village_board block (found ${c?.name ?? 'nothing'} at ${cx},${cy},${cz})`);
+      if (!c || c.name !== 'agentcraft_worlds:village_board') err(`anchor ${full}: not on an agentcraft_worlds:village_board block (found ${c?.name ?? 'nothing'} at ${cx},${cy},${cz})`);
       else if (yawDiff(a.yaw, YAW_OF_FACING[c.props.facing]) > 1) err(`anchor ${full}: yaw ${a.yaw} does not match board facing ${c.props.facing}`);
     } else if (name === 'decision_podium') {
       const c = cellAt(cx, cy, cz);
-      if (!c || c.name !== 'agentcraft:decision_podium') err(`anchor ${full}: not on an agentcraft:decision_podium block (found ${c?.name ?? 'nothing'})`);
+      if (!c || c.name !== 'agentcraft_worlds:decision_podium') err(`anchor ${full}: not on an agentcraft_worlds:decision_podium block (found ${c?.name ?? 'nothing'})`);
     } else if (name === 'goal_atrium') {
       if (!inWalk(a)) err(`anchor ${full} is outside walk`);
     }
@@ -522,8 +522,8 @@ export function checkStructure(sidecar, structure) {
 
   // ---- station blocks need a binding where one is expected
   for (const [k, c] of grid) {
-    if (c.name === 'agentcraft:monitor' && !c.nbt?.binding) err(`monitor at ${k} has no binding`);
-    if (c.name === 'agentcraft:task_board' && !/^repo:/.test(c.nbt?.binding ?? '')) err(`task_board at ${k} has no repo: binding`);
+    if (c.name === 'agentcraft_worlds:monitor' && !c.nbt?.binding) err(`monitor at ${k} has no binding`);
+    if (c.name === 'agentcraft_worlds:task_board' && !/^repo:/.test(c.nbt?.binding ?? '')) err(`task_board at ${k} has no repo: binding`);
   }
 
   return { ok: errors.length === 0, errors, warnings };

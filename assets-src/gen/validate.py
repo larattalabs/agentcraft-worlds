@@ -47,7 +47,7 @@ def main():
     problems = []
     models = {}
     for p in (OUT / "models").rglob("*.json"):
-        rl = "agentcraft:" + p.relative_to(OUT / "models").with_suffix("").as_posix()
+        rl = "agentcraft_worlds:" + p.relative_to(OUT / "models").with_suffix("").as_posix()
         models[rl] = json.loads(p.read_text(encoding="utf-8"))
 
     def resolve_textures(rl, seen=()):
@@ -119,8 +119,8 @@ def main():
             problems.append(f"{p.name}: border {b} leaves no centre in {img.size}")
     lang = json.loads((OUT / "lang" / "en_us.json").read_text(encoding="utf-8"))
     for p in (OUT / "blockstates").glob("*.json"):
-        if f"block.agentcraft.{p.stem}" not in lang:
-            problems.append(f"lang: block.agentcraft.{p.stem} missing")
+        if f"block.agentcraft_worlds.{p.stem}" not in lang:
+            problems.append(f"lang: block.agentcraft_worlds.{p.stem} missing")
     sys.path.insert(0, str(Path(__file__).parent))
     from skinlib import FACES, PARTS, face_rect  # noqa: E402
     cast = json.loads((OUT / "cast.json").read_text(encoding="utf-8"))["agents"]

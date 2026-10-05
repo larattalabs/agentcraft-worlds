@@ -15,6 +15,13 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
   `permissions.allow` rules are evaluated before `canUseTool` and would bypass the policy.
 - README.md is fork-specific (user decision 2026-10-04): on upstream syncs keep ours and port
   upstream's factual changes by hand.
+- The mod id is `agentcraft_worlds`, upstream's is `agentcraft` (see "Mod id"). Upstream changes to
+  `assets/agentcraft/` or `data/agentcraft/` must be ported into `assets/agentcraft_worlds/` /
+  `data/agentcraft_worlds/` (a merge brings them in under the old folder: move them, and rewrite
+  `agentcraft:` ids inside); new `agentcraft:<x>` id literals in upstream code, docs, the blueprint kit
+  (`tools/blueprints/lib`) or the art pipeline (`assets-src/gen`) become `agentcraft_worlds:<x>`; regenerate
+  the bundled structures with `node tools/blueprints/build.mjs --all` rather than merging `.nbt` files. Check
+  with `git grep -n "agentcraft:"` (only the intentional leftovers listed under "Mod id" may remain).
 
 ## Decisions
 
@@ -30,6 +37,53 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
 | 2026-10-03 | PR repos: watch every PR to completion (status, checks, comment threads incl. the automated reviewer's), lead triages new threads (fold in / reply / ask / ignore); fold-ins become an added commit on the same PR; replies and resolutions posted only after approval; goals complete when their PRs merge. Then a lead per building (shared worker pool). Contract: docs/PRWATCH.md. |
 | 2026-10-03 | Goals tab scope: per-goal thread with the lead, plan view/edit, standing instructions inherited by every task, "since you were away" digest. (Phone notifications via the Discord webhook noted, not scheduled.) |
 | 2026-10-03 | Agent context: repo `CLAUDE.md`/`AGENTS.md` on by default; the user's global `~/.claude/CLAUDE.md` opt-in only (interactive-workflow rules would fight the role prompts); extra files by path. Read by the Foreman and appended, never via `settingSources`. |
+
+## Mod id
+
+2026-10-05: the Fabric mod id and resource namespace changed from `agentcraft` to `agentcraft_worlds`, so
+this fork is published under its own mod id instead of upstream's `agentcraft`. Installing both mods at once
+is still not supported: they share the `dev.agentcraft.*` classes (mixin packages included), the
+`/agentcraft` command root and the `<gameDir>/agentcraft/` folder. Renamed: `fabric.mod.json` `id`, `AgentCraft.MOD_ID` (so every `AgentCraft.id(..)`:
+blocks, items, block entity types, the agent entity `agentcraft_worlds:agent`, the creative tab, the key
+category, textures, GUI sprites), `assets/` + `data/` namespaces (bundled structures:
+`/place template agentcraft_worlds:<id>`), lang keys (`block.`/`item.agentcraft_worlds.*`,
+`itemGroup.agentcraft_worlds`, `key.category.agentcraft_worlds.agentcraft`), the mixin config files
+(`agentcraft_worlds*.mixins.json`; no refmap, 26.x is unobfuscated), the Loom `mods {}` entry, the art
+pipeline (`assets-src`: `NS`, `out/assets/agentcraft_worlds`, sync ledger, validate), the blueprint kit's
+block table, checks and preview colours, the Foreman's built-design paths, the dev tools' scenes and smoke
+matchers.
+
+Intentionally unchanged: the Java packages `dev.agentcraft.*`; the chat command root `/agentcraft`; the
+key binding names `key.agentcraft.*` (`options.txt` binds by name, so players keep their keys); the
+Foreman home `~/.agentcraft` and its config/profile names; the game-dir folder `<gameDir>/agentcraft/`
+(user blueprints, hub-seen, hud.json, devbridge.token, ...); world files (`agentcraft-buildings.json`,
+`agentcraft-journal/`, ...); protocol message names and the `materials: "agentcraft"` value (a look, not a
+namespace); DevBridge command names; the `agentcraft` MCP server name; env vars `AGENTCRAFT_*` and
+`-Dagentcraft.*` properties; the jar name `agentcraft-<version>.jar` (`hardcore-setup` matches it);
+Foreman commit-message prefixes `agentcraft: <task>`.
+
+Backward compatibility:
+- Old worlds: `LegacyAliases` registers Fabric API registry aliases `agentcraft:<x>` -> `agentcraft_worlds:<x>`
+  for every block, item, block entity type, entity type and creative tab, so blocks, block entities, agents
+  and items saved before the rename load as the new ids (44: 17 blocks, 17 items, 8 block entity types, the
+  agent, the creative tab). Defensively skipped (with a log line) if a mod `agentcraft` is loaded too, which is
+  not a supported setup (above). Checked in the dev client: a copy of a dev "AgentCraft HQ" world saved with
+  the old id opened without prompts, its studio monitors load as `agentcraft_worlds:monitor` with their block
+  entity data (bindings) intact, no unknown block/entity lines in the log; Minecraft logs "Missing data pack
+  agentcraft" once and enables the new `agentcraft_worlds` pack itself (bundled blueprints load). Commands with
+  old ids resolve too (`setblock ... agentcraft:monitor`, `give @s agentcraft:status_lamp`).
+- `LegacyIds` remaps `agentcraft:<x>` when reading user/generated blueprints (`<gameDir>/agentcraft/blueprints`:
+  template palettes, block entity and entity ids; sidecar `foundationBlock` and approach `block`/`slab`), world
+  journal entries (before/after states and block entity NBT, also the pre-journal migration files) and the HQ
+  plan cache. Template fingerprints hash this mod's namespace in its old spelling, so buildings pinned
+  before the rename still match their blueprint (`LegacyIdsTest`).
+- An Entity Culling `tickCullingWhitelist` entry would now be `agentcraft_worlds:agent`; not needed since
+  agents advance from the client tick (mod/DEV.md "Compatibility: entity tick culling").
+
+Leftover `agentcraft:` strings (`git grep -n "agentcraft:"`) are only: `LegacyIds`, its test, the comments
+at its call sites, this note and mod/DEV.md's Entity Culling note (pre-rename builds); `materials` descriptions ("agentcraft: the AgentCraft look ..."); Foreman commit-message prefixes and
+their tests; the MCP server key in a Foreman test; trophy keys `pr:agentcraft:612` (a repo named
+agentcraft); `~/.agentcraft:` in a tools comment; the historical Hardcore note above.
 
 ## Branches
 
@@ -142,8 +196,8 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   test with every mod; it found two instance issues (LWJGL pinned at 3.4.1 while 26.3 + Sodium need 3.4.3;
   Sodium 0.9.3-alpha broke Reese's Sodium Options -> stable Sodium 0.9.2) and one mod issue (Entity Culling's
   tick culling froze agents -> agents now advance from the client tick; the instance also whitelists
-  agentcraft:agent). Installed with `hardcore-setup --no-prelaunch --apply` (stable checkout, mod-started
-  Foreman, profile hardcore, port 7880); verified to the title screen. Next: play, place buildings, first real goals.
+  agentcraft:agent, the pre-rename id: harmless and no longer needed, see "Mod id"). Installed with
+  `hardcore-setup --no-prelaunch --apply` (stable checkout, mod-started Foreman, profile hardcore, port 7880); verified to the title screen. Next: play, place buildings, first real goals.
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
@@ -189,7 +243,7 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
 9. **Any-world layout** — load anchors in any world (`Anchors.java`), player commands to set
    anchors/bounds and bind station blocks (`StationBlockEntity.setBinding` exists), saved via
    `Anchors.publish`.
-10. **Survival-obtainable blocks** — recipes + loot tables under `data/agentcraft/` (none exist).
+10. **Survival-obtainable blocks** — recipes + loot tables under `data/agentcraft_worlds/` (none exist).
 11. **Iris compatibility** for the custom pipelines (`DisplayDraw`, `WorldUi`).
 12. **More useful displays** — usage/model/context badges, branch/dependency view, repo ↔ building.
 

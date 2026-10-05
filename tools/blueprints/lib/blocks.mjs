@@ -1,6 +1,6 @@
 // Table of the blocks the blueprint kit knows: full property domains, defaults and a coarse collision
 // class (used by the checker). Every palette entry is written with ALL of its properties explicit.
-// AgentCraft blocks: mod/src/main/java/dev/agentcraft/block/ModBlocks.java + assets/agentcraft/blockstates.
+// AgentCraft blocks: mod/src/main/java/dev/agentcraft/block/ModBlocks.java + assets/agentcraft_worlds/blockstates.
 // Vanilla ids/properties are verified against the 26.3 client jar's blockstate files (see README).
 //
 // collision: 'full' (solid cube), 'none' (walk-through / air), 'low' (carpet-thin, walkable),
@@ -25,17 +25,17 @@ function def(name, props = {}, collision = 'full', defaults = {}) {
 }
 
 // ---- AgentCraft ----
-def('agentcraft:monitor', { ...panelProps, lit: BOOL }, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false', lit: 'false' });
-def('agentcraft:task_board', panelProps, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false' });
-def('agentcraft:village_board', panelProps, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false' });
-def('agentcraft:decision_podium', { facing: H4, open: BOOL }, 'partial', { facing: 'south', open: 'false' });
-def('agentcraft:memory_archive', facing(), 'full', { facing: 'south' });
-def('agentcraft:memory_catalog', facing(), 'full', { facing: 'south' });
-def('agentcraft:merge_station', { facing: H4, active: BOOL }, 'partial', { facing: 'south', active: 'false' });
-def('agentcraft:status_lamp', { status: ['off', 'idle', 'thinking', 'working', 'waiting', 'error', 'done'] }, 'partial', { status: 'off' });
-def('agentcraft:console_terminal', facing(), 'partial', { facing: 'south' });
-def('agentcraft:glow_strip', { facing: H6, axis: ['x', 'z'] }, 'none', { facing: 'up', axis: 'x' });
-for (const n of ['glow_panel', 'plaster_panel', 'plaster_frame', 'walnut_panel', 'walnut_trim', 'terracotta_tile', 'oak_parquet']) def(`agentcraft:${n}`);
+def('agentcraft_worlds:monitor', { ...panelProps, lit: BOOL }, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false', lit: 'false' });
+def('agentcraft_worlds:task_board', panelProps, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false' });
+def('agentcraft_worlds:village_board', panelProps, 'partial', { facing: 'south', up: 'false', down: 'false', left: 'false', right: 'false' });
+def('agentcraft_worlds:decision_podium', { facing: H4, open: BOOL }, 'partial', { facing: 'south', open: 'false' });
+def('agentcraft_worlds:memory_archive', facing(), 'full', { facing: 'south' });
+def('agentcraft_worlds:memory_catalog', facing(), 'full', { facing: 'south' });
+def('agentcraft_worlds:merge_station', { facing: H4, active: BOOL }, 'partial', { facing: 'south', active: 'false' });
+def('agentcraft_worlds:status_lamp', { status: ['off', 'idle', 'thinking', 'working', 'waiting', 'error', 'done'] }, 'partial', { status: 'off' });
+def('agentcraft_worlds:console_terminal', facing(), 'partial', { facing: 'south' });
+def('agentcraft_worlds:glow_strip', { facing: H6, axis: ['x', 'z'] }, 'none', { facing: 'up', axis: 'x' });
+for (const n of ['glow_panel', 'plaster_panel', 'plaster_frame', 'walnut_panel', 'walnut_trim', 'terracotta_tile', 'oak_parquet']) def(`agentcraft_worlds:${n}`);
 
 // ---- vanilla ----
 def('minecraft:air', {}, 'none');

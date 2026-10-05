@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Writes a tiny structure template (a 7x5x7 stone-brick room, glass window, door gap, one
-// agentcraft:monitor and a desk) plus a matching sidecar, for exercising verify.mjs without the real
+// agentcraft_worlds:monitor and a desk) plus a matching sidecar, for exercising verify.mjs without the real
 // generator.   node tools/blueprints/make-test-nbt.mjs [outDir] [id]
 // DataVersion is read from the dev world's level.dat when it exists (else a fallback).
 import fs from 'node:fs';
@@ -44,7 +44,7 @@ for (let y = 1; y < SY - 1; y++) {
 for (let x = 0; x < SX; x++) for (let z = 0; z < SZ; z++) put(x, SY - 1, z, 'minecraft:spruce_slab', { type: 'bottom', waterlogged: 'false' });
 // desk (a table of planks + slab) with a monitor on it facing south (towards +z), against the north wall
 put(3, 1, 1, 'minecraft:spruce_planks');
-put(3, 2, 1, 'agentcraft:monitor', { facing: 'south', lit: 'false', up: 'false', down: 'false', left: 'false', right: 'false' });
+put(3, 2, 1, 'agentcraft_worlds:monitor', { facing: 'south', lit: 'false', up: 'false', down: 'false', left: 'false', right: 'false' });
 put(3, 1, 3, 'minecraft:spruce_stairs', { facing: 'north', half: 'bottom', shape: 'straight', waterlogged: 'false' }); // chair
 put(1, 3, 1, 'minecraft:lantern', { hanging: 'false', waterlogged: 'false' });
 

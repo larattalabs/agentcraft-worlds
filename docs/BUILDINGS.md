@@ -12,7 +12,7 @@ A blueprint is two files with the same id (`[a-z0-9_]+`):
 | `<id>.blueprint.json` | the sidecar below |
 
 Where they live:
-- bundled: `mod/src/main/resources/data/agentcraft/structure/<id>.nbt` (so vanilla `/place template agentcraft:<id>` works too) and `mod/src/main/resources/data/agentcraft/blueprints/<id>.blueprint.json`
+- bundled: `mod/src/main/resources/data/agentcraft_worlds/structure/<id>.nbt` (so vanilla `/place template agentcraft_worlds:<id>` works too) and `mod/src/main/resources/data/agentcraft_worlds/blueprints/<id>.blueprint.json`
 - the user's own: `<gameDir>/agentcraft/blueprints/<id>.nbt` + `<id>.blueprint.json` (loaded at start and on `/agentcraft blueprints reload`; same id overrides a bundled one)
 - sources: `tools/blueprints/` generates the bundled ones (parametric designs as code)
 
@@ -101,7 +101,7 @@ Where they live:
   recomputed after placement).
 - Shell: every functional block in or on an outer wall has a solid vanilla block behind it on the
   outside (the kit's `wallLamp()` adds a dark-oak plate behind a wall lamp), so with every
-  `agentcraft:*` cell turned to air the outer shell has no openings.
+  `agentcraft_worlds:*` cell turned to air the outer shell has no openings.
 - Light: every walk cell an entity can stand in gets block light >= 1 from vanilla emitters alone
   (froglights, sea lanterns, lanterns, lit candles, ...; not AgentCraft blocks, not monitors, not the
   invisible `minecraft:light`), so nothing spawns inside at night. Roofs, porches and the attic are
@@ -795,7 +795,7 @@ explicit interior air, bindings, and C5:
 - trophy slots (`trophy*`, see "Trophy slots"): wing in range, yaw a multiple of 90, the cell inside `walk` and explicit
   air, a full opaque block behind it, one slot per cell, not an agent's feet/head cell; a wing without any slot is a
   warning. They are block anchors for `verify.mjs` (no floor/headroom check);
-- fixtures (`kind: "fixture"`, `wings: 0`): `board` (on an `agentcraft:village_board`, yaw = its facing) and `spawn` required
+- fixtures (`kind: "fixture"`, `wings: 0`): `board` (on an `agentcraft_worlds:village_board`, yaw = its facing) and `spawn` required
   instead of the building anchors; no walk/light/doorway rules (outdoors), the no-mod shell leak check stays, a full opaque
   vanilla block behind every AgentCraft cell, no `repo:`/`ci:` bindings, no trophy slots, a warning without a vanilla light;
 - `@<n>` anchors in range 1..wings; `foundationBlock` a full, opaque `minecraft:` block; `approach` an object or

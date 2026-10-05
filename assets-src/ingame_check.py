@@ -43,7 +43,7 @@ PACK_NAME = "agentcraft-artcheck"
 SHOTS = REPO / "artifacts" / "art" / "ingame"
 LOGS = REPO / "artifacts" / "logs"
 PORT = int(os.environ.get("AGENTCRAFT_ARTCHECK_PORT", "7893"))
-NS = "agentcraft"
+NS = "agentcraft_worlds"
 
 
 def _match(cond, props):
@@ -175,7 +175,7 @@ def scene():
     ]
     for i, (cid, model) in enumerate(CAST):
         x = -13.5 + i * 2
-        setup.append(f"/summon minecraft:mannequin {x} 65 -3.5 {{profile:{{texture:\"agentcraft:entity/agent/{cid}\","
+        setup.append(f"/summon minecraft:mannequin {x} 65 -3.5 {{profile:{{texture:\"agentcraft_worlds:entity/agent/{cid}\","
                      f"model:\"{model}\"}},Rotation:[180f,0f],hide_description:1b,immovable:1b,NoGravity:1b}}")
     shots = [
         {"name": "ingame_cast_front", "camera": {"x": -8.5, "y": 66.5, "z": -9.2, "lookAt": {"x": -8.5, "y": 66.0, "z": -3.5}, "fov": 70}},
