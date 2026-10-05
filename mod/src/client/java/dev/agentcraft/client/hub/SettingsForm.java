@@ -10,7 +10,7 @@ import dev.agentcraft.Cast;
 import dev.agentcraft.client.console.TextKeys;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.foreman.ProtocolSupport;
 import dev.agentcraft.client.hud.UiBits;
 import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
@@ -505,10 +505,10 @@ final class SettingsForm {
 	 */
 	private int rolePicker(GuiGraphicsExtractor g, Setting s, SettingDef d, int x, int y, int w, boolean editable, int mx, int my) {
 		ConfigScope scope = s.scope();
-		List<Protocol.RepoAgentFile> files = scope.agents();
+		List<ProtocolSupport.RepoAgentFile> files = scope.agents();
 		List<String> ids = new ArrayList<>(d.options());
 		if (ids.isEmpty() && files != null) {
-			for (Protocol.RepoAgentFile f : files) {
+			for (ProtocolSupport.RepoAgentFile f : files) {
 				ids.add(f.id());
 			}
 		}

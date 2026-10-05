@@ -27,30 +27,7 @@ const descOf = (s: AnySchema): string | undefined => (s as unknown as { descript
 // entity + enum names by identity, so tables can link instead of inlining
 const NAMES = new Map<AnySchema, string>();
 for (const [name, schema] of Object.entries(P.ENTITY_SCHEMAS)) NAMES.set(schema as AnySchema, name);
-const ENUMS: Record<string, AnySchema> = {
-  AgentState: P.AgentState,
-  Station: P.Station,
-  AgentRole: P.AgentRole,
-  TaskStatus: P.TaskStatus,
-  CiStatus: P.CiStatus,
-  LogKind: P.LogKind,
-  DecisionKind: P.DecisionKind,
-  DecisionStatus: P.DecisionStatus,
-  GoalStatus: P.GoalStatus,
-  FeedKind: P.FeedKind,
-  NotifyLevel: P.NotifyLevel,
-  WorktreeStatus: P.WorktreeStatus,
-  BackendName: P.BackendName,
-  AuthStatus: P.AuthStatus,
-  DesignStatus: P.DesignStatus,
-  DesignStyle: P.DesignStyle,
-  DesignFeature: P.DesignFeature,
-  PrStatus: P.PrStatus,
-  PrChecks: P.PrChecks,
-  DigestLineKind: P.DigestLineKind,
-  SettingType: P.SettingType,
-  SettingSource: P.SettingSource,
-};
+const ENUMS: Record<string, AnySchema> = P.ENUM_SCHEMAS;
 for (const [name, schema] of Object.entries(ENUMS)) NAMES.set(schema, name);
 
 const anchor = (name: string) => `#${name.toLowerCase()}`;
@@ -136,7 +113,7 @@ function build(): string {
   const out: string[] = [];
   out.push(`# AgentCraft protocol v${P.PROTOCOL_VERSION}`);
   out.push('');
-  out.push('> GENERATED from `foreman/src/protocol.ts` and `foreman/src/protocol-examples.ts` by `npm run gen:protocol-doc` (in `foreman/`). Do not edit by hand. The Java mod mirrors these shapes.');
+  out.push('> GENERATED from `foreman/src/protocol.ts` and `foreman/src/protocol-examples.ts` by `npm run gen:protocol-doc` (in `foreman/`). Do not edit by hand. The mod\'s Java mirror (`Protocol.java`) is generated from the same schemas by `npm run gen:java-protocol`.');
   out.push('');
   out.push('## Transport');
   out.push('');

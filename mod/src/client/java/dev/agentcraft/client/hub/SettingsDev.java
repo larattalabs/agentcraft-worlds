@@ -6,7 +6,7 @@ import com.google.gson.JsonObject;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Foreman;
-import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.foreman.ProtocolSupport;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
 import java.util.ArrayList;
@@ -187,12 +187,12 @@ final class SettingsDev {
 				if (a == null || !a.isJsonArray()) {
 					throw new DevBridge.DevException("field 'agents' must be an array of {name, path?, description?, model?} or names");
 				}
-				List<Protocol.RepoAgentFile> list = new ArrayList<>();
+				List<ProtocolSupport.RepoAgentFile> list = new ArrayList<>();
 				for (JsonElement x : a.getAsJsonArray()) {
 					if (x.isJsonPrimitive()) {
-						list.add(new Protocol.RepoAgentFile(x.getAsString(), x.getAsString(), null, null, null));
+						list.add(new ProtocolSupport.RepoAgentFile(x.getAsString(), x.getAsString(), null, null, null));
 					} else if (x.isJsonObject()) {
-						list.add(dev.agentcraft.client.foreman.ForemanJson.read(x, Protocol.RepoAgentFile.class));
+						list.add(dev.agentcraft.client.foreman.ForemanJson.read(x, ProtocolSupport.RepoAgentFile.class));
 					}
 				}
 				sc.fakeAgents(list);

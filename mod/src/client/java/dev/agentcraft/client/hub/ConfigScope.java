@@ -9,6 +9,7 @@ import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanJson;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.foreman.ProtocolSupport;
 import dev.agentcraft.client.foreman.Protocol.Ack;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
@@ -56,7 +57,7 @@ final class ConfigScope {
 	private @Nullable String note;
 	private boolean noteError;
 	// repo.agents (repo scopes)
-	private @Nullable List<Protocol.RepoAgentFile> agents;
+	private @Nullable List<ProtocolSupport.RepoAgentFile> agents;
 	private @Nullable String agentsError;
 	private boolean agentsLoading;
 	private int agentsSnapshots = -1;
@@ -327,12 +328,12 @@ final class ConfigScope {
 				agents = List.of();
 				return;
 			}
-			List<Protocol.RepoAgentFile> list = new ArrayList<>();
+			List<ProtocolSupport.RepoAgentFile> list = new ArrayList<>();
 			JsonElement a = ack.result() == null ? null : ack.result().get("agents");
 			if (a != null && a.isJsonArray()) {
 				for (JsonElement x : a.getAsJsonArray()) {
 					try {
-						Protocol.RepoAgentFile f = ForemanJson.read(x, Protocol.RepoAgentFile.class);
+						ProtocolSupport.RepoAgentFile f = ForemanJson.read(x, ProtocolSupport.RepoAgentFile.class);
 						if (f != null && !f.name().isBlank()) {
 							list.add(f);
 						}
@@ -347,7 +348,7 @@ final class ConfigScope {
 	}
 
 	/** The repo's agent files (null while loading or for the global scope). */
-	@Nullable List<Protocol.RepoAgentFile> agents() {
+	@Nullable List<ProtocolSupport.RepoAgentFile> agents() {
 		return agents;
 	}
 
@@ -360,7 +361,7 @@ final class ConfigScope {
 	}
 
 	/** DevBridge: fake repo.agents. */
-	void fakeAgents(List<Protocol.RepoAgentFile> list) {
+	void fakeAgents(List<ProtocolSupport.RepoAgentFile> list) {
 		agents = List.copyOf(list);
 		agentsError = null;
 		agentsLoading = false;

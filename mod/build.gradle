@@ -59,6 +59,8 @@ dependencies {
 	testImplementation platform("org.junit:junit-bom:${project.junit_version}")
 	testImplementation "org.junit.jupiter:junit-jupiter"
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+	// The protocol round-trip test (dev.agentcraft.client.foreman) reads the client-side Protocol records.
+	testImplementation sourceSets.client.output
 }
 
 test {

@@ -1,7 +1,8 @@
 // AgentCraft wire protocol, version 1.
 //
 // This file is the single source of truth. docs/protocol.md is GENERATED from it
-// (`npm run gen:protocol-doc`) and the Java mod mirrors it. Every message is one JSON object per
+// (`npm run gen:protocol-doc`), and so is the mod's Java mirror
+// (mod/src/client/java/dev/agentcraft/client/foreman/Protocol.java, `npm run gen:java-protocol`). Every message is one JSON object per
 // WebSocket text frame:  { "v": 1, "type": "<type>", "id"?: "<client correlation id>", ...payload }
 //
 // Conventions
@@ -83,7 +84,8 @@ export const DesignFeature = z.enum(['porch', 'skylights', 'courtyard', 'big_win
 export type DesignFeature = z.infer<typeof DesignFeature>;
 
 const Id = z.string().min(1);
-const Ts = z.number().int().nonnegative().describe('epoch milliseconds');
+/** Epoch milliseconds. Exported so generators can tell timestamps (Java `long`) from other integers. */
+export const Ts = z.number().int().nonnegative().describe('epoch milliseconds');
 const HexColor = z.string().regex(/^#[0-9A-Fa-f]{6}$/).describe('"#RRGGBB"');
 
 // ---------------------------------------------------------------------------------------------
@@ -828,6 +830,32 @@ export const ENTITY_SCHEMAS = {
   DesignRequest,
   Design,
   SettingDef,
+} as const;
+
+/** Named enums. Order = documentation order (docs/protocol.md, the Java mirror). */
+export const ENUM_SCHEMAS = {
+  AgentState,
+  Station,
+  AgentRole,
+  TaskStatus,
+  CiStatus,
+  LogKind,
+  DecisionKind,
+  DecisionStatus,
+  GoalStatus,
+  FeedKind,
+  NotifyLevel,
+  WorktreeStatus,
+  BackendName,
+  AuthStatus,
+  DesignStatus,
+  DesignStyle,
+  DesignFeature,
+  PrStatus,
+  PrChecks,
+  DigestLineKind,
+  SettingType,
+  SettingSource,
 } as const;
 
 /** Merge decision option labels (exact strings). */
