@@ -35,7 +35,9 @@ export abstract class GoalMessageJobs extends FollowupJobs {
   /** Build a goal-message job's prompt from the goal's unread messages (marked read). False: none left. */
   protected override fillGoalMessage(job: Job): boolean {
     const goal = job.goalId ? this.fm.goal(job.goalId) : undefined;
-    const msgs = goal ? this.fm.bus.goalInbox(job.agentId, goal.id) : [];
+    // (messages a held goal-message turn of this lead answers when it runs again: not asked twice)
+    const held = new Set([...(this.queues.get(job.agentId) ?? []), this.pausedJobs.get(job.agentId), this.delayed.get(job.agentId)?.job].flatMap((j) => (j?.goalReply ? (j.messageIds ?? []) : [])));
+    const msgs = goal ? this.fm.bus.goalInbox(job.agentId, goal.id).filter((m) => !held.has(m.id)) : [];
     if (!goal || !msgs.length) return false;
     this.fm.bus.markRead(job.agentId, msgs.map((m) => m.id));
     const state =
@@ -102,7 +104,8 @@ export abstract class GoalMessageJobs extends FollowupJobs {
    * waiting for its automatic retry) lives in memory only, and its inflight record is gone. When the
    * lead has not answered yet, its messages are unread again meanwhile, so a restart, stop or release
    * before it runs still asks them (queueGoalMessages / the handover); the job itself is unchanged and
-   * marks them read again when it starts (runJob).
+   * marks them read again when it starts (runJob). Other goal-message turns leave them out meanwhile
+   * (fillGoalMessage).
    */
   protected override offerHeldGoalMessages(job: Job): void {
     if (!job.goalReply || !job.messageIds?.length) return;

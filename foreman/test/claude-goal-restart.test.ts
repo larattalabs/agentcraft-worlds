@@ -246,6 +246,23 @@ describe('a goal-message turn held for a usage limit or an automatic retry', () 
     await h2.fm.close();
   });
 
+  it('a message sent while a held turn waits is asked on its own; the held one is not asked twice', async () => {
+    const { h, goalId, calls } = await planned('pi');
+    h.fm.goalMessage(goalId, 'HANG: first while paused?');
+    await until(() => calls.some((c) => c.prompt.includes('HANG: first while paused?')));
+    await until(() => (h.fm.store.data.backend.claude as { inflight: Record<string, { goalReply?: boolean }> }).inflight.marlow?.goalReply === true);
+    await h.fm.agentAction('marlow', 'pause');
+    await until(() => inflight(h).marlow === undefined);
+    h.fm.goalMessage(goalId, 'second while paused?');
+    await h.fm.agentAction('marlow', 'resume');
+    await until(() => repliesTo(h, goalId).includes('ANSWER: second while paused?'));
+    await until(() => calls.some((c) => c.prompt.includes('paused you and has now resumed you')));
+    await until(() => inflight(h).marlow === undefined && h.fm.bus.goalInbox('marlow').length === 0);
+    expect(calls.filter((c) => c.prompt.includes('HANG: first while paused?'))).toHaveLength(1);
+    expect(calls.filter((c) => c.prompt.includes('second while paused?'))).toHaveLength(1);
+    await h.fm.close();
+  });
+
   it('without a restart: the held turn continues its session and answers once; the message is not asked twice', async () => {
     const { h, goalId, calls } = await planned('nu', 50);
     const session = () => h.fm.store.data.sessions[`marlow:${goalId}`]!.sessionId;
