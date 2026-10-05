@@ -53,14 +53,27 @@ final class PlacementHud implements HudElement {
 				+ (v.bp().isFixture() ? "" : "  for " + String.join(", ", BuildPlacement.repos()));
 			String rot = BlueprintTransform.rotationName(v.turns()).replace('_', ' ') + " · entrance " + v.front() + (v.locked() ? " · locked" : "");
 			lines.add(new Line(TextUtil.ellipsize(font, title, inner - font.width(rot) - 8), cream, rot, soft));
+			if (BuildPlacement.tooFar()) {
+				lines.add(new Line(TextUtil.ellipsize(font, BuildPlacement.TOO_FAR, inner), ORANGE, null, 0));
+			}
 			String verdict;
 			int vc;
 			if (v.pending()) {
 				verdict = "Placing…";
 				vc = soft;
 			} else if (v.refusals().isEmpty()) {
-				verdict = BuildPlacement.moving() != null ? "Ready: Enter moves it here (the old site comes back as it was)" : "Ready: Enter places it";
-				vc = UiStyle.SAGE;
+				// S4: "Ready" only once the server checked the exact site; its reasons when it would refuse
+				dev.agentcraft.building.Buildings.Verdict sv = BuildPlacement.serverVerdict();
+				if (sv == null) {
+					verdict = "Checking the site with the server…";
+					vc = soft;
+				} else if (!sv.ok()) {
+					verdict = "Server would refuse: " + String.join("; ", sv.refusals());
+					vc = RED;
+				} else {
+					verdict = BuildPlacement.moving() != null ? "Ready: Enter moves it here (the old site comes back as it was)" : "Ready: Enter places it";
+					vc = UiStyle.SAGE;
+				}
 			} else {
 				verdict = "Would be refused: " + String.join("; ", v.refusals());
 				vc = RED;

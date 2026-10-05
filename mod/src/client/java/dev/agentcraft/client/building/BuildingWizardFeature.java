@@ -403,32 +403,36 @@ public final class BuildingWizardFeature {
 					return o;
 				}));
 		DevBridge.register("dev.buildings.pending", 10_000, "{} - crash safety: the sites taken down this session or before "
-			+ "(pending until the next world start settles them: id, why, snapshot, snapshotExists, box), the snapshot files on disk, "
+			+ "(pending until the next world start settles them: id, why, snapshot (its world journal entry, or an imported file name), "
+			+ "snapshotExists (the entry resolves), entry, box), each site's journal entries (snapshotFiles: 'jN building b3 ACTIVE'), "
 			+ "each building's pin (template fingerprint) and the world-start reports", (req, mc) -> DevBridge.onClient(mc, () -> {
 				JsonObject o = new JsonObject();
-				var server = mc.getSingleplayerServer();
-				java.nio.file.Path dir = server == null ? null
-					: server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).resolve(Buildings.SNAPSHOT_DIR);
 				JsonArray pend = new JsonArray();
 				for (Building.Pending p : Buildings.pending()) {
 					JsonObject j = new JsonObject();
 					j.addProperty("id", p.building().id());
 					j.addProperty("why", p.why());
 					j.addProperty("snapshot", p.snapshot());
-					j.addProperty("snapshotExists", dir != null && java.nio.file.Files.exists(dir.resolve(p.snapshot())));
+					String entry = dev.agentcraft.journal.WorldJournal.resolve(Buildings.SNAPSHOT_DIR, p.snapshot());
+					j.addProperty("snapshotExists", entry != null);
+					j.addProperty("entry", entry);
 					j.addProperty("box", Buildings.str(p.building().restoreBox()));
 					pend.add(j);
 				}
 				o.add("pending", pend);
 				JsonArray files = new JsonArray();
-				if (dir != null && java.nio.file.Files.isDirectory(dir)) {
-					try (var list = java.nio.file.Files.list(dir)) {
-						list.map(f -> f.getFileName().toString()).sorted().forEach(files::add);
-					} catch (java.io.IOException e) {
-						o.addProperty("filesError", e.getMessage());
+				JsonObject journal = dev.agentcraft.journal.WorldJournal.json();
+				if (journal.get("entries") instanceof JsonArray es) {
+					for (var e : es) {
+						JsonObject je = e.getAsJsonObject();
+						if (!je.get("kind").getAsString().equals("road")) {
+							files.add(je.get("id").getAsString() + " " + je.get("kind").getAsString() + " " + je.get("owner").getAsString() + " "
+								+ je.get("status").getAsString());
+						}
 					}
 				}
 				o.add("snapshotFiles", files);
+				o.addProperty("journalUnavailable", dev.agentcraft.journal.WorldJournal.unavailable());
 				JsonObject pins = new JsonObject();
 				for (Building b : Buildings.all()) { // fixtures carry snapshot pins too
 					pins.addProperty(b.id(), b.pin() == null ? "none" : b.pin().template() + (Buildings.ownGridMatches(b) ? "" : " (blueprint changed)"));
@@ -439,8 +443,27 @@ public final class BuildingWizardFeature {
 				o.add("reports", rep);
 				return o;
 			}));
-		DevBridge.register("dev.buildings.failNextRename", 10_000, "{} - test hook: the next snapshot rename of a building move fails "
-			+ "(the move must roll back: new site restored, record unchanged)", (req, mc) -> DevBridge.onClient(mc, () -> {
+		DevBridge.register("dev.journal.state", 10_000, "{} - the world journal (contract J1): open, unavailable reason, counters, every entry "
+			+ "{id, kind, owner, dimension, policy, status, cells, gen, box, group, undoneAt}, the imported legacy file names, unreferenced files, "
+			+ "what the last import said", (req, mc) -> DevBridge.onClient(mc, dev.agentcraft.journal.WorldJournal::json));
+		DevBridge.register("dev.journal.at", 10_000, "{x, y, z, dimension?} - the journal's stack at one cell: every active entry with a cell "
+			+ "there, bottom (oldest layer) first, with its layer, before and after (the top one's after is what the world should show)",
+			(req, mc) -> {
+				Fields f = Fields.of(req);
+				int x = f.optInt("x", 0, -30_000_000, 30_000_000);
+				int y = f.optInt("y", 0, -2048, 2048);
+				int z = f.optInt("z", 0, -30_000_000, 30_000_000);
+				String dimArg = req.has("dimension") ? req.get("dimension").getAsString() : null;
+				return DevBridge.onClient(mc, () -> dev.agentcraft.client.world.ServerTasks.callAsPlayer((level, player) -> {
+					try {
+						return dev.agentcraft.journal.WorldJournal.at(dimArg != null ? dimArg : Buildings.dimensionId(level), x, y, z);
+					} catch (java.io.IOException e) {
+						throw new IllegalStateException(e.getMessage(), e);
+					}
+				})).thenCompose(f2 -> f2);
+			});
+		DevBridge.register("dev.buildings.failNextRename", 10_000, "{} - test hook: the next move's world journal commit fails (the move rolls back: "
+			+ "new site restored, record unchanged; the name is kept from the snapshot-rename days)", (req, mc) -> DevBridge.onClient(mc, () -> {
 				Buildings.failNextSnapshotRename();
 				JsonObject o = new JsonObject();
 				o.addProperty("armed", true);

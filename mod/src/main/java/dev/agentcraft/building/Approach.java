@@ -318,7 +318,7 @@ public final class Approach {
 	}
 
 	/** The world (x, z) of row {@code i} (1 = just outside the box), column {@code c} (0 = the entrance's). */
-	private static int[] cell(int face, int centre, int i, int c, int dx, int dz, boolean alongX) {
+	static int[] cell(int face, int centre, int i, int c, int dx, int dz, boolean alongX) {
 		return alongX ? new int[] {centre + c, face + i * dz} : new int[] {face + i * dx, centre + c};
 	}
 

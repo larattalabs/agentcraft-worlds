@@ -38,6 +38,7 @@ public class AgentCraft implements ModInitializer {
 		Anchors.init();
 		// after Anchors: in a world with buildings the home building's layout replaces the (empty) one Anchors loaded
 		Blueprints.init();
+		dev.agentcraft.journal.WorldJournal.init(); // before the features: the journal opens (and imports) first
 		Buildings.init();
 		Trophies.init();
 		Roads.init();
