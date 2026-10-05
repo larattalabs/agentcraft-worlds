@@ -416,8 +416,13 @@ export const Design = z.object({
 export type Design = z.infer<typeof Design>;
 
 export const SettingType = z
-  .enum(['bool', 'int', 'enum', 'string', 'stringList', 'model', 'effort', 'agentList', 'map'])
-  .describe('How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only: MCP servers by name and command, repo env by name)');
+  .enum(['bool', 'int', 'enum', 'string', 'stringList', 'model', 'effort', 'agentList', 'map', 'secretMap', 'mcpServers'])
+  .describe(
+    'How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only name -> text), ' +
+      'secretMap (a repository\'s `env`: value `{ NAME: "(set)" }`, names only, never values; config.set takes a partial update `{ NAME: "value" | null }`, null removes that variable), ' +
+      'mcpServers (`claude.context.mcpServers`: value `[{ name, type: "stdio"|"http"|"sse", command?, args?, url?, envKeys }]`; an argument shows as "(hidden)" unless it clearly holds nothing secret (a bare flag, number, path or name, not after a credential flag such as --token, -H/--header, --key or --pat), URLs without credentials or query; ' +
+      'config.set takes `[{ name, type, command?, args?, url?, env?: { NAME: "value" | null } } | { name, remove: true }]`, each an upsert or removal of that one server, the others unchanged; an argument or URL sent back exactly as shown keeps the stored original; a hidden or shortened one sent back in another place is refused)',
+  );
 export const SettingSource = z.enum(['file', 'flag', 'env', 'default']).describe('where the value comes from: config.json, a command-line flag, an AGENTCRAFT_* environment variable, or the built-in default');
 
 export const SettingDef = z.object({
@@ -434,7 +439,7 @@ export const SettingDef = z.object({
   source: SettingSource,
   live: z.boolean().describe('true: a change applies from the next turn / poll without a restart; false: after foreman.restart'),
   overriddenBy: z.string().optional().describe('the flag or variable that wins over config.json, e.g. "--lead-model" or "AGENTCRAFT_PR_WATCH": a change is written but has no effect while it is given'),
-  readOnly: z.boolean().optional().describe('shown, never changed through config.set (MCP servers, repo env)'),
+  readOnly: z.boolean().optional().describe('shown, never changed through config.set'),
 });
 export type SettingDef = z.infer<typeof SettingDef>;
 
@@ -662,7 +667,7 @@ export const ConfigSetMsg = z.object({
   ...envelope('config.set'),
   repoId: Id.optional().describe('change that repository\'s repoSettings'),
   changes: z
-    .array(z.object({ key: z.string().min(1), value: z.unknown().describe('the new value; null (or "default" for a model / per-agent effort) removes the key from config.json, back to the default') }))
+    .array(z.object({ key: z.string().min(1), value: z.unknown().describe('the new value; null (or "default" for a model / per-agent effort) removes the key from config.json, back to the default; for a secretMap or mcpServers setting a partial update (see SettingType)') }))
     .min(1),
 });
 export const ForemanRestartMsg = z.object({ ...envelope('foreman.restart') });
@@ -788,8 +793,8 @@ export const CLIENT_MESSAGES = {
   'pr.refresh': { schema: PrRefreshMsg, doc: 'Poll the pull request(s) of tasks in status `pr` now instead of at the next interval (claude backend with PR watching on). Changes arrive as `task.upsert`.' },
   'lead.assign': { schema: LeadAssignMsg, doc: 'A building holding repositories was placed (or its repositories changed). Acked with `{leadId}`. Idempotent: the same `building` keeps its lead and gets its repos updated. A new building takes the first free lead in `claude.leads` order; when none is free the ack says `{leadId: "marlow", overflow: true}` and nothing is stored. A repository listed here leaves any other building that had it; a building left with no repository (here with `repos: []`, or because its last one moved) frees its lead. Open goals (planning / active) whose repository (`repoId`, else `repos[0]`) is in the building move to its lead (feed line per goal); new goals in these repositories go to that lead too.' },
   'lead.release': { schema: LeadReleaseMsg, doc: 'The building was removed. Acked with `{}` (also for a building that has no lead). Its lead goes off shift; its open goals move to marlow (feed line; marlow gets the plan note when it takes over).' },
-  'config.get': { schema: ConfigGetMsg, doc: 'The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository\'s repoSettings. Never contains secret values (environment values, tokens, MCP server env or arguments).' },
-  'config.set': { schema: ConfigSetMsg, doc: 'Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo\'s path as config.json spells it, else its absolute path>]`.' },
+  'config.get': { schema: ConfigGetMsg, doc: 'The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository\'s repoSettings. Never contains secret values: environment values, tokens, MCP server env values or headers, credential-looking arguments, URL credentials or queries.' },
+  'config.set': { schema: ConfigSetMsg, doc: 'Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo\'s path as config.json spells it, else its absolute path>]`. Secret values sent here (`secretMap`, `mcpServers` env) are never echoed in the ack, an error, `config.changed` or a log line.' },
   'foreman.restart': { schema: ForemanRestartMsg, doc: 'Restart the Foreman with the same arguments, environment and working directory (except `--reset`, `--goal` and `--autostart`). Acked with `{}` first; then the server closes (clients see the connection drop and reconnect), running turns are interrupted and resumed on start (`resumeOnStart`), and a new Foreman process (new pid, new client token: read the run file again) takes over the same port.' },
   'agent.logs.request': { schema: AgentLogsRequestMsg, doc: 'Older entries of an agent\'s log (the full history the Foreman stored, across one rotation: `logs/<agent>.jsonl` and `<agent>.1.jsonl`), for a scrollable log view; read-only (allowed without the client token). Acked with `{agentId, entries: LogEntry[], more}`: `entries` oldest first, all older than `before`; `more` = older entries exist (ask again with `before` = the first entry\'s `ts`). An unknown agent is refused.' },
   'repo.agents': { schema: RepoAgentsMsg, doc: 'The repository\'s Claude Code agent files (`.claude/agents/*.md` in its checkout), for the roles picker. Acked with `{agents: [{id, name, path, description?, model?}]}`: `id` is the file name without `.md` (the value to store in `roles.<agent>`), `name` the front matter name (else the id), `path` repo-relative.' },

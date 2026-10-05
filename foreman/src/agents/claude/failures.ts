@@ -2,7 +2,7 @@
 //
 //   auth       the login / key is not valid (structured `authentication_failed` and friends, or an
 //              exact phrase such as "Invalid API key" or a 401): sticky until the Foreman restarts
-//   limit      a usage limit (handled by the usage-limit hold, see index.ts holdForLimit)
+//   limit      a usage limit (handled by the usage-limit hold, see holds.ts holdForLimit)
 //   transient  the network, the machine sleeping, an overloaded or failing API (529 / 5xx), the
 //              turn's step limit (max_turns) or its time limit: worth one automatic resume
 //   context    the session's prompt is too long: worth one retry in a fresh session

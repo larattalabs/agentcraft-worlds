@@ -34,7 +34,7 @@
 - <a id="prstatus"></a>**PrStatus**: `open`, `changes`, `approved`, `merged`, `abandoned` - open: waiting for reviews; changes: a reviewer asked for changes (vote -5/-10, GitHub CHANGES_REQUESTED); approved: approved and nobody objects; merged / abandoned: closed on the host
 - <a id="prchecks"></a>**PrChecks**: `pending`, `passing`, `failing`, `none` - build / status checks on the PR (Azure DevOps build policies, GitHub status checks); none = the PR has no checks
 - <a id="digestlinekind"></a>**DigestLineKind**: `task_done`, `task_blocked`, `task_added`, `decision_waiting`, `decision_answered`, `merged`, `pr_opened`, `pr_merged`, `pr_comments`, `message`, `goal_done`
-- <a id="settingtype"></a>**SettingType**: `bool`, `int`, `enum`, `string`, `stringList`, `model`, `effort`, `agentList`, `map` - How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only: MCP servers by name and command, repo env by name)
+- <a id="settingtype"></a>**SettingType**: `bool`, `int`, `enum`, `string`, `stringList`, `model`, `effort`, `agentList`, `map`, `secretMap`, `mcpServers` - How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only name -> text), secretMap (a repository's `env`: value `{ NAME: "(set)" }`, names only, never values; config.set takes a partial update `{ NAME: "value" | null }`, null removes that variable), mcpServers (`claude.context.mcpServers`: value `[{ name, type: "stdio"|"http"|"sse", command?, args?, url?, envKeys }]`; an argument shows as "(hidden)" unless it clearly holds nothing secret (a bare flag, number, path or name, not after a credential flag such as --token, -H/--header, --key or --pat), URLs without credentials or query; config.set takes `[{ name, type, command?, args?, url?, env?: { NAME: "value" | null } } | { name, remove: true }]`, each an upsert or removal of that one server, the others unchanged; an argument or URL sent back exactly as shown keeps the stored original; a hidden or shortened one sent back in another place is refused)
 - <a id="settingsource"></a>**SettingSource**: `file`, `flag`, `env`, `default` - where the value comes from: config.json, a command-line flag, an AGENTCRAFT_* environment variable, or the built-in default
 
 Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; permission decisions use `Allow once`, `Always allow for this agent`, `Deny`. Question decisions use agent-supplied options (may be empty: free text).
@@ -360,7 +360,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `label` | string | yes |  |
 | `help` | string | yes | one or two sentences for the user |
 | `group` | string | yes | global: team, models, general, permissions, context, subagents, prs, usage; repository: landing, worktrees, agents, review |
-| `type` | [SettingType](#settingtype) | yes | How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only: MCP servers by name and command, repo env by name) |
+| `type` | [SettingType](#settingtype) | yes | How a setting is edited: bool toggle, int stepper (min/max), enum chips (options), string field, string list editor, model / effort picker (options), agent list (options = agent ids; ordered for claude.leads), map (read-only name -> text), secretMap (a repository's `env`: value `{ NAME: "(set)" }`, names only, never values; config.set takes a partial update `{ NAME: "value" \| null }`, null removes that variable), mcpServers (`claude.context.mcpServers`: value `[{ name, type: "stdio"\|"http"\|"sse", command?, args?, url?, envKeys }]`; an argument shows as "(hidden)" unless it clearly holds nothing secret (a bare flag, number, path or name, not after a credential flag such as --token, -H/--header, --key or --pat), URLs without credentials or query; config.set takes `[{ name, type, command?, args?, url?, env?: { NAME: "value" \| null } } \| { name, remove: true }]`, each an upsert or removal of that one server, the others unchanged; an argument or URL sent back exactly as shown keeps the stored original; a hidden or shortened one sent back in another place is refused) |
 | `options` | string[] | no | enum / model / effort / agentList / stringList choices (model: the Opus and Sonnet models in use and "default"; "default" clears the setting) |
 | `min` | number | no |  |
 | `max` | number | no |  |
@@ -369,7 +369,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `source` | [SettingSource](#settingsource) | yes | where the value comes from: config.json, a command-line flag, an AGENTCRAFT_* environment variable, or the built-in default |
 | `live` | boolean | yes | true: a change applies from the next turn / poll without a restart; false: after foreman.restart |
 | `overriddenBy` | string | no | the flag or variable that wins over config.json, e.g. "--lead-model" or "AGENTCRAFT_PR_WATCH": a change is written but has no effect while it is given |
-| `readOnly` | boolean | no | shown, never changed through config.set (MCP servers, repo env) |
+| `readOnly` | boolean | no | shown, never changed through config.set |
 
 ## Foreman -> Mod
 
@@ -1679,7 +1679,7 @@ The building was removed. Acked with `{}` (also for a building that has no lead)
 
 ### `config.get`
 
-The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository's repoSettings. Never contains secret values (environment values, tokens, MCP server env or arguments).
+The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked with `{file, settings: SettingDef[]}`: the global settings, or with `repoId` that repository's repoSettings. Never contains secret values: environment values, tokens, MCP server env values or headers, credential-looking arguments, URL credentials or queries.
 
 | field | type | required | notes |
 | --- | --- | --- | --- |
@@ -1696,7 +1696,7 @@ The editable settings (hub Team / Settings tabs, Repos "Edit settings"). Acked w
 
 ### `config.set`
 
-Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo's path as config.json spells it, else its absolute path>]`.
+Change settings. Every change is validated first (all or nothing: one bad change refuses the lot, `ack.error` lists the problems), then config.json is written atomically (previous file kept as `config.json.bak`; unknown keys, other sections and key order kept), `live` keys apply at once (from the next turn / poll), and the ack is `{applied: [key], restartRequired: [key], overridden: [{key, by}]}` (a key a flag or variable also sets is written but stays overridden). Then `config.changed` is broadcast and `foreman.status.restartRequired` updated. Repository changes go to `repoSettings[<the repo's path as config.json spells it, else its absolute path>]`. Secret values sent here (`secretMap`, `mcpServers` env) are never echoed in the ack, an error, `config.changed` or a log line.
 
 | field | type | required | notes |
 | --- | --- | --- | --- |

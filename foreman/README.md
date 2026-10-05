@@ -520,9 +520,12 @@ restores the old behaviour for development.
 the Repos tab's "Edit settings") edit `config.json` through the Foreman. `config.get` returns a
 `SettingDef` per editable key (label, help, group, type, options, the configured value, default,
 source `file`/`flag`/`env`/`default`, `overriddenBy`, `live`). It never returns secrets:
-environment values are never read (only which `AGENTCRAFT_*` variables are set), MCP servers are
-listed by name and command only (no arguments, env or headers), a repository's `env` by variable
-name. `config.set` validates every change first (types, enums, ranges, agent ids of the cast,
+environment values are never read (only which `AGENTCRAFT_*` variables are set); a repository's
+`env` and each MCP server's `env` are secret maps (variable names only, `{NAME: "(set)"}`; set with a
+partial update `{NAME: "value" | null}`, null removes one); MCP servers are listed as `[{name, type,
+command, args, url, envKeys}]` with credential-looking arguments shown as `(hidden)` and URLs without
+credentials or query, never headers (an entry sent back as shown keeps the stored originals; `{name,
+remove: true}` removes one). Values sent in are never logged, echoed or broadcast (src/settings-secrets.ts). `config.set` validates every change first (types, enums, ranges, agent ids of the cast,
 model names; all or nothing), then the whole new file the way the Foreman loads it, writes it
 atomically with the previous file kept as `config.json.bak` (unknown keys, other sections, key
 order and an existing key's spelling such as `merge-style` kept), applies the live keys and
@@ -535,9 +538,8 @@ for the roles picker.
 
 | applies | settings |
 | --- | --- |
-| live (from the next turn, tick or poll) | `claude.leadModel`, `leadEffort`, `workerModel`, `effort`, `designModel`, `taskModels.*`, `agents.<id>.{title,prompt,model,effort}` (a title change updates the nameplate at once), `maxConcurrent`, `throttleConcurrent`, `maxConcurrentTurns`, `leadReview`, `maxBudgetUsdPerTurn`, `usageReserve.{fiveHourPct,sevenDayPct}`, `leadSession.{maxDays,maxTurns}`, `leadWorldTtlDays`, `prWatch` / `prPollSeconds` (the watcher switches over at once), `permissions.{mode,allow,deny,webTools,protectCheckouts}`, `context.{userInstructions,maxChars,mcpAllow,connectors}`; `userName`, `notify` (written to `notify.desktop` when `notify` is an object; `notify.discord` is read live, edited in config.json), `toastSilent`, `mergeStyle`, `signMerges`, `commitIdentity`, `cleanupAfterDays`; every repository setting (`baseBranch` at the repository's next refresh) |
-| after a restart | `claude.workers`, `claude.leads`, `claude.context.skills`, `claude.context.sessionHistory.{enabled,days}`, `claude.subagents.{enabled,agents}`, `claude.useClaudeLogin` |
-| read-only | `claude.context.mcpServers`, a repository's `env` |
+| live (from the next turn, tick or poll) | `claude.leadModel`, `leadEffort`, `workerModel`, `effort`, `designModel`, `taskModels.*`, `agents.<id>.{title,prompt,model,effort}` (a title change updates the nameplate at once), `maxConcurrent`, `throttleConcurrent`, `maxConcurrentTurns`, `leadReview`, `maxBudgetUsdPerTurn`, `usageReserve.{fiveHourPct,sevenDayPct}`, `leadSession.{maxDays,maxTurns}`, `leadWorldTtlDays`, `prWatch` / `prPollSeconds` (the watcher switches over at once), `permissions.{mode,allow,deny,webTools,protectCheckouts}`, `context.{userInstructions,maxChars,mcpAllow,connectors}`; `userName`, `notify` (written to `notify.desktop` when `notify` is an object; `notify.discord` is read live, edited in config.json), `toastSilent`, `mergeStyle`, `signMerges`, `commitIdentity`, `cleanupAfterDays`; every repository setting (`baseBranch` at the repository's next refresh; `env` from the next turn, setup or test run) |
+| after a restart | `claude.workers`, `claude.leads`, `claude.context.skills`, `claude.context.sessionHistory.{enabled,days}`, `claude.context.mcpServers`, `claude.subagents.{enabled,agents}`, `claude.useClaudeLogin` |
 
 Changes that wait for a restart are listed in `foreman.status.restartRequired` until the Foreman
 restarts (or they are set back).

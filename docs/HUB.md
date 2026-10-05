@@ -379,12 +379,12 @@ decisions, and with config.set loosen its own permissions). From now on:
 - `config.get { repoId? }` -> ack result `{ file, settings: SettingDef[] }` (global settings, or that
   repo's `repoSettings` when `repoId` is given).
   `SettingDef = { key, label, help, group, type: "bool"|"int"|"enum"|"string"|"stringList"|"model"|
-  "effort"|"agentList"|"map", options?: string[], min?, max?, value, default, source: "file"|"flag"|
-  "env"|"default", live: boolean, overriddenBy?: string }`. `key` is the config.json path
+  "effort"|"agentList"|"map"|"secretMap"|"mcpServers", options?: string[], min?, max?, value, default,
+  source: "file"|"flag"|"env"|"default", live: boolean, overriddenBy?: string }`. `key` is the config.json path
   (`claude.prWatch`, `claude.agents.kit.model`, for a repo `land`, `pr.draft`, `roles.kit`).
   `model` options are the Opus and Sonnet models plus "default" (no Haiku). No secret values: env
-  values, tokens and MCP server env are never returned (MCP servers are listed by name and command
-  only, read-only).
+  values, tokens, MCP server env values and headers, credential-looking arguments and URL credentials
+  or queries are never returned (wave 3 contracts S1/S2, docs/WAVE3.md).
 - `config.set { repoId?, changes: [{ key, value }] }` -> validates every change first (all or
   nothing), writes the config file atomically (unknown keys and other sections untouched, a
   `config.json.bak` of the previous file), applies `live` keys at once, and acks `{ applied: [key],
@@ -404,14 +404,14 @@ decisions, and with config.set loosen its own permissions). From now on:
 - Settings: `userName`, `notify`, `toastSilent`, `mergeStyle`, `signMerges`, `commitIdentity`; permissions
   (`claude.permissions.mode`, `allow`, `deny`, `webTools`, `protectCheckouts`); context
   (`claude.context.userInstructions`, `skills`, `sessionHistory.enabled/days`, `maxChars`, `mcpAllow`,
-  `connectors`; MCP servers read-only); `claude.subagents` (list); PRs (`claude.prWatch`,
+  `connectors`, `mcpServers` - restart); `claude.subagents` (list); PRs (`claude.prWatch`,
   `claude.prPollSeconds`); usage (`claude.maxBudgetUsdPerTurn`, `claude.usageReserve.fiveHourPct` /
   `sevenDayPct`, `claude.leadSession.maxDays` / `maxTurns`, `claude.useClaudeLogin` - restart); team
   (`claude.leadWorldTtlDays`); general (`cleanupAfterDays`; `notify` writes `notify.desktop` when
   config.json holds `notify: {desktop, discord}`, which stays file-only).
 - Repo settings (Repos tab "Edit settings", now enabled): `land`, `commitIdentity`, `baseBranch`, `ci`, `setup`, `copy`,
   `setupTimeoutMs`, `ciTimeoutMs`, `protect`, `roles.<agent>` (picker from `repo.agents`), `subagents`, `pr.*`,
-  `prReview.*`; `env` stays read-only (keys only).
+  `prReview.*`, `env` (a secret map, wave 3).
 - Not editable in the hub: `repos` (Repos tab add/remove), host/port/home/profile, sim settings.
 
 #### As implemented (Foreman, branch foreman/settings)
@@ -432,8 +432,8 @@ decisions, and with config.set loosen its own permissions). From now on:
   loopback host or `ws://` (quoting and escapes undone first); recursive search/list/copy/archive
   commands rooted at the home or above it; instruction files and `@imports` that are or reach these
   files are skipped with a note. Best effort (documented in foreman/README.md "Permissions").
-- **SettingDef**: as specified, plus `readOnly?: true` (`claude.context.mcpServers`, a repository's
-  `env`; `config.set` refuses them). `value` is the *configured* value (config.json + flags +
+- **SettingDef**: as specified, plus `readOnly?: true` (`config.set` refuses the key; no setting uses it
+  since wave 3 made `claude.context.mcpServers` and a repository's `env` editable). `value` is the *configured* value (config.json + flags +
   environment now), which for a restart-only key may differ from what is running until the restart.
   Global groups: `team` (workers, leads, leadReview, `claude.agents.<id>.*` for every cast member,
   leads included), `models` (lead/worker/design models and effort, task-size models, concurrency),
@@ -447,9 +447,27 @@ decisions, and with config.set loosen its own permissions). From now on:
   (never Haiku). Clearing a key: `null` for any key; also `"default"` for a model or per-agent
   effort, `""` for a string, `0` for `maxConcurrentTurns` / `maxBudgetUsdPerTurn`, `"off"` for a
   repository's `subagents`. Per-agent model/effort show `"default"` when unset; `claude.designModel`
-  shows `"default"` while it follows the worker model. Maps: `claude.context.mcpServers` is
-  `{name: command}` (remote servers: `"<type> <host>"`; never args, env, headers or URL paths), a
-  repository's `env` is `{NAME: "(hidden)"}`.
+  shows `"default"` while it follows the worker model. Secret settings (wave 3, S1/S2): a repository's
+  `env` is a `secretMap` (below); `claude.context.mcpServers` is `mcpServers` (below).
+- **secretMap** (S1; a repository's `env`, and each MCP server's `env`): `value` is `{NAME: "(set)"}`,
+  names only. `config.set` takes a partial update `{NAME: "value" | null}`: listed variables are set or
+  (null) removed, the others stay; the last one removed removes the key; `value: null` removes them all.
+  Names are `[A-Za-z_][A-Za-z0-9_]*`; a repository refuses `GIT_*` and `AGENTCRAFT_CLIENT_TOKEN` (an MCP
+  server the token). Values are never logged, echoed in acks or errors, or broadcast.
+- **mcpServers** (S2; `claude.context.mcpServers`, restart-required): `value` is `[{name, type:
+  "stdio"|"http"|"sse", command?, args?, url?, envKeys: string[]}]`. An argument is shown only when it clearly
+  holds nothing secret (a bare flag, a number, a path, a package or file name, a URL without
+  credentials, query or fragment) and is not the value of a credential flag (`--token`, `--api-key`,
+  `-H`/`--header`, `--key`, `--pat`, `-u`, `-e`, ...); everything else (`X-API-Key: ...`, `Bearer ...`,
+  a token-shaped word, `NAME=value` with an unsafe value) shows as `"(hidden)"` (`--api-key=(hidden)`);
+  the server's headers are never shown. `config.set` takes `[{name, type, command?, args?, url?, env?: {NAME: "value" | null}} | {name,
+  remove: true}]`: each entry adds or replaces that one server (the others stay; fields the hub does
+  not edit, such as headers, are kept); an argument or URL sent back exactly as shown keeps the stored
+  original in that place; a hidden or shortened argument that moved (one inserted or removed before it) is
+  refused (enter it again), never written as "(hidden)" or without what config.get left out. Checks: name `[\w-]{1,64}` (not `agentcraft`), type, stdio needs a one-line
+  `command` (no `url`), http/sse an http(s) `url` without credentials, query or fragment (no
+  `command`/`args`/`env`), each name once, removing a server that is not there is refused. A change
+  of any value (an env value too) puts the key into `foreman.status.restartRequired`.
 - **config.set ack**: a key a flag or variable overrides is listed only under `overridden`
   (`by`: the flag as given, e.g. `"--no-notify"`, or the variable name), not under `applied` or
   `restartRequired`. `config.changed.keys` are the keys as sent, repository keys as
