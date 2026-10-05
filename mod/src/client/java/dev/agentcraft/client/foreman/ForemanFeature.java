@@ -122,7 +122,7 @@ public final class ForemanFeature {
 	}
 
 	/** The client token for {@code hello} (docs/HUB.md "Client token"); read on every connect. */
-	static dev.agentcraft.hub.ClientToken.Found clientToken(int port) {
+	public static dev.agentcraft.hub.ClientToken.Found clientToken(int port) {
 		String direct = ClientEnv.raw("AGENTCRAFT_CLIENT_TOKEN");
 		if (direct != null) {
 			return new dev.agentcraft.hub.ClientToken.Found(direct, null, null, "from AGENTCRAFT_CLIENT_TOKEN");

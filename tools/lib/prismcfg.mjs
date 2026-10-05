@@ -216,7 +216,8 @@ export function wrapPostExit(original, { daemon, profile, home }) {
 }
 
 /** JVM properties the setup manages (ClientEnv.raw maps AGENTCRAFT_X_Y to -Dagentcraft.x.y). */
-export const MANAGED_PROPS = ['agentcraft.port', 'agentcraft.profile', 'agentcraft.home', 'agentcraft.dev', 'agentcraft.dev.port', 'agentcraft.foreman'];
+export const MANAGED_PROPS = ['agentcraft.port', 'agentcraft.profile', 'agentcraft.home', 'agentcraft.dev', 'agentcraft.dev.port', 'agentcraft.foreman',
+  'agentcraft.foreman.dir', 'agentcraft.launcher', 'agentcraft.launcher.stop.on.exit'];
 
 /**
  * Replace every managed -Dagentcraft.* property in `existing` JvmArgs with `props` ({ name: value };

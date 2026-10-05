@@ -14,7 +14,7 @@ import {
 import { decideStart, devCheckoutConflict, expandHome, lockIsStale, LOCK_STALE_MS } from '../lib/daemonplan.mjs';
 import { parseArgs as parseDaemonArgs } from '../foreman-daemon.mjs';
 import {
-  setup, parseArgs as parseSetupArgs, chooseSource, resolveRemoteRef, realDeps, DAEMON_FILES, parseStatusLine, gameProcesses, cwdProcesses,
+  setup, parseArgs as parseSetupArgs, chooseSource, resolveRemoteRef, realDeps, DAEMON_FILES, LAUNCHER_FILES, parseStatusLine, gameProcesses, cwdProcesses,
 } from '../hardcore-setup.mjs';
 import { spawnSync } from 'node:child_process';
 
@@ -200,7 +200,10 @@ function fakeWorld() {
   fs.mkdirSync(path.join(stable, 'tools'), { recursive: true });
   fs.mkdirSync(path.join(stable, 'mod'), { recursive: true });
   fs.writeFileSync(path.join(stable, 'mod', 'gradle.properties'), 'minecraft_version=26.3\n');
-  for (const f of DAEMON_FILES) fs.writeFileSync(path.join(stable, f), '# stub\n');
+  for (const f of [...DAEMON_FILES, ...LAUNCHER_FILES]) {
+    fs.mkdirSync(path.dirname(path.join(stable, f)), { recursive: true });
+    fs.writeFileSync(path.join(stable, f), '# stub\n');
+  }
   const jar = path.join(dir, 'agentcraft-0.1.0.jar');
   fs.writeFileSync(jar, 'new jar');
   const backupScript = path.join(dir, 'backup-world.sh');
@@ -301,6 +304,61 @@ test('setup --stop-on-exit wraps the backup command; running again without it un
   g = readGeneral(fs.readFileSync(path.join(w.instance, 'instance.cfg'), 'utf8'));
   assert.equal(g.PostExitCommand, readGeneral(CFG).PostExitCommand);
   assert.doesNotMatch(g.JvmArgs, /agentcraft\.dev/);
+});
+
+test('setup --no-prelaunch: no PreLaunchCommand (ours removed), the mod starts the Foreman from the stable checkout', async () => {
+  const w = fakeWorld();
+  // first the daemon path with --stop-on-exit (an instance set up before the mod could launch)
+  await setup(setupArgs(w, ['--apply', '--stop-on-exit']), deps());
+  let g = readGeneral(fs.readFileSync(path.join(w.instance, 'instance.cfg'), 'utf8'));
+  assert.equal(splitCommand(g.PreLaunchCommand)[1], 'start');
+  assert.equal(splitCommand(g.PostExitCommand)[1], 'after-exit');
+  // dry run says what changes
+  const dry = deps();
+  await setup(setupArgs(w, ['--no-prelaunch']), dry);
+  assert.match(dry.lines.join('\n'), /would set PreLaunchCommand: ".+" -> ""/);
+  assert.match(dry.lines.join('\n'), /the mod starts the Foreman from .+ keeps running after the game exits/);
+  // apply: hook gone, backup command unwrapped, the launcher's settings in JvmArgs
+  const d = deps();
+  await setup(setupArgs(w, ['--apply', '--no-prelaunch']), d);
+  g = readGeneral(fs.readFileSync(path.join(w.instance, 'instance.cfg'), 'utf8'));
+  assert.equal(g.PreLaunchCommand, '');
+  assert.equal(g.PostExitCommand, readGeneral(CFG).PostExitCommand);
+  assert.match(g.JvmArgs, new RegExp(`-Dagentcraft\\.port=7880 -Dagentcraft\\.profile=hardcore -Dagentcraft\\.home=\\S+ -Dagentcraft\\.foreman\\.dir=${w.stable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
+  assert.doesNotMatch(g.JvmArgs, /stop\.on\.exit/);
+  assert.match(d.lines.join('\n'), /foreman-launcher-hardcore\.log/);
+  // --stop-on-exit becomes the launcher's property, not a PostExit wrapper
+  await setup(setupArgs(w, ['--apply', '--no-prelaunch', '--stop-on-exit']), deps());
+  g = readGeneral(fs.readFileSync(path.join(w.instance, 'instance.cfg'), 'utf8'));
+  assert.equal(g.PostExitCommand, readGeneral(CFG).PostExitCommand);
+  assert.match(g.JvmArgs, /-Dagentcraft\.launcher\.stop\.on\.exit=1$/);
+  // and back to the daemon path
+  await setup(setupArgs(w, ['--apply']), deps());
+  g = readGeneral(fs.readFileSync(path.join(w.instance, 'instance.cfg'), 'utf8'));
+  assert.equal(splitCommand(g.PreLaunchCommand)[1], 'start');
+  assert.doesNotMatch(g.JvmArgs, /stop\.on\.exit|foreman\.dir/);
+});
+
+test('setup: a stable path with spaces works on the daemon path, and is refused with --no-prelaunch', () => {
+  const w = fakeWorld();
+  const spaced = ['--instance', w.instance, '--stable', path.join(w.dir, 'agentcraft stable'), '--home', w.home, '--skip-checkout'];
+  assert.doesNotThrow(() => parseSetupArgs(spaced));
+  assert.throws(() => parseSetupArgs([...spaced, '--no-prelaunch']), /--stable cannot contain spaces with --no-prelaunch/);
+});
+
+test('setup --no-prelaunch keeps a foreign PreLaunchCommand and needs the mod launcher in the checkout', async () => {
+  const w = fakeWorld();
+  const cfgFile = path.join(w.instance, 'instance.cfg');
+  fs.writeFileSync(cfgFile, CFG.replace('PreLaunchCommand=', 'PreLaunchCommand=/usr/local/bin/sync-world'));
+  await assert.rejects(setup(setupArgs(w), deps()), /already has a PreLaunchCommand that is not ours/);
+  const d = deps();
+  await setup(setupArgs(w, ['--apply', '--no-prelaunch']), d);
+  assert.equal(readGeneral(fs.readFileSync(cfgFile, 'utf8')).PreLaunchCommand, '/usr/local/bin/sync-world');
+  assert.match(d.lines.join('\n'), /not ours; it is kept/);
+  fs.rmSync(path.join(w.stable, LAUNCHER_FILES[0]));
+  await assert.rejects(setup(setupArgs(w, ['--no-prelaunch']), deps()), /could not start the Foreman \(--no-prelaunch needs the mod's Foreman launcher\)/);
+  fs.writeFileSync(cfgFile, CFG);
+  await setup(setupArgs(w), deps()); // the daemon path does not need it
 });
 
 test('setup options come from config.json "hardcore" when no flag is given; flags win', () => {

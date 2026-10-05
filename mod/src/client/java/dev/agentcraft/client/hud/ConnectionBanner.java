@@ -8,6 +8,7 @@ import dev.agentcraft.client.foreman.LinkStatus.Phase;
 import dev.agentcraft.client.foreman.Protocol.AuthStatus;
 import dev.agentcraft.client.foreman.Protocol.BackendName;
 import dev.agentcraft.client.foreman.Protocol.ForemanStatus;
+import dev.agentcraft.client.launcher.Launcher;
 import dev.agentcraft.client.ui.Kit;
 import dev.agentcraft.client.ui.Panels;
 import dev.agentcraft.client.ui.TextUtil;
@@ -30,7 +31,8 @@ import net.minecraft.util.Util;
  *       lower opacity after a few seconds;</li>
  *   <li>reconnecting (it was connected): clay pulsing dot, "Reconnecting to the Foreman", attempt
  *       count, and "showing last known state";</li>
- *   <li>never connected: grey dot, "Foreman not running" + how to start it for this kind of run
+ *   <li>never connected: what the mod's Foreman launcher is doing ("Starting the Foreman…", "The Foreman
+ *       stopped", "Foreman needs Node.js") or "Foreman not running" + how to start it for this kind of run
  *       ({@link ConnectionHints});</li>
  *   <li>auth failed: paper banner with a red dot and the Foreman's message.</li>
  * </ul>
@@ -88,9 +90,13 @@ public final class ConnectionBanner implements HudElement {
 			title = "Reconnecting to the Foreman" + (link.attempt() > 1 ? " (" + link.attempt() + ")" : "");
 			detail = "showing last known state";
 		} else {
-			dot = "idle";
-			title = "Foreman not running";
-			detail = ConnectionHints.notRunning(ClientEnv.DEV_RUN);
+			// never connected: what the game's Foreman launcher is doing (docs/HUB.md "Foreman launcher")
+			String ls = Launcher.state().wire();
+			boolean starting = ls.equals("starting") || ls.equals("installing");
+			dot = starting ? "thinking" : ls.equals("crashed") ? "error" : "idle";
+			pulse = starting;
+			title = ConnectionHints.title(ls);
+			detail = ConnectionHints.detail(ls, ClientEnv.DEV_RUN, Keys.hub == null ? "H" : Keys.label(Keys.hub));
 		}
 		drawPill(g, font, dot, title, detail, alpha, pulse, now);
 
@@ -149,7 +155,7 @@ public final class ConnectionBanner implements HudElement {
 
 	/** The auth banner's text: the Foreman's own message, else how to recover in this kind of run. */
 	public static String authMessage(ForemanStatus fs) {
-		return fs.message() != null ? fs.message() : ConnectionHints.authFailed(ClientEnv.DEV_RUN);
+		return fs.message() != null ? fs.message() : ConnectionHints.authFailed(ClientEnv.DEV_RUN, Launcher.ours());
 	}
 
 	private static void drawAuthBanner(GuiGraphicsExtractor g, Font font, ForemanStatus fs) {

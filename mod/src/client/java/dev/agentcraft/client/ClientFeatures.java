@@ -11,6 +11,7 @@ import dev.agentcraft.client.foreman.ForemanFeature;
 import dev.agentcraft.client.hq.HqClientFeature;
 import dev.agentcraft.client.hub.HubFeature;
 import dev.agentcraft.client.hud.HudFeature;
+import dev.agentcraft.client.launcher.Launcher;
 import dev.agentcraft.client.leads.LeadsFeature;
 import dev.agentcraft.client.library.LibraryFeature;
 import dev.agentcraft.client.monitor.MonitorFeature;
@@ -36,6 +37,7 @@ public final class ClientFeatures {
 
 	public static void init() {
 		ForemanFeature.init();   // link + state model (dev.foreman, dev.state.foreman)
+		Launcher.init();         // starts the Foreman with the game (dev.launcher.*; docs/HUB.md "Foreman launcher")
 		AnchorsDev.init();       // dev.anchors, dev.camera {anchor}
 		UiDev.init();            // dev.state ui (pause, parent, crash guards), dev.ui.pause, dev.guard.inject
 		ItemsDev.init();         // dev.screen creative_agentcraft

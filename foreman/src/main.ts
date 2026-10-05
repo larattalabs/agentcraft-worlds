@@ -1,4 +1,5 @@
 // Foreman entry point: `npm run start -- --backend sim|claude [--repo <path>] [--speed N] ...`
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -24,6 +25,12 @@ async function demoCreator(cfg: Config): Promise<CreateDemo> {
 
 async function createDemoRepo(cfg: Config, dir: string): Promise<void> {
   (await demoCreator(cfg))({ dir, force: true, quiet: true });
+}
+
+/** The checkout's commit (for the run file: launchers tell a stale Foreman by it), or undefined without git. */
+function gitHead(root: string): string | undefined {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 5000 });
+  return r.status === 0 ? r.stdout.trim() || undefined : undefined;
 }
 
 function wipeProfile(cfg: Config): void {
@@ -100,7 +107,8 @@ export async function main(argv: string[]): Promise<void> {
   }
   foreman.endpoint = { port: server.port, ...(client ? { tokenFile: client.file } : {}) };
 
-  const runInfo: RunInfo = { pid: process.pid, port: server.port, host: cfg.host, backend: cfg.backend, profile: cfg.profile, version: FOREMAN_VERSION, startedAt: new Date().toISOString(), ...(client ? { tokenFile: client.file } : {}) };
+  const commit = gitHead(cfg.projectRoot);
+  const runInfo: RunInfo = { pid: process.pid, port: server.port, host: cfg.host, backend: cfg.backend, profile: cfg.profile, version: FOREMAN_VERSION, startedAt: new Date().toISOString(), ...(client ? { tokenFile: client.file } : {}), root: cfg.projectRoot, ...(commit ? { commit } : {}) };
   await claimRunFiles(cfg.home, cfg.dataDir, runInfo);
 
   log.info(`AgentCraft Foreman ${FOREMAN_VERSION} | backend ${cfg.backend} | ws://${cfg.host}:${server.port} | state ${cfg.dataDir}`);
