@@ -36,6 +36,8 @@ npm run start -- --backend claude --repo C:\path\to\your\repo --use-claude-login
 
 # simulated team on a fresh sandbox repo (no API calls) - for demos and screenshot QA
 npm run start -- --backend sim --reset --speed 2
+# ... plus a second demo repo whose work lands as simulated pull requests (fake host, no network)
+npm run start -- --backend sim --reset --speed 2 --sim-pr --autostart --pr-watch on
 
 # static "showcase" states for screenshots (fast-forward through the real script, then hold)
 npm run start -- --backend sim --profile showcase --reset --showcase            # busy mid-run
@@ -100,6 +102,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--commit-identity agent\|user` / `AGENTCRAFT_COMMIT_IDENTITY` (config `commitIdentity`, per repo `repoSettings.commitIdentity`) | `agent` | whose git name/email the agents' commits carry: a placeholder per agent (`AgentCraft Kit <kit@agentcraft.local>`) or yours from each repo's git config (falls back to the agent identity, with a warning, when the repo has none); merges, squash and PR commits are always yours |
 | `--no-sign-merges` / `AGENTCRAFT_SIGN_MERGES=0` | signed if your git config signs (claude) | never sign approved merge commits; the sim never signs |
 | sim: `--speed`, `--seed`, `--autostart`, `--showcase [late]`, `--auto-answer`, `--no-ambient` | | |
+| sim: `--sim-pr` / `AGENTCRAFT_SIM_PR=1` (config `sim.prDemo`) | off | also the `pocket-api` demo repo, landing as simulated pull requests (see "The sim backend") |
 
 `<home>/config.json` can hold the same settings (`{"backend":"claude","claude":{"workers":["kit","wren"]}}`).
 A `hardcore` section in the same file is read by `tools/hardcore-setup.mjs` (tools/README.md "Playing in a
@@ -790,11 +793,55 @@ Static states for screenshot QA:
 
 The repo id is the demo dir name: `sim-demo-showcase` / `sim-demo-showcase-late` for those profiles.
 
+### Simulated pull requests (contract S3, docs/PRWATCH.md)
+
+Under the sim, a repo that lands as pull requests (`repoSettings.<repo>.land: "pr"`) pushes for real
+(to its own remote) and opens its PR on a **fake Azure DevOps** (`src/agents/sim/prhost.ts`): it
+answers exactly the `az` command lines `prs.ts` runs, from state in `state.json` (`backend.simprs`),
+and the sim sets it as the repo manager's PR runner and PR host for every repo, so no `az` or `gh`
+process ever starts under the sim. The real `PrWatcher` reads it, so `Task.pr`, triage items and
+refs (`t3/review-<thread>.<n>`, `t3/thread-<id>`), verdicts, the watcher's decisions and fold-ins
+have the shapes the claude backend produces, and `pr.refresh` works. Mode: `claude.prWatch` /
+`--pr-watch` as for claude (`observe` by default; `on` for the fold-in round; switches live).
+
+- **Demo repo** (`--sim-pr`, `AGENTCRAFT_SIM_PR=1` or config.json `"sim": { "prDemo": true }`; off by
+  default, so the default sim is unchanged): `sandbox/pocket-api` (`pocket-api-<profile>` for other
+  profiles), a copy of the demo repo with `land: "pr"`, pushing to a local bare server next to it
+  (`sandbox/pocket-api.server.git`; its own git config allows git's file transport for that repo
+  only). Both are recreated with `--reset` (or when missing). It is registered before
+  `sim-demo`, which stays the default repo (the last one registered), so turn it on together with
+  `--reset`: on an existing profile `sim-demo` is registered already and pocket-api would become the
+  default. Only when no `--repo` is given. In game: `node tools/mac.mjs launch --backend sim --dev
+  --reset --foreman-arg --sim-pr --foreman-arg --pr-watch --foreman-arg on`.
+- **Goals**: a goal in a repo that lands as PRs runs as a side flow (any lead, Marlow too, one at a
+  time per lead): the lead plans one task, a free worker writes `docs/goals/<goal>.md`, the lead asks
+  "Open a pull request for t1 ...?". `--autostart` with `--sim-pr` also submits "Document the notes
+  export endpoint" for pocket-api.
+- **Timeline** (sim seconds, divided by `--speed`): the push starts checks (pending); after 15 s they
+  pass and the host posts an automated review as `Project Collection Build Service (contoso)` in the
+  "Claude Code Review" format (WARN: one important finding on the changed file, a minor one, a testing
+  recommendation, a teachable moment), a `<!-- changelog-draft -->` thread (ignored) and a question
+  from "Dana Reviewer" on the file. The lead's scripted triage turn gives findings their suggested
+  verdict (important -> fold in, the rest ignore) and drafts a reply to the reviewer.
+  - `observe`: recorded only (the `PR triage t1 #601 (observe)` note, a feed line).
+  - `on`: the task goes back to its worker (`pr -> todo -> doing`, continuing its branch), who adds a
+    real fix to the file, runs the tests, commits; "Push the review fixes for t1 ... to PR #601?" lands
+    it as an added commit; "Post 2 replies and resolve 1 thread on PR #601?" posts the reply at once and
+    "Addressed in <sha>" (thread fixed) after the push. The push re-runs checks and a new review (PASS,
+    minor only) ends the rounds.
+  - The reviewer approves (vote 10, Task.pr `approved`) once the PR has been quiet for 25 s and
+    AgentCraft has nothing in flight on it (triage, fold-in, an open decision); 15 s later it is
+    completed: the task is `done`, the goal completes, the lead says so.
+- `--auto-answer` also answers the watcher's decisions (first option: Post, Fold in).
+- Restart-safe: the host's PRs and timers, running review fixes and the side flow resume (tested).
+- Caveat: a real repo given with `--repo` and `land: "pr"` under the sim still pushes to its real
+  remote (as before); its PR then goes to the fake host, not to Azure DevOps or GitHub.
+
 ## Tests
 
 ```sh
 npm test            # vitest: protocol, task graph, persistence, decisions, repos/merges, policy,
-                    #         git push block, WS + full sim run, showcase states, claude
+                    #         git push block, WS + full sim run, showcase states, sim PRs, claude
                     #         orchestration, restart recovery and steering, design jobs (fake SDK)
 npx tsc --noEmit
 npm run check       # all of the above + protocol doc freshness

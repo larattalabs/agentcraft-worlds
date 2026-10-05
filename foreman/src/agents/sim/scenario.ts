@@ -539,10 +539,18 @@ export const SIDE_BEATS: Beat[] = [
       const goal = d.fm.goal(d.goalId)!;
       await d.requestMerge('s1', 1, 'Small and clear; tests pass.', d.lead);
       await d.settleMerge('s1', worker, `docs/goals/${goal.id}.md`, d.lead);
-      d.act(worker, 'idle', 'lounge', 'idle');
-      d.fm.setAgent(worker, { taskId: null, worktree: null });
+      if (d.fm.agent(worker)?.taskId === d.task('s1').id || !d.fm.agent(worker)?.taskId) {
+        d.act(worker, 'idle', 'lounge', 'idle');
+        d.fm.setAgent(worker, { taskId: null, worktree: null });
+      }
+      // landed as a pull request: the PR watcher takes it from here (triage, review fixes, merged)
+      const pr = d.task('s1').pr;
+      if (pr) {
+        d.act(d.lead, 'idle', 'mergestation', `watching PR #${pr.id}`);
+        while (!['done', 'cancelled'].includes(d.task('s1').status)) await d.sleep(1500);
+      }
       const done = d.fm.goal(d.goalId)?.status === 'done';
-      if (done) d.say(d.lead, 'user', `Done: "${goal.text}" is merged.`);
+      if (done) d.say(d.lead, 'user', pr ? `Done: "${goal.text}" is merged (PR #${pr.id}).` : `Done: "${goal.text}" is merged.`);
       d.act(d.lead, done ? 'done' : 'idle', 'meeting', done ? 'goal done' : 'watching the task wall');
     },
   },

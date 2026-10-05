@@ -461,3 +461,17 @@ export function appendReviewNote(root: string, file: string, note: string, round
   fs.writeFileSync(p, after);
   return { before, after, changed: true };
 }
+
+/** Review fixes on an open pull request (the PR watcher's fold-in `gen`): a note at the end of `file`. */
+export function appendFoldNote(root: string, file: string, note: string, gen: number): { before: string; after: string; changed: boolean } {
+  const p = path.join(root, file);
+  const before = fs.existsSync(p) ? fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n') : '';
+  const clean = note.replace(/\s+/g, ' ').trim().slice(0, 160) || 'address the review';
+  const marker = `Review fixes (PR round ${gen}):`;
+  if (before.includes(marker)) return { before, after: before, changed: false };
+  const line = file.endsWith('.md') ? `\n${marker} ${clean}\n` : `// ${marker} ${clean}\n`;
+  const after = `${before.replace(/\n*$/, '\n')}${line}`;
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, after);
+  return { before, after, changed: true };
+}

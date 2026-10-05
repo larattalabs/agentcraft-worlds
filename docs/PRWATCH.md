@@ -151,6 +151,24 @@ landing in `repos.ts` (`doOpenPr`). Tests: `test/pr-review-parse.test.ts`, `pr-f
   once the task is back in `pr`).
 - **Probe**: `npm run pr-probe -- <PR url>` prints what the watcher would see (reads only).
 
+### Sim backend (contract S3, branch w3/sim)
+
+The sim backend runs the same `PrWatcher` against a fake Azure DevOps (`agents/sim/prhost.ts`) that
+answers the `az` command lines above from `state.json` (`backend.simprs`); it is the repo manager's
+PR runner and PR host (`RepoManager.prHostFor`, a new optional override) for every sim repo, so no
+`az`/`gh` process ever starts (the test mocks the process runner and fails on either). Landing pushes
+for real to the repo's remote: the `--sim-pr` demo repo `pocket-api` pushes to a local bare server,
+so the push lease and the added fold-in commit are real. Timeline per PR (speed-scaled): push ->
+checks pending -> passing + an automated review in the pipeline's format (WARN, one important
+finding) + a changelog-draft thread + a reviewer's question -> the lead's scripted triage turn
+(`applyTriage` with the real refs and verdicts: findings get `suggested`, people a drafted reply) ->
+`observe`: the note and feed line only; `on`: a fold-in by the task's worker ("Push the review fixes
+...?"), the post decision, a new PASS review after the push -> the reviewer approves when nothing is
+in flight on the PR (no triage, fold-in or open decision) and the PR has been quiet -> completed ->
+merged -> `done`. `pr.refresh` works under the sim (the error for a backend that does not watch PRs
+no longer names the claude backend only). How to run it: foreman/README.md, "Simulated pull
+requests". Tests: `test/sim-pr.test.ts`.
+
 ## A lead per building (contract, 2026-10-03)
 
 Each building (one repo or a repo group) gets its own lead; Marlow leads home, repos without a building

@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { ClaudeBackend } from './agents/claude/index.js';
 import { SimBackend } from './agents/sim/index.js';
 import { DEFAULT_SIM_GOAL } from './agents/sim/scenario.js';
+import { createSimPrRepo, simPrRepoDir, simPrRepoSettings } from './agents/sim/prdemo.js';
 import { FOREMAN_VERSION, HELP, loadConfig, type Config } from './config.js';
 import { consoleLogger } from './context.js';
 import { Foreman } from './foreman.js';
@@ -14,11 +15,15 @@ import { currentRestartCommand, spawnRestart } from './restart.js';
 import { claimRunFiles, homeRunFile, liveOwner, profileRunFile, releaseRunFiles, type RunInfo } from './runfile.js';
 import { isInsideOrEqual, writeJsonAtomic } from './util/fsx.js';
 
+type CreateDemo = (o: { dir: string; force?: boolean; quiet?: boolean }) => { dir: string; head: string };
+
+async function demoCreator(cfg: Config): Promise<CreateDemo> {
+  const mod = (await import(pathToFileURL(path.join(cfg.projectRoot, 'sandbox', 'create-demo.mjs')).href)) as { createDemo: CreateDemo };
+  return mod.createDemo;
+}
+
 async function createDemoRepo(cfg: Config, dir: string): Promise<void> {
-  const mod = (await import(pathToFileURL(path.join(cfg.projectRoot, 'sandbox', 'create-demo.mjs')).href)) as {
-    createDemo: (o: { dir: string; force?: boolean; quiet?: boolean }) => { dir: string; head: string };
-  };
-  mod.createDemo({ dir, force: true, quiet: true });
+  (await demoCreator(cfg))({ dir, force: true, quiet: true });
 }
 
 function wipeProfile(cfg: Config): void {
@@ -58,6 +63,17 @@ export async function main(argv: string[]): Promise<void> {
     if (fresh || !fs.existsSync(demo)) {
       log.info(`sim: creating fresh demo repo at ${demo}`);
       await createDemoRepo(cfg, demo);
+    }
+    // --sim-pr: a second demo repo whose work lands as pull requests on the sim's fake host. It is
+    // registered first, so the scripted demo repo stays the default (the last one registered).
+    if (cfg.sim.prDemo) {
+      const api = simPrRepoDir(cfg);
+      if (fresh || !fs.existsSync(api)) {
+        log.info(`sim: creating fresh pull request demo repo at ${api}`);
+        createSimPrRepo(api, await demoCreator(cfg));
+      }
+      cfg.repos.push(api);
+      simPrRepoSettings(cfg, api);
     }
     cfg.repos.push(demo);
   }

@@ -158,6 +158,11 @@ export interface RepoOptions {
   settings?: Record<string, RepoSettings>;
   /** runs `az` / `gh` to open pull requests (tests inject a fake) */
   prRunFn?: typeof run;
+  /**
+   * the PR host of a repo, before its remote URL is parsed (the sim backend's fake host: its demo
+   * repo pushes to a local bare repository, so the URL names no host)
+   */
+  prHostFor?: (repoId: string, remoteUrl: string) => PrHost | undefined;
 }
 
 export interface PrepareResult {
@@ -244,6 +249,12 @@ export class RepoManager {
 
   set prRunFn(fn: typeof run) {
     this.opts.prRunFn = fn;
+  }
+
+  /** the PR host override (sim); unset: the host comes from the remote URL alone */
+  set prHostFor(fn: RepoOptions['prHostFor']) {
+    if (fn) this.opts.prHostFor = fn;
+    else delete this.opts.prHostFor;
   }
 
   private serial<T>(repoId: string, fn: () => Promise<T>): Promise<T> {
@@ -857,7 +868,8 @@ export class RepoManager {
     // 4. the pull request (once; later approvals update the same branch)
     const updated = !!meta.prUrl;
     if (!meta.prUrl) {
-      const host: PrHost | undefined = parseRemote(await gitOut(r.path, ['remote', 'get-url', remote]));
+      const url = await gitOut(r.path, ['remote', 'get-url', remote]);
+      const host: PrHost | undefined = this.opts.prHostFor?.(r.id, url) ?? parseRemote(url);
       if (host) {
         meta.prUrl = await openPullRequest(host, { source: remoteBranch, target, title: opts.title ?? `${w.taskId ?? w.id}`, description: opts.description ?? '', draft: !!s.pr?.draft }, r.path, this.prRunFn);
       } else this.ctx.log.warn(`${r.name}: ${remote} is not an Azure DevOps or GitHub remote; pushed ${remoteBranch}, open the PR yourself`);
