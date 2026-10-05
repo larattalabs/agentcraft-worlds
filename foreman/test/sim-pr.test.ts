@@ -115,7 +115,6 @@ describe('sim pull requests', () => {
     expect(prs.some((p) => p.status === 'approved')).toBe(true);
 
     const feed = h.fm.store.data.feed;
-    if (process.env.SIMPR_DEBUG) console.log(feed.map((f) => `${f.kind} ${f.agentId ?? ''}: ${f.text}`).join('\n'));
     expect(feed.filter((f) => f.kind === 'error')).toEqual([]);
     expect(feed.some((f) => /^PR #601 \(t\d+\): 1 thread with new comments, automated review WARN \(1 important, 1 testing, 1 minor\)\. Marlow triages 4 items \(observe mode\)$/.test(f.text))).toBe(true);
     expect(feed.some((f) => /^Marlow triaged PR #601 \(t\d+\): 1 fold in, 1 reply, 2 ignore \(observe mode: nothing posted, no fold-in\)$/.test(f.text))).toBe(true);
@@ -169,12 +168,46 @@ describe('sim pull requests', () => {
     expect(h.fm.store.data.backend.prwatch).toMatchObject({ prs: { [t.id]: { reviewRounds: 1 } } });
 
     const feed = h.fm.store.data.feed;
-    if (process.env.SIMPR_DEBUG) console.log(feed.map((f) => `${f.kind} ${f.agentId ?? ''}: ${f.text}`).join('\n'));
     expect(feed.filter((f) => f.kind === 'error')).toEqual([]);
     expect(feed.some((f) => f.agentId === 'ines' && /^Ines triaged PR #601 \(t\d+\): 1 fold in, 1 reply, 2 ignore -> fold-in sent to /.test(f.text))).toBe(true);
     expect(feed.some((f) => /^PR #601: posted 1 reply, resolved 0 threads$/.test(f.text))).toBe(true);
     expect(feed.some((f) => /^PR #601: posted 1 reply, resolved 1 thread$/.test(f.text))).toBe(true);
     expect(feed.some((f) => /automated review PASS/.test(f.text))).toBe(true);
+    expect(spawned).toEqual([]);
+  });
+
+  it('--sim-pr autostart: the PR goal runs beside the script, and a restart mid-PR picks it up again', async () => {
+    const home = tempDir();
+    const main = await demoRepo();
+    const api = await prRepo();
+    cleanup.push(home, path.dirname(main), path.dirname(api));
+    // as main.ts registers them: pocket-api first, so the scripted demo repo stays the default
+    const args = ['--backend', 'sim', '--repo', `${api},${main}`, '--speed', '1000', '--no-ambient', '--auto-answer', '--sim-pr', '--pr-watch', 'on'];
+    const h = makeForeman(home, args);
+    simPrRepoSettings(h.cfg, api);
+    expect(h.cfg.sim.prDemo).toBe(true);
+    const sim = new SimBackend(h.fm, h.cfg.sim);
+    await h.fm.start(sim);
+    const g = await sim.autostart();
+    const prGoal = h.fm.store.data.goals.find((x) => x.id !== g!.id)!;
+    expect(g!.repoId).toBe(h.fm.repos.defaultRepo()!.id);
+    expect(path.basename(h.fm.repos.require(g!.repoId!).path)).toBe('demo-app');
+    expect(prGoal.repoId).toBe(h.fm.repos.list()[0]!.id);
+    // stop once the PR is open and its first review is in
+    await until(() => (sim.prHost.prs()[0]?.reviews ?? 0) >= 1);
+    await h.fm.close();
+
+    const h2 = makeForeman(home, args);
+    open.push(h2);
+    simPrRepoSettings(h2.cfg, api);
+    const sim2 = new SimBackend(h2.fm, h2.cfg.sim);
+    await h2.fm.start(sim2);
+    await sim2.idle();
+    await until(() => h2.fm.goal(prGoal.id)!.status === 'done');
+    expect(h2.fm.store.data.feed.filter((f) => f.kind === 'error')).toEqual([]);
+    const t = h2.fm.tasks.forGoal(prGoal.id)[0]!;
+    expect(t.pr).toMatchObject({ id: 601, status: 'merged' });
+    expect(sim2.prHost.pr(t.pr!.url)!.status).toBe('completed');
     expect(spawned).toEqual([]);
   });
 });

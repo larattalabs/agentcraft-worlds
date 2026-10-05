@@ -64,8 +64,8 @@ export async function main(argv: string[]): Promise<void> {
       log.info(`sim: creating fresh demo repo at ${demo}`);
       await createDemoRepo(cfg, demo);
     }
-    cfg.repos.push(demo);
-    // --sim-pr: a second demo repo whose work lands as pull requests on the sim's fake host
+    // --sim-pr: a second demo repo whose work lands as pull requests on the sim's fake host. It is
+    // registered first, so the scripted demo repo stays the default (the last one registered).
     if (cfg.sim.prDemo) {
       const api = simPrRepoDir(cfg);
       if (fresh || !fs.existsSync(api)) {
@@ -75,6 +75,7 @@ export async function main(argv: string[]): Promise<void> {
       cfg.repos.push(api);
       simPrRepoSettings(cfg, api);
     }
+    cfg.repos.push(demo);
   }
 
   const foreman = new Foreman({ config: cfg, logger: log });
