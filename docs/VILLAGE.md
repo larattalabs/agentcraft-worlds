@@ -17,9 +17,9 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
   gets a plank/slab bridge only if the player opts in, else the segment is skipped with a note); never
   creates drops or holes (replaced blocks go into the road's snapshot; nothing falls).
 - Optional lanterns on fence posts every ~12 blocks (default on; vanilla) so the paths are lit at night.
-- Persistence: `<world>/agentcraft-roads.json` (id, buildings, cells, width, created) + a snapshot per road
-  (`<world>/agentcraft-roads/<id>.before.nbt`); Remove road restores it; removing or moving a building
-  offers to remove its roads (never silently).
+- Persistence: `<world>/agentcraft-roads.json` (id, buildings, cells, width, created) + a snapshot per road (since wave 3
+  an entry of the world journal, docs/BUILDINGS.md "World journal"; before, `<world>/agentcraft-roads/<id>.before.nbt`,
+  imported once); Remove road restores it; removing or moving a building offers to remove its roads (never silently).
 - Agents prefer laid roads (lower cost in the planner).
 - DevBridge: `dev.roads.state`, `dev.roads.preview {a, b}`, `dev.roads.lay {a, b, width?}`, `dev.roads.remove {road}`, `dev.roads.plan {a, b}` (the route only), `dev.roads.blocks {x0, y0, z0, x1, y1, z1}` (block ids in a box, for restore checks).
 
@@ -76,11 +76,14 @@ off (through the integrated server, like the hub), is Hardcore safe, and is undo
 
 **Fixtures** (`kind: "fixture"`, `wings: 0`; docs/BUILDINGS.md "Fixtures"):
 - A fixture is a `Building` record with **no repos** (`Building.isFixture()`), in the same `agentcraft-buildings.json`, the same
-  `b<n>` id sequence and the same snapshot folder, so place, ghost, terrain fit, snapshot, Remove (asks twice, restores exactly),
+  `b<n>` id sequence and the same world journal entries (kind `building`), so place, ghost, terrain fit, snapshot, Remove (asks twice, restores exactly),
   Move, Undo move, crash safety and the world-start check work unchanged.
 - `Buildings.all()` is every placed site, buildings **and** fixtures: the safe default for overlap and collision (the ghost,
   placement and roads use it: a road laid through a fixture's restore box would be overwritten when the fixture is removed, and
-  removing the road would restore the old cells over the board). `Buildings.buildings()` leaves fixtures out: routing sites,
+  removing the road would restore the old cells over the board). The other way round, a board (or a building) placed **over**
+  an existing road is safe since wave 3: the world journal layers the board over the road's cells, so the two undo in either
+  order (removing the road hands its cells under the board down to the board's entry, and removing the board then gives
+  the ground back, not the road; docs/BUILDINGS.md "World journal"). `Buildings.buildings()` leaves fixtures out: routing sites,
   leads and `lead.sync`, trophies, the Inbox, Goals, the HUD welcome rule and the hub's building list use it.
   `Buildings.fixtures()` lists the fixtures; `Buildings.get(id)` returns either.
 - A fixture is never home (place, rehome, load and reconcile skip it), refuses Make home and Edit repos, and takes no repos
@@ -132,3 +135,14 @@ Buildings. Sneak-right-click places blocks as usual.
 `dev.camera`), `dev.board.use` (the right-click's action, returns where it went); hub: `dev.hub.open {sub: "fixtures"}`,
 `dev.hub.action {action: "place_board"}` (then `dev.build.*`), remove/move/undo_move/teleport act on a fixture id; screen
 `hub_fixtures`.
+
+## As implemented: wave 3 stream world (branch `w3/world`)
+
+- **World journal** (contract J1, docs/BUILDINGS.md "World journal"): buildings, fixtures, roads and trophy signs record every
+  world change in `<world>/agentcraft-journal/` and undo through it; existing worlds are imported once (snapshots, pending
+  removals and moves, road snapshots and removals, the trophy signs that hang); the old folders move to
+  `agentcraft-journal/legacy/`. A board placed over a road, a road shared by two roads, a trophy over a building: every order
+  of removal gives the ground back without holes or resurrected blocks. `dev.journal.state`, `dev.journal.at`.
+- **Natural drops** never block Remove (docs/BUILDINGS.md "Safe remove").
+- **Server verdict** (S4), **site warnings** and **too far** in the wizard (docs/BUILDINGS.md "Wizard (client)", "Site
+  warnings").

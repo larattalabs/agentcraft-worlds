@@ -438,12 +438,14 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   are never reused), loaded for any world. `place` refuses: a repo that already has a building, more
   repos than wings, a box leaving the build height, a box overlapping another building (never
   forceable, removal would break the newer one), and block entities that are not AgentCraft stations
-  (unless `force`). It then saves the box (air included, verified to hold one entry per cell) to
-  `<world>/agentcraft-buildings/<id>.before.nbt`, places with mirror NONE, entities ignored, no
+  (unless `force`). It then saves the box (air included, verified to hold one entry per cell) as a world journal entry
+  (`<world>/agentcraft-journal/`, docs/BUILDINGS.md "World journal"; before wave 3
+  `<world>/agentcraft-buildings/<id>.before.nbt`), places with mirror NONE, entities ignored, no
   waterlogging, flags `UPDATE_CLIENTS | SUPPRESS_DROPS | SKIP_BLOCK_ENTITY_SIDEEFFECTS` (a forced
   chest is replaced without spilling, so restore doesn't duplicate items), reconnects panels,
-  rewrites `<prefix>:#n` bindings to the n-th repo, clears drops. `remove` places the snapshot back
-  at the same corner and deletes it; `remove <id> forget` only drops the record.
+  rewrites `<prefix>:#n` bindings to the n-th repo, clears drops. `remove` undoes the journal entry (the box placed back
+  at the same corner through `StructureTemplate`, cells under a newer change handed down instead); `remove <id> forget`
+  only drops the record (and releases its entries).
 - Trophies (`docs/BUILDINGS.md` "Trophies"): `Trophies` hangs a waxed `DARK_OAK_WALL_SIGN` at a slot from the
   building's pin (`TrophySlots`), lines from `TrophyText`, flags `UPDATE_CLIENTS` only. Ledger
   `<world>/agentcraft-trophies.json` (`TrophyLedger`, loaded on server start after `Buildings` so it can prune slots
@@ -535,9 +537,11 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
   safety", "Change a building's repos", "Move a building"): `building.Occupancy`, `TerrainFit`, `TemplateGrid`
   (the template's written cells and block entities, shared by server and ghost; `TemplateCells` colours it),
   `Reconcile`, `Displays`; tests `TerrainFitTest`, `BuildingLifecycleTest`, `PinAndReconcileTest`.
-  `dev.buildings.pending` (pending sites with `snapshotExists`, the snapshot files, each building's pin
-  fingerprint, the world-start reports) and `dev.buildings.failNextRename` (the next move's snapshot rename
-  fails: the move must roll back). `dev.build.state.conflicts` adds
+  `dev.buildings.pending` (pending sites with `snapshotExists` and the journal `entry` they resolve to, the sites'
+  journal entries as `snapshotFiles`, each building's pin fingerprint, the world-start reports) and
+  `dev.buildings.failNextRename` (since wave 3: the next world journal commit fails, so a move must roll back).
+  Wave 3: `dev.journal.state` and `dev.journal.at {x, y, z, dimension?}` (docs/BUILDINGS.md "World journal");
+  `dev.build.state.serverVerdict`, `ready`, `tooFar` and `conflicts.site` (S4, too far, site warnings). `dev.build.state.conflicts` adds
   `water, lava, foundation, cleared, snapshotMinY, notes[]` and `moving`; refusals include occupants, lava
   and doors cut by the box edge. Entrance approach (docs/BUILDINGS.md "Entrance approach", `building.Approach`,
   `ApproachTest`): `conflicts.snapshotBox` and `conflicts.approach{rows, path, slabs, fill, cleared, water, lava,
@@ -741,11 +745,11 @@ road cost (`ROAD_FACTOR`, steps onto `Roads.feetCells`; the heuristic is scaled 
 - Hub: `dev.hub.open {tab:"buildings", sub:"roads", roadRow:"pair:b1|b2"}` (or `road:r2`); buttons `road_width`,
   `road_lanterns`, `road_bridge`, `road_lay`, `road_plan`, `road_remove` (press twice), `road_keep`;
   `dev.hub.state.roads{selected, armedRemove, note, rows}`; the view's fit in `dev.roads.state.ui`.
-- Files to look at: `<world>/agentcraft-roads.json`, `<world>/agentcraft-roads/<id>.before.nbt` (`.removed-<ms>.nbt` until
-  the next world start).
+- Files to look at: `<world>/agentcraft-roads.json`, `<world>/agentcraft-journal/journal.json` (the road's entry: kind `road`,
+  owner its id; undone until the next world start after a removal); `dev.journal.at` shows the stack at one cell.
 - Gotchas: the client's preview can be stale (the server plans again; a route the ground has broken since refuses with
-  "preview the road again"); a building placed later over a road keeps those cells on Remove road (they belong to the
-  building's snapshot now); a cell shared with an older road belongs to that road until it is removed, then to the road still running there (`Road.handover`); Enter lays only the confirmed ghost
+  "preview the road again"); a building placed later over a road keeps those cells on Remove road (they are handed down
+  to the building's journal entry, whose own removal then gives the ground back, not the road); a cell shared with an older road belongs to that road until it is removed, then to the road still running there (`Road.handover`); Enter lays only the confirmed ghost
   (the server's plan must hash the same, else "The ground changed since the preview").
 - QA at small sizes: at GUI scale 2, 3 and 4 (and a ~426x240 GUI px window) open `dev.hub.open {tab:"buildings",
   sub:"roads"}`, check `dev.roads.state ui.strip.overflow` and `ui.overflow` are false and screenshot the strip (at scale 4

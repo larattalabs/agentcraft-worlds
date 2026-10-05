@@ -124,7 +124,7 @@ are taken; a single building uses `@1`):
 - the support is the cell **behind** the sign (opposite the yaw): a full, opaque vanilla block. The mod hangs a
   waxed wall sign with no neighbour updates only on an air cell with such a support.
 - placement renames them like any `@<n>` anchor (`trophy`, `trophy_2`.., `trophy:<repoId>`, `trophy_2:<repoId>`);
-- the slots are inside the building box, so `before.nbt` covers them: Remove and Move restore the site exactly.
+- the slots are inside the building box, so the site's journal entry covers them: Remove and Move restore the site exactly.
 
 The kit writes one with `trophyWall(x0, z0, x1, z1, facing, { slots = 6, rows, y, wing })`: the segment is the *wall*
 cells (3 by default), the sign cells are the 3 x 2 room cells in front of it (rows feet+1 and feet+2), a plaster
@@ -190,8 +190,9 @@ A placed blueprint is a building:
 - `origin` is the rotated box's minimum corner (vanilla rotates about the template's origin cell, so
   placement shifts by the rotated box's minimum). The file also stores `box` (the world box the
   template and its snapshot cover); ids `b<n>` are never reused (`next` in the file).
-- Before placing, the blocks and block entities in the target box are saved to
-  `<world>/agentcraft-buildings/<id>.before.nbt`; removing the building puts them back exactly.
+- Before placing, the blocks and block entities in the target box are saved as an entry of the world journal (see
+  "World journal"; until wave 3 `<world>/agentcraft-buildings/<id>.before.nbt`); removing the building puts them back
+  exactly.
 - Placement refuses to overwrite block entities the mod did not place (chests, spawners, ...)
   unless forced, and is only ever done on an explicit command / wizard confirm.
   It always refuses a box that overlaps another building in the same dimension (removing the older one
@@ -303,24 +304,31 @@ them). Forcing is a further explicit confirm: the hub's
 button turns into "Remove anyway", `/agentcraft remove <id> force`. Nothing is deleted silently. Drops are
 only cleared when the placement/removal itself made them: the items and XP around the box are recorded
 before, and only new ones are removed (right after and again three ticks later), never the player's own drops
-lying there. Trophy signs the mod hung at the building's own trophy slots never count (see "Trophies").
+lying there. Trophy signs the mod hung at the building's own trophy slots never count (see "Trophies"), and neither do
+**natural drops** (wave 3, `building.NaturalDrops`, `NaturalDropsTest`): saplings, sticks, apples, seeds, leaf litter,
+petals, berries and flowers that decaying leaves and cleared plants dropped (the placement cleared a tree's logs; the leaves
+left beside the box decay over the next minutes and drop into it), unless a player threw the item or it has a custom name.
+They are nobody's items: they never block Remove or a Move's old site and are not listed or counted. Placement occupancy
+is unchanged (dropped items in a box about to be built still refuse: "pick them up first").
 
 ### Crash safety
 
 Removing a building (or moving it away) restores its site at once, but the restored chunks only reach the disk
 with some later save, and a save does not promise it: an autosave or a pause save (singleplayer saves every time
 the game pauses: the Esc menu, any AgentCraft screen) skips chunks saved in the last few seconds and does not
-wait for the writes. So the snapshot is kept, and the site recorded under `pending` in
-`agentcraft-buildings.json`, until the **next world start**, which settles each pending site on evidence
-(`Reconcile.decide`, unit-tested), never on a count of saves:
-- **released** (snapshot deleted): the site shows its snapshot again (at least 90 % of the cells where the
-  snapshot and the building differ hold the snapshot's block; the building's own template when its pin
+wait for the writes. So the site's journal entry is kept undone (with its trophies' entries, one group), and the site
+recorded under `pending` in `agentcraft-buildings.json` (`snapshot` names the entry, `j<n>`; an imported pending site
+keeps its old file name, which the journal's `legacy` map resolves), until the **next world start**, which settles each
+pending site on evidence (`Reconcile.decide`, unit-tested), never on a count of saves:
+- **released** (journal entries released): the site shows its saved terrain again (at least 90 % of the cells where the
+  terrain and the building differ hold the terrain's block; the building's own template when its pin
   matches, else its pinned block-entity positions), or a standing building covers the whole site (that
-  building's own snapshot holds the same terrain; the same building included, after Undo move or a move back);
-- **record back**: a removal that did not reach the disk (the building stands again) gets its record back; a
-  move that did not reach the disk (the old site stands, the new one does not) gets the old record and its
-  snapshot back (the unused one is kept as `<id>.unused-<ms>.nbt`);
-- **reported, snapshot kept**: a move saved at both sites (two copies of the building), or a taken-down
+  building's own entry holds the same terrain; the same building included, after Undo move or a move back);
+- **record back**: a removal that did not reach the disk (the building stands again) gets its record back and its
+  entries reactivated (their hand-downs reversed, see "World journal"); a move that did not reach the disk (the old site
+  stands, the new one does not) gets the old record and its entries back (the new site's entries are kept undone as
+  unused, naming no record);
+- **reported, entry kept**: a move saved at both sites (two copies of the building), or a taken-down
   building standing partly under another building: it is never re-added over another one;
 - **kept silently** for the next start: anything that cannot be told (blueprint changed or missing, dimension
   not loaded, a site neither standing nor restored).
@@ -332,7 +340,13 @@ own template does not stand is reported in the hub (Buildings tab "Check", `/age
 restores the terrain saved before it was placed, Forget only drops the record; nothing is deleted
 automatically. A building whose blueprint changed since it was placed, or whose blueprint or dimension is not
 loaded, cannot be checked: it gets a note, never a "does not match" (see "Blueprint versions").
-`dev.buildings.pending` shows the pending sites, the snapshot files, the pins and the reports.
+`dev.buildings.pending` shows the pending sites (with the journal entry each resolves to), the sites' journal entries,
+the pins and the reports. Before the evidence rules, the world start repairs the crash windows between the journal and
+`agentcraft-buildings.json` (`Buildings.repair`, pure, `JournalRepairTest`; the journal is always written first): a record
+whose site entry was undone with no pending site naming it becomes a pending removal; a record whose site is not the
+journal's active one, which stands elsewhere, follows the journal (the entry's meta) and the old site becomes a pending
+move; an active site entry with no record and no pending site (a placement whose record was not saved) gets its record back
+from the entry's meta unless another building stands there. Each says so in the hub's Check line.
 
 ### Blueprint versions
 
@@ -370,11 +384,12 @@ repos than wings and a repo that has another building. The lead sync
 The hub's "Move…" puts up the ghost of the building's blueprint (its repos, "Moving b3" in the HUD); Enter
 runs `Buildings.move(level, id, origin, rotation, force)`: every check of `place` at the new site (it may not
 overlap the building's current site), the old site's safe-remove check (Shift+Enter forces after a refusal),
-then the template at the new site, then the snapshots renamed (the old one to `<id>.moved-<ms>.nbt`, the new
-one to `<id>.before.nbt`), then the old site restored from the renamed snapshot (kept until the next world start,
-as for a removal). A failure at any step undoes the steps before it (files renamed back, the new site restored
-from its snapshot) and records nothing, so the record never points at a site whose snapshot is another site's
-terrain (`dev.buildings.failNextRename` injects a rename failure). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
+then the template at the new site (drafted in the world journal first), then **one journal commit** holding the new
+site's entry and the old site's undo (its entry and its trophies'), then the old site restored (the entries kept undone
+until the next world start, as for a removal), then the record. A failure before the commit takes the new site down
+again and records nothing; a failure restoring the old site after it takes the commit back (the old entries active again,
+the new one released) and the new site down, so the record never points at a site the journal does not hold
+(`dev.buildings.failNextRename` makes the next journal commit fail). The id, repos, lead and home flag stay; the layout revision changes. `movedFrom` records the
 old site; "Undo move" (`Buildings.undoMove`) moves it back there (one step). The building's trophies are hung again
 at the new site (see "Trophies").
 
@@ -409,8 +424,13 @@ A repo's building gets a plaque when one of its PRs merges, a task merges locall
   (`Trophy.goalKey/prKey/mergeKey`). A known key is never hung again (also after its sign was replaced or its building
   removed). A key is only recorded when a sign was hung: a repo without a building, slots or room catches up later.
   Malformed parts are skipped; a file that is not JSON at all is left alone and nothing is awarded that session.
-- **Remove / Move**: the slots are inside the box, so the snapshot (`before.nbt`) covers them and Remove puts back
-  exactly what was there (the restore flags suppress drops: no sign item comes out; the drop cleaner catches any).
+- **Remove / Move**: the slots are inside the box, so the site's journal entry covers them and Remove puts back
+  exactly what was there (the restore flags suppress drops: no sign item comes out; the drop cleaner catches any). Each
+  hung sign is also a journal entry of its own (kind `trophy`, owned by the building, CELL policy: the cell before and
+  after); Remove and Move undo them in one group with the site, Forget releases them, and a sign rewritten over our own
+  older trophy folds that older entry into the new one (`Journal.absorb`), so a wall's stack never grows with the awards.
+  A journal that cannot be saved is logged, not fatal (the box covers the slot); while the journal cannot be read at all,
+  `award` answers UNAVAILABLE.
   The removal check ignores sign block entities at the building's pinned trophy cells (a chest put there still
   counts), and the world-start check skips those cells. Move (and Undo move) hangs every ledger trophy again at the
   same slot of the new site; a slot the new site lacks or blocks drops out of the ledger. `forget` drops the
@@ -435,6 +455,84 @@ Client side (`client.trophy.TrophyFeature`; pure `trophy.TrophyEvents` and `Trop
 API (server thread): `Trophies.award(level | server, Trophy, key) -> Result{outcome PLACED | KNOWN | NO_BUILDING |
 NO_SLOTS | NO_ROOM | UNAVAILABLE, building, slot, replaced, message}`, `Trophies.known(key)`, `Trophies.slotsFor(repo)`,
 `Trophies.list(server)` (JSON for the DevBridge).
+
+### Site warnings
+
+What the ground in front of a building's entrance and under its entrance approach is like, which placing does not fix
+and walkers meet when they step out of the door (`building.SiteWarnings`, pure, `SiteWarningsTest`). **Warnings never
+refuse.** One function feeds the ghost (cells drawn magenta), the HUD (notes), the server's place note and the server
+verdict's notes; `dev.build.state.conflicts.site {water, lava, drops, maxDrop, openings, gullies, caves, warnings[]}`.
+- **In front of the entrance**: the strip the approach covers grown by one column on each side, from the box's front
+  face out to 4 rows past the approach's end (4 rows when the blueprint has no approach). Per column the ground is
+  searched as the approach does (12 above to 13 below the path's height there; trees are not ground): **water** or
+  **lava** on the surface ("3 water blocks in front of the entrance"; the approach strip's own cells are the approach's
+  to report, its lava still refuses), a **drop** of 3 or more blocks below the path ("a drop of up to 5 blocks in front of
+  the entrance (12 columns)"), and no ground within reach: a **cave opening** or a deep gully. The strip's own columns
+  are not drops (the approach's fill holds the path up).
+- **Under the approach**: a path column whose foundation fill reached its 12-block limit without meeting the ground (a
+  **gully** under the path), and air, water or lava within 3 blocks under the ground the path (or its fill) stands on (a
+  **cave** under a thin roof).
+
+### World journal (contract J1)
+
+Every AgentCraft world change is an entry of one per-world journal, `<world>/agentcraft-journal/` (package
+`dev.agentcraft.journal`, wave 3): buildings and fixtures (their whole site: template box, foundation and entrance
+approach), roads, trophy signs, anything later. An entry is `{id: "j<n>", kind, owner, dimension, policy, createdAt,
+status, cells: [{pos, layer, before, after}], meta}`: `owner` is the record it belongs to (`b3`, `r2`; a trophy's is its
+building), `before`/`after` a block state with its block entity data, `meta` the owner's record when it was made (crash
+repair rebuilds a lost record from it).
+
+**Layers.** The cells of every active entry at one position form a stack ordered by their **layer** (a later change is
+higher; a cell keeps its layer when it moves to another entry). The top cell's `after` is what the world shows. Undoing
+entries (`Journal.planUndo`, pure, `JournalTest`) takes them out of the stacks top-down per position:
+- a cell **on top** writes the world: a **BOX** entry (a building's or fixture's site) always writes its `before`, so
+  Remove still puts back exactly what was in the box, the player's later changes inside it included ("Safe remove"); a
+  **CELL** entry (roads, trophies) writes it only where the world still holds its `after` (the contract's rule; cells the
+  player changed since are left as they are). The box is written through vanilla's `StructureTemplate` exactly as the old
+  snapshot restore (same flags, shape updates, block entity loading); cells with `setBlock`, lowest first, with the
+  feature's flags. *Decision*: the contract's "restore only if the cell still holds `after`" is kept for CELL entries; for
+  a building's box it would have changed Safe remove (a broken wall left a hole instead of the terrain), so BOX entries
+  keep the documented behaviour;
+- a cell **under a newer one** changes nothing in the world: **ownership passes down**, the newer cell's `before` becomes
+  what this entry's undo would have made of it (its `before`; for a CELL entry whose `after` the newer cell did not find,
+  the newer cell's `before` as it is). So overlapping changes undo in any order without holes or resurrected blocks: a
+  village board placed over a road, then the road removed, then the board removed, gives the ground back (before, the
+  board's snapshot held road blocks and brought the road back); every order of road, board and trophy is in `JournalTest`.
+Undone entries keep their cells, what the undo wrote and every hand-down until the next world start settles them ("Crash
+safety"): **released**, or **reactivated** (the undo never reached the disk), which reverses the hand-downs newest first
+where the receiving cell still holds what was handed (else a chest an undone entry handed down would come back twice).
+**Forget** releases entries (the blocks stay for good: a change under them later leaves them, one over them restores
+them). **Transfer** moves cells between entries keeping their layers (road handover); **absorb** folds a trophy covered
+by a newer one into it.
+
+**On disk** (`JournalStore`): `journal.json` (the index: every entry's metadata and box, the id and layer counters, the
+imported legacy file names) and `<id>.<gen>.nbt` per entry (gzip NBT: a state palette, positions, layers, before/after
+indexes, block entity data, the undo). A change is drafted as generation 0 before it touches the world (a crash leaves
+it on disk; a full disk refuses the change first), committed as the next generation (written, read back), then the index
+is replaced atomically (the commit point), then superseded files are deleted. At open, generations the index does not
+name are leftovers (deleted) and files of entries it does not know (a change that never committed) are kept and listed
+(`dev.journal.state.unreferenced`). Order for every change: the journal, then the feature's record file, then the
+blocks (placing: draft, blocks, journal, record); the world start repairs what a crash between the journal and the record
+file left ("Crash safety"). While the journal cannot be read or imported, place, move, remove, forget, lay and award
+refuse with the reason (the ghost's verdict too) and nothing on disk is touched.
+
+**Import** (`JournalMigration`, once, `JournalMigrationTest` against files in the old formats): when a world has no
+`journal.json` but has `agentcraft-buildings/` or `agentcraft-roads/`, every recorded building's `<id>.before.nbt`
+becomes an active BOX entry (its blocks and block entities exactly; `after` unknown, a box restore never needs it), each
+pending site's file (`<id>.before.nbt` of a removal, `<id>.moved-<ms>.nbt` of a move) an undone one, each road's
+`<id>.before.nbt` an active CELL entry with each cell's before and after, each pending removal (`<id>.removed-<ms>.nbt`,
+or the never renamed `<id>.before.nbt`) an undone one, and each trophy sign the ledger says hangs in a recorded building
+and still hangs there an active trophy entry (the ledger stays the awards record). Layers follow time (a road laid
+before a board placed over it is lower). Every imported file name maps to its entry (`legacy`), so the pending records,
+which keep their old names, still resolve. The index commit is the only "done" marker: the old folders move into
+`agentcraft-journal/legacy/` only after it (every file kept, also leftovers such as `<id>.unused-<ms>.nbt`), a crash in
+between only finishes the move at the next start, and an index that exists means no import runs again. An unreadable
+`agentcraft-buildings.json` or `agentcraft-roads.json` aborts the import (nothing written; changes refused until fixed).
+Ids are never reused: `place` skips any `b<n>` the journal (any entry, any status) or an imported file knows.
+
+DevBridge: `dev.journal.state` (open, unavailable, counters, every entry's metadata, legacy names, unreferenced files,
+the import's notes), `dev.journal.at {x, y, z, dimension?}` (the stack at one cell, bottom first, with layer, before and
+after).
 
 ## Roads (docs/VILLAGE.md V1)
 
@@ -477,8 +575,9 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
 - **Shared cells**: a cell another road already changed is left to that road (the column is skipped, noted "already
   part of another road"). Removing the first road hands the cells the other road still runs on to it (`Road.handover`:
   a changed cell in or beside a column of the other road's walker cells, from 2 below its feet to 3 above; the nearest,
-  then the newest road takes it): they stay, go into that road's snapshot and changes, and its own removal restores
-  them ("…; 294 cells kept for road r13 (it runs there too)"). Before, they went back and left the other road with holes.
+  then the newest road takes it): they stay, go into that road's journal entry (keeping their layer, `Journal.transfer`)
+  and changes, and its own removal restores them ("…; 294 cells kept for road r13 (it runs there too)"). Before, they
+  went back and left the other road with holes.
 - **Laying** (`Roads.lay(level, a, b, route, options, previewHash)`, server thread): the client sends the route and,
   from a preview, the fingerprint of the ghost the player confirmed (`RoadPlan.hash`: each change's x, y, z and block,
   in order). The server
@@ -491,8 +590,9 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   that change nothing, and refuses when a player (box grown by 0.3 sideways), a pet, a villager, an armor stand or a
   named mob is in a cell that could trap them: one that gains a collision shape or whose top rises by more than 1/8
   (`RoadPlan.canTrap`; a ground swap such as grass to a dirt path or stone to gravel never counts) ("Step off the road
-  first: you at 12, 65, -3"). Order: the snapshot (written atomically, read back), the record, then the blocks; when the
-  record cannot be written the snapshot is deleted and nothing is laid (no block stands without a record).
+  first: you at 12, 65, -3"). Order: the journal entry (written atomically, read back; the road record is its meta),
+  the record, then the blocks; when the record cannot be written the entry is released and nothing is laid (no block
+  stands without a record).
 - **Blocks are set** with `UPDATE_CLIENTS | UPDATE_SKIP_ALL_SIDEEFFECTS`: no neighbour or shape updates (nothing next
   to the road pops or reconnects), no drops, no `onPlace` (gravel never ticks), no block-entity side effects. New item
   and XP entities within a block of a changed cell are cleared anyway, right after and 3 ticks later (`Roads.CellDrops`;
@@ -502,22 +602,27 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
   lanterns, bridge, created, length (route cells), cells: [x, feetY, z, ...], lanternCells, changes: [x, y, z, ...],
   notes}], pending: [{road, snapshot, at}]}`; ids are never reused. A malformed entry is skipped; a file that is not JSON
   at all is left alone and nothing is laid that session.
-- **Snapshot**: `<world>/agentcraft-roads/<id>.before.nbt`, one entry per changed cell `{x, y, z, before, after}` (block
-  states), never a box: a box restore would revert everything else in a long diagonal road's bounding box.
+- **Snapshot**: the road's world journal entry (kind `road`, CELL policy; until wave 3
+  `<world>/agentcraft-roads/<id>.before.nbt`), one cell per changed block `{pos, before, after}` (block states), never a
+  box: a box restore would revert everything else in a long diagonal road's bounding box.
 - **Remove road** (`Roads.remove(level, id)`): every cell that **still holds what the road put there** (the same state;
   for fences and lanterns the same block, as a neighbour update reshapes a fence's connections or water fills it; for
-  slabs the same block and slab type, waterlogged or not) gets its old block back, ground first, then what stood on it; cells the player changed since and cells a building now covers are left as
-  they are ("Removed road r2 (b1 to b3): 140 cells back as they were; 3 cells you changed since left alone"). Refuses while
+  slabs the same block and slab type, waterlogged or not) gets its old block back, ground first, then what stood on it; cells the player changed since are left as
+  they are, and cells a building or fixture placed over the road now covers are left in the world and **handed down** to
+  that site's entry (its removal later restores the ground, not the road: before wave 3 a board placed over a road
+  brought the road blocks back when it was removed after the road) ("Removed road r2 (b1 to b3): 140 cells back as they
+  were; 3 cells you changed since left alone"). Refuses while
   a player or a pet stands where an old block comes back (a bush at head height suffocates). Crash safety as for
-  buildings: the cells that go back are written to `<id>.removed-<ms>.nbt` and cells handed over are added to the
-  receiving roads' snapshots, then the removal is recorded under `pending` (refused, those files put back, when the
-  record cannot be written), then `<id>.before.nbt` goes, then the blocks are restored; the next world start settles
-  it on the cells (`Road.settle`), counting only cells no standing road changed (a road laid over the same ground
+  buildings: the journal commit (the entry undone with what it wrote, cells handed over moved to the receiving roads'
+  entries), then the removal recorded under `pending` naming the entry (refused, the journal put back, when the record
+  cannot be written), then the blocks; the next world start settles
+  it on the cells the undo wrote (`Road.settle`), counting only cells no standing road changed (a road laid over the same ground
   later shows road blocks there although the removal reached the disk: counting them brought removed roads back): most
-  telling cells hold the old blocks, or none tell -> the snapshot goes; most hold the road (the removal never reached
-  the disk) -> the record comes back, at most one per building pair; nothing readable -> kept. `forget` drops a record and leaves
-  the blocks (for a road whose snapshot is gone). A pending removal whose snapshot was never renamed (a crash between
-  the record and the rename) is settled on `<id>.before.nbt`.
+  telling cells hold the old blocks, or none tell -> the entry is released; most hold the road (the removal never reached
+  the disk) -> the record and the entry come back, at most one per building pair; nothing readable -> kept. `forget` releases
+  the entry and drops the record, leaving the blocks (also for a road whose snapshot is gone). Crash windows between the
+  journal and `agentcraft-roads.json` are repaired first (`Roads.repair`, as for buildings). Imported pending removals
+  (`<id>.removed-<ms>.nbt`, or the never renamed `<id>.before.nbt`) resolve through the journal's `legacy` map.
 - **Buildings removed or moved** (any path: hub, command, Undo move): their roads now lead nowhere or to the old site.
   The client notices (a `Buildings` listener comparing restore boxes), shows a toast ("b3 was removed: its road r2 leads
   nowhere now. Remove it in the hub: Buildings > Roads") and lists those roads first in Roads with **Remove road…** and
@@ -542,8 +647,11 @@ the server); client `client.road.RoadsFeature` (+ `RoadGhost`, `RoadHud`), the h
 - `Blueprints`: registry (bundled + user folder), `get(id)`, `all()`, `reload()`.
 - `Buildings`: `all()` (every site, fixtures included: overlap checks), `buildings()` (no fixtures: routing, leads, trophies), `fixtures()`, `get(id)` (either), `forRepo(repoId)`, `home()`, `layoutFor(repoId)` (that repo's
   building layout, else `Anchors.current()`), `place(level, blueprint, origin, rotation, repos,
-  force) -> Building`, `remove(level, id)`, `forget(server, id)`, `setHome(server, id)`, persistence,
+  force) -> Building`, `verdict(level, blueprint, origin, rotation, repos, force, movingId) -> Verdict{refusals, notes}`
+  (the dry run of `place`/`move`, contract S4), `remove(level, id)`, `forget(server, id)`, `setHome(server, id)`, persistence,
   change listeners. Errors are `Buildings.BuildingException` with a player-facing message.
+- `dev.agentcraft.journal`: `Journal` (the pure layering rules), `JournalStore` (files), `JournalNbt`, `JournalMigration`,
+  `WorldJournal` (the running world's journal: capture, planUndo, apply, commit). See "World journal".
 - Commands (gamemaster): `/agentcraft blueprints [reload]`, `/agentcraft buildings`, `/agentcraft build` (the wizard),
   `/agentcraft place <blueprint> <repo>[,<repo>...] [rotation] [force]` (in front of the player,
   ground at the player's feet), `/agentcraft place village_board` (a fixture: no repos),
@@ -638,6 +746,19 @@ explicit and reversible.
    template box: a template need not write every cell of its box (the studio's porch is 7 of its 37
    columns wide; the box corners beside it stay terrain). The HUD shows the blueprint, repos, rotation, the verdict (`place`'s refusals, computed on
    the client: repo already built, too many repos, build height, overlap, block entities) and counts.
+   **Server verdict** (contract S4, wave 3): the client's checks are the fast preview; when they pass, the client asks the
+   integrated server for `Buildings.verdict` of the exact site (blueprint, origin, rotation, repos, the building moved,
+   force): the same checks `place` (or `move`, old site included) runs, in the same words, every reason instead of the
+   first, as a dry run (no world change; it never loads or generates a chunk: an unloaded site is a refusal of its own).
+   Asked once when the site changes and then every second (one request in flight; a reply for a site the ghost left is
+   dropped). The HUD says "Checking the site with the server…" until it arrives, "Ready" only when the server agrees, else
+   "Server would refuse: <reasons>". Enter runs the verdict and `place` in one server task, so a refusal lists every
+   reason. `dev.build.state.serverVerdict {ok, refusals, notes}` and `ready`.
+   **Too far** (wave 3): looking further than the 64-block reach (or at the sky) keeps the ghost at the last spot that
+   was in reach in this placement session, with an orange "Too far: aim within 64 blocks" HUD line
+   (`dev.build.state.tooFar`), instead of snapping it to the player's feet; before any spot was in reach the feet
+   fallback is as before. A locked ghost or an explicit origin is not affected.
+   **Site warnings** (wave 3, see "Site warnings"): drawn magenta and listed as notes.
    Keys (consumed before vanilla): `R` rotate (Shift+R back), arrows nudge (relative to the view),
    PgUp/PgDn raise/lower, `L` lock (the ghost stays when looking away; L's advancements screen is
    not opened while placing), Enter place, Esc/Backspace cancel. A refusal over block entities arms
