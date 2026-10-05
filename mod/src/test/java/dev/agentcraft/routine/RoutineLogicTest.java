@@ -79,6 +79,22 @@ class RoutineLogicTest {
 		assertEquals(Kind.NONE, RoutineRules.decide(idle(), true, Kind.NONE, false, false, true));
 	}
 
+	@Test
+	void agentsThatNeedThePlayerSkipStandups() {
+		Facts blocked = new Facts(false, false, true, true, true, true); // blocked: busy (error family), not walking to you
+		Facts taskWaits = new Facts(false, false, true, false, true, true); // its task waits on your merge
+		Facts working = new Facts(false, false, true, true, true);
+		assertFalse(working.needsUser());
+		assertTrue(new Facts(true, false, false, false, true).needsUser()); // the 5-argument form: waiting on you = needs you
+		assertEquals(Kind.STANDUP, RoutineRules.decide(working, false, Kind.NONE, true, false, false));
+		assertEquals(Kind.NONE, RoutineRules.decide(blocked, false, Kind.NONE, true, false, false));
+		assertEquals(Kind.NONE, RoutineRules.decide(taskWaits, false, Kind.STANDUP, true, false, false));
+		// the rules below the stand-up still apply: an idle-at-night agent whose task waits on you rests
+		assertEquals(Kind.REST, RoutineRules.decide(new Facts(false, false, false, false, true, true), false, Kind.NONE, true, false, true));
+		// stale link: nothing starts or ends, also for them
+		assertEquals(Kind.STANDUP, RoutineRules.decide(blocked, true, Kind.STANDUP, true, false, false));
+	}
+
 	// ------------------------------------------------------------------ settings
 
 	@Test

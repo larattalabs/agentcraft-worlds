@@ -536,7 +536,8 @@ Contract: docs/VILLAGE.md V3 ("As implemented: routines"); notes in mod/DEV.md "
 - **Library visits**: a `memory.upsert` written by an agent (`author`) queues a visit; between steps (not working,
   thinking or in an error) it walks to its building's `library` slot with a book in its hand, reads ~5 s (READ pose),
   then returns; cancelled the moment work needs it; at most 30 s; a 2 min wait and a 1 min cooldown.
-- Priorities (pure, `RoutineRules.decide`): waiting on the player / walking between buildings > stand-up > library >
+- Priorities (pure, `RoutineRules.decide`): waiting on the player / walking between buildings > stand-up (not for an
+  agent that needs the player: `Facts.needsUser`, blocked or waiting, also its task) > library >
   night rest > normal. Nothing starts or ends while the Foreman link is stale. Every hook is guarded: an error leaves
   the agents working as usual (logged at most every 10 s).
 - Per-world toggles in hub > Buildings ("Night", "Stand-ups", "Library"), `routines.json`, default on. DevBridge:

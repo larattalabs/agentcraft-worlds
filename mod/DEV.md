@@ -646,7 +646,9 @@ reading, gather and talk). `keepLying` skips retargeting while an agent sleeps; 
 relayout snap, a building change, a released lead leaving, the level or the link going away) gets it up first.
 
 - **Priorities** (`RoutineRules.decide`): waiting on the player (asking, or owning an open decision) or changing
-  building -> nothing; a running stand-up it is in (only in the stand-up's building) -> stand-up; a library visit
+  building -> nothing; a running stand-up it is in (only in the stand-up's building) -> stand-up, unless it needs the
+  player (`Facts.needsUser`, `AgentManager.needsUser`: state `waiting_user`/`blocked` even while paused, an open
+  decision it owns, its task `blocked` or with an open decision, `StatusMap.needsYou`); a library visit
   due and between steps (not `working`/`thinking`/`error`) -> library; night (13000 <= time of day < 23000, the
   overworld clock, `Level.getOverworldClockTime`) + idle (no task and not mid-step, or off shift) -> rest; else its
   own station. While the link is stale the previous routine stays.

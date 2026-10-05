@@ -8,7 +8,9 @@ import org.jspecify.annotations.Nullable;
  * <ol>
  *   <li>an agent that waits on the player (asking, or owning an open decision): no routine (it comes to you);</li>
  *   <li>an agent walking between buildings: no routine until it arrived;</li>
- *   <li>a stand-up it takes part in (the goal's lead and the workers of its first tasks): {@link Kind#STANDUP};</li>
+ *   <li>a stand-up it takes part in (the goal's lead and the workers of its first tasks): {@link Kind#STANDUP}, unless it
+ *       needs the player ({@link Facts#needsUser()}: blocked, waiting on you, its task blocked or waiting on a decision):
+ *       such an agent skips the stand-up and the rules below decide;</li>
  *   <li>a library visit after its own memory note, only between steps (not working, thinking or in an error):
  *       {@link Kind#LIBRARY};</li>
  *   <li>at night (world time 13000-23000), an idle agent (no task, not working) or one off shift: {@link Kind#REST};</li>
@@ -41,8 +43,15 @@ public final class RoutineRules {
 	 * @param hasTask the Foreman gave it a task
 	 * @param busy working, thinking or in an error (mid-step)
 	 * @param onShift active; an agent off shift counts as idle whatever its task
+	 * @param needsUser anything about it waits on the player: the agent is blocked or waiting on you (also while paused),
+	 *     owns an open decision, or its task is blocked or has an open decision on it. It skips stand-ups.
 	 */
-	public record Facts(boolean waitsOnUser, boolean onTrip, boolean hasTask, boolean busy, boolean onShift) {
+	public record Facts(boolean waitsOnUser, boolean onTrip, boolean hasTask, boolean busy, boolean onShift, boolean needsUser) {
+		/** Facts of an agent that needs the player only when it {@code waitsOnUser}. */
+		public Facts(boolean waitsOnUser, boolean onTrip, boolean hasTask, boolean busy, boolean onShift) {
+			this(waitsOnUser, onTrip, hasTask, busy, onShift, waitsOnUser);
+		}
+
 		/** No task and not mid-step, or off shift: it may rest. */
 		public boolean idle() {
 			return !onShift || !hasTask && !busy;
@@ -55,7 +64,7 @@ public final class RoutineRules {
 	}
 
 	/**
-	 * @param inStandup a running stand-up lists this agent (and stand-ups are on)
+	 * @param inStandup a running stand-up lists this agent (and stand-ups are on); ignored when it needs the player
 	 * @param libraryDue a library visit is running or waiting for this agent (and visits are on)
 	 * @param restAllowed it is night and the night routine is on
 	 */
@@ -66,7 +75,7 @@ public final class RoutineRules {
 		if (f.waitsOnUser() || f.onTrip()) {
 			return Kind.NONE;
 		}
-		if (inStandup) {
+		if (inStandup && !f.needsUser()) {
 			return Kind.STANDUP;
 		}
 		if (libraryDue && f.betweenSteps()) {
