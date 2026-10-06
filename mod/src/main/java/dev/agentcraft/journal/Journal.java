@@ -158,7 +158,8 @@ public final class Journal {
 	 */
 	public record Undo(String group, long at, Map<Long, Value> written, List<HandDown> handed) {
 		public Undo {
-			written = Map.copyOf(written);
+			// not Map.copyOf: its open addressing clusters on packed block positions (seconds to minutes for a large undo)
+			written = java.util.Collections.unmodifiableMap(new HashMap<>(written));
 			handed = List.copyOf(handed);
 		}
 	}
@@ -385,13 +386,14 @@ public final class Journal {
 		}
 		all.sort(Comparator.comparingInt(HandDown::order).reversed());
 		Map<String, Map<Long, Value>> before = new HashMap<>();
+		Map<String, Map<Long, Cell>> cellsOf = new HashMap<>(); // the receiving entries' cells by position (Entry.cell is a scan: quadratic here)
 		for (HandDown h : all) {
 			Entry to = byId.get(h.to());
 			if (to == null || !to.active()) {
 				continue; // the receiving entry is gone (released or undone itself): nothing to give back
 			}
 			Map<Long, Value> m = before.computeIfAbsent(h.to(), x -> new HashMap<>());
-			Cell c = to.cell(h.pos());
+			Cell c = cellsOf.computeIfAbsent(h.to(), x -> index(to)).get(h.pos());
 			Value cur = m.containsKey(h.pos()) ? m.get(h.pos()) : c == null ? null : c.before();
 			if (cur != null && cur.equals(h.now())) {
 				m.put(h.pos(), h.was());
@@ -476,6 +478,15 @@ public final class Journal {
 		}
 		out.sort(Comparator.comparingLong((Map.Entry<Entry, Cell> x) -> x.getValue().layer()).thenComparing(x -> x.getKey().id()));
 		return out;
+	}
+
+	/** An entry's cells by position. */
+	private static Map<Long, Cell> index(Entry e) {
+		Map<Long, Cell> m = new HashMap<>(Math.max(16, e.cells().size() * 4 / 3 + 1));
+		for (Cell c : e.cells()) {
+			m.put(c.pos(), c);
+		}
+		return m;
 	}
 
 	/** pos -> the active entries with a cell there, bottom first (by layer; ties by id). */
