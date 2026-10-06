@@ -427,6 +427,7 @@ public final class Buildings {
 	private static void unbuild(ServerLevel level, Built built) {
 		try {
 			Drops drops = Drops.before(level, built.snapshotBox());
+			putBackCut(level, built);
 			WorldJournal.restoreTemplate(level, built.snapshotBox(), built.before(), FLAGS);
 			if (built.leaves() != null) {
 				LeafGuard.release(level, built.leaves().cells(), FLAGS);
@@ -742,6 +743,12 @@ public final class Buildings {
 			throw new BuildingException("Could not save the snapshot (" + e.getMessage() + "); nothing was placed");
 		}
 		List<BlockPos> plants = straddlingPositions(level, snapBox, false);
+		// the outside halves of the plants the box cuts, as they are: the placement takes them (the inside half goes), so they
+		// become guard cells of the held-leaves entry and Remove writes them back before the box (docs/BUILDINGS.md "Cut plants")
+		Map<Long, Journal.Value> cut = new LinkedHashMap<>();
+		for (BlockPos half : plants) {
+			cut.put(half.asLong(), WorldJournal.valueAt(level, half));
+		}
 		Drops drops = Drops.before(level, snapBox);
 		// leaves outside the box that hang on logs inside it: kept from decaying while the site stands (read before the box
 		// changes; their own journal entry, committed with the site's)
@@ -782,6 +789,12 @@ public final class Buildings {
 				if (!level.getBlockState(inside).is(outside.getBlock())) {
 					level.setBlock(half, Blocks.AIR.defaultBlockState(), FLAGS);
 				}
+			}
+			List<Journal.Cell> guards = guardCells(level, cut);
+			if (!guards.isEmpty()) {
+				List<Journal.Cell> both = new ArrayList<>(held);
+				both.addAll(guards);
+				held = both;
 			}
 			drops.clearNew(level);
 			List<String> notes = new ArrayList<>();
@@ -829,11 +842,65 @@ public final class Buildings {
 		} catch (RuntimeException e) {
 			// never leave a half-built, unrecorded box behind: put the site back as it was captured
 			AgentCraft.LOGGER.error("Placing {} at {} failed; restoring box {}", bp.id(), origin.toShortString(), str(snapBox), e);
+			putBackCut(level, cut);
 			WorldJournal.restoreTemplate(level, snapBox, before, FLAGS);
 			LeafGuard.release(level, held, FLAGS);
 			WorldJournal.discardDraft(draft.id());
 			throw new BuildingException("Placing " + bp.id() + " failed (" + e.getMessage() + "); the area was restored");
 		}
+	}
+
+	// ------------------------------------------------------------------ cut plants (guard cells)
+
+	/**
+	 * The guard cells of a placement (docs/BUILDINGS.md "Cut plants"): each outside half of a two-block plant the box cut
+	 * ({@code cut}: position -> the block before) that the placement changed (vanilla drops it with its inside half, or the
+	 * placement takes it), as a cell {@code before} = the plant's half, {@code after} = what is there now. They join the
+	 * held-leaves entry, so Remove and Move undo them with the site and {@code WorldJournal.apply} writes them first.
+	 */
+	private static List<Journal.Cell> guardCells(ServerLevel level, Map<Long, Journal.Value> cut) {
+		if (cut.isEmpty()) {
+			return List.of();
+		}
+		List<Journal.Cell> out = new ArrayList<>();
+		long layer;
+		try {
+			layer = WorldJournal.newLayer();
+		} catch (IOException e) {
+			throw new IllegalStateException("no world journal: " + e.getMessage(), e);
+		}
+		for (var c : cut.entrySet()) {
+			Journal.Value now = WorldJournal.valueAt(level, BlockPos.of(c.getKey()));
+			if (!now.equals(c.getValue())) {
+				out.add(new Journal.Cell(c.getKey(), layer, c.getValue(), now));
+			}
+		}
+		return out;
+	}
+
+	/** A placement taken down before its commit: the cut plants' outside halves back (quietly, before the box), where gone. */
+	private static void putBackCut(ServerLevel level, Map<Long, Journal.Value> cut) {
+		for (var c : cut.entrySet()) {
+			BlockPos p = BlockPos.of(c.getKey());
+			BlockState want = WorldJournal.state(level, c.getValue());
+			if (level.getBlockState(p) != want && level.getBlockState(p).isAir()) {
+				level.setBlock(p, want, LeafGuard.quiet(FLAGS));
+			}
+		}
+	}
+
+	/** {@link #putBackCut} of a built site's guard cells (the non-leaf cells of its held-leaves entry). */
+	private static void putBackCut(ServerLevel level, Built built) {
+		if (built.leaves() == null) {
+			return;
+		}
+		Map<Long, Journal.Value> cut = new LinkedHashMap<>();
+		for (Journal.Cell c : built.leaves().cells()) {
+			if (!(WorldJournal.state(level, c.before()).getBlock() instanceof net.minecraft.world.level.block.LeavesBlock)) {
+				cut.put(c.pos(), c.before());
+			}
+		}
+		putBackCut(level, cut);
 	}
 
 	// ------------------------------------------------------------------ held leaves (LeafGuard)
@@ -1544,6 +1611,7 @@ public final class Buildings {
 				AgentCraft.LOGGER.error("Moving {}: could not take the journal commit back; check {} by hand", id, JournalStore.DIR, e2);
 			}
 			try {
+				putBackCut(level, built);
 				WorldJournal.restoreTemplate(level, built.snapshotBox(), built.before(), FLAGS);
 				if (built.leaves() != null) {
 					LeafGuard.release(level, built.leaves().cells(), FLAGS);
