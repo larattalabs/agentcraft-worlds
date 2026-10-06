@@ -54,32 +54,67 @@ public final class Journal {
 	}
 
 	/**
-	 * A block as the journal keeps it: the block state as NBT ({@code {Name, Properties}}, what
-	 * {@code NbtUtils.writeBlockState} and structure templates write) and the block entity's data, if any. Treated as
-	 * immutable.
+	 * A block as the journal keeps it: the block state as NBT and the block entity's data, if any. Treated as immutable.
+	 *
+	 * <p>The state is kept in 26.x's form, {@code {id, properties}}: what {@code NbtUtils.writeBlockState} and structure
+	 * templates write, and the only keys {@code NbtUtils.readBlockState} reads (it returns air for a tag without
+	 * {@code id}). A state in the older form {@code {Name, Properties}} (a snapshot or road file written before 26.x, an
+	 * older journal) is converted when the value is made ({@link #canonical}), so values compare equal whichever form they
+	 * were read from and always decode to their block.
 	 */
 	public record Value(CompoundTag state, @Nullable CompoundTag nbt) {
+		/** The block id key of a state ({@code NbtUtils}, 26.x). */
+		public static final String ID = "id";
+		/** The properties key of a state ({@code NbtUtils}, 26.x). */
+		public static final String PROPERTIES = "properties";
+		/** The older keys ({@code Name}, {@code Properties}), read and converted, never written. */
+		static final String OLD_ID = "Name";
+		static final String OLD_PROPERTIES = "Properties";
+
 		public Value {
 			Objects.requireNonNull(state, "state");
+			state = canonical(state);
+		}
+
+		/**
+		 * {@code state} in the 26.x form: the same tag when it has no older key, else a copy with {@code Name} and
+		 * {@code Properties} renamed (a key in the new form wins when a tag has both). Pure.
+		 */
+		public static CompoundTag canonical(CompoundTag state) {
+			if (!state.contains(OLD_ID) && !state.contains(OLD_PROPERTIES)) {
+				return state;
+			}
+			CompoundTag t = state.copy();
+			net.minecraft.nbt.Tag name = t.get(OLD_ID);
+			t.remove(OLD_ID);
+			if (name != null && !t.contains(ID)) {
+				t.put(ID, name);
+			}
+			net.minecraft.nbt.Tag props = t.get(OLD_PROPERTIES);
+			t.remove(OLD_PROPERTIES);
+			if (props != null && !t.contains(PROPERTIES)) {
+				t.put(PROPERTIES, props);
+			}
+			return t;
 		}
 
 		/** A plain block by id (tests, air). */
 		public static Value of(String name) {
 			CompoundTag t = new CompoundTag();
-			t.putString("Name", name);
+			t.putString(ID, name);
 			return new Value(t, null);
 		}
 
 		/** A block by id with block state properties ({@code "type", "bottom"} pairs). */
 		public static Value of(String name, String... props) {
 			CompoundTag t = new CompoundTag();
-			t.putString("Name", name);
+			t.putString(ID, name);
 			if (props.length > 0) {
 				CompoundTag p = new CompoundTag();
 				for (int i = 0; i + 1 < props.length; i += 2) {
 					p.putString(props[i], props[i + 1]);
 				}
-				t.put("Properties", p);
+				t.put(PROPERTIES, p);
 			}
 			return new Value(t, null);
 		}
@@ -88,13 +123,19 @@ public final class Journal {
 			return new Value(state, data);
 		}
 
+		/** The block id ({@code minecraft:air} when the state names none). */
 		public String name() {
-			return state.getStringOr("Name", "minecraft:air");
+			return state.getStringOr(ID, "minecraft:air");
+		}
+
+		/** A block state property as written ({@code ""} when the state has none by that name). */
+		public String property(String key) {
+			return state.getCompoundOrEmpty(PROPERTIES).getStringOr(key, "");
 		}
 
 		@Override
 		public String toString() {
-			return name() + (state.get("Properties") == null ? "" : state.get("Properties").toString()) + (nbt == null ? "" : " +nbt");
+			return name() + (state.get(PROPERTIES) == null ? "" : state.get(PROPERTIES).toString()) + (nbt == null ? "" : " +nbt");
 		}
 	}
 

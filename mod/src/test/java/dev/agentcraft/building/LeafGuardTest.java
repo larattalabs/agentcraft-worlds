@@ -55,7 +55,7 @@ class LeafGuardTest {
 	}
 
 	static String prop(Value v, String key) {
-		return v.state().getCompoundOrEmpty("Properties").getStringOr(key, "");
+		return v.property(key);
 	}
 
 	static boolean persistent(Value v) {
@@ -112,7 +112,7 @@ class LeafGuardTest {
 			Map<Long, Value> h = new LinkedHashMap<>();
 			for (long p : held) {
 				Value v = world.get(p);
-				h.put(p, Value.of(v.name(), "distance", v.state().getCompoundOrEmpty("Properties").getStringOr("distance", "1"), "persistent", "true",
+				h.put(p, Value.of(v.name(), "distance", (v.property("distance").isEmpty() ? "1" : v.property("distance")), "persistent", "true",
 					"waterlogged", "false"));
 			}
 			change(s + "-box", "building", Policy.BOX, box);

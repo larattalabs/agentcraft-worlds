@@ -22,7 +22,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The world journal's NBT, pure (no world, no registries): an entry file, and conversion from and to the structure
- * template format the buildings' snapshots always used ({@code size}, {@code palette} of {@code {Name, Properties}},
+ * template format the buildings' snapshots always used ({@code size}, {@code palette} of {@code {id, properties}}: 26.x's
+ * keys; an older snapshot's {@code {Name, Properties}} are read too, see {@link Value#canonical}),
  * {@code blocks} of {@code {pos, state, nbt?}}), so a building's site is still captured and restored by vanilla's
  * {@code StructureTemplate} exactly as before.
  *
@@ -166,7 +167,7 @@ public final class JournalNbt {
 		ListTag palList = t.getListOrEmpty("palette");
 		List<CompoundTag> pal = new ArrayList<>(palList.size());
 		for (int i = 0; i < palList.size(); i++) {
-			pal.add(palList.getCompoundOrEmpty(i));
+			pal.add(Value.canonical(palList.getCompoundOrEmpty(i))); // once per state, not per cell (an older journal's {Name, ...})
 		}
 		long[] pos = t.getLongArray("pos").orElse(new long[0]);
 		long[] layer = t.getLongArray("layer").orElse(new long[pos.length]);
@@ -240,12 +241,17 @@ public final class JournalNbt {
 	public static LinkedHashMap<Long, Value> values(CompoundTag tpl, int minX, int minY, int minZ) {
 		ListTag palette = tpl.getListOrEmpty("palette");
 		ListTag blocks = tpl.getListOrEmpty("blocks");
+		List<CompoundTag> states = new ArrayList<>(palette.size());
+		for (int i = 0; i < palette.size(); i++) {
+			states.add(Value.canonical(palette.getCompoundOrEmpty(i))); // a snapshot written before 26.x: {Name, Properties}
+		}
 		LinkedHashMap<Long, Value> out = new LinkedHashMap<>();
 		for (int i = 0; i < blocks.size(); i++) {
 			CompoundTag bt = blocks.getCompoundOrEmpty(i);
 			ListTag p = bt.getListOrEmpty("pos");
 			long pos = Journal.pos(minX + p.getIntOr(0, 0), minY + p.getIntOr(1, 0), minZ + p.getIntOr(2, 0));
-			CompoundTag state = palette.getCompoundOrEmpty(bt.getIntOr("state", 0));
+			int si = bt.getIntOr("state", 0);
+			CompoundTag state = si >= 0 && si < states.size() ? states.get(si) : new CompoundTag();
 			out.put(pos, new Value(state, bt.getCompound("nbt").orElse(null)));
 		}
 		return out;
