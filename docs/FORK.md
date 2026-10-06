@@ -226,6 +226,25 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   mushrooms) in or next to the box do not come back (83-218 cells; not leaves: the box restore's shape updates and the
   placement drop them; same on main). Placing campus5 (largest) in dark oak: ~390 ms warm in `Buildings.place`, of which
   the ring 3-10 ms.
+- **2026-10-06, branch `fix/journal-exactness`** (four journal bugs Architect found, checked against ours): (1) **26.x block
+  state keys**: `NbtUtils` writes and reads `{id, properties}`, the journal's `Value.of`/`name()`/`toString()`/`Journal.AIR`
+  used `{Name, Properties}`, so `name()` read every world value as air: the one-time import never recognised a hanging
+  trophy sign (no trophy entries) and `dev.journal.at` printed air everywhere; values now hold the 26.x form and convert an
+  older-form state when read (`Value.canonical`), so old journals and pre-26.x snapshots restore as their blocks
+  (`readBlockState` returns air for `Name`). (2) **Undo planning linear**: `Undo` copied its written map with `Map.copyOf`,
+  whose open addressing clusters on packed positions at some coordinates, and `reactivate` scanned the receiving entry per
+  hand-down. `JournalScaleTest` (600k cells at x = -20000): plan 42.8 s -> 0.36 s, group of two 29.9 s -> 0.40 s, reactivate
+  20.4 s -> 0.09 s; 200k cells reactivate 2.2 s -> 0.01 s. (3) **Crash settling**: K4/K6 equivalents were already covered by
+  `repair` except one window: a world start that took a removal back (journal reactivated) and stopped before saving the
+  file left the standing building (or road) with active entries and no record; `Buildings.repair`/`Roads.repair` now bring
+  the record back (`CrashKillPointsTest`, every kill point of place/remove/move and of the settling itself). (4) **Cut
+  plants**: a two-block plant across the box's top or bottom face was lost on Remove; its outside half is now a guard cell of
+  the held-leaves entry, written before the box (docs/BUILDINGS.md "Cut plants"). Not ported: sharded store, off-thread
+  planning, ticked placement (roadmap 13). QA (seed 42, workshop, box + 7, spread_vines false, random tick speed 300, 60 s
+  control soak then place / 60 s / remove / 15 s, same pristine world copy for both builds; plants planted across the box's
+  faces where the terrain allowed, none occurs naturally in 80 trial placements): cells differing main -> branch: meadow 2 -> 0
+  (1 plant), sunflower plains 14 -> 0 (7 plants), flower forest (wooded, leaf ring) 0 -> 0, dark forest (wooded, leaf ring)
+  0 -> 0; controls 0-16 cells (grass spreading onto the planted dirt, kelp and sugar cane growth).
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 

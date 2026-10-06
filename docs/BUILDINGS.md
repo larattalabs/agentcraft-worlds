@@ -336,6 +336,26 @@ kind `leaves`, policy CELL, owned by the building, each cell's `before` the natu
   what now hangs on them: restored leaves whose logs a standing site cleared, leaves the removed site held.
 - **Forget** releases the hold with the site's entry: the building stays, so its held leaves stay persistent.
 
+### Cut plants
+
+A two-block plant (tall grass, large fern, sunflower, lilac, rose bush, peony, pitcher plant...) can stand across the
+snapshot box's top or bottom face: one half inside, the other just outside. Placing the site replaced the inside half and
+the outside one dropped with it (or the placement took it, so it would not float), and Remove's box restore put the inside
+half back next to air, where it dropped again: the plant was gone for good. Since 2026-10-06 (`fix/journal-exactness`,
+ported from Architect c9af228, `CutPlantsTest`) Remove brings it back:
+- **Recorded**: placement reads the outside halves of the plants the box cuts before anything changes; each one the
+  placement changed becomes a **guard cell** of the site's held-leaves entry (kind `leaves`, CELL): `before` the plant's
+  half, `after` what the placement left (air). So it is undone with the site's group, released by Forget, settled by crash
+  safety and layered like the held leaves (a later site over it hands it down). The log names them ("kept as guard cells").
+- **Written first**: `WorldJournal.apply` writes guard cells before the box, quietly (`UPDATE_KNOWN_SHAPE`), lowest first,
+  then the box, then the other cells (`WorldJournal.phases`). The box then writes the inside half next to its other half
+  and the plant stays whole. A half the player changed since is left (the CELL rule). A placement rolled back before its
+  commit (a failure, a Move whose journal commit failed) puts them back before the box too.
+- Doors cut by the box are still refused at placement (a player's door), not guarded.
+- Rare in practice: the box reaches one row below the lowest written cell, so only a plant on terrain at exactly the box's
+  top row, or in a dip of a column the foundation does not fill, is cut (80 trial placements over meadow, sunflower plains
+  and flower forest found none; the QA planted them on purpose).
+
 ### Leaf ring
 
 World generation leaves many leaf `distance`s larger than their nearest log gives (trees generated over each other: dark
@@ -417,7 +437,12 @@ the pins and the reports. Before the evidence rules, the world start repairs the
 whose site entry was undone with no pending site naming it becomes a pending removal; a record whose site is not the
 journal's active one, which stands elsewhere, follows the journal (the entry's meta) and the old site becomes a pending
 move; an active site entry with no record and no pending site (a placement whose record was not saved) gets its record back
-from the entry's meta unless another building stands there. Each says so in the hub's Check line.
+from the entry's meta unless another building stands there; a pending site whose entry is active again with no record of
+its building (the previous world start took the removal back in the journal and stopped before it saved the file) gets
+its record back and the pending site is dropped, unless another building overlaps it (reported). Each says so in the
+hub's Check line. Roads repair the same windows (`Roads.repair`). `CrashKillPointsTest` walks every kill point of place,
+remove, move and of the world start's own release, record-back and move-back, and checks that an active site entry always
+has its record and an undone one is always named by a pending site.
 
 ### Blueprint versions
 
@@ -578,7 +603,14 @@ by a newer one into it.
 
 **On disk** (`JournalStore`): `journal.json` (the index: every entry's metadata and box, the id and layer counters, the
 imported legacy file names) and `<id>.<gen>.nbt` per entry (gzip NBT: a state palette, positions, layers, before/after
-indexes, block entity data, the undo). A change is drafted as generation 0 before it touches the world (a crash leaves
+indexes, block entity data, the undo). Block states are kept in 26.x's form `{id, properties}`, what
+`NbtUtils.writeBlockState` and structure templates write and the only keys `NbtUtils.readBlockState` reads; a state in the
+older form `{Name, Properties}` (an older journal, a snapshot or road file from before 26.x) is converted when it is read
+(`Journal.Value.canonical`), so it compares equal to the world's value and restores as its block, not as air. Until
+2026-10-06 the journal's own helpers (`Value.of`, `name()`, `Journal.AIR`) used the older keys: `name()` read every world
+value as `minecraft:air`, so the import never recognised a hanging trophy sign. Undo bookkeeping is linear in the cells
+(`JournalScaleTest`: 600k cells plan in about 0.4 s and reactivate in 0.1 s; `Map.copyOf` on packed positions and a cell
+scan per hand-down took 20-40 s there before). A change is drafted as generation 0 before it touches the world (a crash leaves
 it on disk; a full disk refuses the change first), committed as the next generation (written, read back), then the index
 is replaced atomically (the commit point), then superseded files are deleted. At open, generations the index does not
 name are leftovers (deleted) and files of entries it does not know (a change that never committed) are kept and listed

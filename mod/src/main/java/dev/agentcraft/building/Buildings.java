@@ -792,6 +792,8 @@ public final class Buildings {
 			}
 			List<Journal.Cell> guards = guardCells(level, cut);
 			if (!guards.isEmpty()) {
+				AgentCraft.LOGGER.info("Placing {}: {} two-block plant half(s) outside box {} kept as guard cells: {}", owner, guards.size(), str(snapBox),
+					guards.stream().map(c -> BlockPos.of(c.pos()).toShortString() + " " + c.before().name()).toList());
 				List<Journal.Cell> both = new ArrayList<>(held);
 				both.addAll(guards);
 				held = both;
