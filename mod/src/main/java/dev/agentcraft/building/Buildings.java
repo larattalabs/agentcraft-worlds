@@ -2014,6 +2014,30 @@ public final class Buildings {
 		Map<String, Building> map = new LinkedHashMap<>(records);
 		List<Building.Pending> pend = new ArrayList<>(pending);
 		Map<String, String> notes = new LinkedHashMap<>();
+		// a pending site whose entry is active again with no record of its building: a world start took the removal back
+		// (record back), its journal commit reached the disk and the file did not. The journal says the site stands, so the
+		// record comes back (else the pending would be dropped as "in use" and the standing building orphaned)
+		for (Building.Pending p : List.copyOf(pend)) {
+			Building gone = p.building();
+			String id = resolve.apply(p.snapshot());
+			if (id == null || map.containsKey(gone.id())) {
+				continue;
+			}
+			SiteEntry e = entries.stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
+			if (e == null || e.status() != Journal.Status.ACTIVE || !e.owner().equals(gone.id()) || !sameBox(e.box(), gone.restoreBox())) {
+				continue;
+			}
+			boolean overlaps = map.values().stream().anyMatch(o -> o.dimensionOrDefault().equals(gone.dimensionOrDefault())
+				&& Building.intersects(o.restoreBox(), gone.restoreBox()));
+			if (overlaps) {
+				notes.put(gone.id(), gone.id() + "'s removal was taken back before the game stopped but not saved, and another building stands there "
+					+ "now: not added (its saved terrain is journal entry " + id + ")");
+				continue;
+			}
+			pend.remove(p);
+			map.put(gone.id(), gone.withHome(false));
+			notes.put(gone.id(), gone.id() + "'s removal was taken back before the game stopped but " + FILE + " was not saved: its record is back");
+		}
 		java.util.Set<String> referenced = new java.util.HashSet<>();
 		java.util.Set<String> pendingOwners = new java.util.HashSet<>();
 		for (Building.Pending p : pend) {
