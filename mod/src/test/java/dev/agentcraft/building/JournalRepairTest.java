@@ -121,6 +121,43 @@ class JournalRepairTest {
 	}
 
 	@Test
+	void aRoadBroughtBackWhoseRecordWasNotSavedComesBack() {
+		// the world start found the road standing, reactivated its entry (journal) and was killed before the roads file
+		Road r2 = road("r2", "b1", "b2");
+		Roads.Repaired r = Roads.repair(new LinkedHashMap<>(), List.of(new Road.Pending(r2, "j5", 8L)),
+			List.of(new Roads.RoadEntry("j5", "r2", Journal.Status.ACTIVE, 0L)), s -> s, id -> null);
+		assertTrue(r.roads().containsKey("r2"), "its entry is active: the road stands");
+		assertTrue(r.pending().isEmpty());
+		// its pair has another road now: not added
+		Map<String, Road> taken = new LinkedHashMap<>();
+		taken.put("r4", road("r4", "b2", "b1"));
+		Roads.Repaired t = Roads.repair(taken, List.of(new Road.Pending(r2, "j5", 8L)), List.of(new Roads.RoadEntry("j5", "r2", Journal.Status.ACTIVE,
+			0L)), s -> s, id -> null);
+		assertFalse(t.roads().containsKey("r2"));
+		// an undone entry: a pending removal as before
+		Roads.Repaired u = Roads.repair(new LinkedHashMap<>(), List.of(new Road.Pending(r2, "j5", 8L)),
+			List.of(new Roads.RoadEntry("j5", "r2", Journal.Status.UNDONE, 8L)), s -> s, id -> null);
+		assertFalse(u.roads().containsKey("r2"));
+		assertEquals(1, u.pending().size());
+	}
+
+	@Test
+	void aBuildingBroughtBackWhoseRecordWasNotSavedComesBack() {
+		Building b1 = b("b1", A, true);
+		Buildings.Repaired r = Buildings.repair(records(), List.of(new Building.Pending(b1, "j1", 5L, "removed")),
+			List.of(new Buildings.SiteEntry("j1", "b1", Journal.Status.ACTIVE, box(A), 0L)), s -> s, id -> null);
+		assertTrue(r.records().containsKey("b1"));
+		assertTrue(r.records().get("b1").home(), "the only building is home");
+		assertTrue(r.pending().isEmpty());
+		// another building stands there now: not added (reported)
+		Buildings.Repaired over = Buildings.repair(records(b("b2", A, true)), List.of(new Building.Pending(b1, "j1", 5L, "removed")),
+			List.of(new Buildings.SiteEntry("j1", "b1", Journal.Status.ACTIVE, box(A), 0L), new Buildings.SiteEntry("j2", "b2", Journal.Status.ACTIVE,
+				box(A), 0L)), s -> s, id -> null);
+		assertFalse(over.records().containsKey("b1"));
+		assertTrue(over.notes().containsKey("b1"));
+	}
+
+	@Test
 	void aRoadLaidWhoseRecordWasLostComesBackUnlessItsPairHasOne() {
 		Road lost = road("r3", "b1", "b2");
 		Roads.Repaired r = Roads.repair(new LinkedHashMap<>(), List.of(), List.of(new Roads.RoadEntry("j6", "r3", Journal.Status.ACTIVE, 0L)), s -> null,

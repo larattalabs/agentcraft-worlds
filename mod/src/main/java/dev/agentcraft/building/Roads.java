@@ -900,6 +900,27 @@ public final class Roads {
 		Map<String, Road> map = new LinkedHashMap<>(roads);
 		List<Road.Pending> pend = new ArrayList<>(pending);
 		List<String> notes = new ArrayList<>();
+		// a pending removal whose entry is active again with no record of its road: a world start brought the road back, its
+		// journal commit reached the disk and the file did not; the road stands, so its record comes back (else the pending
+		// is dropped as settled and the road's entry stays with no record)
+		for (Road.Pending p : List.copyOf(pend)) {
+			Road gone = p.road();
+			String id = resolve.apply(p.snapshot());
+			if (id == null || map.containsKey(gone.id())) {
+				continue;
+			}
+			RoadEntry e = entries.stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
+			if (e == null || e.status() != Journal.Status.ACTIVE || !e.owner().equals(gone.id())) {
+				continue;
+			}
+			if (map.values().stream().anyMatch(q -> q.between(gone.a(), gone.b()))) {
+				notes.add(gone.id() + " was brought back before the game stopped but its record was not saved, and its pair has a road now: not added");
+				continue;
+			}
+			pend.remove(p);
+			map.put(gone.id(), gone);
+			notes.add(gone.id() + " was brought back before the game stopped but " + FILE + " was not saved: its record is back");
+		}
 		java.util.Set<String> referenced = new java.util.HashSet<>();
 		java.util.Set<String> pendingOwners = new java.util.HashSet<>();
 		for (Road.Pending p : pend) {

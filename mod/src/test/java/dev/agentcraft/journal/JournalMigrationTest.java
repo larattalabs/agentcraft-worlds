@@ -163,7 +163,55 @@ class JournalMigrationTest {
 		l.save(world.resolve(TrophyLedger.FILE));
 	}
 
-	static final Value SIGN = Value.of("minecraft:dark_oak_wall_sign", "facing", "north", "waterlogged", "false").withNbt(new CompoundTag());
+	/** The sign as {@code WorldJournal.valueAt} reads it: {@code NbtUtils.writeBlockState}'s 26.x keys, built by hand (not by {@link Value#of}). */
+	static final Value SIGN = new Value(worldState("minecraft:dark_oak_wall_sign", "facing", "north", "waterlogged", "false"), new CompoundTag());
+
+	static CompoundTag worldState(String id, String... props) {
+		CompoundTag t = new CompoundTag();
+		t.putString("id", id);
+		if (props.length > 0) {
+			CompoundTag p = new CompoundTag();
+			for (int i = 0; i + 1 < props.length; i += 2) {
+				p.putString(props[i], props[i + 1]);
+			}
+			t.put("properties", p);
+		}
+		return t;
+	}
+
+	/** A block state in the older form ({@code Name}/{@code Properties}), as files written before 26.x hold them. */
+	static CompoundTag older(CompoundTag state) {
+		CompoundTag t = state.copy();
+		t.put("Name", t.get("id"));
+		t.remove("id");
+		if (t.get("properties") != null) {
+			t.put("Properties", t.get("properties"));
+			t.remove("properties");
+		}
+		return t;
+	}
+
+	/** Rewrites the old world's snapshot files with their block states in the older form (palettes; roads' before/after). */
+	void olderKeys() throws IOException {
+		for (Path f : List.of(world.resolve(JournalMigration.BUILDINGS_DIR).resolve("b3.before.nbt"),
+			world.resolve(JournalMigration.BUILDINGS_DIR).resolve("b5.before.nbt"))) {
+			CompoundTag t = NbtIo.readCompressed(f, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+			ListTag pal = new ListTag();
+			for (int i = 0; i < t.getListOrEmpty("palette").size(); i++) {
+				pal.add(older(t.getListOrEmpty("palette").getCompoundOrEmpty(i)));
+			}
+			t.put("palette", pal);
+			NbtIo.writeCompressed(t, f);
+		}
+		Path r = world.resolve(JournalMigration.ROADS_DIR).resolve("r2.before.nbt");
+		CompoundTag t = NbtIo.readCompressed(r, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+		for (int i = 0; i < t.getListOrEmpty("cells").size(); i++) {
+			CompoundTag c = t.getListOrEmpty("cells").getCompoundOrEmpty(i);
+			c.put("before", older(c.getCompoundOrEmpty("before")));
+			c.put("after", older(c.getCompoundOrEmpty("after")));
+		}
+		NbtIo.writeCompressed(t, r);
+	}
 
 	/** The world: the trophy sign hangs at b3's slot (10, 65, 21). */
 	static final JournalMigration.SlotReader READER = (dim, x, y, z) -> x == 10 && y == 65 && z == 21 ? SIGN : Journal.AIR;
@@ -255,6 +303,44 @@ class JournalMigrationTest {
 		JournalStore reopened = JournalStore.open(world);
 		assertEquals(s.index().entries().keySet(), reopened.index().entries().keySet());
 		assertEquals(b3.cells(), reopened.load(b3.id()).cells());
+	}
+
+	@Test
+	void snapshotsWithTheOlderKeysImportAsTheSameBlocks() throws IOException {
+		oldWorld();
+		olderKeys();
+		JournalStore s = JournalStore.open(world);
+		JournalMigration.run(world, s, READER);
+		Entry b3 = only(s, "building", "b3", Status.ACTIVE);
+		Map<Long, Value> want = JournalNbt.values(buildingSnapshot(BOX3, true), BOX3.minX(), BOX3.minY(), BOX3.minZ());
+		for (Cell c : b3.cells()) {
+			assertEquals(want.get(c.pos()), c.before(), "{Name, Properties} read as {id, properties}");
+			assertNull(c.before().state().get("Name"));
+		}
+		assertEquals("minecraft:chest", b3.cell(Journal.pos(11, 65, 20)).before().name());
+		assertEquals(chestNbt(), b3.cell(Journal.pos(11, 65, 20)).before().nbt(), "block entity data is left as it is");
+		Cell slab = only(s, "road", "r2", Status.ACTIVE).cell(Journal.pos(13, 65, 30));
+		assertEquals(new Value(worldState("minecraft:grass_block", "snowy", "false"), null), slab.before());
+		assertEquals(new Value(worldState("minecraft:mud_brick_slab", "type", "bottom", "waterlogged", "false"), null), slab.after());
+		// the restore template of the imported box is in 26.x's form (NbtUtils.readBlockState reads only id/properties)
+		ListTag pal = JournalNbt.beforeTemplate(b3, b3.box()).getListOrEmpty("palette");
+		for (int i = 0; i < pal.size(); i++) {
+			assertTrue(pal.getCompoundOrEmpty(i).contains("id"), pal.toString());
+		}
+		// written back in 26.x's form, read again the same
+		assertEquals(b3.cells(), JournalStore.open(world).load(b3.id()).cells());
+	}
+
+	@Test
+	void aTrophySignReadFromTheWorldIsImported() throws IOException {
+		// the world's sign has 26.x keys; the import used to compare Value.name() (which read Name) and never found it
+		oldWorld();
+		JournalStore s = JournalStore.open(world);
+		JournalMigration.Plan p = JournalMigration.plan(world, s, READER);
+		assertEquals(1, p.entries().values().stream().filter(e -> e.kind().equals("trophy")).count());
+		Entry trophy = p.entries().values().stream().filter(e -> e.kind().equals("trophy")).findFirst().orElseThrow();
+		assertEquals("minecraft:dark_oak_wall_sign", trophy.cells().get(0).after().name());
+		assertEquals(new Value(worldState("minecraft:air"), null), trophy.cells().get(0).before(), "Journal.AIR is the world's air");
 	}
 
 	@Test

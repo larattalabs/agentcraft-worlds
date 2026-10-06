@@ -65,6 +65,8 @@ dependencies {
 
 test {
 	useJUnitPlatform()
+	// JournalScaleTest holds 600k-cell journal entries next to the bootstrapped registries (JournalValueTest)
+	maxHeapSize = "2g"
 	testLogging {
 		events "failed"
 		exceptionFormat "full"
