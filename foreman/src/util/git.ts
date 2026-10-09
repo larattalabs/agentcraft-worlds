@@ -31,9 +31,11 @@ export interface GitOptions {
 // The Foreman's own git calls (worktree add, commits, merges) never run repository hooks and never
 // use a transport: a hook in the user's repo (post-commit, post-checkout, reference-transaction, husky)
 // could otherwise push or run arbitrary code with the Foreman's environment. core.hooksPath points at
-// a directory that never exists; protocol.allow=never + pushInsteadOf block every remote. The Foreman
+// a path no hook can live under; protocol.allow=never + pushInsteadOf block every remote. The Foreman
 // needs no network: everything it does is local.
-const NO_HOOKS_DIR = path.join(os.tmpdir(), 'agentcraft-no-hooks-7f3e9c');
+// (POSIX: /dev/null, a path no one can put a hook under; a directory in the temp dir could be
+// created by an agent, which may write there, and its hooks would then run as the Foreman)
+export const NO_HOOKS_DIR = process.platform === 'win32' ? path.join(os.tmpdir(), 'agentcraft-no-hooks-7f3e9c') : '/dev/null';
 // The diff parser expects a/ b/ prefixes; the user's diff.mnemonicPrefix, diff.noprefix or
 // diff.srcPrefix/dstPrefix would otherwise turn src/cli.ts into i/src/cli.ts or cli.ts.
 const BASE_ARGS = [

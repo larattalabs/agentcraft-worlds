@@ -70,7 +70,8 @@ export class CodexStreamMapper {
   /** Paths a file change (by item id) touches, for its approval. */
   fileChangePaths(itemId: string): string[] {
     const it = this.items.get(itemId);
-    return Array.isArray(it?.changes) ? it.changes.map((c: { path: string }) => c.path) : [];
+    // a move's destination too (kind.move_path): a rename can write anywhere
+    return Array.isArray(it?.changes) ? it.changes.flatMap((c: { path: string; kind?: { move_path?: string | null } }) => [c.path, ...(c.kind?.move_path ? [c.kind.move_path] : [])]) : [];
   }
 
   private set(patch: { state?: any; station?: any; activity?: string }): void {
@@ -186,8 +187,9 @@ export class CodexStreamMapper {
         this.stats.numTurns = this.steps;
         if (this.finalText) this.stats.resultText = this.finalText;
         if (turn.error?.message) {
-          this.stats.errors.push(String(turn.error.message));
-          if (turn.error.codexErrorInfo === 'unauthorized') this.stats.authFailed = firstLine(String(turn.error.message), 200);
+          const message = fm.redact(String(turn.error.message));
+          this.stats.errors.push(message);
+          if (turn.error.codexErrorInfo === 'unauthorized') this.stats.authFailed = firstLine(message, 200);
           if (turn.error.codexErrorInfo === 'usageLimitExceeded') {
             this.stats.subtype = 'error_usage_limit';
             // the team holds new turns until it resets (no reset time given: backoff), like Claude's
@@ -195,7 +197,7 @@ export class CodexStreamMapper {
           }
         }
         const tokens = this.stats.tokens ? ` · ${Math.round(this.stats.tokens / 1000)}k tokens` : '';
-        fm.agentLog(id, this.stats.isError ? 'error' : 'result', `turn ${status === 'completed' ? 'complete' : `ended: ${status}${turn.error?.message ? ` (${truncate(String(turn.error.message), 160)})` : ''}`} (${this.steps} steps${tokens})`);
+        fm.agentLog(id, this.stats.isError ? 'error' : 'result', `turn ${status === 'completed' ? 'complete' : `ended: ${status}${turn.error?.message ? ` (${truncate(fm.redact(String(turn.error.message)), 160)})` : ''}`} (${this.steps} steps${tokens})`);
         break;
       }
     }

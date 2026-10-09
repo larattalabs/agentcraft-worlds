@@ -3,22 +3,39 @@
 // Codex agent the Foreman's permission gate applies `deny` and `ask` to shell commands:
 //
 //   "Bash"                    every command
-//   "Bash(tofu apply:*)"      any command segment that starts with these words
-//   "Bash(npm run deploy)"    a segment that is exactly this
+//   "Bash(tofu apply:*)"      any simple command that starts with these words
+//   "Bash(npm run deploy)"    a simple command that is exactly this
 //   "Bash(az deployment *)"   `*` matches anything
 //
-// A command is split into its segments (`a && b | c`, `;`, newlines) with the shared shell lexer, and
-// leading VAR=value assignments are ignored, so `X=1 tofu apply` and `ls; tofu apply` match. `allow`
-// rules are not applied to Codex agents (they would skip AgentCraft's policy); rules for other tools
-// (Edit(...), Read(...), WebFetch(...)) do not apply to them either. Best effort, like every text
-// check: a script that runs the command is not seen.
-import { splitSegments } from '../../shell.js';
+// A command is split into its simple commands (`a && b | c`, `;`, newlines, subshells and `$( )`)
+// by the shared shell lexer, quotes removed (`to"fu" apply` is `tofu apply`); leading VAR=value
+// assignments and wrappers (env, command, nohup, time, timeout, nice, exec, xargs...) are skipped,
+// so `X=1 env tofu apply` and `ls; tofu apply` match. `allow` rules are not applied to Codex agents
+// (they would skip AgentCraft's policy); rules for other tools (Edit(...), Read(...), WebFetch(...))
+// do not apply to them either. Best effort, like every text check: a script that runs the command,
+// or a command Codex runs without asking, is not seen.
+import { shellItems } from '../../shell.js';
 
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+const WRAPPERS = new Set(['env', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'timeout', 'stdbuf', 'xargs', 'sudo', 'doas']);
 
-/** The command words of a segment, without leading VAR=value assignments. */
-function segmentText(seg: string): string {
-  return seg.trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+)+/, '').replace(/\s+/g, ' ').trim();
+/** Each simple command of a shell line as plain words, without assignments and wrappers in front. */
+function commandTexts(command: string): string[] {
+  const out: string[] = [];
+  for (const it of shellItems(command, process.platform !== 'win32')) {
+    if (it.kind !== 'cmd') continue;
+    const w = it.words;
+    let i = 0;
+    while (i < w.length) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i]!)) i++;
+      else if (WRAPPERS.has(w[i]!.toLowerCase())) {
+        i++;
+        while (i < w.length && (w[i]!.startsWith('-') || /^\d+(\.\d+)?[smhd]?$/.test(w[i]!))) i++;
+      } else break;
+    }
+    if (i < w.length) out.push(w.slice(i).join(' '));
+  }
+  return out;
 }
 
 function patternMatches(pattern: string, text: string): boolean {
@@ -41,7 +58,7 @@ export function shellRuleMatches(rule: string, toolName: string, input: Record<s
   if (!m) return false;
   if (m[2] === undefined) return true;
   const command = typeof input.command === 'string' ? input.command : '';
-  return splitSegments(command).some((seg) => patternMatches(m[2]!, segmentText(seg)));
+  return commandTexts(command).some((text) => patternMatches(m[2]!, text));
 }
 
 /** The first rule of `rules` that matches, if any. */

@@ -78,6 +78,19 @@ function envDelta(env: Record<string, string | undefined>, inherited = process.e
   return out;
 }
 
+/** A command as the policy should see it: prefixed with `cd <dir> &&` when it runs outside the turn's cwd. */
+export function inDir(command: string, dir: unknown, cwd: string): string {
+  if (typeof dir !== 'string' || !dir.trim()) return command;
+  const same = (() => {
+    try {
+      return fs.realpathSync.native(dir) === fs.realpathSync.native(cwd);
+    } catch {
+      return path.resolve(dir) === path.resolve(cwd);
+    }
+  })();
+  return same ? command : `cd '${dir.replace(/'/g, `'\\''`)}' && ${command}`;
+}
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -220,7 +233,7 @@ export class CodexEngine implements Engine {
       // token or port interrupts the turn
       if (method === 'item/started' && params?.item?.type === 'commandExecution' && !approved.has(String(params.item.id)) && spec.policy) {
         const sc = shellCommand(String(params.item.command ?? ''));
-        const v = foremanPrivateVerdict(sc.tool, { command: sc.command }, spec.policy());
+        const v = foremanPrivateVerdict(sc.tool, { command: inDir(sc.command, params.item.cwd, cwd) }, spec.policy());
         if (v?.action === 'deny') {
           this.fm.agentLog(agentId, 'error', `blocked (ran without asking): ${sc.tool}: ${truncate(sc.command, 160)} (${v.reason}); turn interrupted`);
           mapper.stats.errors.push(`interrupted: ${v.reason}`);
@@ -294,16 +307,19 @@ export class CodexEngine implements Engine {
     switch (method) {
       case 'item/commandExecution/requestApproval': {
         if (!ours) return { decision: 'decline' };
-        if (params.kind === 'writeStdin') return { decision: 'accept' }; // input to a command already approved
+        // input to a command: only one the gate approved, in a turn that is still running
+        if (params.kind === 'writeStdin') return { decision: !abort.signal.aborted && params.itemId && approved.has(String(params.itemId)) ? 'accept' : 'decline' };
         const sc = shellCommand(String(params.command ?? ''));
-        const r = await spec.permission(sc.tool, { command: sc.command }, abort.signal, params.reason ?? undefined);
+        // judged where it really runs: a command in another directory is checked as `cd <dir> && ...`
+        const r = await spec.permission(sc.tool, { command: inDir(sc.command, params.cwd, cwd) }, abort.signal, params.reason ?? undefined);
         if (r.allow && params.itemId) approved.add(String(params.itemId));
         return { decision: r.allow ? 'accept' : r.interrupt ? 'cancel' : 'decline' };
       }
       case 'item/fileChange/requestApproval': {
         if (!ours) return { decision: 'decline' };
+        // every source and destination of the patch, and a root it asks to be granted, each on its own
         const paths = mapper.fileChangePaths(String(params.itemId));
-        if (!paths.length && params.grantRoot) paths.push(String(params.grantRoot));
+        if (params.grantRoot) paths.push(path.join(String(params.grantRoot), '.agentcraft-grant-root'));
         if (!paths.length) return { decision: 'decline' };
         for (const p of paths) {
           const r = await spec.permission('Edit', { file_path: path.resolve(cwd, p) }, abort.signal, params.reason ?? undefined);

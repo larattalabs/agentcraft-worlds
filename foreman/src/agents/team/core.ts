@@ -124,6 +124,8 @@ export interface ClaudeState {
   foldIns: Record<string, { notes: string; from?: string; at: number }>;
   /** goal id -> the lead that last had a turn for it (another lead next: it gets a takeover note) */
   goalLead: Record<string, string>;
+  /** goal id -> the pull requests fetched for it (PR intake): branch -> repository and the fetched head */
+  pulls: Record<string, Record<string, { repoId: string; number: number; sha: string }>>;
 }
 
 export interface Running {
@@ -378,6 +380,12 @@ export abstract class BackendCore {
         this.fm.store.markDirty();
       },
       onTriage: (items) => this.prs.applyTriage(items),
+      startBranchProblem: (goalId, repoId, branch) => {
+        const p = goalId ? this.st.pulls[goalId]?.[branch] : undefined;
+        if (!p) return `${branch} is not a pull request fetched for this goal`;
+        if (repoId && p.repoId !== repoId) return `${branch} was fetched in ${p.repoId}, not ${repoId}`;
+        return undefined;
+      },
     };
     if (opts.prRunFn) this.fm.repos.prRunFn = opts.prRunFn;
     this.prs = new PrWatcher(this.fm, {
@@ -397,7 +405,7 @@ export abstract class BackendCore {
     const b = this.fm.store.data.backend;
     let s = b.claude as ClaudeState | undefined;
     if (!s) {
-      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {}, taskSize: {}, goalBranch: {}, taskBase: {}, foldIns: {}, goalLead: {} };
+      s = { inflight: {}, ciFixes: {}, stopped: [], plans: {}, taskSize: {}, goalBranch: {}, taskBase: {}, foldIns: {}, goalLead: {}, pulls: {} };
       b.claude = s;
     }
     s.inflight ??= {};
@@ -409,6 +417,7 @@ export abstract class BackendCore {
     s.taskBase ??= {};
     s.foldIns ??= {};
     s.goalLead ??= {};
+    s.pulls ??= {};
     return s;
   }
 

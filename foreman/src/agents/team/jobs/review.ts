@@ -50,7 +50,11 @@ export abstract class ReviewJobs extends WorkJobs {
     }
     if (worker) this.fm.setAgent(worker, { state: 'idle', station: 'lounge', activity: `${t.id} in review` });
     let ci: TestResult | undefined;
-    try {
+    // a contributor's pull request (PR intake): its tests are its code; they ran only where the worker
+    // asked and the user approved, never automatically outside the policy
+    const contributor = this.fm.repos.keepsContributorCommits(this.fm.repos.requireWorktree(t.repoId, t.worktree));
+    if (contributor) this.fm.bus.feed('ci', `${t.id}: tests not run automatically (a contributor's pull request; the worker's approved runs count)`, { ...(worker ? { agentId: worker } : {}), taskId: t.id });
+    else try {
       this.fm.tasks.update(t.id, { ci: 'running' });
       this.fm.repos.setCi(t.repoId, 'running');
       const ciCommand = this.fm.repos.testCommand(t.repoId, this.fm.repos.requireWorktree(t.repoId, t.worktree).path, this.cfg.ciCommand);

@@ -32,6 +32,8 @@ export interface ToolHooks {
   onTaskSize?(taskId: string, size: 'small' | 'normal' | 'large'): void;
   /** the lead put a task on one of the user's branches (create_task base); throws if it cannot be used */
   onTaskBase?(taskId: string, repoId: string, branch: string): Promise<void>;
+  /** PR intake: why `branch` cannot be a task's start_branch in this goal/repository (undefined: it can) */
+  startBranchProblem?(goalId: string | undefined, repoId: string | undefined, branch: string): string | undefined;
   /** the lead's verdicts on PR triage items (tool `triage`); returns the tool's answer */
   onTriage?(items: Array<{ ref: string; verdict: 'fold_in' | 'reply' | 'ask_user' | 'ignore'; note: string }>): { ok: boolean; text: string };
 }
@@ -338,6 +340,10 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
             const r = fm.repos.list().find((x) => x.id.toLowerCase() === want || x.name.toLowerCase() === want);
             if (!r) return fail(`no repository ${repo} (registered: ${fm.repos.list().map((x) => x.id).join(', ')})`);
             repoId = r.id;
+          }
+          if (start_branch) {
+            const problem = hooks.startBranchProblem ? hooks.startBranchProblem(goal?.id, repoId, start_branch) : `${start_branch} cannot be checked`;
+            if (problem) return fail(problem);
           }
           try {
             const t = fm.tasks.create({

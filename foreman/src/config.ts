@@ -458,6 +458,10 @@ const NOT_READ_ONLY = new Set([
   'git', 'rm', 'mv', 'cp', 'tee', 'dd', 'sed', 'awk', 'find', 'xargs', 'env', 'sudo', 'sh', 'bash', 'zsh',
   'node', 'npm', 'npx', 'python', 'python3', 'pip', 'perl', 'ruby', 'curl', 'wget', 'ssh', 'scp', 'eval', 'exec',
   'cmd', 'powershell', 'pwsh', 'touch', 'mkdir', 'chmod', 'kill',
+  // the fork: more writers and runners (a declaration skips the policy's own checks of the program)
+  'sort', 'fd', 'fdfind', 'rg', 'ripgrep', 'less', 'more', 'vi', 'vim', 'nvim', 'nano', 'emacs', 'tar', 'zip', 'unzip', 'rsync',
+  'make', 'docker', 'kubectl', 'open', 'xdg-open', 'tsx', 'deno', 'bun', 'pnpm', 'yarn', 'uv', 'cargo', 'go', 'java',
+  'osascript', 'install', 'ln', 'truncate', 'patch', 'chown', 'gawk', 'gsed', 'ksh', 'dash', 'fish', 'sudo', 'doas', 'tclsh', 'lua', 'php',
 ]);
 
 /** Each entry is a bare program name plus plain words ("bd show"): no paths, shell syntax, or writers/interpreters. */
@@ -468,7 +472,7 @@ function readCommands(v: unknown): string[] {
     if (!/^[A-Za-z0-9_.+-]+$/.test(head) || !words.every((w) => /^[A-Za-z0-9_.:@+=-]+$/.test(w))) {
       throw new Error(`bad lead read command "${e}" (use a bare program name and plain words, like "bd show")`);
     }
-    if (NOT_READ_ONLY.has(head.toLowerCase().replace(/\.(exe|cmd|bat)$/, ''))) {
+    if (NOT_READ_ONLY.has(head.toLowerCase().replace(/\.(exe|cmd|bat|com|ps1)$/, ''))) {
       throw new Error(`lead read command "${e}" is not allowed: "${head}" can write files, run code or use the network`);
     }
   }

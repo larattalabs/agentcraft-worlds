@@ -68,7 +68,15 @@ export abstract class TurnSetupLayer extends HoldsLayer {
       foreman: foremanPrivateOf(this.fm),
       // the user's declared read commands: the lead only (policy.ts), never a worker's
       ...(role === 'lead' && this.cfg.leadReadCommands.length ? { leadReadCommands: this.cfg.leadReadCommands } : {}),
+      ...(role === 'worker' && this.runsContributorCode(agentId) ? { untrustedCode: true } : {}),
     };
+  }
+
+  /** The worker's task works on a contributor's pull request (PR intake): code the user did not write. */
+  protected runsContributorCode(agentId: string): boolean {
+    const t = this.fm.tasks.get(this.fm.agent(agentId)?.taskId ?? '');
+    const w = t?.repoId && t.worktree ? this.fm.repos.findWorktree(t.repoId, t.worktree) : undefined;
+    return !!w && this.fm.repos.keepsContributorCommits(w);
   }
 
   protected async cwdFor(job: Job): Promise<{ cwd: string; role: 'lead' | 'worker'; repoId: string }> {

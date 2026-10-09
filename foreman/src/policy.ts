@@ -84,6 +84,8 @@ export interface PolicyContext {
   platform?: 'win32' | 'posix';
   /** lead only: command prefixes the user declared read-only, e.g. `bd show` */
   leadReadCommands?: string[];
+  /** the worktree holds a contributor's pull request (PR intake): only reads run without asking */
+  untrustedCode?: boolean;
 }
 
 export interface ForemanPrivate {
@@ -1528,8 +1530,53 @@ function leadReadCommand(cmd: string, cmdWord: string, rest: string[], ctx: Poli
   if (/[\\/]/.test(cmdWord)) return false;
   return (ctx.leadReadCommands ?? []).some((entry) => {
     const [head, ...words] = entry.trim().split(/\s+/);
-    return baseCmd(head!) === cmd && words.every((w, i) => rest[i] === w);
+    // the declaration covers what follows, except arguments that would make it write or run something
+    return baseCmd(head!) === cmd && words.every((w, i) => rest[i] === w) && !rest.slice(words.length).some((a) => LEAD_DECLARED_RISKY_ARG.test(a));
   });
+}
+
+/** Arguments that turn a declared lead read command into a writer or a runner (`--output=f`, `-x cmd`). */
+const LEAD_DECLARED_RISKY_ARG = /^-{1,2}(o|out|output|outfile|output-file|output-dir|write|exec|exec-batch|x|X|e|execute|pre|pre-glob|editor|pager|hook|run|cmd|command|shell)(=.*)?$/i;
+
+/** Variables that pick what a command runs (or loads): a lead never sets them without asking. */
+const LEAD_EXEC_VARS = /^(PATH|PATHEXT|BASH_ENV|ENV|ZDOTDIR|PAGER|GIT_PAGER|MANPAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|PERL5OPT|PERL5LIB|PYTHONSTARTUP|PYTHONPATH|NODE_OPTIONS|RUBYOPT|SHELL)$/i;
+const LEAD_WRAPPERS = new Set(['env', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'stdbuf', 'timeout']);
+
+/**
+ * The lead's extra rule on top of isReadOnlyCommand (it works in the user's code, a view of it, and
+ * must never run anything it was not shown): a program run by path (`./cat`, `bin/x`), a variable
+ * that picks the program or what it loads (PATH, PAGER, NODE_OPTIONS...), and the reader options that
+ * run another program or a script file (rg --pre, sed -f, awk -f). Returns why, or undefined.
+ */
+export function leadExecRisk(command: string): string | undefined {
+  for (const it of shellItems(command, process.platform !== 'win32')) {
+    if (it.kind !== 'cmd') continue;
+    const w = it.words;
+    let i = 0;
+    while (i < w.length) {
+      const a = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(w[i]!);
+      if (a) {
+        if (LEAD_EXEC_VARS.test(a[1]!)) return `sets ${a[1]}`;
+        i++;
+        continue;
+      }
+      if (LEAD_WRAPPERS.has(w[i]!.toLowerCase())) {
+        i++;
+        while (i < w.length && (w[i]!.startsWith('-') || /^\d+(\.\d+)?[smhd]?$/.test(w[i]!))) i++;
+        continue;
+      }
+      break;
+    }
+    const cmd = w[i];
+    if (!cmd) continue;
+    if (/[\\/]/.test(cmd)) return `runs a program by its path (${cmd})`;
+    const base = cmd.toLowerCase().replace(/\.exe$/, '');
+    const args = w.slice(i + 1);
+    if ((base === 'rg' || base === 'ripgrep') && args.some((x) => /^--pre(-glob)?(=|$)/.test(x))) return `${base} --pre runs another program`;
+    if (/^g?sed$/.test(base) && args.some((x) => /^(--file(=|$)|-[a-zA-Z]*f)/.test(x))) return `${base} runs a script file`;
+    if (/^[gnm]?awk$/.test(base) && args.some((x) => /^(--file(=|$)|-[a-zA-Z]*f$)/.test(x))) return `${base} runs a program file`;
+  }
+  return undefined;
 }
 
 /** `node_modules/.bin/<tool>` exists between the cwd and the worktree root (npx would not download it). */
@@ -2094,12 +2141,19 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
   if (toolName === 'Bash' || toolName === 'PowerShell') {
     const command = typeof input.command === 'string' ? input.command : '';
     const v = classifyBash(command, ctx);
+    if (ctx.role !== 'lead' && ctx.untrustedCode && v.action === 'allow' && (leadExecRisk(command) || !isReadOnlyCommand(command, ctx))) {
+      // a contributor's pull request (PR intake): code the user did not write runs only after asking,
+      // once per exact command (tests, builds, scripts, installs)
+      const key = `untrusted:${exactKey(command)}`;
+      return always(key) ?? askVerdict(`runs code from a contributor's pull request (${v.reason})`, key);
+    }
     if (ctx.role !== 'lead' || v.action === 'deny') return v;
     // the lead works in the user's checkout: only inspection commands run without asking, and an
     // approval covers exactly that command
-    if (v.action === 'allow' && isReadOnlyCommand(command, ctx)) return v;
+    const risk = leadExecRisk(command);
+    if (v.action === 'allow' && !risk && isReadOnlyCommand(command, ctx)) return v;
     const key = `lead:${exactKey(command)}`;
-    return always(key) ?? askVerdict(`the lead is read-only; this command may change things${v.action === 'ask' ? ` (${v.reason})` : ''}`, key);
+    return always(key) ?? askVerdict(`the lead is read-only; this command may change things${risk ? ` (${risk})` : v.action === 'ask' ? ` (${v.reason})` : ''}`, key);
   }
 
   if (NETWORK_TOOLS.has(toolName)) {

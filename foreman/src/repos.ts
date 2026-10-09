@@ -751,13 +751,36 @@ export class RepoManager {
    * squashed into one commit of the user's (repoSettings pr.squash, --merge-style squash).
    */
   keepsContributorCommits(w: Worktree): boolean {
+    const r = this.repos.find((x) => x.worktrees.includes(w));
+    if (r && this.ctx.store.data.worktreeMeta[`${r.id}/${w.id}`]?.contributorSha) return true;
     const t = w.taskId ? this.ctx.store.data.tasks.find((x) => x.id === w.taskId) : undefined;
     return !!t?.startBranch && isPrBranch(t.startBranch);
+  }
+
+  /** PR intake: record the contributor's head a worktree starts from (see keepsContributorCommits). */
+  pinContributor(repoId: string, worktreeId: string, sha: string): void {
+    const meta = (this.ctx.store.data.worktreeMeta[`${repoId}/${worktreeId}`] ??= { createdAt: this.ctx.now() });
+    meta.contributorSha = sha;
+    this.ctx.store.markDirty();
+  }
+
+  /** A contributor's head fetched at intake: the commit a local branch points at now (or undefined). */
+  async branchSha(repoId: string, branch: string): Promise<string | undefined> {
+    const r = this.require(repoId);
+    const res = await git(r.path, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`], { allowFail: true });
+    return res.code === 0 ? res.stdout.trim() || undefined : undefined;
   }
 
   /** Land an approved task the repo's way: a local merge, or a pull request (repoSettings.land). */
   async land(decision: Decision, opts: { commitMessage?: string; title?: string; description?: string } = {}): Promise<LandResult> {
     const w = decision.repoId && decision.worktree ? this.findWorktree(decision.repoId, decision.worktree) : undefined;
+    // a contributor's pull request lands with its commits as they were fetched, never rewritten
+    const pinned = w && decision.repoId ? this.ctx.store.data.worktreeMeta[`${decision.repoId}/${w.id}`]?.contributorSha : undefined;
+    if (w && pinned) {
+      const r = this.require(decision.repoId!);
+      const kept = (await git(r.path, ['merge-base', '--is-ancestor', pinned, `refs/heads/${w.branch}`], { allowFail: true })).code === 0;
+      if (!kept) throw new RepoError(`${w.branch} no longer contains the contributor's commits (${pinned.slice(0, 10)}): they were rewritten; not landing it`, 'refused');
+    }
     if (decision.repoId && w && this.isUserBase(decision.repoId, w.base)) {
       // the user's own branch: add the work to it (squashed if the repo's PRs are squashed), then
       // fast-forward it on the remote when it is there, so a PR already open from it updates

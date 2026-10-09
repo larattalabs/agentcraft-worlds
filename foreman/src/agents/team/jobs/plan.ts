@@ -69,6 +69,18 @@ export abstract class PlanJobs extends RecoveryLayer {
     const { pulls, errors } = await this.pullFetcher.fetch(repoPath, refs).catch((e: Error) => ({ pulls: [] as PullRequest[], errors: [`fetch failed: ${this.fm.redact(e.message)}`] }));
     for (const p of pulls) this.fm.bus.feed('task', `PR #${p.number} by @${p.author}: ${p.title}`, { agentId: lead, goalId: goal.id });
     for (const e of errors) this.fm.bus.feed('error', `PR ${e}`, { agentId: lead, goalId: goal.id });
+    // what each branch held when it was fetched: tasks start from exactly that commit, and it must still be
+    // on the branch when the work lands
+    const repoId = goal.repoId!;
+    const fetched: Record<string, { repoId: string; number: number; sha: string }> = {};
+    for (const p of pulls) {
+      const sha = await this.fm.repos.branchSha(repoId, p.branch).catch(() => undefined);
+      if (sha) fetched[p.branch] = { repoId, number: p.number, sha };
+    }
+    if (Object.keys(fetched).length) {
+      this.st.pulls[goal.id] = fetched;
+      this.fm.store.markDirty();
+    }
     if (pulls.length) this.fm.memory.write({ scope: 'shared', title: `Pull requests for ${goal.id}`, body: pullBriefs(pulls), author: lead, mode: 'replace' });
     this.fm.setAgent(lead, { state: 'thinking', station: 'meeting', activity: 'reading the goal' });
     return pulls;

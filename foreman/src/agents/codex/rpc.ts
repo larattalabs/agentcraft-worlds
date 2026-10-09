@@ -45,12 +45,28 @@ export class AppServer {
       : spawn(bin, args, { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     this.child.stdin?.on('error', () => undefined); // EPIPE after exit: the exit handler reports it
     this.child.stderr?.setEncoding('utf8');
+    // whole lines in the tail (a line split across two chunks stays one line, so a secret in it is
+    // still redacted whole when an error quotes it)
+    let pending = '';
+    const keep = (line: string) => {
+      if (!line.trim()) return;
+      this.stderrTail.push(line);
+      if (this.stderrTail.length > 20) this.stderrTail.shift();
+    };
     this.child.stderr?.on('data', (s: string) => {
-      for (const line of s.split(/\r?\n/).filter((l) => l.trim())) {
-        this.stderrTail.push(line);
-        if (this.stderrTail.length > 20) this.stderrTail.shift();
+      pending += s;
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? '';
+      if (pending.length > 64_000) {
+        lines.push(pending);
+        pending = '';
       }
+      for (const line of lines) keep(line);
       opts.onStderr?.(s);
+    });
+    this.child.stderr?.on('end', () => {
+      keep(pending);
+      pending = '';
     });
     this.exited = new Promise((resolve) => {
       this.child.once('error', (e) => {

@@ -6,9 +6,9 @@
 //
 // This is the one place the Foreman talks to a remote, and only when the user's goal asks for it:
 // agents still have no git network access (gitsafety.ts), and nothing is ever pushed.
-import os from 'node:os';
-import path from 'node:path';
 import { GIT_REDIRECT_VARS } from './gitsafety.js';
+// hooks off: /dev/null on POSIX, never a path an agent could fill (util/git.ts)
+import { NO_HOOKS_DIR } from './util/git.js';
 import { run, type RunResult } from './util/proc.js';
 
 export interface PullRequest {
@@ -41,8 +41,6 @@ export const isPrBranch = (b: string): boolean => /^agentcraft\/pr-\d+$/.test(b)
 
 export type Runner = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<RunResult>;
 
-const NO_HOOKS_DIR = path.join(os.tmpdir(), 'agentcraft-no-hooks-7f3e9c');
-
 function env(): NodeJS.ProcessEnv {
   const e: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', LC_ALL: 'C' };
   for (const k of Object.keys(e)) if (GIT_REDIRECT_VARS.includes(k.toUpperCase())) delete e[k];
@@ -53,7 +51,8 @@ function env(): NodeJS.ProcessEnv {
 export async function githubOrigin(repoPath: string, runner: Runner = run): Promise<string | undefined> {
   const r = await runner('git', ['remote', 'get-url', 'origin'], { cwd: repoPath, env: env(), timeoutMs: 15_000 });
   const url = r.stdout.trim();
-  return r.code === 0 && /github\.com[:/]/i.test(url) ? url : undefined;
+  // the host itself, not "github.com/" anywhere in the URL (https://evil.example/github.com/x)
+  return r.code === 0 && /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)/i.test(url) ? url : undefined;
 }
 
 /**

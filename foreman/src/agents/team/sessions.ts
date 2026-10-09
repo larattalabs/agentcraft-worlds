@@ -12,6 +12,8 @@ import { truncate } from '../../util/text.js';
 import { instructionsBlock } from '../claude/context.js';
 import { boardSummary, leadRepoContext, leadSystemPrompt, planText, workerSystemPrompt } from '../prompts.js';
 import { agentTools, type TurnHandle } from '../tools.js';
+import { API_KEY_VARS, CLAUDE_LOGIN_VARS, PROVIDER_SWITCHES } from '../claude/auth.js';
+import { credentialLikeName } from '../../redact.js';
 import type { Engine, EngineId, Role, TurnStats } from '../engine.js';
 import { modelLabel } from '../models.js';
 import { userName } from '../../user.js';
@@ -196,7 +198,7 @@ export abstract class SessionsLayer extends TurnSetupLayer {
           prompt,
           instructions: systemAppend,
           ...(resume ? { resume } : {}),
-          env: engine.id === 'claude' ? env : withoutClaudeAuth(env),
+          env: this.contributorEnv(agentId, role, engine.id === 'claude' ? env : withoutClaudeAuth(env), engine),
           writableRoots: await this.writableRoots(role, job),
           abort,
           turn,
@@ -335,6 +337,22 @@ export abstract class SessionsLayer extends TurnSetupLayer {
     ]
       .filter(Boolean)
       .join('\n\n');
+  }
+
+  /**
+   * A worker on a contributor's pull request (PR intake) runs code the user did not write: its
+   * environment keeps no credential-like variables (tokens, keys, secrets, passwords, the ssh agent)
+   * except what its engine needs to sign in (Claude: the API key / login token, a cloud provider's
+   * credentials when one is switched on; Codex: OPENAI_* / CODEX_*).
+   */
+  protected contributorEnv(agentId: string, role: Role, env: Record<string, string | undefined>, engine: Engine): Record<string, string | undefined> {
+    if (role !== 'worker' || !this.runsContributorCode(agentId)) return env;
+    const provider = Object.keys(PROVIDER_SWITCHES).some((k) => env[k] && env[k] !== '0' && env[k]!.toLowerCase() !== 'false');
+    const keep = (k: string) =>
+      engine.id === 'claude'
+        ? [...API_KEY_VARS, ...CLAUDE_LOGIN_VARS].includes(k.toUpperCase()) || (provider && /^(AWS_|GOOGLE_|GCLOUD_|CLOUDSDK_|AZURE_|ANTHROPIC_)/i.test(k))
+        : /^(OPENAI_|CODEX_)/i.test(k);
+    return Object.fromEntries(Object.entries(env).filter(([k]) => keep(k) || !credentialLikeName(k)));
   }
 
   /** A turn reported the model it really runs: the agent's nameplate shows it. */
