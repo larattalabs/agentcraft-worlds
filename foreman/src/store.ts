@@ -10,6 +10,20 @@
 //   <dir>/designs/<designId>/   scratch dirs of building design jobs (see designs.ts)
 //
 // state.json is written atomically (temp + fsync + rename), debounced, and flushed on exit.
+//
+// The durability rule: nothing the Foreman tells the outside world may describe state that is not
+// on disk yet. A hard kill (power loss, kill -9) right after an ack or an announcement must not
+// bring back what the user saw end: a resumed turn that had finished, a cancelled goal's or task's
+// work, a stopped agent, an unanswered decision. So `commit()` (a flush when something is unsaved)
+// runs, in the Foreman, before
+//   - every ack of a client message (Foreman.handle; also a failed one: it may have changed state);
+//   - every broadcast except the chatty kinds (Foreman.emit; agent.log, agent.say, agent.upsert,
+//     feed.add and foreman.status ride the debounce), and every outside notification;
+//   - and, in the team, right after a turn's inflight entry is cleared (sessions.ts: the agent going
+//     idle is a chatty broadcast, so the emit rule alone would not save it).
+// Everything else (feed lines, logs, progress, session stats) keeps the 100 ms debounce. Recovery
+// also drops an inflight turn whose task or goal was cancelled (its abort was acked and saved, the
+// turn had not unwound yet).
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Agent, Decision, Design, FeedItem, Goal, LogEntry, Repo, Task } from './protocol.js';
@@ -227,6 +241,14 @@ export class Store {
     }
     writeJsonAtomic(this.file, this.data);
     this.dirty = false;
+  }
+
+  /**
+   * Make what is in memory durable now, if anything is unsaved (the durability rule above): before
+   * an ack, an announcement or the end of a turn. Cheap when nothing changed (no write).
+   */
+  commit(): void {
+    if (this.dirty) this.flush();
   }
 
   get isDirty(): boolean {

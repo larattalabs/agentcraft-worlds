@@ -260,7 +260,8 @@ export abstract class SessionsLayer extends TurnSetupLayer {
     // before anything is re-queued, so the next turn of this agent waits for it
     if (reason) void this.reap(entry);
     delete this.st.inflight[agentId];
-    this.fm.store.markDirty();
+    // durable before the turn's end is announced (store.ts): a hard kill now must not resume it
+    this.fm.commit();
     if (reason === 'pause') {
       const next: Job = { ...job, fresh: false, resumed: true, prompt: `${userName()} paused you and has now resumed you. Any question you had open was withdrawn; ask again if you still need it. Continue your current job.` };
       this.offerHeldGoalMessages(next);
