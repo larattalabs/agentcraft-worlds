@@ -1468,6 +1468,8 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     }
     target ??= positional[0];
     if (!target) return exact(env, `${cmd} without a file to write`);
+    // a drive path outside Windows (C:/x resolves inside the cwd there): never taken for a worktree file
+    if (/^[A-Za-z]:[\\/]/.test(target) && process.platform !== 'win32') return exact(env, `${cmd} writes the Windows path ${target}`);
     return merge(pathAsks([isPathCandidate(target, true) ? target : `./${target}`], 'w', sc), ok(`${cmd} inside worktree`, false));
   }
   if (WRITE_CMDS.has(cmd)) {

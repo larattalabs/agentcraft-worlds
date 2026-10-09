@@ -1,23 +1,23 @@
-// Claude backend: running a turn. One SDK query() per job with the session resumed (or rotated, for a
-// lead), the CLI spawned by us so a stopped turn's whole process tree can be ended, session records
-// and costs, and the hand-off of a task whose turn was stopped.
-import { spawn } from 'node:child_process';
+// The team: running a turn. One engine turn per job (Claude: an SDK query(); Codex: an app-server
+// thread turn) with the session resumed (or rotated, for a lead), the agent process reported by the
+// engine so a stopped turn's whole process tree can be ended, session records and costs, and the
+// hand-off of a task whose turn was stopped.
+import fs from 'node:fs';
 import os from 'node:os';
-import { type Options } from '@anthropic-ai/claude-agent-sdk';
+import path from 'node:path';
 import { foremanPrivatePath } from '../../policy.js';
 import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
-import { instructionsBlock } from './context.js';
+import { instructionsBlock } from '../claude/context.js';
 import { boardSummary, leadRepoContext, leadSystemPrompt, planText, workerSystemPrompt } from '../prompts.js';
-import { withAuthMode } from './auth.js';
-import { isAuthText } from './failures.js';
-import { limitFromText, StreamMapper, type TurnStats } from './stream.js';
-import { buildMcpServer, MCP_SERVER, type TurnHandle } from './tools.js';
+import { agentTools, type TurnHandle } from '../tools.js';
+import type { Engine, EngineId, Role, TurnStats } from '../engine.js';
+import { modelLabel } from '../models.js';
 import { userName } from '../../user.js';
 import { scrubEnv } from '../../util/env.js';
 import { TurnSetupLayer } from './turnSetup.js';
-import { type AbortReason, type Job, type Running, sleep, alive, TURN_TIMEOUT_MS, LIMIT_BACKOFF_MS, rotationDue } from './core.js';
+import { type AbortReason, type Job, type Running, sleep, alive, TURN_TIMEOUT_MS, LIMIT_BACKOFF_MS, rotationDue, withoutClaudeAuth, foremanPrivateOf } from './core.js';
 
 export abstract class SessionsLayer extends TurnSetupLayer {
   /** Abort a turn: remember why, snapshot its process tree while the CLI is still alive, close it. */
@@ -114,8 +114,10 @@ export abstract class SessionsLayer extends TurnSetupLayer {
       const repoId = where.repoId;
       const roleDir = cwd;
       const roleOf = (id: string) => this.repoRole(id, repoId, roleDir);
+      const engine = this.engineFor(agentId);
       const session = this.fm.store.data.sessions[job.sessionKey];
-      let resume = !job.fresh && session?.sessionId ? session.sessionId : undefined;
+      // a session belongs to the engine that made it (records from before engines were Claude's)
+      let resume = !job.fresh && session?.sessionId && (session.engine ?? 'claude') === engine.id ? session.sessionId : undefined;
       // a lead's long-lived session for a goal: start over once it is old or long (seeded below).
       // Never for a job that continues the session's own work (restart, usage limit, pause, retry,
       // an answer after a restart): its prompt only means something inside that session.
@@ -162,33 +164,15 @@ export abstract class SessionsLayer extends TurnSetupLayer {
             ? `\n\n# Earlier sessions\n${userName()}'s earlier Claude sessions in these repositories are searchable (find_sessions, read_session). When a goal refers to earlier work, find and read the relevant session before planning, then put what a worker needs, and the session id, into the task description.`
             : `\n\n# Earlier sessions\nIf your task names an earlier Claude session (an id), read it with read_session before you start; find_sessions searches others.`;
       }
-      const priv = this.foremanPrivate();
+      const priv = foremanPrivateOf(this.fm);
       const extra = instructionsBlock(this.cfg.context, cwd, userName(), os.homedir(), this.fm.repos.get(repoId)?.path, (abs) => foremanPrivatePath(abs, priv));
       if (extra) systemAppend = `${systemAppend}\n\n${extra}`;
-      const { model, effort } = this.modelFor(agentId, role, job.taskId, role === 'worker' ? roleOf(agentId) : undefined);
-      const options: Options = {
-        cwd,
-        model,
-        effort,
-        maxTurns: role === 'lead' ? this.cfg.maxTurnsLead : this.cfg.maxTurnsWorker,
-        settingSources: [],
-        ...this.permissionOptions(agentId, role, cwd, turn, repoId),
-        // the user's extra servers first, so the team tools server can never be replaced
-        mcpServers: { ...this.cfg.context.mcpServers, [MCP_SERVER]: buildMcpServer(this.fm, agentId, role, this.hooks, turn, this.history) },
-        ...(this.skillsPlugin ? { plugins: [{ type: 'local' as const, path: this.skillsPlugin.path, skipMcpDiscovery: true }], skills: this.skillsPlugin.ids } : {}),
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
-        abortController: abort,
-        // the repository's env (e.g. a PATH for its Node version) on top; GIT_* never comes from it
-        env: scrubEnv(withAuthMode({ ...this.env({ agentId, cwd }), ...this.fm.repos.envFor(repoId), ...this.fm.repos.commitIdentityEnv(repoId, agentId) }, this.cfg.useClaudeLogin)),
-        // we spawn the CLI ourselves (same as the SDK's local spawn) so its pid is known: a stopped
-        // turn's whole process tree can then be ended before its worktree is handed on
-        spawnClaudeCodeProcess: this.spawner(entry, agentId),
-        ...(resume ? { resume } : {}),
-        ...(this.cfg.maxBudgetUsdPerTurn ? { maxBudgetUsd: this.cfg.maxBudgetUsdPerTurn } : {}),
-      };
-      this.fm.agentLog(agentId, 'text', `${resume ? 'Resuming' : 'Starting'} ${job.kind}${job.taskId ? ` ${job.taskId}` : ''} (${model})`);
+      // Claude agents: profiles, task sizes and repository roles pick the model; other engines run
+      // their own configured model (a Claude alias would mean nothing to them)
+      const picked = engine.id === 'claude' ? this.modelFor(agentId, role, job.taskId, role === 'worker' ? roleOf(agentId) : undefined) : undefined;
+      const model = picked?.model ?? engine.model(role);
+      this.fm.agentLog(agentId, 'text', `${resume ? 'Resuming' : 'Starting'} ${job.kind}${job.taskId ? ` ${job.taskId}` : ''} (${engine.id === 'claude' ? model : `${engine.label} ${model}`})`);
       if (job.kind === 'followup' || job.resumed) this.fm.agentLog(agentId, 'text', truncate(job.prompt, 400));
-      const mapper = new StreamMapper(this.fm, agentId, cwd, role, (r) => this.onRateLimit(r));
       const setupNote = role === 'worker' && job.taskId ? await this.prepareWorktree(agentId, job.taskId) : '';
       if (abort.signal.aborted) throw new Error('turn stopped during worktree setup');
       const timer = setTimeout(() => this.abortTurn(entry, 'timeout'), TURN_TIMEOUT_MS);
@@ -199,34 +183,45 @@ export abstract class SessionsLayer extends TurnSetupLayer {
       const takeover = role === 'lead' ? this.takeoverNote(agentId, job.goalId) : '';
       const withSetup = [setupNote, takeover, rotated, job.prompt].filter(Boolean).join('\n\n');
       const prompt = unread.length ? `${withSetup}\n\n[New messages]\n${formatInbox(unread, (id) => this.fm.nameOf(id))}` : withSetup;
+      // the repository's env (e.g. a PATH for its Node version) on top; GIT_* never comes from it.
+      // The Claude engine applies its auth mode to this final environment; other engines never get
+      // the Claude credentials.
+      const worktreeId = role === 'worker' && job.taskId ? this.fm.tasks.get(job.taskId)?.worktree : undefined;
+      const env = scrubEnv({ ...this.env({ agentId, cwd }), ...this.fm.repos.envForWorktree(repoId, worktreeId), ...this.fm.repos.commitIdentityEnv(repoId, agentId) });
       try {
-        const q = this.queryFn({ prompt, options });
-        this.refreshUsage(q);
-        entry.q = q;
-        // the abort signal alone lets a CLI finish what it is doing (seen in a real run: ~6 s of
-        // further turns after /stop). close() force-ends the subprocess and its transports.
-        const closeQuery = () => {
-          try {
-            q.close();
-          } catch {
-            /* already closed */
-          }
-        };
-        if (abort.signal.aborted) closeQuery();
-        else abort.signal.addEventListener('abort', closeQuery, { once: true });
-        for await (const msg of q) {
-          if (abort.signal.aborted) break; // nothing from an aborted turn reaches the world
-          mapper.handle(msg);
-          if (mapper.stats.sessionId && this.fm.store.data.sessions[job.sessionKey]?.sessionId !== mapper.stats.sessionId) {
-            this.recordSession(job.sessionKey, mapper.stats.sessionId, model);
-          }
-        }
+        stats = await engine.runTurn({
+          agentId,
+          role,
+          cwd,
+          prompt,
+          instructions: systemAppend,
+          ...(resume ? { resume } : {}),
+          env: engine.id === 'claude' ? env : withoutClaudeAuth(env),
+          writableRoots: await this.writableRoots(role, job),
+          abort,
+          turn,
+          permission: this.permissionGate(agentId, role, cwd, turn, repoId, engine),
+          tools: agentTools(this.fm, agentId, role, this.hooks, turn, this.history),
+          ...(picked ? { model: picked.model, effort: picked.effort } : {}),
+          repoId,
+          policy: () => this.policyContext(agentId, role, cwd, repoId, engine),
+          onRateLimit: (r) => this.onRateLimit(r),
+          onUsageSource: (q) => this.refreshUsage(q),
+          // a stopped turn's whole process tree is ended before its worktree is handed on
+          onProcess: (child) => {
+            entry.child = child;
+            entry.spawnedAt = Date.now();
+          },
+          onSession: (id) => {
+            if (this.fm.store.data.sessions[job.sessionKey]?.sessionId !== id) this.recordSession(job.sessionKey, id, model, undefined, engine.id);
+          },
+          onModel: (m) => this.reportModel(agentId, engine.id, m),
+        });
       } finally {
         clearTimeout(timer);
       }
-      stats = mapper.stats;
-      if (stats.sessionId) this.recordSession(job.sessionKey, stats.sessionId, model, stats);
-      if (stats.authFailed) this.markAuthFailed(`Claude authentication failed (${stats.authFailed}). Run \`claude\` and /login, then restart the Foreman.`);
+      if (stats.sessionId) this.recordSession(job.sessionKey, stats.sessionId, model, stats, engine.id);
+      if (stats.authFailed) this.markAuthFailed(engine.authFailedMessage(stats.authFailed));
     } catch (e) {
       const aborted = abort.signal.aborted;
       if (!aborted) {
@@ -234,12 +229,16 @@ export abstract class SessionsLayer extends TurnSetupLayer {
         const msg = this.fm.redact((e as Error).message ?? String(e));
         this.fm.log.error(`${agentId} ${job.kind} failed: ${msg}`);
         this.fm.agentLog(agentId, 'error', `session error: ${truncate(msg, 400)}`);
-        if (isAuthText(msg)) this.markAuthFailed(`Claude authentication failed: ${truncate(msg, 160)}`);
+        const engine = this.engineFor(agentId);
+        const c = engine.classifyError?.(msg) ?? { auth: /auth|login|credential|401/i.test(msg) };
+        if (c.auth) this.markAuthFailed(engine.authFailedMessage(truncate(msg, 160)));
         stats = { isError: true, errors: [msg] };
-        const l = limitFromText(msg);
-        if (l.limited) {
+        // a session the turn started before it failed: kept, so a retry resumes it
+        const partial = (e as { stats?: TurnStats }).stats;
+        if (partial?.sessionId) stats.sessionId = partial.sessionId;
+        if (c.limited) {
           stats.limited = true;
-          if (l.resetsAt) stats.rateLimit = { status: 'rejected', resetsAt: l.resetsAt };
+          if (c.limited.resetsAt) stats.rateLimit = { status: 'rejected', resetsAt: c.limited.resetsAt };
         }
       }
     } finally {
@@ -286,8 +285,9 @@ export abstract class SessionsLayer extends TurnSetupLayer {
     this.tick();
   }
 
-  protected recordSession(key: string, sessionId: string, model: string, stats?: TurnStats): void {
+  protected recordSession(key: string, sessionId: string, model: string, stats?: TurnStats, engine: EngineId = 'claude'): void {
     const s = (this.fm.store.data.sessions[key] ??= { turns: 0, costUsd: 0, updatedAt: Date.now() });
+    s.engine = engine;
     if (s.sessionId !== sessionId) {
       // a new session under this key (fresh plan, rotation): the earlier sessions' spend is kept
       if (s.sessionId) s.baseCostUsd = s.costUsd;
@@ -337,35 +337,42 @@ export abstract class SessionsLayer extends TurnSetupLayer {
       .join('\n\n');
   }
 
-  /** The CLI is spawned by us (same as the SDK's local spawn) so its pid is known: an aborted turn's whole process tree can be ended. */
-  protected spawner(entry: Running, label: string): NonNullable<Options['spawnClaudeCodeProcess']> {
-    return (o) => {
-      const child = spawn(o.command, o.args, { cwd: o.cwd, env: scrubEnv(o.env as NodeJS.ProcessEnv), stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
-      child.stderr?.setEncoding('utf8');
-      // whole lines only: a secret split across two chunks is still one line when it is redacted
-      let pending = '';
-      const line = (l: string) => {
-        if (l.trim()) this.fm.log.debug(`[${label} stderr] ${this.fm.redact(l).trim().slice(0, 300)}`);
-      };
-      child.stderr?.on('data', (s: string) => {
-        pending += s;
-        const lines = pending.split('\n');
-        pending = lines.pop() ?? '';
-        // an endless line is flushed in large pieces (redacted whole up to there)
-        if (pending.length > 64_000) {
-          lines.push(pending);
-          pending = '';
-        }
-        for (const l of lines) line(l);
-      });
-      child.stderr?.on('end', () => {
-        line(pending);
-        pending = '';
-      });
-      child.on('error', (e) => this.fm.log.debug(`[${label}] CLI process error: ${e.message}`));
-      entry.child = child;
-      entry.spawnedAt = Date.now();
-      return child;
-    };
+  /** A turn reported the model it really runs: the agent's nameplate shows it. */
+  protected reportModel(agentId: string, engine: EngineId, model: string): void {
+    const label = modelLabel(model);
+    if (!label) return;
+    this.reportedModels.set(agentId, { engine, label });
+    if (this.fm.agent(agentId)) this.fm.setAgent(agentId, { engine, model: label });
+  }
+
+  /**
+   * Where a sandboxed worker (Codex) may write besides its worktree: exactly what committing and
+   * merging on its own branch needs, and the temp dir (scratch files and test runs; the policy
+   * allows it too). Never the shared git dir as a whole: its config and hooks would let a worker
+   * run code in the user's own git, outside every sandbox, and its refs would let it move the
+   * user's branches (upstream 0f04d91).
+   *  - objects/                        new commits, trees, blobs (content-addressed, harmless)
+   *  - refs/heads/<branch dir>/        this agent's branches only (agentcraft/<agent>/...)
+   *  - logs/refs/heads/<branch dir>/   their reflogs
+   *  - the worktree's own git dir      its HEAD, index, ORIG_HEAD, MERGE_HEAD
+   * Claude agents need none of this (their sandbox is the policy); computed for every engine that
+   * sandboxes (Codex).
+   */
+  protected async writableRoots(role: Role, job: Job, engine: Engine = this.engineFor(job.agentId)): Promise<string[]> {
+    if (engine.id === 'claude' || role !== 'worker' || !job.taskId) return [];
+    const t = this.fm.tasks.require(job.taskId);
+    const repo = this.fm.repos.require(t.repoId!);
+    const worktree = this.fm.repos.requireWorktree(repo.id, t.worktree!);
+    const verified = await this.fm.repos.verifyWorktreeGit(repo, worktree);
+    if (!verified.ok) throw new Error(`Cannot grant worktree Git access: ${verified.reason}`);
+    const roots = [path.join(verified.commonDir, 'objects'), verified.gitDir, os.tmpdir()];
+    const branchDir = path.posix.dirname(worktree.branch);
+    if (branchDir !== '.' && !branchDir.split('/').includes('..')) {
+      for (const d of [path.join(verified.commonDir, 'refs', 'heads', ...branchDir.split('/')), path.join(verified.commonDir, 'logs', 'refs', 'heads', ...branchDir.split('/'))]) {
+        fs.mkdirSync(d, { recursive: true });
+        roots.push(d);
+      }
+    }
+    return [...new Set(roots)];
   }
 }

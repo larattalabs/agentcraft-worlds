@@ -1,10 +1,11 @@
-// Claude backend, work jobs: the scheduler starts ready tasks on free workers, each in its own git
+// The team, work jobs: the scheduler starts ready tasks on free workers, each in its own git
 // worktree (continuing another worker's branch after a hand-off or for PR review fixes); work goes
 // back to its worker with feedback; task steering (cancel, reassign).
 import type { Goal, Task } from '../../../protocol.js';
 import { formatInbox } from '../../../bus.js';
 import { truncate } from '../../../util/text.js';
 import { foldInPrompt, workPrompt } from '../../prompts.js';
+import { isPrBranch } from '../../../pulls.js';
 import { userName } from '../../../user.js';
 import { PlanJobs } from './plan.js';
 
@@ -65,6 +66,8 @@ export abstract class WorkJobs extends PlanJobs {
         this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} continues ${t.id} from ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId, taskId: t.id });
       }
     }
+    // a pull request task starts from the contributor's commits (fetched at goal intake, pulls.ts)
+    if (!startPoint && t.startBranch && isPrBranch(t.startBranch)) startPoint = t.startBranch;
     const base = this.baseFor(t);
     const wt = await this.fm.repos.createWorktree(t.repoId!, agentId, t, { ...(startPoint ? { startPoint } : {}), ...(base ? { base } : {}) });
     this.fm.tasks.update(t.id, { branch: wt.branch, worktree: wt.id });

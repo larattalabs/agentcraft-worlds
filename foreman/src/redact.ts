@@ -160,6 +160,11 @@ export const CREDENTIAL_FLAG = /^(-p|-H|--?(token|key|password|pass|passphrase|p
 /** A NAME=value whose name looks like a credential. */
 const CREDENTIAL_NAME = /token|secret|passw(or)?d|passwd|passphrase|pwd|pass$|^pass|api[-_]?key|apikey|[-_]key$|^key$|auth|credential|bearer|private|cookie|session/i;
 
+/** Does a variable name look like it holds a credential (GITHUB_TOKEN, API_KEY, DB_PASSWORD...)? */
+export function credentialLikeName(name: string): boolean {
+  return CREDENTIAL_NAME.test(name);
+}
+
 /** The credentials among MCP arguments: values after a credential flag, --flag=value of one, NAME=value with a credential-like name. */
 export function argSecrets(args: string[]): string[] {
   const out: string[] = [];

@@ -1,7 +1,8 @@
 // The AgentCraft team tools, shared by every engine (Claude: an in-process MCP server named
 // "agentcraft", see claude/tools.ts; Codex: app-server dynamic tools, see codex/engine.ts):
 //   send_message, ask_user, write_memory, read_memory, update_task, report_status, list_tasks
-//   lead only: create_task, request_merge
+//   with session history on: find_sessions, read_session
+//   lead only: create_task, request_merge, triage (PR review comments, see prwatch.ts)
 // Every tool result carries any unread messages for the agent (so mid-turn messages arrive).
 import { z } from 'zod';
 import { formatInbox } from '../bus.js';
@@ -12,6 +13,7 @@ import { isPrBranch } from '../pulls.js';
 import { truncate } from '../util/text.js';
 import { boardSummary } from './prompts.js';
 import { userName } from '../user.js';
+import { sessionLine, type SessionHistory } from '../history.js';
 
 export interface ToolHooks {
   /** worker moved its task to review */
@@ -24,6 +26,14 @@ export interface ToolHooks {
   onMergeRequested(taskId: string, decision: Decision): void;
   /** agent is blocked waiting for the user */
   onWaiting(agentId: string, waiting: boolean): void;
+  /** the lead wrote a shared "Plan: ..." note during a turn for this goal */
+  onPlanWritten?(goalId: string, memoryId: string): void;
+  /** the lead sized a task it created (picks the worker's model, see claude.taskModels) */
+  onTaskSize?(taskId: string, size: 'small' | 'normal' | 'large'): void;
+  /** the lead put a task on one of the user's branches (create_task base); throws if it cannot be used */
+  onTaskBase?(taskId: string, repoId: string, branch: string): Promise<void>;
+  /** the lead's verdicts on PR triage items (tool `triage`); returns the tool's answer */
+  onTriage?(items: Array<{ ref: string; verdict: 'fold_in' | 'reply' | 'ask_user' | 'ignore'; note: string }>): { ok: boolean; text: string };
 }
 
 /** The turn a tool server belongs to: once it is aborted, tools refuse to act. */
@@ -31,6 +41,8 @@ export interface TurnHandle {
   signal: AbortSignal;
   /** why it was aborted: pause | stop | shutdown | cancel | timeout */
   reason(): string | undefined;
+  /** the goal this turn works for, if any */
+  goalId?: string;
 }
 
 export type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
@@ -44,10 +56,10 @@ export interface AgentTool {
   handler(args: any): Promise<ToolResult>;
 }
 
-/** Names of the team tools for a role (unprefixed). */
+/** Names of the team tools for a role (unprefixed; find_sessions / read_session only with session history). */
 export const TOOL_NAMES = {
   common: ['send_message', 'ask_user', 'write_memory', 'read_memory', 'update_task', 'report_status', 'list_tasks'],
-  lead: ['create_task', 'request_merge'],
+  lead: ['create_task', 'request_merge', 'triage'],
 } as const;
 
 function tool<S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>) => Promise<ToolResult>): AgentTool {
@@ -66,14 +78,22 @@ export async function closeIfNoChanges(fm: Foreman, taskId: string): Promise<boo
   const wt = fm.repos.findWorktree(t.repoId, t.worktree);
   if (!wt || wt.status !== 'active' || wt.files > 0) return false;
   await fm.repos.abandon(t.repoId, wt.id, `agentcraft: ${t.id} (no changes)`);
+  if (t.pr) {
+    // review fixes that changed nothing: the pull request stays open and watched
+    fm.tasks.setStatus(t.id, 'pr', { force: true });
+    fm.bus.feed('task', `${t.id}: the review fixes changed no files; PR #${t.pr.id} stays as it is`, { agentId: t.assignee ?? fm.leadOfTask(t), taskId: t.id });
+    if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} PR open`, taskId: null, worktree: null });
+    fm.backend?.onPrPush?.(fm.tasks.require(t.id), 'empty');
+    return true;
+  }
   fm.tasks.setStatus(t.id, 'done', { force: true, summary: t.summary ?? 'no changes' });
-  fm.bus.feed('task', `${t.id} changed no files (report only): closed as done, nothing to merge`, { agentId: t.assignee ?? 'marlow' });
+  fm.bus.feed('task', `${t.id} changed no files (report only): closed as done, nothing to merge`, { agentId: t.assignee ?? fm.leadOfTask(t), taskId: t.id });
   if (t.assignee && fm.agent(t.assignee)?.taskId === t.id) fm.setAgent(t.assignee, { state: 'idle', station: 'lounge', activity: `${t.id} done`, taskId: null, worktree: null });
   return true;
 }
 
-/** The team tools for one agent's turn (lead: also create_task and request_merge). */
-export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker', hooks: ToolHooks, turn?: TurnHandle): AgentTool[] {
+/** The team tools for one agent's turn (lead: also create_task, request_merge and triage). */
+export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker', hooks: ToolHooks, turn?: TurnHandle, history?: SessionHistory): AgentTool[] {
   const withInbox = (text: string, isError = false): ToolResult => {
     const inbox = fm.bus.inbox(agentId, { markRead: true });
     const extra = inbox.length ? `\n\n[New messages]\n${formatInbox(inbox, (id) => fm.nameOf(id))}` : '';
@@ -88,14 +108,19 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
       { to: z.string().describe('agent id/name, "lead", "all" or "user"'), text: z.string().describe('the message (1-3 sentences)') },
       async ({ to, text }) => {
         let target = to.trim().toLowerCase();
-        if (target === 'lead') target = 'marlow';
+        // "lead": the lead of the sender's task (its goal's lead), else marlow
+        if (target === 'lead') {
+          const lead = fm.leadOfTask(fm.tasks.get(fm.agent(agentId)?.taskId ?? ''));
+          target = fm.leads.onDuty(lead) ? lead : 'marlow';
+        }
         if (!['all', 'user'].includes(target)) {
           const id = fm.resolveAgentId(target);
           if (!id) return fail(`no teammate "${to}". Team: ${fm.agents().filter((a) => a.active).map((a) => a.id).join(', ')}`);
           target = id;
         }
         if (target === agentId) return fail('you cannot message yourself');
-        fm.bus.send(agentId, target, text);
+        // tagged with the goal: a lead's turn for a goal, a worker's task
+        fm.bus.send(agentId, target, text, role === 'lead' ? { goalId: turn?.goalId } : { taskId: fm.agent(agentId)?.taskId });
         // A worker reads messages only while it works on a task: one with no task would read this
         // whenever its next task starts, so a request sent this way silently never happens.
         if (role === 'lead' && !['all', 'user'].includes(target) && !fm.agent(target)?.taskId) {
@@ -122,7 +147,7 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
         const home = role === 'lead' ? 'meeting' : 'desk';
         const waiting = prev?.state === 'waiting_user' || prev?.station === 'user';
         const prevState = { state: waiting ? 'thinking' : (prev?.state ?? 'thinking'), station: waiting ? home : (prev?.station ?? home), activity: prev?.activity ?? '' };
-        const d = fm.createDecision({ agentId, kind: 'question', question, options: options ?? [], ...(context ? { context } : {}), ...(prev?.taskId ? { taskId: prev.taskId } : {}) });
+        const d = fm.createDecision({ agentId, kind: 'question', question, options: options ?? [], ...(context ? { context } : {}), ...(prev?.taskId ? { taskId: prev.taskId } : {}), ...(role === 'lead' && turn?.goalId ? { goalId: turn.goalId } : {}) });
         fm.setAgent(agentId, { state: 'waiting_user', station: 'user', activity: 'waiting for your answer' });
         hooks.onWaiting(agentId, true);
         // If the turn is aborted (stop, pause, task cancelled, timeout) nobody will read the answer:
@@ -154,7 +179,8 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
       },
       async ({ title, body, scope, mode }) => {
         const e = fm.memory.write({ scope: scope === 'private' ? agentId : 'shared', title, body, author: agentId, mode: mode ?? 'replace' });
-        fm.bus.feed('memory', `${fm.nameOf(agentId)} wrote memory: ${e.title}`, { agentId });
+        if (role === 'lead' && turn?.goalId && e.scope === 'shared' && /^plan\b/i.test(e.title)) hooks.onPlanWritten?.(turn.goalId, e.id);
+        fm.bus.feed('memory', `${fm.nameOf(agentId)} wrote memory: ${e.title}`, { agentId, ...(role === 'lead' ? { goalId: turn?.goalId } : { taskId: fm.agent(agentId)?.taskId }) });
         return withInbox(`Saved memory ${e.id}.`);
       },
     ),
@@ -194,15 +220,23 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
         if (role === 'worker') {
           const current = fm.agent(agentId)?.taskId;
           if (t.assignee !== agentId) return fail(`${t.id} is not your task`);
-          if (current && t.id !== current) return fail(`you are working on ${current}; you can only update that task. Tell Marlow (send_message to "lead") if ${t.id} is already covered.`);
+          if (current && t.id !== current) return fail(`you are working on ${current}; you can only update that task. Tell ${fm.nameOf(fm.leadOfTask(fm.tasks.get(current)))} (send_message to "lead") if ${t.id} is already covered.`);
           if (a.status && !['review', 'blocked', 'doing'].includes(a.status)) return fail('workers can set status review, blocked or doing');
           if (a.assignee || a.title || a.description) return fail('only the lead can change assignee/title/description');
+        } else {
+          // every lead changes only its own goals' tasks (the workers are shared, the tasks are not)
+          const owner = fm.leadOfTask(t);
+          if (owner !== agentId) return fail(`${t.id} belongs to ${fm.nameOf(owner)}'s goal; leave it to them (send_message to "${owner}" if it matters for your work).`);
         }
         try {
           if (a.assignee) {
             const id = fm.resolveAgentId(a.assignee);
             if (!id) return fail(`no agent ${a.assignee}`);
-            fm.tasks.update(t.id, { assignee: id });
+            if (role === 'lead' && fm.agent(id)?.role === 'lead') return fail('assign tasks to workers, not to a lead');
+            if (role === 'lead' && t.status === 'doing' && t.assignee && t.assignee !== id) {
+              // a task in progress changes hands properly: the old turn ends, the new worker continues its branch
+              fm.taskAction(t.id, 'reassign', id);
+            } else fm.tasks.update(t.id, { assignee: id });
           }
           if (a.title) fm.tasks.update(t.id, { title: a.title });
           if (a.description) fm.tasks.update(t.id, { description: a.description });
@@ -210,7 +244,7 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
           if (a.status && a.status !== t.status) {
             const prev = t.status;
             fm.tasks.setStatus(t.id, a.status as TaskStatus, { force: role === 'lead' || a.status === 'review', ...(a.blocked_reason ? { reason: a.blocked_reason } : {}), ...(a.summary ? { summary: a.summary } : {}) });
-            fm.bus.feed('task', `${fm.nameOf(agentId)}: ${t.id} ${prev} -> ${a.status}`, { agentId });
+            fm.bus.feed('task', `${fm.nameOf(agentId)}: ${t.id} ${prev} -> ${a.status}`, { agentId, taskId: t.id });
             if (a.status === 'review' && role === 'worker') hooks.onReview(agentId, t.id);
             if (a.status === 'doing' && prev === 'review' && role === 'lead') hooks.onChangesRequested(t.id, a.summary ?? 'see review comments');
           }
@@ -234,6 +268,43 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
     tool('list_tasks', 'Show the task board (ids, status, assignee, deps).', {}, async () => withInbox(boardSummary(fm))),
   ];
 
+  if (history) {
+    tools.push(
+      tool(
+        'find_sessions',
+        `Search ${userName()}'s earlier Claude sessions (Claude Code / Claude Desktop) in these repositories' workspaces: by words (titles, prompts, files, PRs), by a branch they worked on, or by repository. Newest first without a query. Use it when a goal or task refers to earlier work ("continue what I started", "the session about X").`,
+        {
+          query: z.string().optional().describe('words to match'),
+          branch: z.string().optional().describe('a branch the session worked on'),
+          repo: z.string().optional().describe('repository id or name: only sessions in its workspace'),
+          days: z.number().int().positive().optional().describe('how far back (default from config)'),
+          limit: z.number().int().positive().max(25).optional(),
+        },
+        async ({ query, branch, repo, days, limit }) => {
+          let dir: string | undefined;
+          if (repo) {
+            const want = repo.trim().toLowerCase();
+            const r = fm.repos.list().find((x) => x.id.toLowerCase() === want || x.name.toLowerCase() === want);
+            if (!r) return fail(`no repository ${repo}`);
+            dir = r.path;
+          }
+          const found = await history.find({ ...(query ? { query } : {}), ...(branch ? { branch } : {}), ...(dir ? { dir } : {}), ...(days ? { days } : {}), limit: limit ?? 8 });
+          if (!found.length) return withInbox('No matching sessions.');
+          return withInbox(`${found.map(sessionLine).join('\n')}\n\nread_session(id) shows one.`);
+        },
+      ),
+      tool(
+        'read_session',
+        'Read one of the earlier sessions found with find_sessions: what was asked, what Claude concluded, commands and edits (tool output left out), most of it from the end, where it stopped.',
+        { id: z.string().describe('session id (or its first characters)'), max_chars: z.number().int().positive().max(60_000).optional() },
+        async ({ id, max_chars }) => {
+          const text = await history.read(id.trim(), max_chars ?? 20_000);
+          return text ? withInbox(text) : fail(`no session ${id} in scope (find_sessions lists them)`);
+        },
+      ),
+    );
+  }
+
   if (role === 'lead') {
     tools.push(
       tool(
@@ -245,16 +316,28 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
           deps: z.array(z.string()).optional(),
           assignee: z.string().optional().describe('worker id/name'),
           priority: z.number().int().optional(),
+          size: z.enum(['small', 'normal', 'large']).optional().describe('small = mechanical, well-specified; large = hard or architectural (picks the model)'),
+          repo: z.string().optional().describe("repository id or name for this task (default: the goal's repository)"),
+          base: z.string().optional().describe("a branch of the user's to build this task on and add its work to, instead of the repository's base (only when the user asked for it)"),
           start_branch: z.string().optional().describe('only for a fetched pull request: its branch, e.g. "agentcraft/pr-12"; the worker starts from the contributor\'s commits'),
         },
-        async ({ title, description, deps, assignee, priority, start_branch }) => {
-          const goal = fm.currentGoal();
+        async ({ title, description, deps, assignee, priority, size, repo, base, start_branch }) => {
           if (start_branch && !isPrBranch(start_branch)) return fail(`start_branch must be a fetched pull request branch (agentcraft/pr-<n>), not ${start_branch}`);
+          if (start_branch && base) return fail('a pull request task starts from its own branch and lands on the base: give start_branch or base, not both');
+          // the goal this turn plans (several can be open; the newest is not necessarily this one)
+          const goal = (turn?.goalId ? fm.goal(turn.goalId) : undefined) ?? fm.currentGoal();
           let who: string | undefined;
           if (assignee) {
             who = fm.resolveAgentId(assignee);
             if (!who) return fail(`no worker ${assignee}`);
             if (fm.agent(who)?.role === 'lead') return fail('assign tasks to workers, not yourself');
+          }
+          let repoId = goal?.repoId;
+          if (repo) {
+            const want = repo.trim().toLowerCase();
+            const r = fm.repos.list().find((x) => x.id.toLowerCase() === want || x.name.toLowerCase() === want);
+            if (!r) return fail(`no repository ${repo} (registered: ${fm.repos.list().map((x) => x.id).join(', ')})`);
+            repoId = r.id;
           }
           try {
             const t = fm.tasks.create({
@@ -263,17 +346,44 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
               deps: deps ?? [],
               ...(who ? { assignee: who } : {}),
               ...(priority !== undefined ? { priority } : {}),
-              ...(start_branch ? { startBranch: start_branch } : {}),
               createdBy: agentId,
               ...(goal ? { goalId: goal.id } : {}),
-              ...(goal?.repoId ? { repoId: goal.repoId } : {}),
+              ...(repoId ? { repoId } : {}),
+              ...(start_branch ? { startBranch: start_branch } : {}),
             });
-            fm.bus.feed('task', `Marlow created ${t.id}: ${t.title}`, { agentId });
+            if (size) hooks.onTaskSize?.(t.id, size);
+            if (base && repoId) {
+              try {
+                await hooks.onTaskBase?.(t.id, repoId, base);
+              } catch (e) {
+                fm.tasks.setStatus(t.id, 'cancelled', { force: true });
+                return fail(`cannot build on ${base}: ${(e as Error).message}`);
+              }
+            }
+            fm.bus.feed('task', `${fm.nameOf(agentId)} created ${t.id}: ${t.title}`, { agentId, taskId: t.id });
             hooks.onTasksChanged();
+            // the workers are shared: one busy on another lead's task is never taken off it
+            const busy = who ? fm.tasks.list().find((x) => x.assignee === who && x.status === 'doing' && x.id !== t.id) : undefined;
+            const other = busy ? fm.leadOfTask(busy) : undefined;
+            if (busy && other && other !== agentId) return withInbox(`Created ${t.id}. ${fm.nameOf(who!)} is busy on ${busy.id} for ${fm.nameOf(other)}; ${t.id} waits until they are free (update_task assignee to pick another worker).`);
             return withInbox(`Created ${t.id}.`);
           } catch (e) {
             return fail((e as Error).message);
           }
+        },
+      ),
+      tool(
+        'triage',
+        `Your verdicts on pull request review items (from a triage request): one entry per item ref. fold_in = address it in code (note: what to change; all fold-ins of a PR go to its worker as ONE follow-up); reply = no code change (note: the reply to post, polite and short); ask_user = a product decision for ${userName()} (note: the question); ignore = noise or already handled (a human thread is then resolved without a reply, only with ${userName()}'s approval). Nothing is posted to the PR without ${userName()}'s approval.`,
+        {
+          items: z
+            .array(z.object({ ref: z.string().describe('the item ref, e.g. "t3/thread-12" or "t3/review-11.2"'), verdict: z.enum(['fold_in', 'reply', 'ask_user', 'ignore']), note: z.string().describe('fold_in: what to change; reply: the drafted reply; ask_user: the question; ignore: why') }))
+            .min(1),
+        },
+        async ({ items }) => {
+          if (!hooks.onTriage) return fail('PR watching is not running');
+          const res = hooks.onTriage(items);
+          return res.ok ? withInbox(res.text) : fail(res.text);
         },
       ),
       tool(
@@ -295,7 +405,13 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
           const d = fm.createDecision({
             agentId,
             kind: 'merge',
-            question: `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
+            question: t.pr
+              ? `Push the review fixes for ${t.id} "${t.title}" to PR #${t.pr.id}?`
+              : fm.repos.isUserBase(t.repoId, wt.base)
+                ? `Add ${t.id} "${t.title}" (${wt.branch}) to your branch ${wt.base}?`
+                : fm.repos.landsAsPr(t.repoId)
+                  ? `Open a pull request for ${t.id} "${t.title}" (${wt.branch} into ${wt.base.replace(/^[^/]+\//, '')})?`
+                  : `Merge ${t.id} "${t.title}" (${wt.branch}) into ${wt.base}?`,
             options: [...MERGE_OPTIONS],
             context: `${summary}\n${wt.files} files, +${wt.additions} -${wt.deletions} | tests: ${t.ci}`,
             taskId: t.id,
@@ -314,5 +430,6 @@ export function agentTools(fm: Foreman, agentId: string, role: 'lead' | 'worker'
     const inner = t.handler;
     t.handler = async (args) => (turn?.signal.aborted ? fail('your turn was stopped; nothing was changed') : inner(args));
   }
+
   return tools;
 }

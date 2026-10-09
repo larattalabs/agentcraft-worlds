@@ -11,12 +11,20 @@
 //   image generation and notify hooks are off for agent threads (their Codex app is untouched)
 // - commands run with the git safety environment (no push, no hooks, the agent's own identity),
 //   passed explicitly because Codex drops variables named like secrets (GIT_CONFIG_KEY_0...)
+//
+// Fork notes (docs/FORK.md "Upstream sync 2026-10"): every approval goes through the team's
+// permission gate (the AgentCraft policy, the Foreman-private guard, protected files, the user's
+// deny / ask rules, then the user in game). Under "untrusted" Codex runs commands it considers safe
+// reads (cat, ls, rg...) WITHOUT asking: those never reach the gate. Each one is still checked when
+// it starts, and one that touches the Foreman's own files, token or port interrupts the turn at once - after the fact, so best effort. Output, stderr and errors are redacted (whole
+// lines, before they are cut). A usage limit holds the team like Claude's.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import type { CodexConfig } from '../../config.js';
 import type { Foreman } from '../../foreman.js';
+import { foremanPrivateVerdict } from '../../policy.js';
 import { truncate } from '../../util/text.js';
 import { userName } from '../../user.js';
 import type { AuthCheck, Engine, Role, TurnSpec, TurnStats } from '../engine.js';
@@ -119,6 +127,25 @@ export class CodexEngine implements Engine {
     return `Codex authentication failed (${detail}). Run \`codex login\`, then restart the Foreman.`;
   }
 
+  classifyError(message: string): { auth: boolean; limited?: { resetsAt?: number } } {
+    return { auth: /unauthorized|\b401\b|not logged in|codex login|credential/i.test(message), ...(/usage limit|usageLimitExceeded|rate limit/i.test(message) ? { limited: {} } : {}) };
+  }
+
+  /** Whole stderr lines, redacted (a secret split across two chunks is still one line). */
+  private stderrLines(agentId: string): (s: string) => void {
+    let pending = '';
+    return (s: string) => {
+      pending += s;
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      if (pending.length > 64_000) {
+        lines.push(pending);
+        pending = '';
+      }
+      for (const l of lines) if (l.trim()) this.fm.log.debug(`[${agentId} codex] ${this.fm.redact(l).trim().slice(0, 300)}`);
+    };
+  }
+
   private async initialize(server: AppServer): Promise<void> {
     await server.request('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true, requestAttestation: false } }, 30_000);
     server.notify('initialized');
@@ -173,10 +200,12 @@ export class CodexEngine implements Engine {
       cwd,
       env: serverEnv,
       ...(this.opts.args ? { args: this.opts.args } : {}),
-      onStderr: (s) => this.fm.log.debug(`[${agentId} codex] ${s.trim().slice(0, 300)}`),
+      onStderr: this.stderrLines(agentId),
     });
     spec.onProcess(server.child);
     const tools = new Map(spec.tools.map((t) => [t.name, t]));
+    /** command items the gate approved (their item/started is expected) */
+    const approved = new Set<string>();
     let threadId: string | undefined;
     let turnId: string | undefined;
     let finish!: () => void;
@@ -186,10 +215,22 @@ export class CodexEngine implements Engine {
       // only our own thread reaches the world (Codex could start helper threads of its own)
       if (params?.threadId && threadId && params.threadId !== threadId) return;
       if (abort.signal.aborted) return;
+      // a command Codex may run without asking (it counts it as a safe read): checked as it starts
+      // (Codex announces a command before it asks about it); one that touches the Foreman's own files,
+      // token or port interrupts the turn
+      if (method === 'item/started' && params?.item?.type === 'commandExecution' && !approved.has(String(params.item.id)) && spec.policy) {
+        const sc = shellCommand(String(params.item.command ?? ''));
+        const v = foremanPrivateVerdict(sc.tool, { command: sc.command }, spec.policy());
+        if (v?.action === 'deny') {
+          this.fm.agentLog(agentId, 'error', `blocked (ran without asking): ${sc.tool}: ${truncate(sc.command, 160)} (${v.reason}); turn interrupted`);
+          mapper.stats.errors.push(`interrupted: ${v.reason}`);
+          if (threadId && turnId) server.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
+        }
+      }
       mapper.handle(method, params);
       if (method === 'turn/completed' && (!turnId || params?.turn?.id === turnId)) finish();
     });
-    server.onRequest((method, params) => this.answer(method, params as any, spec, () => threadId, mapper, tools));
+    server.onRequest((method, params) => this.answer(method, params as any, spec, () => threadId, mapper, tools, approved));
 
     const onAbort = () => {
       if (threadId && turnId) server.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
@@ -247,7 +288,7 @@ export class CodexEngine implements Engine {
   }
 
   /** The app-server's own requests: approvals (-> policy / the user) and our team tools. */
-  private async answer(method: string, params: any, spec: TurnSpec, thread: () => string | undefined, mapper: CodexStreamMapper, tools: Map<string, AgentTool>): Promise<unknown> {
+  private async answer(method: string, params: any, spec: TurnSpec, thread: () => string | undefined, mapper: CodexStreamMapper, tools: Map<string, AgentTool>, approved: Set<string>): Promise<unknown> {
     const ours = !!params?.threadId && params.threadId === thread();
     const { cwd, abort } = spec;
     switch (method) {
@@ -256,6 +297,7 @@ export class CodexEngine implements Engine {
         if (params.kind === 'writeStdin') return { decision: 'accept' }; // input to a command already approved
         const sc = shellCommand(String(params.command ?? ''));
         const r = await spec.permission(sc.tool, { command: sc.command }, abort.signal, params.reason ?? undefined);
+        if (r.allow && params.itemId) approved.add(String(params.itemId));
         return { decision: r.allow ? 'accept' : r.interrupt ? 'cancel' : 'decline' };
       }
       case 'item/fileChange/requestApproval': {

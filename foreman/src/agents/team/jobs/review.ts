@@ -1,4 +1,4 @@
-// Claude backend, review jobs: a finished task runs CI in its worktree, then the lead reviews it
+// The team, review jobs: a finished task runs CI in its worktree, then the lead reviews it
 // (request_merge or changes) or the merge decision goes straight to the user.
 import type { Task } from '../../../protocol.js';
 import { MERGE_OPTIONS } from '../../../protocol.js';

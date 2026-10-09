@@ -131,14 +131,15 @@ export class CodexStreamMapper {
         if (!it) break;
         this.items.set(it.id, { ...this.items.get(it.id), ...it });
         if (it.type === 'agentMessage') {
-          const text = String(it.text ?? '').trim();
+          // redacted before anything cuts it (agentLog redacts too, but after the clip below)
+          const text = fm.redact(String(it.text ?? '')).trim();
           if (!text) break;
           fm.agentLog(id, 'text', truncate(text, 1200));
           this.set({ state: 'thinking', activity: firstLine(text, 48) });
           if (it.phase === 'final_answer' || it.phase == null) this.finalText = text;
         } else if (it.type === 'commandExecution') {
           this.steps++;
-          const out = String(it.aggregatedOutput ?? '');
+          const out = fm.redact(String(it.aggregatedOutput ?? ''));
           if (it.status === 'declined') fm.agentLog(id, 'error', 'command not run (declined)');
           else if (it.status === 'failed' || (typeof it.exitCode === 'number' && it.exitCode !== 0)) fm.agentLog(id, 'error', truncate(`exit ${it.exitCode ?? '?'}${out ? `\n${tailLines(out, 6, 700)}` : ''}`, 800));
           else fm.agentLog(id, 'result', tailLines(out, 8, 900) || '(no output)');
@@ -149,10 +150,10 @@ export class CodexStreamMapper {
           this.refreshSoon();
         } else if (it.type === 'dynamicToolCall') {
           this.steps++;
-          const text = (Array.isArray(it.contentItems) ? it.contentItems : []).map((c: { text?: string }) => c.text ?? '').join('\n');
+          const text = fm.redact((Array.isArray(it.contentItems) ? it.contentItems : []).map((c: { text?: string }) => c.text ?? '').join('\n'));
           fm.agentLog(id, it.success === false ? 'error' : 'result', it.success === false ? truncate(text || 'tool error', 600) : headLines(text, 3, 300) || 'ok');
         } else if (it.type === 'reasoning') {
-          const summary = (Array.isArray(it.summary) ? it.summary : []).join(' ').trim();
+          const summary = fm.redact((Array.isArray(it.summary) ? it.summary : []).join(' ')).trim();
           if (summary) fm.agentLog(id, 'text', `~ ${truncate(summary.replace(/\s+/g, ' '), 300)}`);
         }
         break;
@@ -163,7 +164,7 @@ export class CodexStreamMapper {
         break;
       }
       case 'error': {
-        const msg = String(params?.error?.message ?? 'error');
+        const msg = fm.redact(String(params?.error?.message ?? 'error'));
         fm.agentLog(id, 'error', `${params?.willRetry ? 'retrying: ' : ''}${truncate(msg, 400)}`);
         if (!params?.willRetry) this.stats.errors.push(msg);
         if (params?.error?.codexErrorInfo === 'unauthorized') this.stats.authFailed = firstLine(msg, 200);
@@ -187,7 +188,11 @@ export class CodexStreamMapper {
         if (turn.error?.message) {
           this.stats.errors.push(String(turn.error.message));
           if (turn.error.codexErrorInfo === 'unauthorized') this.stats.authFailed = firstLine(String(turn.error.message), 200);
-          if (turn.error.codexErrorInfo === 'usageLimitExceeded') this.stats.subtype = 'error_usage_limit';
+          if (turn.error.codexErrorInfo === 'usageLimitExceeded') {
+            this.stats.subtype = 'error_usage_limit';
+            // the team holds new turns until it resets (no reset time given: backoff), like Claude's
+            this.stats.limited = true;
+          }
         }
         const tokens = this.stats.tokens ? ` · ${Math.round(this.stats.tokens / 1000)}k tokens` : '';
         fm.agentLog(id, this.stats.isError ? 'error' : 'result', `turn ${status === 'completed' ? 'complete' : `ended: ${status}${turn.error?.message ? ` (${truncate(String(turn.error.message), 160)})` : ''}`} (${this.steps} steps${tokens})`);

@@ -1,10 +1,10 @@
-// Claude backend, goal messages (Goals tab): goal.message runs as a turn of the lead's session for that
+// The team, goal messages (Goals tab): goal.message runs as a turn of the lead's session for that
 // goal, built from the goal's unread messages when it starts; its reply goes to the goal's thread.
 // A restart, stop or release before the lead answered (also while the turn is paused, held for the
 // usage limit or waiting for its automatic retry) offers the messages again.
 import type { Goal } from '../../../protocol.js';
 import { truncate } from '../../../util/text.js';
-import { type TurnStats } from '../stream.js';
+import { type TurnStats } from '../../claude/stream.js';
 import { userName } from '../../../user.js';
 import { FollowupJobs } from './followup.js';
 import { type Job, type Inflight } from '../core.js';

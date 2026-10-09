@@ -186,14 +186,26 @@ describe('session options', () => {
     });
     try {
       for (const o of options) {
+        const lead = !(o.tools as string[]).includes('Edit');
         expect(o.permissionMode).toBe('auto');
-        expect(o.hooks?.PreToolUse).toHaveLength(3); // the Foreman guard, the MCP gate, then the guardrail
+        // the Foreman guard, the MCP gate, (the lead: its read-only guard,) then the guardrail
+        expect(o.hooks?.PreToolUse).toHaveLength(lead ? 4 : 3);
         expect(o.settings).toEqual({ permissions: { allow: ['Bash(codex exec:*)'], deny: [], ask: [] }, ...NO_ATTRIBUTION });
         expect(o.tools).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch', 'Agent', 'Task']));
         expect(o.disallowedTools).toEqual(['Bash(git push:*)']);
         expect(Object.keys(o.agents ?? {})).toEqual(['checker']);
       }
-      expect(options[0]!.tools).not.toContain('Bash'); // the lead stays read-only
+      // the lead stays read-only: it has a shell (upstream d4ad706), but its guard asks before anything
+      // that is not a read, ahead of the allow rule and the classifier
+      const lead = options[0]!;
+      expect(lead.tools).not.toContain('Edit');
+      expect(lead.tools).not.toContain('Write');
+      const guard = lead.hooks!.PreToolUse![2]!.hooks[0]!;
+      const pre = (command: string) =>
+        guard({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'x', session_id: 's', transcript_path: '', cwd: lead.cwd! } as HookInput, 'x', { signal: new AbortController().signal });
+      expect(await pre('codex exec "rm -rf src"')).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' } }); // the allow rule does not reach the lead
+      expect(await pre('rm -rf src')).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' } });
+      expect(await pre('git log --oneline -5')).toEqual({});
       const logs = () => {
         h.fm.flushLogs();
         return JSON.stringify(h.events.filter((e) => e.type === 'agent.log'));
@@ -254,7 +266,8 @@ describe('claude.ai connectors', () => {
     const none = await session({});
     try {
       expect(none.options.every((o) => o.strictMcpConfig === true)).toBe(true);
-      expect(none.options.every((o) => o.hooks?.PreToolUse?.length === 2)).toBe(true); // the MCP gate runs on every turn
+      // the MCP gate runs on every turn (the Foreman guard too; a lead's turn also has its read-only guard)
+      expect(none.options.every((o) => o.hooks?.PreToolUse?.length === ((o.tools as string[]).includes('Edit') ? 2 : 3))).toBe(true);
     } finally {
       await none.cleanup();
     }
@@ -262,7 +275,8 @@ describe('claude.ai connectors', () => {
     try {
       for (const o of some.options) {
         expect(o.strictMcpConfig).toBe(false);
-        expect(o.hooks?.PreToolUse).toHaveLength(2); // the Foreman guard and the MCP gate (policy mode: no guardrail hook)
+        // the Foreman guard and the MCP gate (policy mode: no guardrail hook; a lead: its read-only guard)
+        expect(o.hooks?.PreToolUse).toHaveLength((o.tools as string[]).includes('Edit') ? 2 : 3);
       }
       expect(some.h.cfg.claude.context.connectors).toEqual(['monday.com']);
     } finally {

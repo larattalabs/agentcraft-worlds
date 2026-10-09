@@ -47,7 +47,7 @@ describe('a lead session that grew long', () => {
     const lead: Array<{ prompt: string; resume?: string; session: string }> = [];
     const cost = new Map<string, number>();
     const queryFn = ({ prompt, options }: { prompt: string; options: Options }) => {
-      const isLead = !(options.tools as string[]).includes('Bash');
+      const isLead = !(options.tools as string[]).includes('Edit');
       const s = options.resume ?? sid();
       if (isLead) lead.push({ prompt: String(prompt), session: s, ...(options.resume ? { resume: options.resume } : {}) });
       async function* run(): AsyncGenerator<SDKMessage> {
@@ -97,7 +97,7 @@ describe('a lead session that grew long', () => {
     const fm = h.fm;
     const lead: Array<{ prompt: string; resume?: string; session: string }> = [];
     const queryFn = ({ prompt, options }: { prompt: string; options: Options }) => {
-      const isLead = !(options.tools as string[]).includes('Bash');
+      const isLead = !(options.tools as string[]).includes('Edit');
       const s = options.resume ?? sid();
       if (isLead) lead.push({ prompt: String(prompt), session: s, ...(options.resume ? { resume: options.resume } : {}) });
       const nth = lead.length;

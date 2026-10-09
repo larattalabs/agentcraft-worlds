@@ -1,9 +1,9 @@
-// Claude backend: after a turn. What the job's end means for its goal or task (plan -> active, a
+// The team: after a turn. What the job's end means for its goal or task (plan -> active, a
 // worker's task -> CI and review, blocked, nudged), and the one automatic retry of a turn that failed
 // for a passing reason.
 import { truncate } from '../../util/text.js';
-import { classifyFailure } from './failures.js';
-import { type TurnStats } from './stream.js';
+import { classifyFailure } from '../claude/failures.js';
+import { type TurnStats } from '../claude/stream.js';
 import { SessionsLayer } from './sessions.js';
 import { type Job, clock } from './core.js';
 

@@ -13,6 +13,7 @@
 //  - removing a finished worktree's directory never fails an operation (busy dirs are retried
 //    later) and never deletes anything outside the worktree root
 import { isSecretEnvVar } from './util/env.js';
+import { credentialLikeName } from './redact.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,6 +26,7 @@ import { withGitSafety } from './gitsafety.js';
 import { ensureDir, isInsideOrEqual } from './util/fsx.js';
 import { agentGitIdentity, git, gitConfigGet, gitOut, gitRemote, identityEnv, listWorktrees } from './util/git.js';
 import { openPullRequest, parseRemote, type PrHost } from './prs.js';
+import { isPrBranch } from './pulls.js';
 import { run, runShell } from './util/proc.js';
 import { slugify, tailLines } from './util/text.js';
 
@@ -170,6 +172,8 @@ export interface PrepareResult {
   copied: string[];
   /** the setup command, when one ran */
   setup?: { command: string; ok: boolean; output: string; durationMs: number };
+  /** copy and setup were configured but not applied: the worktree holds a contributor's pull request */
+  skipped?: 'contributor';
 }
 
 /** the user's git identity as their own git sees it in that repo (falls back to AgentCraft). */
@@ -741,13 +745,23 @@ export class RepoManager {
     return `not pushed: ${remote}/${branch} has commits that are not on your ${branch} (pull or merge, then push yourself)`;
   }
 
+  /**
+   * The worktree works on a contributor's pull request (PR intake, pulls.ts: its task starts from
+   * agentcraft/pr-<n>): its commits are the contributor's, so landing keeps them as they are, never
+   * squashed into one commit of the user's (repoSettings pr.squash, --merge-style squash).
+   */
+  keepsContributorCommits(w: Worktree): boolean {
+    const t = w.taskId ? this.ctx.store.data.tasks.find((x) => x.id === w.taskId) : undefined;
+    return !!t?.startBranch && isPrBranch(t.startBranch);
+  }
+
   /** Land an approved task the repo's way: a local merge, or a pull request (repoSettings.land). */
   async land(decision: Decision, opts: { commitMessage?: string; title?: string; description?: string } = {}): Promise<LandResult> {
     const w = decision.repoId && decision.worktree ? this.findWorktree(decision.repoId, decision.worktree) : undefined;
     if (decision.repoId && w && this.isUserBase(decision.repoId, w.base)) {
       // the user's own branch: add the work to it (squashed if the repo's PRs are squashed), then
       // fast-forward it on the remote when it is there, so a PR already open from it updates
-      const squash = !!this.settingsFor(decision.repoId).pr?.squash;
+      const squash = !!this.settingsFor(decision.repoId).pr?.squash && !this.keepsContributorCommits(w);
       const res = await this.merge(decision, { ...opts, ...(squash ? { style: 'squash' as const } : {}) });
       return { kind: 'merge', ...res, pushed: await this.pushUserBranch(decision.repoId, w.base) };
     }
@@ -812,7 +826,7 @@ export class RepoManager {
       if (mt.code !== 0) throw new RepoError(`merge-tree failed: ${mt.stderr.trim()}`, 'failed');
 
       // 2. what to push: the agents' commits, or one commit authored by the user on top of the base
-      if (s.pr?.squash) {
+      if (s.pr?.squash && !this.keepsContributorCommits(w)) {
         const tree = mt.stdout.trim().split('\n')[0]!.trim();
         const baseSha = await gitOut(r.path, ['rev-parse', baseRef]);
         // the user's own commit: no co-author trailers, no tool attribution (C8)
@@ -924,7 +938,7 @@ export class RepoManager {
     const branchSha = await gitOut(r.path, ['rev-parse', `refs/heads/${w.branch}`]);
     const tree = (await gitOut(r.path, ['merge-tree', '--write-tree', '--no-messages', w.base, w.branch])).split('\n')[0]!.trim();
     // the user's own commit (they approved it): no co-author trailers and no tool attribution (C8)
-    const squash = (style ?? this.opts.mergeStyle) === 'squash';
+    const squash = (style ?? this.opts.mergeStyle) === 'squash' && !this.keepsContributorCommits(w);
     const msg = squash ? (commitMessage ?? w.taskId ?? w.id).trim() : `Merge ${w.branch} into ${w.base}`;
     const sign = !!this.opts.signMerges && (await gitConfigGet(r.path, 'commit.gpgsign', 'bool')) === 'true';
     const { env } = await userIdentity(r.path);
@@ -1353,6 +1367,18 @@ export class RepoManager {
     return out;
   }
 
+  /**
+   * repoSettings.env for work in a worktree. A contributor's pull request (PR intake) runs code the
+   * user did not write: its agent, setup and CI get no credential-like variables (names like
+   * *_TOKEN, *_KEY, *SECRET*, PASSWORD), only the rest (PATH and the like).
+   */
+  envForWorktree(repoId: string | undefined, worktreeId: string | undefined, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+    const env = this.envFor(repoId, base);
+    const w = repoId && worktreeId ? this.findWorktree(repoId, worktreeId) : undefined;
+    if (!w || !this.keepsContributorCommits(w)) return env;
+    return Object.fromEntries(Object.entries(env).filter(([k]) => !credentialLikeName(k)));
+  }
+
   /** The repo's settings from config.json (matched by path), or {}. */
   settingsFor(repoId: string): RepoSettings {
     const r = this.get(repoId);
@@ -1380,6 +1406,14 @@ export class RepoManager {
     const out: PrepareResult = { copied: [] };
     if (meta.prepared) return out;
     const s = this.settingsFor(repoId);
+    // a contributor's pull request (PR intake): no copied files (.env ...) and no automatic setup
+    // command (an install runs the contributor's lifecycle scripts) in a worktree of code the user
+    // did not write; the worker installs what it needs through the policy, which asks
+    if (this.keepsContributorCommits(w)) {
+      meta.prepared = true;
+      this.ctx.store.markDirty();
+      return { ...out, ...(s.setup || s.copy?.length ? { skipped: 'contributor' as const } : {}) };
+    }
     for (const rel of s.copy ?? []) {
       const from = path.resolve(r.path, rel);
       const to = path.resolve(w.path, rel);
@@ -1417,7 +1451,7 @@ export class RepoManager {
     const t0 = Date.now();
     // the worktree's test scripts are agent-editable code: run them with git transports disabled
     // (a `git push` inside a test script fails) and kill the whole process tree on timeout
-    const res = await runShell(cmd, { cwd, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...this.envFor(repoId) }, { ceiling: path.dirname(path.resolve(cwd)) }) });
+    const res = await runShell(cmd, { cwd, timeoutMs, env: withGitSafety(process.env, { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...this.envForWorktree(repoId, worktreeId) }, { ceiling: path.dirname(path.resolve(cwd)) }) });
     const full = `${res.stdout}\n${res.stderr}${res.timedOut ? `\n(timed out after ${Math.round(timeoutMs / 1000)}s; process tree killed)` : ''}`;
     const output = tailLines(this.ctx.redact ? this.ctx.redact(full) : full, 40, 3000);
     return { pass: res.code === 0 && !res.timedOut, code: res.code, command: cmd, output, durationMs: Date.now() - t0, ...parseTestOutput(full) };

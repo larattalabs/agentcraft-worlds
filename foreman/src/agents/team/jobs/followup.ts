@@ -1,4 +1,4 @@
-// Claude backend, follow-up jobs: an agent's session resumed with new input (a user message, an
+// The team, follow-up jobs: an agent's session resumed with new input (a user message, an
 // answer after a restart), and the PR side: the lead triages a pull request's new comments, reviews
 // and checks (prwatch.ts) and fold-ins send the task back to its worker.
 import type { Decision, Task } from '../../../protocol.js';

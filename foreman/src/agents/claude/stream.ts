@@ -5,30 +5,8 @@ import { firstLine, headLines, tailLines, truncate } from '../../util/text.js';
 import { relPath, toolActivity } from '../activity.js';
 import { AUTH_ERRORS, isAuthText, isNetworkText } from './failures.js';
 
-export interface TurnStats {
-  sessionId?: string;
-  resultText?: string;
-  subtype?: string;
-  isError: boolean;
-  costUsd?: number;
-  numTurns?: number;
-  authFailed?: string;
-  errors: string[];
-  /** a usage/rate limit refused this turn (rate_limit_event "rejected" or an API rate_limit error) */
-  limited?: boolean;
-  /** the latest rate limit report seen in the turn */
-  rateLimit?: RateLimitReport;
-}
-
-/** A plan usage report from the CLI (claude.ai subscription logins). */
-export interface RateLimitReport {
-  status: 'allowed' | 'allowed_warning' | 'rejected';
-  /** epoch ms */
-  resetsAt?: number;
-  type?: string;
-  /** 0-1 */
-  utilization?: number;
-}
+import type { RateLimitReport, TurnStats } from '../engine.js';
+export type { RateLimitReport, TurnStats };
 
 const LIMIT_RE = /usage limit|rate[ _-]?limit/i;
 

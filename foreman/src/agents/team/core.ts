@@ -1,6 +1,9 @@
-// Claude backend: real Claude Agent SDK sessions for the lead and workers.
+// The agent team: a lead per building and shared workers doing real work, each turn run by an
+// engine (../engine.ts): the Claude Agent SDK or the Codex app-server, chosen per agent (a team can
+// mix them). This folder is upstream's team.ts split into layers (fork wave 3); upstream edits to
+// team.ts are ported here by hand (docs/FORK.md "Upstream sync 2026-10").
 //
-// Each agent processes a queue of jobs, one SDK `query()` turn per job:
+// Each agent processes a queue of jobs, one engine turn per job:
 //   plan    lead explores the repo (read-only), writes the plan, creates tasks
 //   work    worker implements a task in its own git worktree
 //   review  lead reviews a finished task (diff + CI) -> request_merge or changes
@@ -23,10 +26,10 @@
 // committed on its branch. The next worker's worktree then starts from that branch.
 //
 // The backend is one class assembled in layers, one file each (base first):
-//   core.ts            state (every field lives here), queues, the scheduler tick, small helpers
-//   holds.ts           auth probe, usage limits / warnings / reserve: foreman.status.hold
-//   turnSetup.ts       a turn's cwd, role, model, policy, permissions, hooks, worktree setup
-//   sessions.ts        running a turn (SDK query, CLI process, sessions, rotation, abort / reap, hand-off)
+//   core.ts            state (every field lives here), engines per agent, queues, the scheduler tick
+//   holds.ts           auth probes, usage limits / warnings / reserve: foreman.status.hold
+//   turnSetup.ts       a turn's cwd, role, model, policy context, permission gate, worktree setup
+//   sessions.ts        running a turn (the engine, its process, sessions, rotation, abort / reap, hand-off)
 //   outcomes.ts        after a turn: settle the goal / task, the one automatic retry
 //   recovery.ts        after a restart: re-queue what was in flight, reconcile states
 //   jobs/plan.ts       plan jobs (goals)
@@ -35,29 +38,32 @@
 //   jobs/followup.ts   follow-ups: user messages, answers, PR triage and fold-ins
 //   jobs/goalMessages.ts  goal messages (Goals tab)
 //   jobs/designTurns.ts  building design turns (design.ts DesignJobs runs them)
-//   index.ts           ClaudeBackend: lifecycle, steering, leads
+//   ../team.ts         TeamBackend: lifecycle, steering, leads (claude/index.ts: ClaudeBackend)
 // A method a base layer calls but a later layer implements is declared abstract at the end of
 // BackendCore. Later layers add methods only: with ES2022 class fields, a field declared in a
 // derived class would be re-initialised after the base constructor ran.
 import { type ChildProcess } from 'node:child_process';
 import path from 'node:path';
-import { query, type AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
-import { DesignJobs, type AuxTurn, type AuxTurnSpec } from './design.js';
+import { DesignJobs, type AuxTurn, type AuxTurnSpec } from '../claude/design.js';
 import type { ClaudeConfig } from '../../config.js';
 import { FOREMAN_VERSION } from '../../config.js';
 import { type Foreman } from '../../foreman.js';
 import { withGitSafety } from '../../gitsafety.js';
 import { agentGitIdentity } from '../../util/git.js';
-import type { Decision, Goal, Task } from '../../protocol.js';
+import type { BackendName, Decision, Goal, Task } from '../../protocol.js';
+import type { ForemanPrivate } from '../../policy.js';
 import { type ProcEntry } from '../../util/proc.js';
 import { SessionHistory } from '../../history.js';
 import { boardSummary, planText } from '../prompts.js';
 import { PrWatcher, type TriageItem } from '../../prwatch.js';
 import type { RunFn } from '../../prs.js';
-import { withAuthMode } from './auth.js';
+import { API_KEY_VARS, CLAUDE_LOGIN_VARS } from '../claude/auth.js';
 import type { SessionRecord } from '../../store.js';
-import { type TurnStats } from './stream.js';
-import { type ToolHooks } from './tools.js';
+import type { Engine, EngineId, Role, TurnStats } from '../engine.js';
+import { modelLabel } from '../models.js';
+import type { PullRequest } from '../../pulls.js';
+import { fetchPulls, githubOrigin } from '../../pulls.js';
+import { type ToolHooks } from '../tools.js';
 import { scrubEnv } from '../../util/env.js';
 
 export type JobKind = 'plan' | 'work' | 'review' | 'followup' | 'triage';
@@ -124,9 +130,7 @@ export interface Running {
   abort: AbortController;
   job: Job;
   reason?: AbortReason;
-  /** the live query, force-closed on abort */
-  q?: { close(): void };
-  /** the agent's CLI process (we spawn it, so we know its pid) */
+  /** the agent's CLI process (the engine spawns it and reports it, so we know its pid) */
   child?: ChildProcess;
   /** settles when runJob is completely done with this turn */
   done?: Promise<void>;
@@ -150,9 +154,6 @@ export function clock(ms: number): string {
 export function alive(child: ChildProcess | undefined): child is ChildProcess {
   return !!child && child.exitCode === null && child.signalCode === null;
 }
-
-/** Claude Code settings that keep Claude's co-author trailer, PR footer and session link out (C8). */
-export const NO_ATTRIBUTION = { attribution: { commit: '', pr: '', sessionUrl: false }, includeCoAuthoredBy: false } as const;
 
 export const TURN_TIMEOUT_MS = 45 * 60_000;
 /** wait after a usage limit that did not say when it resets (doubles per hit, up to LIMIT_BACKOFF_MAX_MS) */
@@ -187,6 +188,19 @@ export function agentEnv(base: NodeJS.ProcessEnv = process.env, who: { agentId?:
   );
 }
 
+/** The Foreman's own home, port and client token: off limits for agents (policy.ts). */
+export function foremanPrivateOf(fm: Foreman): ForemanPrivate {
+  const e = fm.endpoint;
+  return { home: fm.config.home, port: e?.port ?? fm.config.port, ...(e?.tokenFile ? { tokenFile: e.tokenFile } : {}) };
+}
+
+/** An environment without the Claude credentials (for an engine that is not Claude: Codex agents never get them). */
+export function withoutClaudeAuth(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const out = { ...env };
+  for (const k of Object.keys(out)) if ([...API_KEY_VARS, ...CLAUDE_LOGIN_VARS].includes(k.toUpperCase())) delete out[k];
+  return out;
+}
+
 /**
  * Lead session rotation (claude.leadSession): why the stored session should be replaced by a fresh
  * one, or undefined. A record from before rotation existed (no startedAt) is not rotated: its clock
@@ -205,11 +219,30 @@ export function goalReplyOf(inf: Inflight): Pick<Job, 'goalReply' | 'startedAt' 
   return inf.goalReply ? { goalReply: true, startedAt: inf.startedAt, ...(inf.messageIds ? { messageIds: inf.messageIds } : {}) } : {};
 }
 
-export interface ClaudeBackendOptions {
-  /** injectable for tests */
-  queryFn?: typeof query;
+/** Which engine runs which agent: the leads', the workers', and per-agent exceptions. */
+export interface TeamEngines {
+  lead: Engine;
+  worker: Engine;
+  byAgent?: Record<string, Engine>;
+  /** building design jobs (Claude only); none: design requests are refused */
+  design?: Engine;
+}
+
+export interface PullFetcher {
+  origin(repoPath: string): Promise<string | undefined>;
+  fetch(repoPath: string, numbers: number[]): Promise<{ pulls: PullRequest[]; errors: string[] }>;
+}
+
+export const defaultPullFetcher: PullFetcher = { origin: (p) => githubOrigin(p), fetch: (p, n) => fetchPulls(p, n) };
+
+export interface TeamOptions {
+  /** the backend name reported to clients ("claude" or "codex": the workers' engine) */
+  name: BackendName;
+  engines: TeamEngines;
   /** skip the startup auth probe (tests) */
   skipAuthCheck?: boolean;
+  /** injectable for tests: pull request intake (default: git + gh, see pulls.ts) */
+  pullFetcher?: PullFetcher;
   /** runs `az` / `gh` for pull requests (opening and watching them); tests inject a fake */
   prRunFn?: RunFn;
   /** first auth-probe retry delay after a network failure (tests) */
@@ -221,7 +254,7 @@ export interface ClaudeBackendOptions {
 }
 
 export abstract class BackendCore {
-  readonly name = 'claude' as const;
+  readonly name: BackendName;
 
   protected queues = new Map<string, Job[]>();
 
@@ -256,8 +289,6 @@ export abstract class BackendCore {
 
   protected waitingUser = new Set<string>();
 
-  protected readonly queryFn: typeof query;
-
   protected hooks: ToolHooks;
 
   protected lastCost = new Map<string, number>();
@@ -283,14 +314,8 @@ export abstract class BackendCore {
 
   protected limitBackoffMs = LIMIT_BACKOFF_MS;
 
-  /** the Foreman's skills plugin (built at start from claude.context.skills) */
-  protected skillsPlugin: { path: string; ids: string[] } | undefined;
-
   /** the user's earlier Claude sessions (claude.context.sessionHistory) */
   protected history: SessionHistory | undefined;
-
-  /** subagent definitions from claude.subagents.agents (loaded at start) */
-  protected subagentDefs: Record<string, AgentDefinition> = {};
 
   /** role files that could not be read (warned once each) */
   protected roleProblems = new Set<string>();
@@ -304,12 +329,18 @@ export abstract class BackendCore {
   /** when the plan's usage windows were last read (refreshUsage) */
   protected lastUsageRead = 0;
 
+  /** the model each agent's last turn really ran (shown on its nameplate) */
+  protected reportedModels = new Map<string, { engine: EngineId; label: string }>();
+
+  protected readonly pullFetcher: PullFetcher;
+
   constructor(
     protected readonly fm: Foreman,
     protected readonly cfg: ClaudeConfig,
-    protected readonly opts: ClaudeBackendOptions = {},
+    protected readonly opts: TeamOptions,
   ) {
-    this.queryFn = opts.queryFn ?? query;
+    this.name = opts.name;
+    this.pullFetcher = opts.pullFetcher ?? defaultPullFetcher;
     this.designs = new DesignJobs({
       fm: this.fm,
       cfg: this.cfg,
@@ -379,6 +410,49 @@ export abstract class BackendCore {
     s.foldIns ??= {};
     s.goalLead ??= {};
     return s;
+  }
+
+  /** The engine that runs an agent's turns (every lead: the lead engine). */
+  engineFor(agentId: string): Engine {
+    const e = this.opts.engines;
+    return e.byAgent?.[agentId] ?? (this.fm.isLead(agentId) ? e.lead : e.worker);
+  }
+
+  /** Every engine on the team: each is checked at start (building designs: when they run). */
+  protected enginesInUse(): Engine[] {
+    return [...new Set([...this.leadsOnDuty(), ...this.team].map((id) => this.engineFor(id)))];
+  }
+
+  /** Every engine the team was given (prepared at start). */
+  protected allEngines(): Engine[] {
+    const e = this.opts.engines;
+    return [...new Set([e.lead, e.worker, ...Object.values(e.byAgent ?? {}), ...(e.design ? [e.design] : [])])];
+  }
+
+  /** e.g. "Claude (lead opus, workers sonnet)" or "Claude lead opus · Codex workers gpt-5" */
+  protected teamLabel(): string {
+    const lead = this.opts.engines.lead;
+    const workers = [...new Set(this.team.map((w) => this.engineFor(w)))];
+    // aliases as configured ("opus"), full model ids as display names ("claude-opus-5-5" -> "Opus 5.5")
+    const m = (e: Engine, role: Role) => (/^[a-z]+$/.test(e.model(role)) ? e.model(role) : (modelLabel(e.model(role)) ?? e.model(role)));
+    if (!workers.length || (workers.length === 1 && workers[0] === lead)) return `${lead.label} (lead ${m(lead, 'lead')}, workers ${m(lead, 'worker')})`;
+    if (workers.length === 1) return `${lead.label} lead ${m(lead, 'lead')} · ${workers[0]!.label} workers ${m(workers[0]!, 'worker')}`;
+    return `${lead.label} lead ${m(lead, 'lead')} · ${this.team.map((w) => `${this.fm.nameOf(w)} ${this.engineFor(w).label}`).join(', ')}`;
+  }
+
+  /**
+   * Every agent's nameplate shows its engine and model: the configured one (its profile's model for a
+   * Claude agent) until a turn reports the real one. Off-shift agents too: what they would run.
+   */
+  protected showEngines(): void {
+    for (const a of this.fm.agents()) {
+      const engine = this.engineFor(a.id);
+      const role: Role = this.fm.isLead(a.id) ? 'lead' : 'worker';
+      const reported = this.reportedModels.get(a.id);
+      const configured = engine.id === 'claude' ? (this.cfg.agents[a.id]?.model ?? engine.model(role)) : engine.model(role);
+      const model = (reported?.engine === engine.id ? reported.label : undefined) ?? modelLabel(configured) ?? engine.label;
+      this.fm.setAgent(a.id, { engine: engine.id, model });
+    }
   }
 
   get team(): string[] {
@@ -521,8 +595,9 @@ export abstract class BackendCore {
     return !this.fm.tasks.list().some((t) => t.assignee === w && t.status === 'doing');
   }
 
+  /** An agent's base environment (git safety, identity); each engine applies its own auth on top. */
   protected env(who: { agentId?: string; cwd?: string } = {}): Record<string, string | undefined> {
-    return scrubEnv(withAuthMode(agentEnv(process.env, who), this.cfg.useClaudeLogin));
+    return scrubEnv(agentEnv(process.env, who));
   }
 
   // ---- implemented by later layers (one file each, see the list above) ----

@@ -4,6 +4,7 @@
 // every answer it gets to $FAKE_CODEX_LOG (one JSON object per line).
 //
 // Steps: { cmd, foreign?, output? }  run a shell command (asks for approval; foreign: from another thread)
+//        { silentCmd, output? }       a command Codex counts as a safe read: run without asking
 //        { write: { file, content } } edit a file in the worktree (no approval: inside the sandbox)
 //        { editOutside: path }        an edit outside the sandbox (asks for file-change approval)
 //        { tool, args }               call a dynamic tool (the AgentCraft team tools)
@@ -16,7 +17,7 @@ import readline from 'node:readline';
 const scenario = JSON.parse(fs.readFileSync(process.env.FAKE_CODEX_SCENARIO, 'utf8'));
 const logFile = process.env.FAKE_CODEX_LOG;
 const log = (o) => logFile && fs.appendFileSync(logFile, `${JSON.stringify({ pid: process.pid, ...o })}\n`);
-log({ serverLocalAppData: process.env.LOCALAPPDATA });
+log({ serverLocalAppData: process.env.LOCALAPPDATA, anthropicKey: !!process.env.ANTHROPIC_API_KEY });
 let nextId = 1000;
 const pending = new Map();
 const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
@@ -47,6 +48,11 @@ async function play(params, turnId) {
       const r = await ask('item/commandExecution/requestApproval', { threadId: s.foreign ? 'th-somebody-else' : thread, turnId, itemId, kind: 'command', command, cwd, startedAtMs: Date.now(), environmentId: 'local' });
       log({ cmd: s.cmd, foreign: !!s.foreign, decision: r.decision });
       notify('item/completed', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd, status: r.decision === 'accept' ? 'completed' : 'declined', aggregatedOutput: s.output ?? '', exitCode: r.decision === 'accept' ? 0 : null } });
+    } else if (s.silentCmd) {
+      const command = wrap(s.silentCmd);
+      notify('item/started', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd, status: 'inProgress', commandActions: [] } });
+      log({ silentCmd: s.silentCmd });
+      notify('item/completed', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd, status: 'completed', aggregatedOutput: s.output ?? '', exitCode: 0 } });
     } else if (s.write) {
       const file = path.join(cwd, s.write.file);
       fs.appendFileSync(file, s.write.content);

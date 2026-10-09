@@ -1,68 +1,48 @@
-// Claude backend: holds on new turns. The startup auth probe (auth failed: until a restart;
-// unreachable: retried with backoff), usage limits and warnings reported by running turns, and the
-// usage reserve, published as foreman.status.hold.
+// The team: holds on new turns. The startup auth probes (auth failed: until a restart; unreachable:
+// retried with backoff), usage limits and warnings reported by running turns, and the usage reserve
+// (the Claude plan's windows), published as foreman.status.hold.
 import { truncate } from '../../util/text.js';
-import { detectApiAuth, NO_API_AUTH_MESSAGE } from './auth.js';
-import { pruneUsage, readPlanUsage, reserveHold, usageLine, withWindow } from './usage.js';
-import { probeFailure } from './failures.js';
+import { pruneUsage, readPlanUsage, reserveHold, usageLine, withWindow } from '../claude/usage.js';
 import type { ForemanHold } from '../../protocol.js';
-import { type RateLimitReport, type TurnStats } from './stream.js';
+import type { AuthCheck, RateLimitReport, TurnStats } from '../engine.js';
 import { BackendCore } from './core.js';
 import { type Job, clock, LIMIT_BACKOFF_MAX_MS, THROTTLE_DEFAULT_MS, USAGE_REFRESH_MS, AUTH_RETRY_MS, AUTH_RETRY_MAX_MS } from './core.js';
 
 export abstract class HoldsLayer extends BackendCore {
+  /**
+   * Every engine on the team checks its login / key (in turn). A bad one fails the team until a
+   * restart; one that could not reach its service (network, sleep, outage) puts the team offline
+   * and is probed again with backoff.
+   */
   async checkAuth(): Promise<boolean> {
     if (this.opts.skipAuthCheck) {
-      this.fm.setStatus({ auth: 'ok', message: `Claude (lead ${this.cfg.leadModel}, workers ${this.cfg.workerModel})` });
+      this.fm.setStatus({ auth: 'ok', message: this.teamLabel() });
       return true;
     }
-    // API authentication by default; the claude.ai login only when explicitly opted into
-    const api = detectApiAuth(process.env);
-    if (!this.cfg.useClaudeLogin && !api.ok) {
-      this.markAuthFailed(NO_API_AUTH_MESSAGE);
-      return false;
-    }
-    this.fm.setStatus({ auth: 'checking', message: this.cfg.useClaudeLogin ? 'Checking Claude login...' : 'Checking Claude API access...' });
-    async function* never(): AsyncGenerator<never> {
-      await new Promise(() => undefined);
-    }
-    const q = this.queryFn({ prompt: never(), options: { settingSources: [], persistSession: false, permissionMode: 'default', env: this.env() } });
-    try {
-      const info = await Promise.race([q.accountInfo(), new Promise<never>((_, r) => setTimeout(() => r(new Error('timed out after 45s')), 45_000))]);
-      const ok = !!(info.email || info.organization || (info.apiKeySource && info.apiKeySource !== 'none') || (info.tokenSource && info.tokenSource !== 'none') || (info.apiProvider && info.apiProvider !== 'firstParty'));
-      if (!ok) throw new Error('not logged in');
-      const account = this.cfg.useClaudeLogin
-        ? [info.organization, info.subscriptionType].filter(Boolean).join(' · ') || info.apiProvider || 'ok'
-        : [api.ok ? api.source : 'API', info.organization].filter(Boolean).join(' · ');
-      this.authFailed = false;
-      this.fm.setStatus({ auth: 'ok', account, message: `Claude (lead ${this.cfg.leadModel}, workers ${this.cfg.workerModel})` });
-      this.fm.log.info(`claude auth ok (${account})`);
-      if (this.offline) {
-        this.offline = undefined;
-        this.fm.bus.feed('system', 'Claude is reachable again: the team picks up where it stopped');
-      }
-      this.refreshHold();
-      return true;
-    } catch (e) {
-      const why = (e as Error).message ?? String(e);
-      if (probeFailure(why) === 'retry') {
+    const engines = this.enginesInUse();
+    const claudeOnly = engines.length === 1 && engines[0]!.id === 'claude';
+    this.fm.setStatus({ auth: 'checking', message: claudeOnly ? (this.cfg.useClaudeLogin ? 'Checking Claude login...' : 'Checking Claude API access...') : `Checking ${engines.map((e) => e.label).join(' and ')} access...` });
+    const accounts: string[] = [];
+    for (const engine of engines) {
+      const r: AuthCheck = await engine.checkAuth().catch((e: Error): AuthCheck => ({ ok: false, message: `${engine.label} check failed: ${e.message}` }));
+      if (!r.ok) {
         // the network, a sleeping machine, an API outage: not a bad login. Retry with backoff.
-        this.goOffline(why);
+        if (r.transient) this.goOffline(r.message, engine.label);
+        else this.markAuthFailed(r.message);
         return false;
       }
-      this.markAuthFailed(
-        this.cfg.useClaudeLogin
-          ? `Claude login check failed: ${why}. Run \`claude\` and /login, then restart the Foreman. The sim backend still works.`
-          : `Claude API check failed: ${why}. Check ANTHROPIC_API_KEY (or your cloud provider settings), then restart the Foreman. The sim backend still works.`,
-      );
-      return false;
-    } finally {
-      try {
-        q.close();
-      } catch {
-        /* ignore */
-      }
+      accounts.push(engines.length > 1 ? `${engine.label}: ${r.account}` : r.account);
+      this.fm.log.info(`${engine.id} auth ok (${r.account})`);
     }
+    this.authFailed = false;
+    this.fm.setStatus({ auth: 'ok', account: accounts.join(' · '), message: this.teamLabel() });
+    this.showEngines(); // the check may have learned the configured model (Codex)
+    if (this.offline) {
+      this.offline = undefined;
+      this.fm.bus.feed('system', `${engines.map((e) => e.label).join(' and ')} ${engines.length > 1 ? 'are' : 'is'} reachable again: the team picks up where it stopped`);
+    }
+    this.refreshHold();
+    return true;
   }
 
   protected markAuthFailed(raw: string): void {
@@ -81,19 +61,19 @@ export abstract class HoldsLayer extends BackendCore {
     this.refreshHold();
   }
 
-  /** The auth probe could not reach Claude: hold new turns and probe again later (backoff). */
-  protected goOffline(why: string): void {
+  /** The auth probe could not reach an engine's service: hold new turns and probe again later (backoff). */
+  protected goOffline(why: string, label = 'Claude'): void {
     const delayMs = this.offline ? Math.min(AUTH_RETRY_MAX_MS, this.offline.delayMs * 2) : (this.opts.authRetryMs ?? AUTH_RETRY_MS);
     const first = !this.offline;
     const retryAt = Date.now() + delayMs;
     // the probe's error can quote a credential: redacted before it is cut
     why = this.fm.redact(why);
-    this.offline = { delayMs, retryAt, message: `Claude could not be reached (${truncate(why, 120)}); trying again at ${clock(retryAt)}. Work waits meanwhile.` };
+    this.offline = { delayMs, retryAt, message: `${label} could not be reached (${truncate(why, 120)}); trying again at ${clock(retryAt)}. Work waits meanwhile.` };
     this.fm.setStatus({ auth: 'checking', message: this.offline.message });
     if (first) {
       this.fm.log.warn(this.offline.message);
       this.fm.bus.feed('error', this.offline.message);
-    } else this.fm.log.info(`claude still unreachable (${truncate(why, 120)}); next try ${clock(retryAt)}`);
+    } else this.fm.log.info(`${label.toLowerCase()} still unreachable (${truncate(why, 120)}); next try ${clock(retryAt)}`);
     this.refreshHold();
     if (this.authRetryTimer) clearTimeout(this.authRetryTimer);
     this.authRetryTimer = setTimeout(() => {
@@ -118,7 +98,7 @@ export abstract class HoldsLayer extends BackendCore {
 
   /** What holds new turns right now (C9 foreman.status.hold), most important first. */
   protected currentHold(now = Date.now()): ForemanHold | undefined {
-    if (this.authFailed) return { reason: 'auth', message: this.authMessage || 'Claude authentication failed' };
+    if (this.authFailed) return { reason: 'auth', message: this.authMessage || `${this.opts.engines.lead.label} authentication failed` };
     if (this.offline) return { reason: 'offline', until: this.offline.retryAt, message: this.offline.message };
     const l = this.st.limit;
     if (l && now < l.until) return { reason: 'usage', until: l.until, message: `Usage limit reached${l.type ? ` (${l.type.replace(/_/g, ' ')})` : ''}: agents wait until ${clock(l.until)}, then resume` };
@@ -161,7 +141,7 @@ export abstract class HoldsLayer extends BackendCore {
   }
 
   protected baseStatusMessage(): string {
-    return `Claude (lead ${this.cfg.leadModel}, workers ${this.cfg.workerModel})`;
+    return this.teamLabel();
   }
 
   /** A live usage report from a running turn. */
@@ -192,7 +172,7 @@ export abstract class HoldsLayer extends BackendCore {
     this.refreshHold();
   }
 
-  /** At most every few minutes, while some agent has a live session: the CLI's /usage windows. */
+  /** At most every few minutes, while some agent has a live session: the CLI's /usage windows (Claude). */
   protected refreshUsage(q: object): void {
     if (!this.cfg.useClaudeLogin || Date.now() - this.lastUsageRead < USAGE_REFRESH_MS) return;
     this.lastUsageRead = Date.now();
