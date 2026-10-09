@@ -1551,9 +1551,14 @@ const LEAD_RUNNERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'cmd',
  * run another program or a script file (rg --pre, sed -f, awk -f). Returns why, or undefined.
  */
 export function leadExecRisk(command: string): string | undefined {
+  // a command substitution anywhere (also inside double quotes): what it runs is not shown as a command
+  if (/\$\(|`/.test(command)) return 'runs a command substitution';
   for (const it of shellItems(command, process.platform !== 'win32')) {
     if (it.kind !== 'cmd') continue;
     const w = it.words;
+    // `export PATH=...`, `declare -x PAGER=...` as well as a plain assignment
+    const setsVar = w.map((x) => /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(x)?.[1]).find((n) => n && LEAD_EXEC_VARS.test(n));
+    if (setsVar) return `sets ${setsVar}`;
     let i = 0;
     while (i < w.length) {
       const a = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(w[i]!);

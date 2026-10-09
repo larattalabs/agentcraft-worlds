@@ -8,7 +8,7 @@
 // agents still have no git network access (gitsafety.ts), and nothing is ever pushed.
 import { GIT_REDIRECT_VARS } from './gitsafety.js';
 // hooks off: /dev/null on POSIX, never a path an agent could fill (util/git.ts)
-import { NO_HOOKS_DIR } from './util/git.js';
+import { noHooksDir } from './util/git.js';
 import { run, type RunResult } from './util/proc.js';
 
 export interface PullRequest {
@@ -81,7 +81,7 @@ export async function fetchPulls(repoPath: string, numbers: number[], runner: Ru
       continue;
     }
     const branch = prBranch(n);
-    const fetch = await runner('git', ['-c', `core.hooksPath=${NO_HOOKS_DIR}`, 'fetch', '--no-tags', '--quiet', 'origin', `+pull/${n}/head:refs/heads/${branch}`], { cwd: repoPath, env: env(), timeoutMs: 120_000 });
+    const fetch = await runner('git', ['-c', `core.hooksPath=${noHooksDir()}`, 'fetch', '--no-tags', '--quiet', 'origin', `+pull/${n}/head:refs/heads/${branch}`], { cwd: repoPath, env: env(), timeoutMs: 120_000 });
     if (fetch.code !== 0) {
       errors.push(`#${n}: git fetch failed: ${(fetch.stderr || fetch.stdout).trim().split('\n').pop()}`);
       continue;

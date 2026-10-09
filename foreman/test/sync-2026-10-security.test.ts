@@ -12,6 +12,7 @@ import { loadConfig } from '../src/config.js';
 import { classifyToolUse, type PolicyContext } from '../src/policy.js';
 import { MERGE_OPTIONS } from '../src/protocol.js';
 import { githubOrigin } from '../src/pulls.js';
+import { lineSplitter } from '../src/util/lines.js';
 import { demoRepo, makeForeman, rmrf, tempDir, type Harness } from './helpers.js';
 
 const cwd = tempDir();
@@ -38,6 +39,9 @@ describe('the lead runs nothing it was not shown', () => {
     ['git ls-files | xargs cat', 'ask'],
     ['awk -fp.awk package.json', 'ask'],
     ['timeout 5 cat package.json', 'allow'],
+    ['echo "$(./cat package.json)"', 'ask'],
+    ['echo `./cat package.json`', 'ask'],
+    ['export PATH=./bin:$PATH; cat package.json', 'ask'],
     ['bd show x --json', 'allow'],
     ['cat package.json', 'allow'],
     ['git log --oneline -5', 'allow'],
@@ -80,6 +84,24 @@ describe('Codex commands', () => {
       expect(shellRuleMatches('Bash(tofu apply:*)', 'Bash', { command: c }), c).toBe(true);
     }
     for (const c of ['tofu plan', 'echo tofu apply']) expect(shellRuleMatches('Bash(tofu apply:*)', 'Bash', { command: c }), c).toBe(false);
+    const deploy = (c: string) => shellRuleMatches('Bash(npm run deploy:*)', 'Bash', { command: c });
+    expect(deploy('env -S "npm run deploy"')).toBe(true);
+    expect(deploy(`echo "$(printf ')'; npm run deploy)"`)).toBe(true);
+    expect(deploy(`echo "it's $(npm run deploy)"`)).toBe(true);
+    expect(deploy(`echo 'not $(npm run deploy)'`)).toBe(false);
+    expect(deploy(`${'$('.repeat(64)}npm run deploy${')'.repeat(64)}`)).toBe(true);
+  });
+
+  it('stderr lines are whole; an endless one is dropped, never cut', () => {
+    const got: string[] = [];
+    const s = lineSplitter((l) => got.push(l), 10);
+    s.push('ab');
+    s.push('c\nsecret-');
+    s.push('value-way-too-long');
+    s.push('-still\nnext\n');
+    s.push('tail');
+    s.end();
+    expect(got).toEqual(['abc', 'next', 'tail']);
   });
 });
 

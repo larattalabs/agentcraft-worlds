@@ -37,13 +37,24 @@ export interface GitOptions {
 // created by an agent, which may write there, and its hooks would then run as the Foreman)
 // Windows: a path under the Foreman home, which agents may not write (policy.ts foremanPrivateVerdict)
 // and the Codex sandbox does not grant; it is never created
-export const NO_HOOKS_DIR = process.platform === 'win32' ? path.join(process.env.AGENTCRAFT_HOME || path.join(os.homedir(), '.agentcraft'), 'no-hooks', 'never-created') : '/dev/null';
+// (the Foreman sets the configured home at start, setNoHooksHome; never created)
+let hooksOffDir = process.platform === 'win32' ? path.resolve(os.homedir(), '.agentcraft', 'no-hooks', 'never-created') : '/dev/null';
+
+/** The path core.hooksPath points at for the Foreman's own git calls. */
+export function noHooksDir(): string {
+  return hooksOffDir;
+}
+
+/** Windows: hooks off under the Foreman's configured home (absolute), which agents may not write. */
+export function setNoHooksHome(home: string): void {
+  if (process.platform === 'win32') hooksOffDir = path.resolve(home, 'no-hooks', 'never-created');
+}
 // The diff parser expects a/ b/ prefixes; the user's diff.mnemonicPrefix, diff.noprefix or
 // diff.srcPrefix/dstPrefix would otherwise turn src/cli.ts into i/src/cli.ts or cli.ts.
-const BASE_ARGS = [
+const baseArgs = () => [
   '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'commit.gpgsign=false',
   '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.noprefix=false', '-c', 'diff.srcPrefix=a/', '-c', 'diff.dstPrefix=b/',
-  '-c', `core.hooksPath=${NO_HOOKS_DIR}`,
+  '-c', `core.hooksPath=${noHooksDir()}`,
   '-c', 'protocol.allow=never',
   '-c', `url.${PUSH_BLOCK_URL}.pushInsteadOf=`,
 ];
@@ -61,7 +72,7 @@ function baseEnv(): NodeJS.ProcessEnv {
 
 export async function git(cwd: string, args: string[], opts: GitOptions = {}): Promise<RunResult> {
   const env = { ...baseEnv(), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ALLOW_PROTOCOL: 'agentcraft-none', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C', ...(opts.env ?? {}) };
-  const res = await run('git', [...BASE_ARGS, ...args], { cwd, env, input: opts.input, timeoutMs: opts.timeoutMs ?? 120_000 });
+  const res = await run('git', [...baseArgs(), ...args], { cwd, env, input: opts.input, timeoutMs: opts.timeoutMs ?? 120_000 });
   if (res.code !== 0 && !opts.allowFail) {
     const msg = (res.stderr || res.stdout).trim().split('\n').slice(-3).join(' | ');
     throw new GitError(`git ${args.slice(0, 3).join(' ')} failed: ${msg}`, res, args);
@@ -79,7 +90,7 @@ export async function git(cwd: string, args: string[], opts: GitOptions = {}): P
 export async function gitRemote(cwd: string, args: ['fetch' | 'push', ...string[]], opts: GitOptions = {}): Promise<RunResult> {
   const env: NodeJS.ProcessEnv = { ...baseEnv(), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', LC_ALL: 'C', ...(opts.env ?? {}) };
   delete env.GIT_ALLOW_PROTOCOL;
-  const netArgs = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', `core.hooksPath=${NO_HOOKS_DIR}`, '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'protocol.ssh.allow=always'];
+  const netArgs = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', `core.hooksPath=${noHooksDir()}`, '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'protocol.ssh.allow=always'];
   const res = await run('git', [...netArgs, ...args], { cwd, env, timeoutMs: opts.timeoutMs ?? 180_000 });
   if (res.code !== 0 && !opts.allowFail) {
     const msg = (res.stderr || res.stdout).trim().split('\n').slice(-3).join(' | ');

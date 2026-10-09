@@ -376,7 +376,7 @@ export abstract class SessionsLayer extends TurnSetupLayer {
    * allows it too). Never the shared git dir as a whole: its config and hooks would let a worker
    * run code in the user's own git, outside every sandbox, and its refs would let it move the
    * user's branches (upstream 0f04d91).
-   *  - objects/                        new commits, trees, blobs (content-addressed, harmless)
+   *  - objects/                        new commits, trees, blobs (a trust grant: the sandbox cannot make it append-only, so a worker could also corrupt or delete objects; docs/FORK.md)
    *  - refs/heads/<branch dir>/        this agent's branches only (agentcraft/<agent>/...)
    *  - logs/refs/heads/<branch dir>/   their reflogs
    *  - the worktree's own git dir      its HEAD, index, ORIG_HEAD, MERGE_HEAD

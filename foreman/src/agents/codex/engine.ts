@@ -9,7 +9,7 @@
 // - the team tools (send_message, ask_user, update_task...) are dynamic tools answered here
 // - none of the user's own Codex setup leaks in: their MCP servers, plugins, apps, web search,
 //   image generation and notify hooks are off for agent threads (their Codex app is untouched)
-// - commands run with the git safety environment (no push, no hooks, the agent's own identity),
+// - commands run with the git safety environment (no push, no signing, the agent's own identity; the agent's own repository hooks still run),
 //   passed explicitly because Codex drops variables named like secrets (GIT_CONFIG_KEY_0...)
 //
 // Fork notes (docs/FORK.md "Upstream sync 2026-10"): every approval goes through the team's
@@ -144,17 +144,9 @@ export class CodexEngine implements Engine {
     return { auth: /unauthorized|\b401\b|not logged in|codex login|credential/i.test(message), ...(/usage limit|usageLimitExceeded|rate limit/i.test(message) ? { limited: {} } : {}) };
   }
 
-  /** Whole stderr lines, redacted (a secret split across two chunks is still one line). */
-  private stderrLines(agentId: string): (s: string) => void {
-    let pending = '';
-    return (s: string) => {
-      pending += s;
-      const lines = pending.split('\n');
-      pending = lines.pop() ?? '';
-      // an endless line is dropped, not cut in pieces (a piece of a secret would not be redacted)
-      if (pending.length > 64_000) pending = '';
-      for (const l of lines) if (l.trim()) this.fm.log.debug(`[${agentId} codex] ${this.fm.redact(l).trim().slice(0, 300)}`);
-    };
+  /** Whole stderr lines (rpc.ts splits them), redacted before they are cut. */
+  private stderrLines(agentId: string): (line: string) => void {
+    return (line: string) => this.fm.log.debug(`[${agentId} codex] ${this.fm.redact(line).trim().slice(0, 300)}`);
   }
 
   private async initialize(server: AppServer): Promise<void> {

@@ -15,6 +15,7 @@ import type { ClaudeConfig } from '../../config.js';
 import type { Foreman } from '../../foreman.js';
 import { classifyToolUse, foremanPrivateVerdict, type PolicyContext } from '../../policy.js';
 import { scrubEnv } from '../../util/env.js';
+import { lineSplitter } from '../../util/lines.js';
 import { truncate } from '../../util/text.js';
 import type { AuthCheck, Engine, Role, TurnSpec, TurnStats } from '../engine.js';
 import { agentEnv, foremanPrivateOf } from '../team/core.js';
@@ -228,26 +229,13 @@ export class ClaudeEngine implements Engine {
     return (o) => {
       const child = spawn(o.command, o.args, { cwd: o.cwd, env: scrubEnv(o.env as NodeJS.ProcessEnv), stdio: ['pipe', 'pipe', 'pipe'], signal: o.signal, windowsHide: true });
       child.stderr?.setEncoding('utf8');
-      // whole lines only: a secret split across two chunks is still one line when it is redacted
-      let pending = '';
-      const line = (l: string) => {
+      // whole lines only: a secret split across two chunks is still one line when it is redacted (an
+      // endless line is dropped, never cut in pieces)
+      const lines = lineSplitter((l) => {
         if (l.trim()) this.fm.log.debug(`[${label} stderr] ${this.fm.redact(l).trim().slice(0, 300)}`);
-      };
-      child.stderr?.on('data', (s: string) => {
-        pending += s;
-        const lines = pending.split('\n');
-        pending = lines.pop() ?? '';
-        // an endless line is flushed in large pieces (redacted whole up to there)
-        if (pending.length > 64_000) {
-          lines.push(pending);
-          pending = '';
-        }
-        for (const l of lines) line(l);
       });
-      child.stderr?.on('end', () => {
-        line(pending);
-        pending = '';
-      });
+      child.stderr?.on('data', (s: string) => lines.push(s));
+      child.stderr?.on('end', () => lines.end());
       child.on('error', (e) => this.fm.log.debug(`[${label}] CLI process error: ${this.fm.redact(e.message)}`));
       spec.onProcess(child);
       return child;

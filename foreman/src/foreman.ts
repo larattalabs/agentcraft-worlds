@@ -40,6 +40,7 @@ import { Store } from './store.js';
 import { TaskError, TaskGraph } from './taskgraph.js';
 import { setUserName, userName } from './user.js';
 import { truncate } from './util/text.js';
+import { setNoHooksHome } from './util/git.js';
 import { unifiedDiff } from './util/udiff.js';
 import { buildDigest } from './digest.js';
 import { applyLive, ConfigError, configGet, configSet, listRepoAgents, pendingRestart, restartBaseline } from './settings.js';
@@ -196,6 +197,8 @@ export class Foreman {
 
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
+    // Windows: the Foreman's own git calls point hooks under its home (util/git.ts)
+    setNoHooksHome(opts.config.home);
     this.redactor.add(configSecrets(opts.config));
     // the Claude credentials the Foreman inherited (an API key, an OAuth token): never printed
     this.redactor.add(INHERITED_SECRET_VARS.map((k) => process.env[k]));

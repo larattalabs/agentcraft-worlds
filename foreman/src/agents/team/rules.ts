@@ -22,25 +22,54 @@ const WRAPPERS = new Set(['env', 'command', 'builtin', 'exec', 'nice', 'nohup', 
 /** Wrapper options that take the next word as their value (`env -u NAME`, `timeout -s TERM`). */
 const OPTION_WITH_VALUE = /^(-[uCSsknIoe]|--(unset|chdir|split-string|signal|kill-after|adjustment|input|output|error|max-args|max-procs|replace|delimiter|arg-file))$/;
 
-/** `$( ... )` and backtick bodies anywhere in the text, also inside double quotes. */
+/**
+ * `$( ... )` and backtick bodies anywhere in the text, also inside double quotes (not inside single
+ * quotes, where they are literal). Quotes inside a body do not count as its parentheses. An unclosed
+ * body runs to the end of the text.
+ */
 function substitutions(command: string): string[] {
   const out: string[] = [];
+  let dq = false;
   for (let i = 0; i < command.length; i++) {
-    if (command[i] === '$' && command[i + 1] === '(') {
+    const c = command[i]!;
+    if (c === '"') {
+      dq = !dq;
+      continue;
+    }
+    if (c === "'" && !dq) {
+      // a single-quoted run outside any substitution: literal text
+      const end = command.indexOf("'", i + 1);
+      if (end < 0) break;
+      i = end;
+      continue;
+    }
+    if (c === '\\') {
+      i++;
+      continue;
+    }
+    if (c === '$' && command[i + 1] === '(') {
       let depth = 0;
-      for (let j = i + 1; j < command.length; j++) {
-        if (command[j] === '(') depth++;
-        else if (command[j] === ')' && --depth === 0) {
-          out.push(command.slice(i + 2, j));
-          break;
+      let q: string | undefined;
+      let j = i + 1;
+      for (; j < command.length; j++) {
+        const d = command[j]!;
+        if (q) {
+          if (d === q) q = undefined;
+          else if (d === '\\' && q === '"') j++;
+          continue;
         }
+        if (d === "'" || d === '"') q = d;
+        else if (d === '\\') j++;
+        else if (d === '(') depth++;
+        else if (d === ')' && --depth === 0) break;
       }
-    } else if (command[i] === '`') {
+      out.push(command.slice(i + 2, j));
+      i = j;
+    } else if (c === '`') {
       const end = command.indexOf('`', i + 1);
-      if (end > i) {
-        out.push(command.slice(i + 1, end));
-        i = end;
-      }
+      out.push(command.slice(i + 1, end < 0 ? undefined : end));
+      if (end < 0) break;
+      i = end;
     }
   }
   return out;
@@ -58,6 +87,10 @@ function commandTexts(command: string, depth = 0): string[] {
       else if (WRAPPERS.has(w[i]!.toLowerCase())) {
         i++;
         while (i < w.length && (w[i]!.startsWith('-') || /^\d+(\.\d+)?[smhd]?$/.test(w[i]!))) {
+          // env -S "cmd args": the value is a command line of its own
+          if (/^(-S|--split-string)$/.test(w[i]!) && w[i + 1] !== undefined && depth < 4) out.push(...commandTexts(w[i + 1]!, depth + 1));
+          const attached = /^(?:-S|--split-string=)(.+)$/.exec(w[i]!);
+          if (attached && depth < 4) out.push(...commandTexts(attached[1]!, depth + 1));
           if (OPTION_WITH_VALUE.test(w[i]!)) i++;
           i++;
         }
@@ -89,7 +122,13 @@ export function shellRuleMatches(rule: string, toolName: string, input: Record<s
   if (!m) return false;
   if (m[2] === undefined) return true;
   const command = typeof input.command === 'string' ? input.command : '';
-  return commandTexts(command).some((text) => patternMatches(m[2]!, text));
+  try {
+    return commandTexts(command).some((text) => patternMatches(m[2]!, text));
+  } catch {
+    // a command too odd to parse: matched when the rule's words appear in it at all (fail closed)
+    const words = m[2]!.replace(/:\*$/, '').replace(/\*/g, ' ').trim().split(/\s+/).filter(Boolean);
+    return words.every((x) => command.includes(x));
+  }
 }
 
 /** The first rule of `rules` that matches, if any. */

@@ -2,6 +2,7 @@
 // one JSON object per line on stdio. The server sends notifications and also requests of its own
 // (approvals, dynamic tool calls), which `onRequest` answers.
 import { spawn, type ChildProcess } from 'node:child_process';
+import { lineSplitter } from '../../util/lines.js';
 import readline from 'node:readline';
 
 type Json = unknown;
@@ -22,7 +23,8 @@ export interface AppServerOptions {
   env: NodeJS.ProcessEnv;
   /** extra CLI args before `app-server` subcommand args (e.g. `-c key=value`) */
   args?: string[];
-  onStderr?(text: string): void;
+  /** each whole stderr line (an endless one is dropped, never cut) */
+  onStderr?(line: string): void;
 }
 
 export class AppServer {
@@ -47,25 +49,14 @@ export class AppServer {
     this.child.stderr?.setEncoding('utf8');
     // whole lines in the tail (a line split across two chunks stays one line, so a secret in it is
     // still redacted whole when an error quotes it)
-    let pending = '';
-    const keep = (line: string) => {
+    const lines = lineSplitter((line) => {
       if (!line.trim()) return;
       this.stderrTail.push(line);
       if (this.stderrTail.length > 20) this.stderrTail.shift();
-    };
-    this.child.stderr?.on('data', (s: string) => {
-      pending += s;
-      const lines = pending.split(/\r?\n/);
-      pending = lines.pop() ?? '';
-      // an endless line is dropped, not cut in pieces (a piece of a secret would not be redacted)
-      if (pending.length > 64_000) pending = '';
-      for (const line of lines) keep(line);
-      opts.onStderr?.(s);
+      opts.onStderr?.(line);
     });
-    this.child.stderr?.on('end', () => {
-      keep(pending);
-      pending = '';
-    });
+    this.child.stderr?.on('data', (s: string) => lines.push(s));
+    this.child.stderr?.on('end', () => lines.end());
     this.exited = new Promise((resolve) => {
       this.child.once('error', (e) => {
         this.fail(new Error(`could not start codex: ${e.message}`));
