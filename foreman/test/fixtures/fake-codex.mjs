@@ -5,6 +5,10 @@
 //
 // Steps: { cmd, foreign?, output? }  run a shell command (asks for approval; foreign: from another thread)
 //        { silentCmd, output? }       a command Codex counts as a safe read: run without asking
+//        { cmdIn: { cmd, cwd } }      a command whose approval reports another working directory
+//        { moveTo: path }             a rename of src/cli.ts to `path` (file-change approval)
+//        { grantOnly: root }          a patch approval for an unannounced item, with only a root
+//        { stdinAfter: cmd }          approve cmd, input while it runs, input after it finished
 //        { write: { file, content } } edit a file in the worktree (no approval: inside the sandbox)
 //        { editOutside: path }        an edit outside the sandbox (asks for file-change approval)
 //        { tool, args }               call a dynamic tool (the AgentCraft team tools)
@@ -48,6 +52,33 @@ async function play(params, turnId) {
       const r = await ask('item/commandExecution/requestApproval', { threadId: s.foreign ? 'th-somebody-else' : thread, turnId, itemId, kind: 'command', command, cwd, startedAtMs: Date.now(), environmentId: 'local' });
       log({ cmd: s.cmd, foreign: !!s.foreign, decision: r.decision });
       notify('item/completed', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd, status: r.decision === 'accept' ? 'completed' : 'declined', aggregatedOutput: s.output ?? '', exitCode: r.decision === 'accept' ? 0 : null } });
+    } else if (s.cmdIn) {
+      // a command whose approval reports another working directory
+      const command = wrap(s.cmdIn.cmd);
+      notify('item/started', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd: s.cmdIn.cwd, status: 'inProgress', commandActions: [] } });
+      const r = await ask('item/commandExecution/requestApproval', { threadId: thread, turnId, itemId, kind: 'command', command, cwd: s.cmdIn.cwd, startedAtMs: Date.now(), environmentId: 'local' });
+      log({ cmdIn: s.cmdIn.cmd, decision: r.decision });
+      notify('item/completed', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd: s.cmdIn.cwd, status: r.decision === 'accept' ? 'completed' : 'declined', aggregatedOutput: '', exitCode: r.decision === 'accept' ? 0 : null } });
+    } else if (s.moveTo) {
+      // a rename of a worktree file to another path (asks for file-change approval)
+      const change = { path: path.join(cwd, 'src', 'cli.ts'), kind: { type: 'update', move_path: s.moveTo }, diff: '@@\n+x\n' };
+      notify('item/started', { threadId: thread, turnId, item: { type: 'fileChange', id: itemId, changes: [change], status: 'inProgress' } });
+      const r = await ask('item/fileChange/requestApproval', { threadId: thread, turnId, itemId, startedAtMs: Date.now() });
+      log({ moveTo: s.moveTo, decision: r.decision });
+      notify('item/completed', { threadId: thread, turnId, item: { type: 'fileChange', id: itemId, changes: [change], status: r.decision === 'accept' ? 'completed' : 'declined' } });
+    } else if (s.grantOnly) {
+      // a patch approval for an item never announced, asking only for a root
+      const r = await ask('item/fileChange/requestApproval', { threadId: thread, turnId, itemId: `unknown-${itemId}`, grantRoot: s.grantOnly, startedAtMs: Date.now() });
+      log({ grantOnly: s.grantOnly, decision: r.decision });
+    } else if (s.stdinAfter) {
+      // input to a command that already finished
+      const command = wrap(s.stdinAfter);
+      notify('item/started', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd, status: 'inProgress', commandActions: [] } });
+      const r1 = await ask('item/commandExecution/requestApproval', { threadId: thread, turnId, itemId, kind: 'command', command, cwd, startedAtMs: Date.now(), environmentId: 'local' });
+      const r2 = await ask('item/commandExecution/requestApproval', { threadId: thread, turnId, itemId, kind: 'writeStdin', command, cwd, startedAtMs: Date.now(), environmentId: 'local' });
+      notify('item/completed', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd, status: 'completed', aggregatedOutput: '', exitCode: 0 } });
+      const r3 = await ask('item/commandExecution/requestApproval', { threadId: thread, turnId, itemId, kind: 'writeStdin', command, cwd, startedAtMs: Date.now(), environmentId: 'local' });
+      log({ stdinAfter: s.stdinAfter, decisions: [r1.decision, r2.decision, r3.decision] });
     } else if (s.silentCmd) {
       const command = wrap(s.silentCmd);
       notify('item/started', { threadId: thread, turnId, item: { type: 'commandExecution', id: itemId, command, cwd, status: 'inProgress', commandActions: [] } });

@@ -11,7 +11,7 @@ import { demoRepo, makeForeman, rmrf, tempDir, until, type Harness } from './hel
 
 const FAKE = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), 'fixtures', 'fake-codex.mjs');
 
-type LogLine = { pid: number; anthropicKey?: boolean; method?: string; cmd?: string; silentCmd?: string; decision?: string };
+type LogLine = { pid: number; anthropicKey?: boolean; method?: string; cmd?: string; silentCmd?: string; decision?: string; cmdIn?: string; moveTo?: string; grantOnly?: string; stdinAfter?: string; decisions?: string[] };
 const readLog = (file: string): LogLine[] => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as LogLine) : []);
 
 let h: Harness;
@@ -35,7 +35,19 @@ beforeAll(async () => {
         ],
       },
       { role: 'worker', match: 'Your task: t1', steps: [{ silentCmd: `cat ${path.join(home, 'config.json')}`, output: '{"secret": true}' }, { wait: 4000 }, { say: 'read it' }] },
-      { role: 'worker', match: 'Your task: t2', steps: [{ cmd: 'npm publish --tag next' }, { say: 'tried' }] },
+      {
+        role: 'worker',
+        match: 'Your task: t2',
+        steps: [
+          { moveTo: path.join(home, 'config.json') },
+          { grantOnly: home },
+          { stdinAfter: 'git status' },
+          { cmd: 'npm publish --tag next' },
+          // last: its start already interrupts the turn (the Foreman-private guard)
+          { cmdIn: { cmd: 'cat config.json', cwd: home } },
+          { say: 'tried' },
+        ],
+      },
     ],
   };
   const scenarioFile = path.join(home, 'scenario.json');
@@ -77,14 +89,23 @@ describe('the fork protections on Codex turns', () => {
     for (const pid of turnPids) expect(log.find((l) => l.pid === pid && l.anthropicKey !== undefined)?.anthropicKey).toBe(false);
   });
 
-  it('applies the user\'s deny rules to Codex commands, without asking', async () => {
+  it('applies the user\'s deny rules to Codex commands, and checks every approval where it applies', async () => {
     // t1 is blocked or retrying after the interrupted turn: let t2 run anyway
     await until(() => !!h.fm.tasks.get('t1'), 10_000);
     h.fm.tasks.update('t2', { deps: [] });
     h.fm.backend?.onTaskAction?.(h.fm.tasks.get('t2')!, 'prioritize');
-    await until(() => readLog(logFile).some((l) => l.cmd === 'npm publish --tag next'), 60_000);
+    await until(() => readLog(logFile).some((l) => l.cmdIn), 50_000);
     const line = readLog(logFile).find((l) => l.cmd === 'npm publish --tag next')!;
     expect(line.decision).toBe('decline');
+    const log = readLog(logFile);
+    // judged where it runs: `cat config.json` in the Foreman home is the Foreman's config
+    expect(log.find((l) => l.cmdIn)?.decision).toBe('decline');
+    // a rename's destination is checked, not only its source
+    expect(log.find((l) => l.moveTo)?.decision).toBe('decline');
+    // a patch nobody described is declined, whatever root it asks for
+    expect(log.find((l) => l.grantOnly)?.decision).toBe('decline');
+    // input only while the approved command runs
+    expect(log.find((l) => l.stdinAfter)?.decisions).toEqual(['accept', 'accept', 'decline']);
     expect(h.fm.decisions.open().some((d) => d.kind === 'permission')).toBe(false);
     h.fm.flushLogs();
     expect(JSON.stringify(h.events.filter((e) => e.type === 'agent.log'))).toContain('denied by your permission rule Bash(npm publish:*)');

@@ -100,7 +100,9 @@ shared `agents/tools.ts`, `agents/prompts.ts`, `agents/engine.ts`). The fork's w
 (`core`, `holds`, `turnSetup`, `sessions`, `outcomes`, `recovery`, `jobs/*`). Divergence rule: **upstream
 edits to `agents/team.ts` are ported into these layers by hand** (as with the README); the seam files
 (`engine.ts`, `claude/engine.ts`, `codex/*`, `tools.ts`, `prompts.ts`, `teams.ts`) stay close to
-upstream's so their merges stay cheap. `agents/claude/index.ts` is the all-Claude team with the same
+upstream's so their merges stay cheap. The fork's fixes inside `codex/*` (approval cwd, rename
+destinations, undescribed patches, stdin, the started-command guard, redaction) are pinned by
+`foreman/test/codex-fork.test.ts` and `sync-2026-10-security.test.ts`: check they still pass on every sync. `agents/claude/index.ts` is the all-Claude team with the same
 constructor and test options as before.
 
 Where each fork Foreman feature lives now:

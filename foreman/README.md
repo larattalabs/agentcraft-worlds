@@ -400,7 +400,7 @@ restarts) runs each agent turn through an engine, chosen per agent:
   are an in-process MCP server; every tool call goes through `canUseTool` and the policy.
 - **Codex** (`src/agents/codex/`): one `codex app-server` process per turn, JSON-RPC over stdio. The
   agent's thread is durable, so its next turn resumes it. Commands run with `approvalPolicy:
-  "untrusted"`, so Codex asks before each one, and the ask goes through the same policy and in-game
+  "untrusted"`, so Codex asks before each one it does not treat as a safe read (see the fork table below), and the ask goes through the same policy and in-game
   permission prompts (commands are unwrapped from Codex's `powershell -Command` / `bash -lc` wrapper
   first). Workers are sandboxed to their worktree, its git dir and the temp dir; the lead is
   read-only. The team tools are app-server dynamic tools. None of your own Codex setup reaches an
