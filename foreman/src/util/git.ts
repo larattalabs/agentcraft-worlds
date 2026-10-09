@@ -35,7 +35,9 @@ export interface GitOptions {
 // needs no network: everything it does is local.
 // (POSIX: /dev/null, a path no one can put a hook under; a directory in the temp dir could be
 // created by an agent, which may write there, and its hooks would then run as the Foreman)
-export const NO_HOOKS_DIR = process.platform === 'win32' ? path.join(os.tmpdir(), 'agentcraft-no-hooks-7f3e9c') : '/dev/null';
+// Windows: a path under the Foreman home, which agents may not write (policy.ts foremanPrivateVerdict)
+// and the Codex sandbox does not grant; it is never created
+export const NO_HOOKS_DIR = process.platform === 'win32' ? path.join(process.env.AGENTCRAFT_HOME || path.join(os.homedir(), '.agentcraft'), 'no-hooks', 'never-created') : '/dev/null';
 // The diff parser expects a/ b/ prefixes; the user's diff.mnemonicPrefix, diff.noprefix or
 // diff.srcPrefix/dstPrefix would otherwise turn src/cli.ts into i/src/cli.ts or cli.ts.
 const BASE_ARGS = [

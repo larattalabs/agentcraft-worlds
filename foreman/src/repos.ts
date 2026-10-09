@@ -776,6 +776,7 @@ export class RepoManager {
     const w = decision.repoId && decision.worktree ? this.findWorktree(decision.repoId, decision.worktree) : undefined;
     // a contributor's pull request lands with its commits as they were fetched, never rewritten
     const pinned = w && decision.repoId ? this.ctx.store.data.worktreeMeta[`${decision.repoId}/${w.id}`]?.contributorSha : undefined;
+    if (w && !pinned && this.keepsContributorCommits(w)) throw new RepoError(`${w.branch} works on a contributor's pull request but has no recorded starting commit; not landing it`, 'refused');
     if (w && pinned) {
       const r = this.require(decision.repoId!);
       const kept = (await git(r.path, ['merge-base', '--is-ancestor', pinned, `refs/heads/${w.branch}`], { allowFail: true })).code === 0;

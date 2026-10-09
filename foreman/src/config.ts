@@ -462,6 +462,7 @@ const NOT_READ_ONLY = new Set([
   'sort', 'fd', 'fdfind', 'rg', 'ripgrep', 'less', 'more', 'vi', 'vim', 'nvim', 'nano', 'emacs', 'tar', 'zip', 'unzip', 'rsync',
   'make', 'docker', 'kubectl', 'open', 'xdg-open', 'tsx', 'deno', 'bun', 'pnpm', 'yarn', 'uv', 'cargo', 'go', 'java',
   'osascript', 'install', 'ln', 'truncate', 'patch', 'chown', 'gawk', 'gsed', 'ksh', 'dash', 'fish', 'sudo', 'doas', 'tclsh', 'lua', 'php',
+  'uniq', 'yq', 'shuf', 'split', 'csplit', 'iconv', 'base64', 'gzip', 'gunzip', 'xz', 'bzip2', 'cpio', 'ed', 'ex', 'parallel', 'watch', 'script',
 ]);
 
 /** Each entry is a bare program name plus plain words ("bd show"): no paths, shell syntax, or writers/interpreters. */

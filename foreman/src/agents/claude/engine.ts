@@ -182,13 +182,14 @@ export class ClaudeEngine implements Engine {
         ),
       ],
     });
-    // the lead is read-only in both modes, whatever the allow rules or the auto mode classifier say
-    if (role === 'lead') {
+    // the lead is read-only in both modes, whatever the allow rules or the auto mode classifier say; a
+    // worker on a contributor's pull request asks before running its code the same way
+    if (role === 'lead' || policy().untrustedCode) {
       hooks.push({
         hooks: [
           leadReadOnlyHook(
             (tool, input) => classifyToolUse(tool, input, policy()),
-            (tool, decision, reason, subagent) => this.fm.agentLog(agentId, decision === 'deny' ? 'error' : 'tool', `lead read-only ${decision === 'deny' ? 'blocked' : 'asks you'}${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
+            (tool, decision, reason, subagent) => this.fm.agentLog(agentId, decision === 'deny' ? 'error' : 'tool', `${role === 'lead' ? 'lead read-only' : 'contributor code'} ${decision === 'deny' ? 'blocked' : 'asks you'}${subagent ? ' (subagent)' : ''}: ${tool} (${truncate(reason, 160)})`),
           ),
         ],
       });

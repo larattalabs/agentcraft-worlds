@@ -1536,11 +1536,13 @@ function leadReadCommand(cmd: string, cmdWord: string, rest: string[], ctx: Poli
 }
 
 /** Arguments that turn a declared lead read command into a writer or a runner (`--output=f`, `-x cmd`). */
-const LEAD_DECLARED_RISKY_ARG = /^-{1,2}(o|out|output|outfile|output-file|output-dir|write|exec|exec-batch|x|X|e|execute|pre|pre-glob|editor|pager|hook|run|cmd|command|shell)(=.*)?$/i;
+const LEAD_DECLARED_RISKY_ARG = /^(-{1,2}(o|out|output|outfile|output-file|output-dir|write|exec|exec-batch|x|X|e|execute|pre|pre-glob|editor|pager|hook|run|cmd|command|shell|i|in-place|inplace)(=.*)?|-[oxXei].+)$/;
 
 /** Variables that pick what a command runs (or loads): a lead never sets them without asking. */
 const LEAD_EXEC_VARS = /^(PATH|PATHEXT|BASH_ENV|ENV|ZDOTDIR|PAGER|GIT_PAGER|MANPAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|PERL5OPT|PERL5LIB|PYTHONSTARTUP|PYTHONPATH|NODE_OPTIONS|RUBYOPT|SHELL)$/i;
-const LEAD_WRAPPERS = new Set(['env', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'stdbuf', 'timeout']);
+const LEAD_WRAPPERS = new Set(['command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'stdbuf', 'timeout']);
+/** Programs that run a command line given to them: a lead's use of them always asks. */
+const LEAD_RUNNERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'cmd', 'powershell', 'pwsh', 'xargs', 'parallel', 'watch', 'script', 'su', 'sudo', 'doas', 'eval', 'source', '.', 'env']);
 
 /**
  * The lead's extra rule on top of isReadOnlyCommand (it works in the user's code, a view of it, and
@@ -1561,8 +1563,10 @@ export function leadExecRisk(command: string): string | undefined {
         continue;
       }
       if (LEAD_WRAPPERS.has(w[i]!.toLowerCase())) {
+        // a wrapper with options: whatever it runs cannot be pinned down here
+        if (w[i + 1]?.startsWith('-')) return `${w[i]} with options`;
         i++;
-        while (i < w.length && (w[i]!.startsWith('-') || /^\d+(\.\d+)?[smhd]?$/.test(w[i]!))) i++;
+        while (i < w.length && /^\d+(\.\d+)?[smhd]?$/.test(w[i]!)) i++;
         continue;
       }
       break;
@@ -1571,10 +1575,11 @@ export function leadExecRisk(command: string): string | undefined {
     if (!cmd) continue;
     if (/[\\/]/.test(cmd)) return `runs a program by its path (${cmd})`;
     const base = cmd.toLowerCase().replace(/\.exe$/, '');
+    if (LEAD_RUNNERS.has(base)) return `${base} runs another command line`;
     const args = w.slice(i + 1);
     if ((base === 'rg' || base === 'ripgrep') && args.some((x) => /^--pre(-glob)?(=|$)/.test(x))) return `${base} --pre runs another program`;
     if (/^g?sed$/.test(base) && args.some((x) => /^(--file(=|$)|-[a-zA-Z]*f)/.test(x))) return `${base} runs a script file`;
-    if (/^[gnm]?awk$/.test(base) && args.some((x) => /^(--file(=|$)|-[a-zA-Z]*f$)/.test(x))) return `${base} runs a program file`;
+    if (/^[gnm]?awk$/.test(base) && args.some((x) => /^(--file(=|$)|-[a-zA-Z]*f)/.test(x))) return `${base} runs a program file`;
   }
   return undefined;
 }
@@ -2141,10 +2146,11 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
   if (toolName === 'Bash' || toolName === 'PowerShell') {
     const command = typeof input.command === 'string' ? input.command : '';
     const v = classifyBash(command, ctx);
-    if (ctx.role !== 'lead' && ctx.untrustedCode && v.action === 'allow' && (leadExecRisk(command) || !isReadOnlyCommand(command, ctx))) {
+    if (ctx.role !== 'lead' && ctx.untrustedCode && v.action !== 'deny' && (v.action === 'ask' || leadExecRisk(command) || !isReadOnlyCommand(command, ctx))) {
       // a contributor's pull request (PR intake): code the user did not write runs only after asking,
       // once per exact command (tests, builds, scripts, installs)
       const key = `untrusted:${exactKey(command)}`;
+      // (an earlier "Always allow" of the policy's own, broader key does not cover it here)
       return always(key) ?? askVerdict(`runs code from a contributor's pull request (${v.reason})`, key);
     }
     if (ctx.role !== 'lead' || v.action === 'deny') return v;

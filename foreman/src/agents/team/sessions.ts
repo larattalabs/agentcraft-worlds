@@ -12,7 +12,7 @@ import { truncate } from '../../util/text.js';
 import { instructionsBlock } from '../claude/context.js';
 import { boardSummary, leadRepoContext, leadSystemPrompt, planText, workerSystemPrompt } from '../prompts.js';
 import { agentTools, type TurnHandle } from '../tools.js';
-import { API_KEY_VARS, CLAUDE_LOGIN_VARS, PROVIDER_SWITCHES } from '../claude/auth.js';
+import { API_KEY_VARS, CLAUDE_LOGIN_VARS } from '../claude/auth.js';
 import { credentialLikeName } from '../../redact.js';
 import type { Engine, EngineId, Role, TurnStats } from '../engine.js';
 import { modelLabel } from '../models.js';
@@ -347,10 +347,17 @@ export abstract class SessionsLayer extends TurnSetupLayer {
    */
   protected contributorEnv(agentId: string, role: Role, env: Record<string, string | undefined>, engine: Engine): Record<string, string | undefined> {
     if (role !== 'worker' || !this.runsContributorCode(agentId)) return env;
-    const provider = Object.keys(PROVIDER_SWITCHES).some((k) => env[k] && env[k] !== '0' && env[k]!.toLowerCase() !== 'false');
+    const on = (k: string) => !!env[k] && env[k] !== '0' && env[k]!.toLowerCase() !== 'false';
+    // the credentials of the cloud provider the Claude CLI is switched to, and only those
+    const families = [
+      ...(on('CLAUDE_CODE_USE_BEDROCK') || on('CLAUDE_CODE_USE_ANTHROPIC_AWS') ? ['AWS_'] : []),
+      ...(on('CLAUDE_CODE_USE_VERTEX') ? ['GOOGLE_', 'GCLOUD_', 'CLOUDSDK_'] : []),
+      ...(on('CLAUDE_CODE_USE_FOUNDRY') ? ['AZURE_', 'ANTHROPIC_FOUNDRY_'] : []),
+    ];
+
     const keep = (k: string) =>
       engine.id === 'claude'
-        ? [...API_KEY_VARS, ...CLAUDE_LOGIN_VARS].includes(k.toUpperCase()) || (provider && /^(AWS_|GOOGLE_|GCLOUD_|CLOUDSDK_|AZURE_|ANTHROPIC_)/i.test(k))
+        ? [...API_KEY_VARS, ...CLAUDE_LOGIN_VARS].includes(k.toUpperCase()) || families.some((f) => k.toUpperCase().startsWith(f))
         : /^(OPENAI_|CODEX_)/i.test(k);
     return Object.fromEntries(Object.entries(env).filter(([k]) => keep(k) || !credentialLikeName(k)));
   }

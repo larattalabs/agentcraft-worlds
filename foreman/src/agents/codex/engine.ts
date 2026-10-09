@@ -151,10 +151,8 @@ export class CodexEngine implements Engine {
       pending += s;
       const lines = pending.split('\n');
       pending = lines.pop() ?? '';
-      if (pending.length > 64_000) {
-        lines.push(pending);
-        pending = '';
-      }
+      // an endless line is dropped, not cut in pieces (a piece of a secret would not be redacted)
+      if (pending.length > 64_000) pending = '';
       for (const l of lines) if (l.trim()) this.fm.log.debug(`[${agentId} codex] ${this.fm.redact(l).trim().slice(0, 300)}`);
     };
   }
@@ -240,6 +238,9 @@ export class CodexEngine implements Engine {
           if (threadId && turnId) server.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
         }
       }
+      // an approved command that finished takes no more input
+      if (method === 'item/completed' && params?.item?.type === 'commandExecution') approved.delete(String(params.item.id));
+      if (method === 'turn/completed') approved.clear();
       mapper.handle(method, params);
       if (method === 'turn/completed' && (!turnId || params?.turn?.id === turnId)) finish();
     });
@@ -319,8 +320,9 @@ export class CodexEngine implements Engine {
         if (!ours) return { decision: 'decline' };
         // every source and destination of the patch, and a root it asks to be granted, each on its own
         const paths = mapper.fileChangePaths(String(params.itemId));
-        if (params.grantRoot) paths.push(path.join(String(params.grantRoot), '.agentcraft-grant-root'));
+        // a patch the stream never described cannot be checked: declined, whatever root it asks for
         if (!paths.length) return { decision: 'decline' };
+        if (params.grantRoot) paths.push(path.join(String(params.grantRoot), '.agentcraft-grant-root'));
         for (const p of paths) {
           const r = await spec.permission('Edit', { file_path: path.resolve(cwd, p) }, abort.signal, params.reason ?? undefined);
           if (!r.allow) return { decision: r.interrupt ? 'cancel' : 'decline' };

@@ -30,6 +30,14 @@ describe('the lead runs nothing it was not shown', () => {
     ['sed -nf s.sed package.json', 'ask'],
     ['awk -f p.awk package.json', 'ask'],
     ['bd show x --output=f', 'ask'],
+    ['bd show x -oout.json', 'ask'],
+    ["sh -c './cat package.json'", 'ask'],
+    ['env -u LANG ./cat package.json', 'ask'],
+    ['env -u LANG cat package.json', 'ask'],
+    ['git ls-files | xargs ./cat', 'ask'],
+    ['git ls-files | xargs cat', 'ask'],
+    ['awk -fp.awk package.json', 'ask'],
+    ['timeout 5 cat package.json', 'allow'],
     ['bd show x --json', 'allow'],
     ['cat package.json', 'allow'],
     ['git log --oneline -5', 'allow'],
@@ -39,7 +47,7 @@ describe('the lead runs nothing it was not shown', () => {
   });
 
   it('refuses writers and runners as declared read commands', () => {
-    for (const bad of ['sort', 'fd', 'rg', 'less', 'make']) {
+    for (const bad of ['sort', 'fd', 'rg', 'less', 'make', 'uniq', 'yq']) {
       expect(() => loadConfig(['--lead-read-commands', `${bad} x`], { AGENTCRAFT_HOME: tempDir() })).toThrow(/not allowed/);
     }
   });
@@ -47,7 +55,11 @@ describe('the lead runs nothing it was not shown', () => {
 
 describe("a contributor's pull request", () => {
   it('runs code only after asking; reads and edits as usual', () => {
-    for (const c of ['npm test', 'node x.js', 'npx vitest', 'make', 'pytest', 'git commit -am fix']) expect(bash(c, contributor), c).toBe('ask');
+    for (const c of ['npm test', 'node x.js', 'npx vitest', 'make', 'pytest', 'git commit -am fix', 'npm install', 'sh p.sh']) {
+      // asked as code from the pull request (forced in auto mode), keyed to the exact command
+      const v = classifyToolUse('Bash', { command: c }, contributor);
+      expect(v.action === 'ask' && v.reason.includes("contributor's pull request") && v.ruleKeys.every((k) => k.startsWith('untrusted:')), c).toBe(true);
+    }
     for (const c of ['cat package.json', 'git log --oneline', 'git diff main...HEAD']) expect(bash(c, contributor), c).toBe('allow');
     expect(classifyToolUse('Edit', { file_path: path.join(cwd, 'src', 'a.ts') }, contributor).action).toBe('allow');
     const key = classifyToolUse('Bash', { command: 'npm test' }, contributor);
@@ -64,7 +76,7 @@ describe('Codex commands', () => {
   });
 
   it("the user's deny rules see through quotes and wrappers", () => {
-    for (const c of ['to"fu" apply', "'tofu' apply", 'tofu a"pply"', 'env X=1 tofu apply', 'command tofu apply', 'timeout 5 tofu apply', 'ls; tofu apply', 'echo $(tofu apply)']) {
+    for (const c of ['to"fu" apply', "'tofu' apply", 'tofu a"pply"', 'env X=1 tofu apply', 'command tofu apply', 'timeout 5 tofu apply', 'ls; tofu apply', 'echo $(tofu apply)', 'env -u LANG tofu apply', 'timeout -s TERM 5 tofu apply', 'echo "$(tofu apply)"', 'echo `tofu apply`']) {
       expect(shellRuleMatches('Bash(tofu apply:*)', 'Bash', { command: c }), c).toBe(true);
     }
     for (const c of ['tofu plan', 'echo tofu apply']) expect(shellRuleMatches('Bash(tofu apply:*)', 'Bash', { command: c }), c).toBe(false);
@@ -104,6 +116,15 @@ describe("landing a contributor's pull request", () => {
     await h.fm.close();
     rmrf(home);
     rmrf(path.dirname(repo));
+  });
+
+  it('refuses a contributor worktree that has no recorded starting commit', async () => {
+    const repoId = h.fm.repos.list()[0]!.id;
+    const task = h.fm.tasks.create({ title: 'PR #7 again', description: 'review', deps: [], repoId, createdBy: 'marlow', startBranch: 'agentcraft/pr-7' });
+    const wt = await h.fm.repos.createWorktree(repoId, 'juniper', task, { startPoint: 'agentcraft/pr-7' });
+    fs.appendFileSync(path.join(wt.path, 'CONTRIB.md'), 'fix\n');
+    const d = h.fm.createDecision({ agentId: 'marlow', kind: 'merge', question: 'Land it?', options: [...MERGE_OPTIONS], taskId: task.id, repoId, worktree: wt.id });
+    await expect(h.fm.repos.land(h.fm.decisions.answer(d.id, 'Merge'))).rejects.toThrow(/no recorded starting commit/);
   });
 
   it('refuses when the contributor commits were rewritten', async () => {

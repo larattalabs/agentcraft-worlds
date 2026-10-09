@@ -19,8 +19,35 @@ import { shellItems } from '../../shell.js';
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const WRAPPERS = new Set(['env', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'timeout', 'stdbuf', 'xargs', 'sudo', 'doas']);
 
+/** Wrapper options that take the next word as their value (`env -u NAME`, `timeout -s TERM`). */
+const OPTION_WITH_VALUE = /^(-[uCSsknIoe]|--(unset|chdir|split-string|signal|kill-after|adjustment|input|output|error|max-args|max-procs|replace|delimiter|arg-file))$/;
+
+/** `$( ... )` and backtick bodies anywhere in the text, also inside double quotes. */
+function substitutions(command: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < command.length; i++) {
+    if (command[i] === '$' && command[i + 1] === '(') {
+      let depth = 0;
+      for (let j = i + 1; j < command.length; j++) {
+        if (command[j] === '(') depth++;
+        else if (command[j] === ')' && --depth === 0) {
+          out.push(command.slice(i + 2, j));
+          break;
+        }
+      }
+    } else if (command[i] === '`') {
+      const end = command.indexOf('`', i + 1);
+      if (end > i) {
+        out.push(command.slice(i + 1, end));
+        i = end;
+      }
+    }
+  }
+  return out;
+}
+
 /** Each simple command of a shell line as plain words, without assignments and wrappers in front. */
-function commandTexts(command: string): string[] {
+function commandTexts(command: string, depth = 0): string[] {
   const out: string[] = [];
   for (const it of shellItems(command, process.platform !== 'win32')) {
     if (it.kind !== 'cmd') continue;
@@ -30,11 +57,15 @@ function commandTexts(command: string): string[] {
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i]!)) i++;
       else if (WRAPPERS.has(w[i]!.toLowerCase())) {
         i++;
-        while (i < w.length && (w[i]!.startsWith('-') || /^\d+(\.\d+)?[smhd]?$/.test(w[i]!))) i++;
+        while (i < w.length && (w[i]!.startsWith('-') || /^\d+(\.\d+)?[smhd]?$/.test(w[i]!))) {
+          if (OPTION_WITH_VALUE.test(w[i]!)) i++;
+          i++;
+        }
       } else break;
     }
     if (i < w.length) out.push(w.slice(i).join(' '));
   }
+  if (depth < 4) for (const body of substitutions(command)) out.push(...commandTexts(body, depth + 1));
   return out;
 }
 

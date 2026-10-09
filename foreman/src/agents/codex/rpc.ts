@@ -57,10 +57,8 @@ export class AppServer {
       pending += s;
       const lines = pending.split(/\r?\n/);
       pending = lines.pop() ?? '';
-      if (pending.length > 64_000) {
-        lines.push(pending);
-        pending = '';
-      }
+      // an endless line is dropped, not cut in pieces (a piece of a secret would not be redacted)
+      if (pending.length > 64_000) pending = '';
       for (const line of lines) keep(line);
       opts.onStderr?.(s);
     });
