@@ -33,6 +33,9 @@ npm install
 npm run start -- --backend claude --repo C:\path\to\your\repo
 # personal use only: your local `claude` CLI login instead of an API key
 npm run start -- --backend claude --repo C:\path\to\your\repo --use-claude-login
+# Codex agents on your Codex login (`codex login`), or a mixed team
+npm run start -- --backend codex --repo C:\path\to\your\repo
+npm run start -- --backend claude --worker-engine codex --repo C:\path\to\your\repo
 
 # simulated team on a fresh sandbox repo (no API calls) - for demos and screenshot QA
 npm run start -- --backend sim --reset --speed 2
@@ -73,7 +76,11 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 
 | flag / env | default | |
 | --- | --- | --- |
-| `--backend sim\|claude` / `AGENTCRAFT_BACKEND` | `claude` | |
+| `--backend sim\|claude\|codex` / `AGENTCRAFT_BACKEND` | `claude` | codex: an all-Codex team |
+| `--lead-engine` / `--worker-engine` `claude\|codex` | the backend's | mixed teams, e.g. a Claude lead with Codex workers |
+| `--engines kit=codex,...` / `AGENTCRAFT_ENGINES` | | engine per agent |
+| `--codex-model`, `--codex-lead-model`, `--codex-worker-model`, `--codex-effort` | your Codex config | Codex models and reasoning effort |
+| `--codex-path` / `AGENTCRAFT_CODEX_PATH` | `codex` on PATH, else the Codex app's | the Codex CLI |
 | `--port` / `AGENTCRAFT_PORT` | `7878` | WebSocket port (127.0.0.1 only) |
 | `--home` / `AGENTCRAFT_HOME` | `~/.agentcraft` | state root |
 | `--user-name` / `AGENTCRAFT_USER_NAME` / config `userName` | OS user name | how the agents address you; sent to the mod in `foreman.status` |
@@ -81,7 +88,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--repo <path>[,<path>]` | | register repos at start (sim: a fresh `sandbox/sim-demo`) |
 | `--goal "<text>"` | | submit a goal right away |
 | `--reset` | | wipe this profile first |
-| `--notify` / `--no-notify` / `AGENTCRAFT_NOTIFY` | on for claude, off for sim | Windows or macOS notifications |
+| `--notify` / `--no-notify` / `AGENTCRAFT_NOTIFY` | on for claude, off for sim | Windows, macOS or Linux (`notify-send`) notifications |
 | `--toast-silent` | | toast without sound |
 | `--model`, `--lead-model`, `--worker-model` | lead `opus`, workers `sonnet` | any model id/alias the CLI accepts |
 | `--design-model` / `AGENTCRAFT_DESIGN_MODEL` / `claude.designModel` | the worker model | the building design agent (below) |
@@ -93,6 +100,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--max-concurrent-turns` / `claude.maxConcurrentTurns` | no cap | agent turns at once, leads and workers together |
 | `--max-turns`, `--max-budget <usd>` | 40 lead / 80 worker, none | per turn caps |
 | `--ci "<cmd>"` | detected (`npm`/`pnpm`/`yarn`/`bun test` by lockfile, `cargo test`, ...) | run after each task (a repo's `repoSettings` `ci` wins) |
+| `--lead-read-commands "<cmd>,..."` / `AGENTCRAFT_LEAD_READ_COMMANDS` / `claude.leadReadCommands` | none | read commands the leads run without asking, by prefix: `"bd show,gh issue view"` lets them read your issue tracker (bare program name plus plain words; writers, interpreters and network tools are refused) |
 | `--no-lead-review` | | merge decisions go to you without a lead review turn |
 | `--pr-watch off\|observe\|on` | `observe` | pull requests of tasks landed as PRs (`land: "pr"`): observe = poll + Marlow's triage, nothing posted or started; on = fold-ins and approved replies too; off = a PR finishes its task (config `claude.prWatch`) |
 | `--pr-poll-seconds` | `180` | how often watched PRs are polled (config `claude.prPollSeconds`) |
@@ -383,6 +391,79 @@ so launch scripts can find it; `<home>/foreman.json` holds the same for the firs
 it exits, another live profile takes its place). A second Foreman on a profile that is already
 running is refused (two would both write its `state.json`).
 
+## Engines: Claude and Codex
+
+The team (`src/agents/team.ts`: task graph, worktrees, scheduling, CI, reviews, merges, steering,
+restarts) runs each agent turn through an engine, chosen per agent:
+
+- **Claude** (`src/agents/claude/engine.ts`): one Claude Agent SDK `query()` per turn; the team tools
+  are an in-process MCP server; every tool call goes through `canUseTool` and the policy.
+- **Codex** (`src/agents/codex/`, experimental): one `codex app-server` process per turn, JSON-RPC over
+  stdio. The agent's thread is durable, so its next turn resumes it. The fork runs Codex threads with
+  `approvalPolicy: "on-request"` in its OS sandbox (upstream: `"untrusted"`): inside the sandbox Codex works
+  without asking, and whatever would leave it (other paths, the network) asks; the ask goes through the same policy and in-game
+  permission prompts (commands are unwrapped from Codex's `powershell -Command` / `bash -lc` wrapper
+  first). Workers are sandboxed to their worktree, its git dir and the temp dir; the lead is
+  read-only. The team tools are app-server dynamic tools. None of your own Codex setup reaches an
+  agent thread: your MCP servers, plugins, apps, web search, image generation and notify hooks are
+  switched off for it (your Codex app is untouched). Codex's own sub-agent tools cannot be switched
+  off; agents are told not to use them, and every approval from a thread AgentCraft did not start is
+  declined. The git safety environment is passed explicitly (`shell_environment_policy.set`), since
+  Codex drops variables named like secrets (`GIT_CONFIG_KEY_0`).
+
+  On Windows, the app-server uses `<home>/<profile>/codex-localappdata` as its own local app-data
+  directory. This avoids a Codex sandbox setup bug that tries to repair permissions on locked
+  desktop runtime executables. Agent shell commands retain the original `LOCALAPPDATA`; the
+  sandbox, approval policy, login and saved Codex threads are unchanged.
+
+  A worker's sandbox can write exactly what committing and merging on its own branch needs: the
+  shared `objects/`, its own branches' refs and reflogs (`refs/heads/agentcraft/<agent>/`), and its
+  worktree's own git dir (Codex protects the `.git` pointer's target unless it is granted exactly),
+  validated against the registered repository before every turn. Never the shared `.git` as a
+  whole: its `config` and `hooks` would let a worker run code in your own git, outside any sandbox,
+  and its refs would let it move your branches. On Windows,
+  worktrees run with the older grant may retain Codex deny ACLs; recreating the worktree after
+  saving its changes clears those stale permissions. Do not reset permissions on the whole repo.
+  Windows agents are also told to use `npm.cmd` / `npx.cmd`: their PowerShell launchers can fail
+  on sandbox-inaccessible global installs or script execution policy, while the CMD launchers work.
+
+**In this fork** the team is `src/agents/team.ts` plus its layers in `src/agents/team/` (core,
+holds, turnSetup, sessions, outcomes, recovery, jobs/*); `src/agents/claude/index.ts` is the all-Claude
+team. Claude stays the default; Codex is opt-in. What the fork's protections mean for a Codex agent:
+
+| protection | Codex agents |
+|---|---|
+| AgentCraft policy, protected files, Foreman-private guard, your deny/ask rules | every approval Codex asks for goes through the same gate, judged in the directory the command runs in. What Codex does inside its sandbox (commands, patches) does not ask: the OS sandbox holds it, and each command is still checked as it starts, so one that touches the Foreman's home, token or port, or that one of your deny rules matches (best effort, also inside `sh -c`), interrupts the turn after the fact |
+| `claude.permissions` deny / ask rules | applied to Codex shell commands by the team (`team/rules.ts`: `Bash`, `Bash(prefix:*)`, exact, `*`); allow rules and rules for other tools are not |
+| auto mode, skills, subagents, `claude.context.mcpServers`, connectors, session usage windows | Claude only (a Codex thread gets none of your MCP servers, plugins or apps; holds still apply) |
+| git safety env, commit identity, no push | yes (passed explicitly; the sandbox has no network) |
+| no attribution | not enforced: Claude's attribution settings have no Codex equivalent, so a Codex agent's own commit messages are whatever it writes (approved merges, squashed PR commits and the user-branch commits are made by the Foreman as you, without trailers) |
+| redaction | agent log, feed, errors and stderr are redacted, before anything cuts them |
+| Claude credentials | removed from a Codex agent's environment |
+| usage limits | a Codex usage limit holds the whole team until it resets (backoff) |
+| building designs | Claude only: a team without a Claude agent refuses design requests |
+
+**Pull request intake** (off by default: `claude.prIntake`, `--pr-intake`, hub Settings). Turn it on only
+for outside contributors, with isolation (a container or VM with no credentials): their code runs on this
+machine with your account. When it is on, a goal that mentions PRs (`#12`, `PR 12`, `pull/12`) on a
+repository whose `origin` is on GitHub makes the Foreman fetch each open one (`gh pr view`, then `git fetch` with hooks
+off) into `agentcraft/pr-<n>` and brief the lead, which creates one task per PR with `start_branch`.
+`start_branch` must be one of the PRs fetched for that goal; the worker's worktree starts from the
+commit fetched then. Because that is code you did not write, such a worktree gets no `repoSettings`
+setup command, no copied files (`.env`) and none of the repository env's credential-like variables
+(`*_TOKEN`, `*_KEY`, `*SECRET*`, passwords); the worker's environment drops every credential-like
+variable its engine does not need; only commands the policy verifies as reads run without asking
+(tests, builds, installs and commits ask, once per exact command, also in auto mode); CI does not run
+automatically. Landing keeps the contributor's commits on every path, never squashed, and refuses if
+they were rewritten: a local merge, your branch, or (`land: "pr"`) a pull request of ours, which PR
+watching then follows like any other. A Codex worker's sandbox can write the repository's shared
+`objects/` (upstream's design for committing); treat Codex workers as trusted with the object store.
+Intake force-updates `agentcraft/pr-<n>` and then reads it: a second fetch of the same PR in between can
+change the commit tasks start from (nothing compares it with the one listed).
+
+The rest of this section describes the team with either engine ("Read/Grep/Glob" is how a Codex
+agent reads with its shell).
+
 ## How the claude backend works
 
 1. **Plan** (lead, read-only in your checkout): explores with Read/Grep/Glob, writes `Plan: ...` to
@@ -561,7 +642,7 @@ restarts (or they are set back).
 (running turns are interrupted and resumed on start), and the same command (node, its flags, the
 script, the arguments, environment and working directory; without the one-shot `--reset`, `--goal`
 and `--autostart`) starts again detached, with a new pid and a new client token, on the same port.
-The profile's run file names the new process right away, so `node tools/mac.mjs stop` finds it
+The profile's run file names the new process right away, so `node tools/unix.mjs stop` finds it
 (`launch` reuses it too). Its output goes where the old process's went.
 
 ### Steering
@@ -592,9 +673,13 @@ path matters (except `$(pwd)`, `$(git rev-parse --show-toplevel)` and lists of w
 from a list of worktree paths (`find`, `git ls-files`, `grep -l`), anything else it runs asks.
 Commands that git runs for us (`git rebase -x/--exec`, `git bisect run`, `git submodule foreach`,
 `git filter-branch --*-filter`, `git difftool -x`, `-c alias.x='!cmd'`) are classified exactly like
-the same command typed directly. Anything it cannot verify asks. The lead works in your own
-checkout, so it may only run read-only commands without asking (a redirection like `git log > x`
-or `git diff --output=x` is a write).
+the same command typed directly. Anything it cannot verify asks. The lead reads a view of your
+code, so in policy mode it runs only what the policy sees as reads without asking (a redirection like
+`git log > x` or `git diff --output=x` is a write): a best-effort nudge, not a sandbox. In auto mode
+Claude's classifier judges the lead's commands like any agent's; denies (push) and the Foreman's own
+files hold in both modes. Programs the policy does not know, like an issue tracker's
+CLI, ask every time unless listed in `--lead-read-commands`. The list is matched by bare program
+name and applies to the lead only: a worker could put its own `bd` in front of the real one. Entries must be a bare program name plus plain words; writers, interpreters and network tools (`rm`, `git`, `bash`, `node`, `curl`, ...) are refused at startup.
 
 "Always allow for this agent" stores every rule key the call needed, and each key is scoped so it
 never covers more than the prompt said (the prompt shows the scope: `"Always allow for this
@@ -824,7 +909,7 @@ have the shapes the claude backend produces, and `pr.refresh` works. Mode: `clau
   only). Both are recreated with `--reset` (or when missing). It is registered before
   `sim-demo`, which stays the default repo (the last one registered), so turn it on together with
   `--reset`: on an existing profile `sim-demo` is registered already and pocket-api would become the
-  default. Only when no `--repo` is given. In game: `node tools/mac.mjs launch --backend sim --dev
+  default. Only when no `--repo` is given. In game: `node tools/unix.mjs launch --backend sim --dev
   --reset --foreman-arg --sim-pr --foreman-arg --pr-watch --foreman-arg on`.
 - **Goals**: a goal in a repo that lands as PRs runs as a side flow (any lead, Marlow too, one at a
   time per lead): the lead plans one task, a free worker writes `docs/goals/<goal>.md`, the lead asks

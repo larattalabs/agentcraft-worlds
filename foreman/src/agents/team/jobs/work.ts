@@ -1,10 +1,11 @@
-// Claude backend, work jobs: the scheduler starts ready tasks on free workers, each in its own git
+// The team, work jobs: the scheduler starts ready tasks on free workers, each in its own git
 // worktree (continuing another worker's branch after a hand-off or for PR review fixes); work goes
 // back to its worker with feedback; task steering (cancel, reassign).
 import type { Goal, Task } from '../../../protocol.js';
 import { formatInbox } from '../../../bus.js';
 import { truncate } from '../../../util/text.js';
-import { foldInPrompt, workPrompt } from '../prompts.js';
+import { foldInPrompt, workPrompt } from '../../prompts.js';
+import { isPrBranch } from '../../../pulls.js';
 import { userName } from '../../../user.js';
 import { PlanJobs } from './plan.js';
 
@@ -65,8 +66,21 @@ export abstract class WorkJobs extends PlanJobs {
         this.fm.bus.feed('task', `${this.fm.nameOf(agentId)} continues ${t.id} from ${this.fm.nameOf(prev.agentId)}'s branch`, { agentId, taskId: t.id });
       }
     }
+    // a pull request task starts from the contributor's commits as they were fetched at goal intake
+    // (pulls.ts), never from whatever the branch holds later
+    let contributor: string | undefined;
+    if (t.startBranch && isPrBranch(t.startBranch)) {
+      const p = t.goalId ? this.st.pulls[t.goalId]?.[t.startBranch] : undefined;
+      if (!p || p.repoId !== t.repoId) {
+        this.fm.tasks.setStatus(t.id, 'blocked', { reason: `${t.startBranch} is not a pull request fetched for this goal`, force: true });
+        return;
+      }
+      contributor = p.sha;
+      if (!startPoint) startPoint = p.sha;
+    }
     const base = this.baseFor(t);
     const wt = await this.fm.repos.createWorktree(t.repoId!, agentId, t, { ...(startPoint ? { startPoint } : {}), ...(base ? { base } : {}) });
+    if (contributor) this.fm.repos.pinContributor(t.repoId!, wt.id, contributor);
     this.fm.tasks.update(t.id, { branch: wt.branch, worktree: wt.id });
     this.fm.tasks.setStatus(t.id, 'doing');
     this.fm.setAgent(agentId, { taskId: t.id, repoId: t.repoId!, worktree: wt.id, state: 'thinking', station: 'desk', activity: `starting ${t.id}` });

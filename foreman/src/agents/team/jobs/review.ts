@@ -1,10 +1,10 @@
-// Claude backend, review jobs: a finished task runs CI in its worktree, then the lead reviews it
+// The team, review jobs: a finished task runs CI in its worktree, then the lead reviews it
 // (request_merge or changes) or the merge decision goes straight to the user.
 import type { Task } from '../../../protocol.js';
 import { MERGE_OPTIONS } from '../../../protocol.js';
 import type { TestResult } from '../../../repos.js';
 import { renderDiffText } from '../../../diff.js';
-import { reviewPrompt } from '../prompts.js';
+import { reviewPrompt } from '../../prompts.js';
 import { WorkJobs } from './work.js';
 
 export abstract class ReviewJobs extends WorkJobs {
@@ -50,7 +50,11 @@ export abstract class ReviewJobs extends WorkJobs {
     }
     if (worker) this.fm.setAgent(worker, { state: 'idle', station: 'lounge', activity: `${t.id} in review` });
     let ci: TestResult | undefined;
-    try {
+    // a contributor's pull request (PR intake): its tests are its code; they ran only where the worker
+    // asked and the user approved, never automatically outside the policy
+    const contributor = this.fm.repos.keepsContributorCommits(this.fm.repos.requireWorktree(t.repoId, t.worktree));
+    if (contributor) this.fm.bus.feed('ci', `${t.id}: tests not run automatically (a contributor's pull request; the worker's approved runs count)`, { ...(worker ? { agentId: worker } : {}), taskId: t.id });
+    else try {
       this.fm.tasks.update(t.id, { ci: 'running' });
       this.fm.repos.setCi(t.repoId, 'running');
       const ciCommand = this.fm.repos.testCommand(t.repoId, this.fm.repos.requireWorktree(t.repoId, t.worktree).path, this.cfg.ciCommand);

@@ -7,7 +7,7 @@ import path from 'node:path';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ClaudeBackend } from '../src/agents/claude/index.js';
-import { planPrompt } from '../src/agents/claude/prompts.js';
+import { planPrompt } from '../src/agents/prompts.js';
 import type { ClientMessage, Outbound } from '../src/protocol.js';
 import { demoRepo, makeForeman, rmrf, tempDir, until, type Harness } from './helpers.js';
 

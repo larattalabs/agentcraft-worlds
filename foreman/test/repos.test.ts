@@ -252,6 +252,28 @@ describe('RepoManager', () => {
     }
   });
 
+  it.each([
+    ['diff.mnemonicPrefix', 'true'],
+    ['diff.noprefix', 'true'],
+    ['diff.srcPrefix', 'SRC/'],
+  ])('reports repo-relative paths when the user sets %s=%s', async (key, value) => {
+    const repo = await demoRepo();
+    try {
+      execFileSync('git', ['config', key, value], { cwd: repo, stdio: 'pipe' });
+      const r = await h.fm.repos.add(repo);
+      const t = h.fm.tasks.create({ title: 'Prefix config', createdBy: 'marlow', repoId: r.id, assignee: 'kit' });
+      const wt = await h.fm.repos.createWorktree(r.id, 'kit', t);
+      fs.appendFileSync(path.join(wt.path, 'src', 'cli.ts'), '// changed\n');
+      fs.rmSync(path.join(wt.path, 'README.md'));
+      fs.mkdirSync(path.join(wt.path, 'b'));
+      fs.writeFileSync(path.join(wt.path, 'b', 'notes.md'), 'new\n');
+      const d = await h.fm.repos.diff(r.id, wt.id);
+      expect(d.files.map((f) => [f.path, f.status])).toEqual([['README.md', 'deleted'], ['b/notes.md', 'added'], ['src/cli.ts', 'modified']]);
+    } finally {
+      rmrf(path.dirname(repo));
+    }
+  });
+
   it('runs the repo test command and reports failures', async () => {
     const res = await h.fm.repos.runTests('demo-app');
     expect(res.pass).toBe(true);

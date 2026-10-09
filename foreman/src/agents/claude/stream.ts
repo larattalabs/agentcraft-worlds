@@ -5,30 +5,8 @@ import { firstLine, headLines, tailLines, truncate } from '../../util/text.js';
 import { relPath, toolActivity } from '../activity.js';
 import { AUTH_ERRORS, isAuthText, isNetworkText } from './failures.js';
 
-export interface TurnStats {
-  sessionId?: string;
-  resultText?: string;
-  subtype?: string;
-  isError: boolean;
-  costUsd?: number;
-  numTurns?: number;
-  authFailed?: string;
-  errors: string[];
-  /** a usage/rate limit refused this turn (rate_limit_event "rejected" or an API rate_limit error) */
-  limited?: boolean;
-  /** the latest rate limit report seen in the turn */
-  rateLimit?: RateLimitReport;
-}
-
-/** A plan usage report from the CLI (claude.ai subscription logins). */
-export interface RateLimitReport {
-  status: 'allowed' | 'allowed_warning' | 'rejected';
-  /** epoch ms */
-  resetsAt?: number;
-  type?: string;
-  /** 0-1 */
-  utilization?: number;
-}
+import type { RateLimitReport, TurnStats } from '../engine.js';
+export type { RateLimitReport, TurnStats };
 
 const LIMIT_RE = /usage limit|rate[ _-]?limit/i;
 
@@ -126,6 +104,8 @@ function subagentArg(input: Record<string, unknown>): string {
 export class StreamMapper {
   private toolNames = new Map<string, string>();
   readonly stats: TurnStats = { isError: false, errors: [] };
+  /** the model the CLI reported at init */
+  model: string | undefined;
 
   constructor(
     private fm: Foreman,
@@ -144,6 +124,7 @@ export class StreamMapper {
         const m = msg as { subtype?: string; session_id?: string; model?: string; tool_name?: string; agent_id?: string; decision_reason_type?: string; decision_reason?: string; message?: string };
         if (m.subtype === 'init' && m.session_id) {
           this.stats.sessionId = m.session_id;
+          if (m.model) this.model = m.model;
           fm.log.debug(`${id}: session ${m.session_id} (${m.model ?? '?'})`);
         } else if (m.subtype === 'permission_denied') {
           // auto mode's classifier (or a rule) refused a call without asking anyone

@@ -234,6 +234,7 @@ function globalSpecs(x: SpecCtx): Spec[] {
     { key: 'claude.subagents.enabled', group: 'subagents', type: 'bool', label: 'Subagents', help: 'Let agents start Claude Code subagents (they work in the agent\'s worktree under the same rules). After a restart.', live: false, def: false, get: g('claude.subagents.enabled') },
     { key: 'claude.subagents.agents', group: 'subagents', type: 'stringList', label: 'Subagent definitions', help: 'Agent files the agents may use as subagents: names under ~/.claude/agents, or paths. After a restart.', live: false, def: [], get: g('claude.subagents.agents') },
     // prs
+    { key: 'claude.prIntake', group: 'prs', type: 'bool', label: 'Pull request intake', help: 'A goal that mentions "#12" on a GitHub repository fetches those pull requests (gh, git fetch) and the lead plans one task per PR, starting from the contributor\'s commits. Their code then runs on this machine with your account: use it only for outside contributors, with isolation (a container, no credentials). Off by default.', live: true, flags: ['pr-intake'], envs: ['AGENTCRAFT_PR_INTAKE'], def: false, get: g('claude.prIntake') },
     { key: 'claude.prWatch', group: 'prs', type: 'enum', options: ['off', 'observe', 'on'], label: 'Pull request watching', help: 'For tasks landed as pull requests. observe: poll them and have the lead triage new comments, reviews and failing checks, posting nothing; on: also send fixes back to the worker and post replies after your approval; off: opening the PR finishes the task.', live: true, flags: ['pr-watch'], envs: ['AGENTCRAFT_PR_WATCH'], def: 'observe', get: g('claude.prWatch') },
     { key: 'claude.prPollSeconds', group: 'prs', type: 'int', min: 15, max: 3600, label: 'Poll pull requests every (seconds)', help: 'How often watched pull requests are checked.', live: true, flags: ['pr-poll-seconds'], def: 180, get: g('claude.prPollSeconds') },
     // usage
@@ -665,6 +666,7 @@ export function applyLive(running: Config, next: Config): void {
   c.leadReview = n.leadReview;
   c.prWatch = n.prWatch;
   c.prPollSeconds = n.prPollSeconds;
+  c.prIntake = n.prIntake;
   Object.assign(c.usageReserve, n.usageReserve);
   Object.assign(c.leadSession, n.leadSession);
   c.leadWorldTtlDays = n.leadWorldTtlDays;

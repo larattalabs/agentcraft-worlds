@@ -25,6 +25,8 @@ export interface CreateTaskInput {
   repoId?: string;
   goalId?: string;
   priority?: number;
+  /** the worker's branch starts from this branch (e.g. a fetched pull request) instead of the base */
+  startBranch?: string;
   createdBy: string;
 }
 
@@ -108,6 +110,7 @@ export class TaskGraph {
     if (input.assignee) task.assignee = input.assignee;
     if (input.repoId) task.repoId = input.repoId;
     if (input.goalId) task.goalId = input.goalId;
+    if (input.startBranch) task.startBranch = input.startBranch;
     this.tasks.push(task);
     this.touch(task);
     return task;

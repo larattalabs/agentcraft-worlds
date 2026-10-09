@@ -82,6 +82,10 @@ export interface PolicyContext {
   foreman?: ForemanPrivate;
   /** path rules of this platform (tests simulate Windows); default: the one we run on */
   platform?: 'win32' | 'posix';
+  /** lead only: command prefixes the user declared read-only, e.g. `bd show` */
+  leadReadCommands?: string[];
+  /** the worktree holds a contributor's pull request (PR intake): only reads run without asking */
+  untrustedCode?: boolean;
 }
 
 export interface ForemanPrivate {
@@ -548,6 +552,35 @@ const READ_CMDS = new Set([
   ':', 'exit', 'return', 'break', 'continue', 'wait', 'shift', 'set', 'shopt', 'umask', 'ulimit', 'read', 'unset', 'jobs', 'history',
 ]);
 const NO_PATH_CMDS = new Set(['echo', 'printf', 'true', 'false', 'sleep', 'date', 'whoami', 'uname', 'hostname', 'id', 'locale', 'seq', 'pwd', 'clear', 'cls', 'command', 'hash', 'which', 'where', 'whereis', 'test', '[', '[[', 'ps', 'tasklist', 'nproc', 'arch', 'getconf', 'uptime', 'free', ':', 'exit', 'return', 'break', 'continue', 'wait', 'shift', 'set', 'shopt', 'umask', 'ulimit', 'read', 'unset', 'jobs', 'history', 'printenv', 'env']);
+// PowerShell pipeline filters/formatters (Codex runs commands through PowerShell on Windows): they
+// shape objects and print, never touch files. Script blocks (`ForEach-Object { ... }`) are split
+// into their own segments and checked as commands.
+const PS_FILTERS = [
+  'select-object', 'select', 'where-object', '?', 'foreach-object', '%', 'foreach', 'sort-object', 'measure-object', 'measure',
+  'format-table', 'ft', 'format-list', 'fl', 'format-wide', 'fw', 'out-string', 'out-host', 'oh', 'out-null', 'group-object', 'group',
+  'get-unique', 'gu', 'get-member', 'gm', 'convertto-json', 'convertfrom-json', 'convertto-csv', 'get-location', 'gl', 'get-command',
+  'gcm', 'get-date', 'write-output', 'write', 'write-host', 'join-path', 'split-path', 'get-help',
+];
+for (const c of PS_FILTERS) {
+  READ_CMDS.add(c);
+  NO_PATH_CMDS.add(c);
+}
+/** PowerShell cmdlets that run a script block: `ForEach-Object { Remove-Item $_ }` runs Remove-Item. */
+const PS_BLOCK_CMDS = new Set(['foreach-object', '%', 'foreach', 'where-object', '?']);
+/**
+ * A script block's body is an expression (`$_.FullName`, `$_.Length -gt 100`) or commands. Braces and
+ * `;`/`|` were split off already; leading parameter names (-Process, -FilterScript) are skipped.
+ */
+function psBlockCommand(rest: string[]): string | undefined {
+  let i = 0;
+  while (i < rest.length && /^-[a-z]+$/i.test(rest[i]!)) i++;
+  const body = rest.slice(i);
+  if (!body.length) return undefined;
+  const expression = /^[$'"0-9(]/.test(body[0]!) && !body.some((w) => /^[a-z][a-z0-9]*-[a-z][a-z0-9]*$/i.test(w) || w === '&' || w === '.' || w === '=');
+  return expression ? undefined : body.join(' ');
+}
+/** PowerShell cmdlets that write the file named by -Path/-LiteralPath/-FilePath (or the first argument). */
+const PS_WRITERS = new Set(['set-content', 'add-content', 'ac', 'out-file']);
 const RECURSIVE_READERS = new Set(['du', 'tree']);
 /** commands that only write their path arguments (inside the worktree is fine) */
 const WRITE_CMDS = new Set(['mkdir', 'md', 'touch', 'tee', 'truncate', 'new-item', 'ni']);
@@ -1171,6 +1204,9 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     return merge(inner, exact(env, `xargs ${cmd}: its arguments come from input and cannot be checked`), ok('', false, { pathsOut: false }));
   }
 
+  // lead only: workers can write files, so their `bd` could be a fake on PATH
+  if (ctx.role === 'lead' && leadReadCommand(cmd, cmdWord, rest, ctx)) return ok(`${cmd}: declared read-only`, true);
+
   // ---- directory changes ----
   if (['cd', 'pushd', 'chdir', 'set-location', 'sl'].includes(cmd)) {
     // cmd.exe style `cd /d <path>` (seen from real agents): the switch is not the target. In Git
@@ -1400,6 +1436,10 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     return merge(j, ok(cmd, !outFile, { pathsOut: !ins.length && !outFile && o.pipeTrusted }));
   }
 
+  if (PS_BLOCK_CMDS.has(cmd)) {
+    const inner = psBlockCommand(rest);
+    if (inner !== undefined) return merge({ ...classifyCommand(inner, sc.vcwd, { ...sc.env, depth: sc.env.depth + 1 }), cwd: undefined, pathsOut: undefined }, ok(cmd, false, { pathsOut: false }));
+  }
   if (READ_CMDS.has(cmd)) {
     if (NO_PATH_CMDS.has(cmd)) {
       // `env`/`command` with a command after them were unwrapped already; what is left only prints
@@ -1418,6 +1458,21 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     const passthrough = ['cat', 'head', 'tail', 'tac'].includes(cmd) && !positional.length && o.pipeTrusted;
     const listing = cmd === 'ls' && !args.some((a) => /^-[a-zA-Z]*[lgnos]/.test(a)) && !j.asks.length;
     return merge(j, ok(cmd, true, { pathsOut: passthrough || listing }));
+  }
+  if (PS_WRITERS.has(cmd)) {
+    let target: string | undefined;
+    const positional: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i]!;
+      if (/^-(path|literalpath|lp|filepath|pspath)$/i.test(a)) target = rest[++i];
+      else if (/^-(value|encoding|inputobject|delimiter|stream|width)$/i.test(a)) i++;
+      else if (!a.startsWith('-')) positional.push(a);
+    }
+    target ??= positional[0];
+    if (!target) return exact(env, `${cmd} without a file to write`);
+    // a drive path outside Windows (C:/x resolves inside the cwd there): never taken for a worktree file
+    if (/^[A-Za-z]:[\\/]/.test(target) && process.platform !== 'win32') return exact(env, `${cmd} writes the Windows path ${target}`);
+    return merge(pathAsks([isPathCandidate(target, true) ? target : `./${target}`], 'w', sc), ok(`${cmd} inside worktree`, false));
   }
   if (WRITE_CMDS.has(cmd)) {
     const { args } = stripCmdSwitches(cmd, rest);
@@ -1468,6 +1523,79 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     return merge(paths, ok(`${cmd} (project tool)`, false));
   }
   return exact(env, `unrecognised command: ${cmd}`);
+}
+
+/** "bd show" matches `bd show x`, not `./bd show x` or `bd showall`. */
+function leadReadCommand(cmd: string, cmdWord: string, rest: string[], ctx: PolicyContext): boolean {
+  if (/[\\/]/.test(cmdWord)) return false;
+  return (ctx.leadReadCommands ?? []).some((entry) => {
+    const [head, ...words] = entry.trim().split(/\s+/);
+    // the declaration covers what follows, except arguments that would make it write or run something
+    return baseCmd(head!) === cmd && words.every((w, i) => rest[i] === w) && !rest.slice(words.length).some((a) => LEAD_DECLARED_RISKY_ARG.test(a));
+  });
+}
+
+/** Arguments that turn a declared lead read command into a writer or a runner (`--output=f`, `-x cmd`). */
+const LEAD_DECLARED_RISKY_ARG = /^(-{1,2}(o|out|output|outfile|output-file|output-dir|write|exec|exec-batch|x|X|e|execute|pre|pre-glob|editor|pager|hook|run|cmd|command|shell|i|in-place|inplace)(=.*)?|-[oxXei].+)$/;
+
+/** Variables that pick what a command runs (or loads): a lead never sets them without asking. */
+const LEAD_EXEC_VARS = /^(PATH|PATHEXT|BASH_ENV|ENV|ZDOTDIR|PAGER|GIT_PAGER|MANPAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|PERL5OPT|PERL5LIB|PYTHONSTARTUP|PYTHONPATH|NODE_OPTIONS|RUBYOPT|SHELL)$/i;
+const LEAD_WRAPPERS = new Set(['command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'stdbuf', 'timeout']);
+/** Programs that run a command line given to them: a lead's use of them always asks. */
+const LEAD_RUNNERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'cmd', 'powershell', 'pwsh', 'xargs', 'parallel', 'watch', 'script', 'su', 'sudo', 'doas', 'eval', 'source', '.', 'env']);
+
+/**
+ * For a contributor's pull request (PR intake, off by default), on top of isReadOnlyCommand: a "read"
+ * that would still run code nobody was shown - a program by path (`./cat`, `bin/x`), a variable that
+ * picks the program or what it loads (PATH, PAGER, NODE_OPTIONS...), a command substitution, a shell
+ * or runner, the reader options that run another program or a script file (rg --pre, sed -f, awk -f).
+ * Best effort, a text check. Returns why, or undefined.
+ */
+export function unshownCodeRisk(command: string): string | undefined {
+  // a command substitution outside single quotes (also inside double quotes): what it runs is not
+  // shown as a command; '$(x)' in single quotes is literal text
+  if (/\$\(|`/.test(command.replace(/'[^']*'/g, "''"))) return 'runs a command substitution';
+  for (const it of shellItems(command, process.platform !== 'win32')) {
+    if (it.kind !== 'cmd') continue;
+    const w = it.words;
+    // `export PATH=...`, `declare -x PAGER=...`, `printf -v PATH ...` (an argument like `rg 'PATH=.'` is not one)
+    const head = w[0]?.toLowerCase() ?? '';
+    if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(head)) {
+      const setsVar = w.slice(1).map((x) => /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(x)?.[1]).find((n) => n && LEAD_EXEC_VARS.test(n));
+      if (setsVar) return `sets ${setsVar}`;
+    }
+    if (head === 'printf') {
+      const v = w.indexOf('-v');
+      if (v > 0 && w[v + 1] && LEAD_EXEC_VARS.test(w[v + 1]!)) return `sets ${w[v + 1]}`;
+    }
+    let i = 0;
+    while (i < w.length) {
+      const a = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(w[i]!);
+      if (a) {
+        if (LEAD_EXEC_VARS.test(a[1]!)) return `sets ${a[1]}`;
+        i++;
+        continue;
+      }
+      if (LEAD_WRAPPERS.has(w[i]!.toLowerCase())) {
+        // a wrapper with options: whatever it runs cannot be pinned down here
+        if (w[i + 1]?.startsWith('-')) return `${w[i]} with options`;
+        i++;
+        while (i < w.length && /^\d+(\.\d+)?[smhd]?$/.test(w[i]!)) i++;
+        continue;
+      }
+      break;
+    }
+    const cmd = w[i];
+    if (!cmd) continue;
+    if (/[\\/]/.test(cmd)) return `runs a program by its path (${cmd})`;
+    const base = cmd.toLowerCase().replace(/\.exe$/, '');
+    if (LEAD_RUNNERS.has(base)) return `${base} runs another command line`;
+    const args = w.slice(i + 1);
+    if ((base === 'rg' || base === 'ripgrep') && args.some((x) => /^--pre(-glob)?(=|$)/.test(x))) return `${base} --pre runs another program`;
+    if (/^g?sed$/.test(base) && args.some((x) => /^(--file(=|$)|-[a-zA-Z]*f)/.test(x))) return `${base} runs a script file`;
+    if (/^[gnm]?awk$/.test(base) && args.some((x) => /^(--file(=|$)|-[a-zA-Z]*f)/.test(x))) return `${base} runs a program file`;
+  }
+  return undefined;
 }
 
 /** `node_modules/.bin/<tool>` exists between the cwd and the worktree root (npx would not download it). */
@@ -2032,9 +2160,18 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
   if (toolName === 'Bash' || toolName === 'PowerShell') {
     const command = typeof input.command === 'string' ? input.command : '';
     const v = classifyBash(command, ctx);
+    if (ctx.role !== 'lead' && ctx.untrustedCode && v.action !== 'deny' && (v.action === 'ask' || unshownCodeRisk(command) || !isReadOnlyCommand(command, ctx))) {
+      // a contributor's pull request (PR intake): code the user did not write runs only after asking,
+      // once per exact command (tests, builds, scripts, installs)
+      const key = `untrusted:${exactKey(command)}`;
+      // (an earlier "Always allow" of the policy's own, broader key does not cover it here)
+      return always(key) ?? askVerdict(`runs code from a contributor's pull request (${v.reason})`, key);
+    }
     if (ctx.role !== 'lead' || v.action === 'deny') return v;
-    // the lead works in the user's checkout: only inspection commands run without asking, and an
-    // approval covers exactly that command
+    // the lead reads a view of the user's code: a best-effort nudge, not a sandbox. Commands the lexer
+    // sees as reads run; an obvious write asks, and an approval covers exactly that command. (Auto
+    // mode: the classifier judges the lead's calls like any agent's; deny rules and the Foreman's
+    // private files still hold.)
     if (v.action === 'allow' && isReadOnlyCommand(command, ctx)) return v;
     const key = `lead:${exactKey(command)}`;
     return always(key) ?? askVerdict(`the lead is read-only; this command may change things${v.action === 'ask' ? ` (${v.reason})` : ''}`, key);

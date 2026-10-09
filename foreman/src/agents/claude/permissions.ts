@@ -36,8 +36,8 @@ export interface PermissionsConfig {
 
 export const DEFAULT_PERMISSIONS: PermissionsConfig = { mode: 'policy', allow: [], deny: [], ask: [], webTools: false, protectCheckouts: true };
 
-/** Policy asks that stay asks in auto mode: git internals and redirections. */
-const STRUCTURAL = /git internals \(\.git\)|points git at another repository|--git-dir\/--work-tree|edit through a link that leads outside|GIT_DIR|protected file/i;
+/** Policy asks that stay asks in auto mode: git internals and redirections, a lead's non-read command, code from a contributor's pull request. */
+const STRUCTURAL = /git internals \(\.git\)|points git at another repository|--git-dir\/--work-tree|edit through a link that leads outside|GIT_DIR|protected file|contributor's pull request/i;
 
 const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
 const inside = (p: string, root: string) => p === root || p.startsWith(`${root}${path.sep}`) || p.startsWith(`${root}/`);
@@ -164,5 +164,30 @@ export function foremanGuardHook(
     if (!v || v.action !== 'deny') return {};
     report(input.tool_name, v.reason, input.agent_id);
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } };
+  };
+}
+
+/**
+ * PreToolUse hook for a lead's turns (every turn, both permission modes): the lead stays read-only.
+ * Whatever the policy denies is denied, and a Bash/PowerShell command the policy cannot verify as a
+ * read (policy.ts isReadOnlyCommand, plus the user's declared lead read commands) is forced to an
+ * in-world ask, so neither auto mode's classifier nor a Claude Code allow rule
+ * (claude.permissions.allow, e.g. `Bash(codex exec:*)`) runs it unseen. An approval covers exactly
+ * that command (rule key `lead:<command>`, policy.ts). Subagents of a lead are held to the same.
+ */
+export function leadReadOnlyHook(
+  classify: (toolName: string, input: Record<string, unknown>) => Verdict,
+  report: (toolName: string, decision: 'deny' | 'ask', reason: string, subagent?: string) => void,
+): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
+    const toolInput = (input.tool_input && typeof input.tool_input === 'object' ? input.tool_input : {}) as Record<string, unknown>;
+    const v = classify(input.tool_name, toolInput);
+    const shell = input.tool_name === 'Bash' || input.tool_name === 'PowerShell';
+    if (v.action === 'deny' || (v.action === 'ask' && shell)) {
+      report(input.tool_name, v.action, v.reason, input.agent_id);
+      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: v.action, permissionDecisionReason: v.reason } };
+    }
+    return {};
   };
 }

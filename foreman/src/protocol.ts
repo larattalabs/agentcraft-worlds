@@ -62,7 +62,7 @@ export type NotifyLevel = z.infer<typeof NotifyLevel>;
 export const WorktreeStatus = z.enum(['active', 'merged', 'abandoned']);
 export type WorktreeStatus = z.infer<typeof WorktreeStatus>;
 
-export const BackendName = z.enum(['sim', 'claude']);
+export const BackendName = z.enum(['sim', 'claude', 'codex']);
 export type BackendName = z.infer<typeof BackendName>;
 
 export const AuthStatus = z
@@ -108,6 +108,8 @@ export const Agent = z.object({
   worktree: Id.optional().describe('id of the worktree the agent is working in (see Repo.worktrees)'),
   paused: z.boolean(),
   active: z.boolean().describe('false = off shift (not on the current team, or stopped by the user); render idle in the lounge'),
+  engine: z.enum(['claude', 'codex']).optional().describe('which engine runs this agent (absent: the sim)'),
+  model: z.string().optional().describe('the model it runs, for display, e.g. "Opus 5.5" or "GPT-6 Astra" (the real model once a turn reported it)'),
 });
 export type Agent = z.infer<typeof Agent>;
 
@@ -155,6 +157,7 @@ export const Task = z.object({
   goalId: Id.optional(),
   priority: z.number().int().describe('higher = sooner; default 0'),
   branch: z.string().optional().describe('git branch, e.g. "agentcraft/kit/t2-tag-parser"'),
+  startBranch: z.string().optional().describe('the worker\'s branch starts from this branch instead of the base, e.g. a fetched pull request "agentcraft/pr-12"'),
   worktree: Id.optional(),
   ci: CiStatus,
   blockedReason: z.string().optional(),

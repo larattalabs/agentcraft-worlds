@@ -164,6 +164,17 @@ describe('session options', () => {
     const { options, cleanup } = await session({});
     try {
       const w = options[1]!;
+      // the lead: a shell (upstream d4ad706) with the read-only nudge ahead of the user's allow rules
+      const leadOpts = options[0]!;
+      expect(leadOpts.tools).toContain('Bash');
+      expect(leadOpts.tools).not.toContain('Edit');
+      expect(leadOpts.hooks?.PreToolUse).toHaveLength(3); // the Foreman guard, the MCP gate, the lead's nudge
+      const nudge = leadOpts.hooks!.PreToolUse![2]!.hooks[0]!;
+      const pre = (command: string) =>
+        nudge({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'x', session_id: 's', transcript_path: '', cwd: leadOpts.cwd! } as HookInput, 'x', { signal: new AbortController().signal });
+      expect(await pre('rm -rf src')).toMatchObject({ hookSpecificOutput: { permissionDecision: 'ask' } });
+      expect(await pre('git push origin main')).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+      expect(await pre('git log --oneline -5')).toEqual({});
       expect(w.permissionMode).toBe('default');
       expect(w.hooks?.PreToolUse).toHaveLength(2); // the Foreman guard (its own files, token and port) and the MCP gate
       expect(w.settings).toEqual(NO_ATTRIBUTION); // C8: no Claude co-author trailer / PR footer
@@ -187,13 +198,24 @@ describe('session options', () => {
     try {
       for (const o of options) {
         expect(o.permissionMode).toBe('auto');
-        expect(o.hooks?.PreToolUse).toHaveLength(3); // the Foreman guard, the MCP gate, then the guardrail
+        // the Foreman guard, the MCP gate, then the guardrail (auto mode: the classifier judges the lead
+        // like any agent; no forced read-only ask)
+        expect(o.hooks?.PreToolUse).toHaveLength(3);
         expect(o.settings).toEqual({ permissions: { allow: ['Bash(codex exec:*)'], deny: [], ask: [] }, ...NO_ATTRIBUTION });
         expect(o.tools).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch', 'Agent', 'Task']));
         expect(o.disallowedTools).toEqual(['Bash(git push:*)']);
         expect(Object.keys(o.agents ?? {})).toEqual(['checker']);
       }
-      expect(options[0]!.tools).not.toContain('Bash'); // the lead stays read-only
+      // auto mode: the lead's shell goes to the classifier; the guardrail still denies what the policy
+      // denies (push) and the Foreman guard its private files
+      const lead = options[0]!;
+      expect(lead.tools).toContain('Bash');
+      expect(lead.tools).not.toContain('Edit');
+      const guardrail = lead.hooks!.PreToolUse![2]!.hooks[0]!;
+      const pre = (command: string) =>
+        guardrail({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'x', session_id: 's', transcript_path: '', cwd: lead.cwd! } as HookInput, 'x', { signal: new AbortController().signal });
+      expect(await pre('git push origin main')).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+      expect(await pre('rm -rf src')).toEqual({}); // the classifier decides
       const logs = () => {
         h.fm.flushLogs();
         return JSON.stringify(h.events.filter((e) => e.type === 'agent.log'));
@@ -254,7 +276,8 @@ describe('claude.ai connectors', () => {
     const none = await session({});
     try {
       expect(none.options.every((o) => o.strictMcpConfig === true)).toBe(true);
-      expect(none.options.every((o) => o.hooks?.PreToolUse?.length === 2)).toBe(true); // the MCP gate runs on every turn
+      // the MCP gate runs on every turn (the Foreman guard too; a lead's turn also has its read-only guard)
+      expect(none.options.every((o) => o.hooks?.PreToolUse?.length === ((o.tools as string[]).includes('Edit') ? 2 : 3))).toBe(true); // (a lead in policy mode: its nudge)
     } finally {
       await none.cleanup();
     }
@@ -262,7 +285,8 @@ describe('claude.ai connectors', () => {
     try {
       for (const o of some.options) {
         expect(o.strictMcpConfig).toBe(false);
-        expect(o.hooks?.PreToolUse).toHaveLength(2); // the Foreman guard and the MCP gate (policy mode: no guardrail hook)
+        // the Foreman guard and the MCP gate (policy mode: no guardrail hook; a lead: its read-only guard)
+        expect(o.hooks?.PreToolUse).toHaveLength((o.tools as string[]).includes('Edit') ? 2 : 3);
       }
       expect(some.h.cfg.claude.context.connectors).toEqual(['monday.com']);
     } finally {

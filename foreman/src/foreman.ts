@@ -8,7 +8,7 @@ import { LEAD_ID, loadCast, type CastMember } from './cast.js';
 import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, redactingLogger, type Ctx, type Logger } from './context.js';
-import { configSecrets, INHERITED_SECRET_VARS, Redactor } from './redact.js';
+import { configSecrets, inheritedSecrets, Redactor } from './redact.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
@@ -17,6 +17,7 @@ import { DiscordNotifier, Notifier, type ExternalKind } from './notifier.js';
 import type {
   Agent,
   AgentState,
+  BackendName,
   ClientMessage,
   Decision,
   Design,
@@ -39,12 +40,13 @@ import { Store } from './store.js';
 import { TaskError, TaskGraph } from './taskgraph.js';
 import { setUserName, userName } from './user.js';
 import { truncate } from './util/text.js';
+import { setNoHooksHome } from './util/git.js';
 import { unifiedDiff } from './util/udiff.js';
 import { buildDigest } from './digest.js';
 import { applyLive, ConfigError, configGet, configSet, listRepoAgents, pendingRestart, restartBaseline } from './settings.js';
 
 export interface Backend {
-  readonly name: 'sim' | 'claude';
+  readonly name: BackendName;
   /** Called once after the core is ready (and after restart: resume work). */
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -195,9 +197,12 @@ export class Foreman {
 
   constructor(opts: ForemanOptions) {
     this.config = opts.config;
+    // Windows: the Foreman's own git calls point hooks under its home (util/git.ts)
+    setNoHooksHome(opts.config.home);
     this.redactor.add(configSecrets(opts.config));
-    // the Claude credentials the Foreman inherited (an API key, an OAuth token): never printed
-    this.redactor.add(INHERITED_SECRET_VARS.map((k) => process.env[k]));
+    // the credentials the Foreman inherited (Claude's and Codex's keys and tokens, any credential-like
+    // variable): never printed
+    this.redactor.add(inheritedSecrets(process.env));
     this.log = redactingLogger(opts.logger ?? consoleLogger('foreman', { debug: opts.config.debug, quiet: opts.config.quiet }), (s) => this.redact(s));
     this.store = new Store(opts.config.dataDir, { log: this.log });
     const now = opts.now ?? Date.now;
@@ -370,7 +375,7 @@ export class Foreman {
   /** Patch an agent and broadcast if anything changed. */
   setAgent(
     id: string,
-    patch: Partial<Pick<Agent, 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title'>> & {
+    patch: Partial<Pick<Agent, 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title' | 'engine' | 'model'>> & {
       taskId?: string | null;
       repoId?: string | null;
       worktree?: string | null;
@@ -378,7 +383,7 @@ export class Foreman {
   ): Agent {
     const a = this.requireAgent(id);
     let changed = false;
-    const set = <K extends 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title'>(k: K, v: Agent[K] | undefined) => {
+    const set = <K extends 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title' | 'engine' | 'model'>(k: K, v: Agent[K] | undefined) => {
       if (v !== undefined && a[k] !== v) {
         a[k] = v;
         changed = true;
@@ -390,6 +395,8 @@ export class Foreman {
     set('paused', patch.paused);
     set('active', patch.active);
     set('title', patch.title);
+    set('engine', patch.engine);
+    set('model', patch.model);
     for (const k of ['taskId', 'repoId', 'worktree'] as const) {
       const v = patch[k];
       if (v === undefined) continue;

@@ -5,7 +5,7 @@
 //        [--port 7879] [--at x,y,z] [--rotation none|clockwise_90|180|counterclockwise_90]
 //        [--keep] [--size x,y,z] [--no-clear] [--quick]
 //
-// Needs the dev client running (node tools/mac.mjs launch --backend sim --dev). It never launches
+// Needs the dev client running (node tools/unix.mjs launch --backend sim --dev). It never launches
 // the game itself. Output: artifacts/shots/blueprints/<id>/*.png + sheet.png, and an anchor table.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -150,7 +150,7 @@ let dev;
 try {
   dev = await DevClient.connect({ port, timeoutMs: 8000 });
 } catch (e) {
-  die(`the dev client is not running or refused the connection (${e.message}).\n  Start it first:  node tools/mac.mjs launch --backend sim --dev   (this script never launches it)`);
+  die(`the dev client is not running or refused the connection (${e.message}).\n  Start it first:  node tools/unix.mjs launch --backend sim --dev   (this script never launches it)`);
 }
 log(`connected to DevBridge :${port}${dev.hello?.version ? ' (' + dev.hello.version + ')' : ''}`);
 

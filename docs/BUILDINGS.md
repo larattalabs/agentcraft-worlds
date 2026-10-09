@@ -960,7 +960,7 @@ explicit interior air, bindings, and C5:
 
 ## Verify loop (tools)
 
-`tools/blueprints/verify.mjs <id>`: with the dev client running (`node tools/mac.mjs launch
+`tools/blueprints/verify.mjs <id>`: with the dev client running (`node tools/unix.mjs launch
 --backend sim --dev`), places the template in the dev HQ world away from the studio, takes an
 exterior orbit (4 views) + interior views (each `cam_*` anchor), writes PNGs and a contact sheet
 under `artifacts/shots/blueprints/<id>/` (see `tools/blueprints/VERIFY.md`), and checks the sidecar (required anchors, anchors inside

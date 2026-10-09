@@ -101,7 +101,7 @@ public final class Protocol {
 	}
 
 	public enum BackendName implements Wire {
-		SIM, CLAUDE, UNKNOWN
+		SIM, CLAUDE, CODEX, UNKNOWN
 	}
 
 	/** `failed` must be shown loudly (in-world banner): the claude backend cannot run. */
@@ -213,11 +213,14 @@ public final class Protocol {
 	 * <li>{@code worktree}: id of the worktree the agent is working in (see Repo.worktrees)</li>
 	 * <li>{@code active}: false = off shift (not on the current team, or stopped by the user); render idle in the
 	 * lounge</li>
+	 * <li>{@code engine}: which engine runs this agent (absent: the sim)</li>
+	 * <li>{@code model}: the model it runs, for display, e.g. "Opus 5.5" or "GPT-6 Astra" (the real model once a
+	 * turn reported it)</li>
 	 * </ul>
 	 */
 	public record Agent(String id, String name, AgentRole role, @Nullable String title, String color, @Nullable String accent, String skin,
 		AgentState state, String activity, Station station, @Nullable String taskId, @Nullable String repoId, @Nullable String worktree,
-		@Nullable Boolean paused, @Nullable Boolean active) implements ProtocolSupport.AgentHelpers {
+		@Nullable Boolean paused, @Nullable Boolean active, @Nullable String engine, @Nullable String model) implements ProtocolSupport.AgentHelpers {
 		public Agent {
 			name = ProtocolSupport.displayName(id, name);
 			role = role == null ? AgentRole.UNKNOWN : role;
@@ -282,6 +285,8 @@ public final class Protocol {
 	 * <li>{@code deps}: task ids that must be done before this one can start</li>
 	 * <li>{@code priority}: higher = sooner; default 0</li>
 	 * <li>{@code branch}: git branch, e.g. "agentcraft/kit/t2-tag-parser"</li>
+	 * <li>{@code startBranch}: the worker's branch starts from this branch instead of the base, e.g. a fetched pull
+	 * request "agentcraft/pr-12"</li>
 	 * <li>{@code summary}: worker/lead summary of the result</li>
 	 * <li>{@code pr}: the pull request this task landed as (repoSettings land "pr"), while it is watched and after
 	 * it closed</li>
@@ -291,8 +296,9 @@ public final class Protocol {
 	 * </ul>
 	 */
 	public record Task(String id, String title, @Nullable String description, TaskStatus status, @Nullable String assignee, List<String> deps,
-		@Nullable String repoId, @Nullable String goalId, int priority, @Nullable String branch, @Nullable String worktree, CiStatus ci,
-		@Nullable String blockedReason, @Nullable String summary, @Nullable TaskPr pr, @Nullable String createdBy, long createdAt, long updatedAt) {
+		@Nullable String repoId, @Nullable String goalId, int priority, @Nullable String branch, @Nullable String startBranch,
+		@Nullable String worktree, CiStatus ci, @Nullable String blockedReason, @Nullable String summary, @Nullable TaskPr pr,
+		@Nullable String createdBy, long createdAt, long updatedAt) {
 		public Task {
 			title = title == null ? id : title;
 			status = status == null ? TaskStatus.UNKNOWN : status;

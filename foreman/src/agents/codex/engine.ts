@@ -1,0 +1,351 @@
+// The Codex engine: one `codex app-server` process per turn (like one Claude CLI per turn). The
+// agent's thread is durable (its id is the session id), so a later turn resumes it in a new process.
+//
+// What the agent may do is decided the same way as for Claude agents:
+// - the fork's default: approvalPolicy "on-request" in the OS sandbox. Inside the sandbox Codex works
+//   without asking; a command that would leave it (write elsewhere, use the network) asks, and that
+//   ask goes through AgentCraft's policy (policy.ts) and, if needed, an in-game prompt
+//   (upstream: "untrusted", which also asks before every command Codex does not count as a safe read)
+// - sandbox: workers write only their worktree (+ its git dir, for commits), the lead nothing; no
+//   network inside the sandbox (a command that needs it asks again, through the same policy)
+// - the team tools (send_message, ask_user, update_task...) are dynamic tools answered here
+// - none of the user's own Codex setup leaks in: their MCP servers, plugins, apps, web search,
+//   image generation and notify hooks are off for agent threads (their Codex app is untouched)
+// - commands run with the git safety environment (no push, no signing, the agent's own identity; the agent's own repository hooks still run),
+//   passed explicitly because Codex drops variables named like secrets (GIT_CONFIG_KEY_0...)
+//
+// Fork notes (docs/FORK.md "Upstream sync 2026-10"): every approval goes through the team's
+// permission gate (the AgentCraft policy, the Foreman-private guard, protected files, the user's
+// deny / ask rules, then the user in game). Commands inside the sandbox run WITHOUT asking and never
+// reach the gate; the OS sandbox is what holds them. Each is still checked when it starts (spec.check:
+// the Foreman's own files, token or port, and the user's deny rules), and one that fails interrupts
+// the turn at once - after the fact, so best effort. Output, stderr and errors are redacted (whole
+// lines, before they are cut). A usage limit holds the team like Claude's.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { z } from 'zod';
+import type { CodexConfig } from '../../config.js';
+import type { Foreman } from '../../foreman.js';
+import { foremanPrivateVerdict } from '../../policy.js';
+import { truncate } from '../../util/text.js';
+import { userName } from '../../user.js';
+import type { AuthCheck, Engine, Role, TurnSpec, TurnStats } from '../engine.js';
+import type { AgentTool } from '../tools.js';
+import { CODEX_NOT_FOUND, findCodex } from './find.js';
+import { AppServer } from './rpc.js';
+import { CodexStreamMapper, shellCommand } from './stream.js';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+/** Codex features an agent thread does not get. */
+const OFF_FEATURES = [
+  'apps',
+  'browser_use',
+  'browser_use_external',
+  'computer_use',
+  'goals',
+  'hooks',
+  'image_generation',
+  'in_app_browser',
+  'memories',
+  'multi_agent',
+  'plugins',
+  'realtime_conversation',
+  'skill_mcp_dependency_install',
+  'skill_search',
+  'tool_suggest',
+];
+
+const CLIENT_INFO = { name: 'agentcraft', title: 'AgentCraft', version: '0.1.0' };
+
+function notes(role: Role, tools: AgentTool[]): string {
+  return [
+    '',
+    '# Working in AgentCraft (Codex)',
+    `- The AgentCraft team tools (${tools.map((t) => t.name).join(', ')}) are function tools: call them directly. They are how the team and ${userName()} see your work; plain text only shows on your monitor.`,
+    '- Where these instructions mention Read, Grep or Glob, read and search files with your shell (e.g. rg). Edit files with apply_patch.',
+    process.platform === 'win32' ? '- In PowerShell, use npm.cmd and npx.cmd for npm/npx commands. Their .ps1 launchers can fail under the Windows sandbox even when the .cmd launchers work.' : '',
+    `- Every command is checked against AgentCraft's policy, and anything it cannot allow by itself is shown to ${userName()}, who may deny it. Never work around a denial: find another way or use ask_user.`,
+    `- Do not spawn sub-agents, do not search the web, and ask questions only with ask_user (not request_user_input).`,
+    role === 'lead' ? '- You are read-only: never modify files or run commands that change anything.' : '',
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
+}
+
+/** Variables the agent's commands need beyond the user's environment (git safety, identity). */
+function envDelta(env: Record<string, string | undefined>, inherited = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && inherited[k] !== v) out[k] = v;
+  return out;
+}
+
+/** A command as the policy should see it: prefixed with `cd <dir> &&` when it runs outside the turn's cwd. */
+export function inDir(command: string, dir: unknown, cwd: string): string {
+  if (typeof dir !== 'string' || !dir.trim()) return command;
+  const same = (() => {
+    try {
+      return fs.realpathSync.native(dir) === fs.realpathSync.native(cwd);
+    } catch {
+      return path.resolve(dir) === path.resolve(cwd);
+    }
+  })();
+  return same ? command : `cd '${dir.replace(/'/g, `'\\''`)}' && ${command}`;
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export interface CodexEngineOptions {
+  /** the codex CLI (tests: node with a fake app-server script in `args`) */
+  bin?: string;
+  /** arguments before `app-server` */
+  args?: string[];
+}
+
+export class CodexEngine implements Engine {
+  readonly id = 'codex' as const;
+  readonly label = 'Codex';
+  /** the model in the user's Codex config (read at the auth check) */
+  private configuredModel: string | undefined;
+
+  constructor(
+    private fm: Foreman,
+    private cfg: CodexConfig,
+    private opts: CodexEngineOptions = {},
+  ) {}
+
+  private bin(): string | undefined {
+    return this.opts.bin ?? findCodex(this.cfg.path);
+  }
+
+  private serverEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    if (process.platform !== 'win32') return env;
+    // Windows sandbox setup scans LOCALAPPDATA/OpenAI/Codex/runtimes even when MCP is off.
+    // Older Codex builds try to repair ACLs on active desktop EXEs and fail with sharing
+    // violations (openai/codex#51822). Give our server its own app-data root; shell commands
+    // get the original environment back below. The sandbox and the user's Codex home stay intact.
+    const localAppData = path.join(this.fm.config.dataDir, 'codex-localappdata');
+    fs.mkdirSync(localAppData, { recursive: true });
+    const isolated = { ...env };
+    for (const key of Object.keys(isolated)) if (key.toUpperCase() === 'LOCALAPPDATA') delete isolated[key];
+    isolated.LOCALAPPDATA = localAppData;
+    return isolated;
+  }
+
+  model(role: Role): string {
+    return (role === 'lead' ? this.cfg.leadModel : this.cfg.workerModel) ?? this.configuredModel ?? 'default';
+  }
+
+  authFailedMessage(detail: string): string {
+    return `Codex authentication failed (${detail}). Run \`codex login\`, then restart the Foreman.`;
+  }
+
+  classifyError(message: string): { auth: boolean; limited?: { resetsAt?: number } } {
+    return { auth: /unauthorized|\b401\b|not logged in|codex login|credential/i.test(message), ...(/usage limit|usageLimitExceeded|rate limit/i.test(message) ? { limited: {} } : {}) };
+  }
+
+  /** Whole stderr lines (rpc.ts splits them), redacted before they are cut. */
+  private stderrLines(agentId: string): (line: string) => void {
+    return (line: string) => this.fm.log.debug(`[${agentId} codex] ${this.fm.redact(line).trim().slice(0, 300)}`);
+  }
+
+  private async initialize(server: AppServer): Promise<void> {
+    await server.request('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true, requestAttestation: false } }, 30_000);
+    server.notify('initialized');
+  }
+
+  async checkAuth(): Promise<AuthCheck> {
+    const bin = this.bin();
+    if (!bin) return { ok: false, message: CODEX_NOT_FOUND };
+    const server = new AppServer(bin, { cwd: os.homedir(), env: this.serverEnv(process.env), ...(this.opts.args ? { args: this.opts.args } : {}) });
+    try {
+      await this.initialize(server);
+      const cfg = await server.request<any>('config/read', {}, 30_000).catch(() => undefined);
+      if (typeof cfg?.config?.model === 'string') this.configuredModel = cfg.config.model;
+      const r = await server.request<any>('account/read', {}, 30_000);
+      const a = r?.account;
+      if (!a && r?.requiresOpenaiAuth !== false) return { ok: false, message: 'Codex is not logged in. Run `codex login` (ChatGPT or an OpenAI API key), then restart the Foreman. The sim backend still works.' };
+      const account = a?.type === 'chatgpt' ? `ChatGPT${a.planType ? ` ${a.planType}` : ''}` : a?.type === 'apiKey' ? 'OpenAI API key' : a?.type === 'amazonBedrock' ? 'Amazon Bedrock' : 'ok';
+      return { ok: true, account };
+    } catch (e) {
+      return { ok: false, message: `Codex check failed: ${errorText(e)}. Check that \`codex\` works and you are logged in (\`codex login\`), then restart the Foreman. The sim backend still works.` };
+    } finally {
+      server.close();
+    }
+  }
+
+  /** Config overrides for an agent thread (see the header). `userConfig`: the effective config. */
+  private threadConfig(userConfig: any, spec: TurnSpec, serverEnv: NodeJS.ProcessEnv): Record<string, unknown> {
+    const off = (names: string[]) => Object.fromEntries(names.map((n) => [n, { enabled: false }]));
+    const effort = spec.role === 'lead' ? this.cfg.leadEffort : this.cfg.effort;
+    return {
+      mcp_servers: off(Object.keys(userConfig?.mcp_servers ?? {})),
+      plugins: off(Object.keys(userConfig?.plugins ?? {})),
+      features: Object.fromEntries(OFF_FEATURES.map((f) => [f, false])),
+      web_search: 'disabled',
+      notify: [],
+      include_apps_instructions: false,
+      // Preserve both the git-safety variables Codex normally filters and any values isolated
+      // for the app-server itself (LOCALAPPDATA on Windows).
+      shell_environment_policy: { set: { ...envDelta(spec.env), ...envDelta(spec.env, serverEnv) } },
+      sandbox_workspace_write: { writable_roots: spec.writableRoots ?? [], network_access: false },
+      ...(effort ? { model_reasoning_effort: effort } : {}),
+    };
+  }
+
+  async runTurn(spec: TurnSpec): Promise<TurnStats> {
+    const bin = this.bin();
+    if (!bin) throw new Error(CODEX_NOT_FOUND);
+    const { agentId, role, cwd, abort } = spec;
+    const mapper = new CodexStreamMapper(this.fm, agentId, cwd, role);
+    const serverEnv = this.serverEnv(spec.env);
+    const server = new AppServer(bin, {
+      cwd,
+      env: serverEnv,
+      ...(this.opts.args ? { args: this.opts.args } : {}),
+      onStderr: this.stderrLines(agentId),
+    });
+    spec.onProcess(server.child);
+    const tools = new Map(spec.tools.map((t) => [t.name, t]));
+    /** command items the gate approved (their item/started is expected) */
+    const approved = new Set<string>();
+    let threadId: string | undefined;
+    let turnId: string | undefined;
+    let finish!: () => void;
+    const finished = new Promise<void>((r) => (finish = r));
+
+    server.onNotification((method, params: any) => {
+      // only our own thread reaches the world (Codex could start helper threads of its own)
+      if (params?.threadId && threadId && params.threadId !== threadId) return;
+      if (abort.signal.aborted) return;
+      // a command Codex runs without asking (inside its sandbox): checked as it starts (Codex announces
+      // a command before it asks about it); one that touches the Foreman's own files, token or port,
+      // or that a deny rule of the user's matches, interrupts the turn
+      if (method === 'item/started' && params?.item?.type === 'commandExecution' && !approved.has(String(params.item.id)) && (spec.check || spec.policy)) {
+        const sc = shellCommand(String(params.item.command ?? ''));
+        const input = { command: inDir(sc.command, params.item.cwd, cwd) };
+        const reason = spec.check ? spec.check(sc.tool, input) : foremanPrivateVerdict(sc.tool, input, spec.policy!())?.reason;
+        if (reason) {
+          this.fm.agentLog(agentId, 'error', `blocked (ran without asking): ${sc.tool}: ${truncate(sc.command, 160)} (${reason}); turn interrupted`);
+          mapper.stats.errors.push(`interrupted: ${reason}`);
+          if (threadId && turnId) server.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
+        }
+      }
+      // an approved command that finished takes no more input
+      if (method === 'item/completed' && params?.item?.type === 'commandExecution') approved.delete(String(params.item.id));
+      if (method === 'turn/completed') approved.clear();
+      mapper.handle(method, params);
+      if (method === 'turn/completed' && (!turnId || params?.turn?.id === turnId)) finish();
+    });
+    server.onRequest((method, params) => this.answer(method, params as any, spec, () => threadId, mapper, tools, approved));
+
+    const onAbort = () => {
+      if (threadId && turnId) server.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
+      const t = setTimeout(() => server.close(), 2_000);
+      t.unref?.();
+      finish();
+    };
+    if (abort.signal.aborted) onAbort();
+    else abort.signal.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      await this.initialize(server);
+      const userConfig = (await server.request<any>('config/read', { cwd }, 30_000).catch(() => undefined))?.config;
+      if (typeof userConfig?.model === 'string') this.configuredModel ??= userConfig.model;
+      const model = role === 'lead' ? this.cfg.leadModel : this.cfg.workerModel;
+      const dynamicTools = spec.tools.map((t) => ({ type: 'function', name: t.name, description: t.description, inputSchema: z.toJSONSchema(z.object(t.shape)) }));
+      const thread = {
+        cwd,
+        approvalPolicy: 'on-request',
+        sandbox: role === 'lead' ? 'read-only' : 'workspace-write',
+        config: this.threadConfig(userConfig, spec, serverEnv),
+        developerInstructions: spec.instructions + notes(role, spec.tools),
+        dynamicTools,
+        ...(model ? { model } : {}),
+      };
+      let started: any;
+      if (spec.resume) {
+        started = await server.request<any>('thread/resume', { threadId: spec.resume, ...thread }, 60_000).catch((e) => {
+          this.fm.log.warn(`${agentId}: could not resume Codex thread ${spec.resume} (${errorText(e)}); starting a new one`);
+          return undefined;
+        });
+      }
+      if (!started) {
+        started = await server.request<any>('thread/start', { ...thread, serviceName: 'agentcraft' }, 60_000);
+        const task = this.fm.agent(agentId)?.taskId;
+        server.request('thread/name/set', { threadId: started.thread.id, name: `AgentCraft · ${this.fm.nameOf(agentId)}${task ? ` · ${task}` : ''}` }, 10_000).catch(() => undefined);
+      }
+      threadId = started.thread.id as string;
+      mapper.stats.sessionId = threadId;
+      spec.onSession(threadId);
+      if (typeof started.model === 'string' && started.model) spec.onModel?.(started.model);
+      if (abort.signal.aborted) return mapper.stats;
+      const turn = await server.request<any>('turn/start', { threadId, input: [{ type: 'text', text: spec.prompt, text_elements: [] }] }, 60_000);
+      turnId = turn?.turn?.id;
+      // until the turn completes, the turn is stopped, or the process dies
+      const died = server.exited.then(() => {
+        if (!abort.signal.aborted) throw new Error(`codex app-server exited during the turn${server.stderr().length ? `: ${truncate(server.stderr().slice(-3).join(' | '), 300)}` : ''}`);
+      });
+      await Promise.race([finished, died]);
+      return mapper.stats;
+    } finally {
+      abort.signal.removeEventListener('abort', onAbort);
+      server.close();
+    }
+  }
+
+  /** The app-server's own requests: approvals (-> policy / the user) and our team tools. */
+  private async answer(method: string, params: any, spec: TurnSpec, thread: () => string | undefined, mapper: CodexStreamMapper, tools: Map<string, AgentTool>, approved: Set<string>): Promise<unknown> {
+    const ours = !!params?.threadId && params.threadId === thread();
+    const { cwd, abort } = spec;
+    switch (method) {
+      case 'item/commandExecution/requestApproval': {
+        if (!ours) return { decision: 'decline' };
+        // input to a command: only one the gate approved, in a turn that is still running
+        if (params.kind === 'writeStdin') return { decision: !abort.signal.aborted && params.itemId && approved.has(String(params.itemId)) ? 'accept' : 'decline' };
+        const sc = shellCommand(String(params.command ?? ''));
+        // judged where it really runs: a command in another directory is checked as `cd <dir> && ...`
+        const r = await spec.permission(sc.tool, { command: inDir(sc.command, params.cwd, cwd) }, abort.signal, params.reason ?? undefined);
+        if (r.allow && params.itemId) approved.add(String(params.itemId));
+        return { decision: r.allow ? 'accept' : r.interrupt ? 'cancel' : 'decline' };
+      }
+      case 'item/fileChange/requestApproval': {
+        if (!ours) return { decision: 'decline' };
+        // every source and destination of the patch, and a root it asks to be granted, each on its own
+        const paths = mapper.fileChangePaths(String(params.itemId));
+        // a patch the stream never described cannot be checked: declined, whatever root it asks for
+        if (!paths.length) return { decision: 'decline' };
+        if (params.grantRoot) paths.push(path.join(String(params.grantRoot), '.agentcraft-grant-root'));
+        for (const p of paths) {
+          const r = await spec.permission('Edit', { file_path: path.resolve(cwd, p) }, abort.signal, params.reason ?? undefined);
+          if (!r.allow) return { decision: r.interrupt ? 'cancel' : 'decline' };
+        }
+        return { decision: 'accept' };
+      }
+      case 'item/tool/call': {
+        const reply = (text: string, success: boolean) => ({ success, contentItems: [{ type: 'inputText', text }] });
+        if (!ours) return reply('Not available in this thread.', false);
+        const t = tools.get(String(params.tool));
+        if (!t) return reply(`Unknown tool ${params.tool}. Available: ${[...tools.keys()].join(', ')}`, false);
+        const parsed = z.object(t.shape).safeParse(params.arguments ?? {});
+        if (!parsed.success) return reply(`Invalid arguments for ${t.name}: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'input'}: ${i.message}`).join('; ')}`, false);
+        const res = await t.handler(parsed.data);
+        return reply(res.content.map((c) => c.text).join('\n'), !res.isError);
+      }
+      case 'item/tool/requestUserInput': {
+        const msg = `(Not available in AgentCraft: ask ${userName()} with the ask_user tool instead.)`;
+        return { answers: Object.fromEntries(((params?.questions ?? []) as Array<{ id: string }>).map((q) => [q.id, { answers: [msg] }])) };
+      }
+      case 'mcpServer/elicitation/request':
+        return { action: 'decline', content: null, _meta: null };
+      case 'execCommandApproval':
+      case 'applyPatchApproval':
+        return { decision: { denied: { rejection: 'AgentCraft answers approvals through the v2 API only' } } };
+      default:
+        throw new Error(`AgentCraft does not handle ${method}`);
+    }
+  }
+}

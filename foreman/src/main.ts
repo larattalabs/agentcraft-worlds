@@ -1,9 +1,9 @@
-// Foreman entry point: `npm run start -- --backend sim|claude [--repo <path>] [--speed N] ...`
+// Foreman entry point: `npm run start -- --backend sim|claude|codex [--repo <path>] [--speed N] ...`
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ClaudeBackend } from './agents/claude/index.js';
+import { createTeam } from './agents/teams.js';
 import { SimBackend } from './agents/sim/index.js';
 import { DEFAULT_SIM_GOAL } from './agents/sim/scenario.js';
 import { createSimPrRepo, simPrRepoDir, simPrRepoSettings } from './agents/sim/prdemo.js';
@@ -86,7 +86,7 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   const foreman = new Foreman({ config: cfg, logger: log });
-  const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : new ClaudeBackend(foreman, cfg.claude);
+  const backend = cfg.backend === 'sim' ? new SimBackend(foreman, cfg.sim) : createTeam(foreman, cfg);
   // a new client token every start (after --reset wiped the profile); never logged
   const client = cfg.clientToken ? createClientToken(cfg.dataDir) : undefined;
   if (client) foreman.addSecrets([client.token]);

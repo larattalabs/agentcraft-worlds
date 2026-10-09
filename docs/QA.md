@@ -32,7 +32,7 @@ works. At most one game per checkout.
 What a run does:
 
 1. Starts (or reuses) a **showcase Foreman** and the **game** with
-   `tools/launch.ps1` on Windows or `tools/mac.mjs` on macOS (muted, never
+   `tools/launch.ps1` on Windows or `tools/unix.mjs` on macOS and Linux (muted, never
    steals focus, no toasts). Whatever was already running is reused and left running.
 2. Waits for a ready world and for the Foreman to hold the showcase state
    (`foreman.status.showcase`), then asks the mod for its camera anchors (`dev.anchors`).

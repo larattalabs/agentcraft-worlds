@@ -1,6 +1,6 @@
-// Claude backend: after a restart. Re-attach or re-queue what was in flight, then bring every
+// The team: after a restart. Re-attach or re-queue what was in flight, then bring every
 // non-terminal state (planning goals, doing tasks, review tasks) back in line with what is running.
-import { planPrompt, RESUME_PROMPT } from './prompts.js';
+import { planPrompt, RESUME_PROMPT } from '../prompts.js';
 import { OutcomesLayer } from './outcomes.js';
 import { goalReplyOf } from './core.js';
 

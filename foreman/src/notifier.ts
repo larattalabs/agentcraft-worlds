@@ -1,6 +1,7 @@
 // Notifier: tells the user (outside the game) that a decision is waiting.
 //
-//  - Windows toast via PowerShell + Windows.UI.Notifications; macOS notification via osascript
+//  - Windows toast via PowerShell + Windows.UI.Notifications; macOS notification via osascript;
+//    Linux notification via notify-send (libnotify)
 //  - console bell on the Foreman's terminal (only when stdout is a TTY)
 //  - rate-limited and coalesced: at most one toast per `minIntervalMs`; decisions that arrive
 //    inside the window are summarised in the next toast
@@ -48,12 +49,13 @@ export function showWindowsToast(title: string, body: string, silent: boolean): 
     `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("${POWERSHELL_AUMID}").Show($toast)`,
   ].join('; ');
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  return runNotifier('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded]);
+}
+
+/** Resolves true if the notifier command exited 0; never rejects. */
+function runNotifier(command: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
-      env: scrubEnv(process.env),
-      windowsHide: true,
-      stdio: 'ignore',
-    });
+    const child = spawn(command, args, { env: scrubEnv(process.env), windowsHide: true, stdio: 'ignore' });
     const timer = setTimeout(() => child.kill(), 15_000);
     child.on('error', () => {
       clearTimeout(timer);
@@ -72,23 +74,20 @@ export function showMacNotification(title: string, body: string, silent: boolean
   const script = silent
     ? 'display notification (item 2 of argv) with title (item 1 of argv)'
     : 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"';
-  return new Promise((resolve) => {
-    const child = spawn('osascript', ['-e', 'on run argv', '-e', script, '-e', 'end run', '--', title, body], { stdio: 'ignore', env: scrubEnv(process.env) });
-    const timer = setTimeout(() => child.kill(), 15_000);
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve(code === 0);
-    });
-  });
+  return runNotifier('osascript', ['-e', 'on run argv', '-e', script, '-e', 'end run', '--', title, body]);
+}
+
+/** Desktop notification through the freedesktop notification daemon (notify-send from libnotify). */
+export function showLinuxNotification(title: string, body: string, silent: boolean): Promise<boolean> {
+  if (process.platform !== 'linux') return Promise.resolve(false);
+  const args = ['--app-name=AgentCraft', '--urgency=normal', ...(silent ? ['--hint=boolean:suppress-sound:true'] : ['--hint=string:sound-name:message-new-instant']), '--', title, body];
+  return runNotifier('notify-send', args);
 }
 
 export function showDesktopNotification(title: string, body: string, silent: boolean): Promise<boolean> {
   if (process.platform === 'win32') return showWindowsToast(title, body, silent);
   if (process.platform === 'darwin') return showMacNotification(title, body, silent);
+  if (process.platform === 'linux') return showLinuxNotification(title, body, silent);
   return Promise.resolve(false);
 }
 

@@ -160,6 +160,11 @@ export const CREDENTIAL_FLAG = /^(-p|-H|--?(token|key|password|pass|passphrase|p
 /** A NAME=value whose name looks like a credential. */
 const CREDENTIAL_NAME = /token|secret|passw(or)?d|passwd|passphrase|pwd|pass$|^pass|api[-_]?key|apikey|[-_]key$|^key$|auth|credential|bearer|private|cookie|session/i;
 
+/** Does a variable name look like it holds a credential (GITHUB_TOKEN, API_KEY, DB_PASSWORD...)? */
+export function credentialLikeName(name: string): boolean {
+  return CREDENTIAL_NAME.test(name);
+}
+
 /** The credentials among MCP arguments: values after a credential flag, --flag=value of one, NAME=value with a credential-like name. */
 export function argSecrets(args: string[]): string[] {
   const out: string[] = [];
@@ -195,5 +200,23 @@ export function configSecrets(cfg: Pick<Config, 'repoSettings' | 'claude'>): str
   return out;
 }
 
-/** Credentials the Foreman inherited from its environment (never printed). */
-export const INHERITED_SECRET_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
+/** Credentials the Foreman inherited from its environment (never printed): Claude's and Codex's / OpenAI's. */
+export const INHERITED_SECRET_VARS = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_ADMIN_KEY', 'AZURE_OPENAI_API_KEY', 'OPENAI_ORG_ID', 'OPENAI_ORGANIZATION', 'OPENAI_PROJECT_ID',
+];
+
+/** Names that look like credentials but hold none (a socket path, a session number). */
+const NOT_A_SECRET = /(SOCK|_PID|SESSION_ID|_SESSION_TYPE)$|^(TERM_|XPC_|LaunchInstanceID)/i;
+
+/**
+ * Every value the Foreman inherited that it hands to agents' processes and might print: the named
+ * credentials above, and any variable whose name looks like a credential (GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY,
+ * DB_PASSWORD...). An engine passes the environment through to the agent's commands, so whatever a
+ * command echoes is cut from logs and the feed.
+ */
+export function inheritedSecrets(env: NodeJS.ProcessEnv = process.env): Array<string | undefined> {
+  const named = INHERITED_SECRET_VARS.map((k) => env[k]);
+  const looksLike = Object.entries(env).filter(([k]) => credentialLikeName(k) && !NOT_A_SECRET.test(k)).map(([, v]) => v);
+  return [...named, ...looksLike];
+}

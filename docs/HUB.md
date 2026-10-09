@@ -111,7 +111,7 @@ to "Place…" too (`dev.roads.state ui.strip.compact`).
 ## Foreman launcher (mod, client; branch `mod/foreman-launcher`)
 
 The mod starts the Foreman itself, so a player needs neither Prism's PreLaunchCommand
-(`tools/foreman-daemon.sh`, still supported) nor `tools/mac.mjs`. Code: `client/launcher/Launcher.java`
+(`tools/foreman-daemon.sh`, still supported) nor `tools/unix.mjs`. Code: `client/launcher/Launcher.java`
 (I/O, its own thread), pure decisions in `dev.agentcraft.launcher.LauncherPlan` and settings in
 `LauncherConfig` (both unit-tested); details in mod/DEV.md "Foreman launcher", the player's view in
 tools/README.md "Playing in a Hardcore world".
@@ -537,7 +537,7 @@ decisions, and with config.set loosen its own permissions). From now on:
   starts (same node, flags, script, arguments, environment and cwd, minus `--reset`, `--goal`,
   `--autostart`), on the same port with a **new token**: re-read the run file before reconnecting.
   The run file names the new pid (and the same `tokenFile` path) at once; the new process writes its
-  token there before it listens. Verified on macOS (`tools/mac.mjs stop` and `launch` follow it);
+  token there before it listens. Verified on macOS (`tools/unix.mjs stop` and `launch` follow it);
   Windows `tools\stop.ps1` still looks only at the pid launch.ps1 recorded.
   Refused (`ok:false`) when the Foreman was not started by `main` (tests).
 

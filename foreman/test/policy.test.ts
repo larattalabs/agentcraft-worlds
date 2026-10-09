@@ -13,6 +13,7 @@ const gitBashHome = process.platform === 'win32' ? `/${homeFwd[0]!.toLowerCase()
 const worker: PolicyContext = { role: 'worker', cwd: wt, tempDirs: [] };
 const lead: PolicyContext = { role: 'lead', cwd: wt, tempDirs: [] };
 const withTemp: PolicyContext = { role: 'worker', cwd: wt };
+const leadReads: PolicyContext = { ...lead, leadReadCommands: ['bd show'] };
 
 type Row = [string, string, Record<string, unknown>, PolicyContext, 'allow' | 'ask' | 'deny'];
 const bash = (label: string, command: string, expected: 'allow' | 'ask' | 'deny', ctx: PolicyContext = worker): Row => [label, 'Bash', { command }, ctx, expected];
@@ -245,6 +246,23 @@ const rows: Row[] = [
   bash('lead writes a file', 'echo x > notes.txt', 'ask', lead),
   bash('lead git branch -f', 'git branch -f main HEAD', 'ask', lead),
   bash('lead git config write', 'git config core.hooksPath x', 'ask', lead),
+  // lead read commands
+  bash('lead declared read', 'bd show est-1 --json', 'allow', leadReads),
+  bash('lead undeclared subcommand', 'bd update est-1 --claim', 'ask', leadReads),
+  bash('lead prefix matches whole words', 'bd showall', 'ask', leadReads),
+  bash('lead declared read by path', './bd show est-1', 'ask', leadReads),
+  bash('worker declared read', 'bd show est-1', 'ask', { ...worker, leadReadCommands: ['bd show'] }),
+  bash('lead declared read then rm', 'bd show x; rm -rf y', 'ask', leadReads),
+  bash('lead declared read redirect', 'bd show x > out.txt', 'ask', leadReads),
+  bash('lead declared read piped to tee', 'bd show x | tee out.txt', 'ask', leadReads),
+  bash('lead declared read with substitution', 'bd show $(rm -rf y)', 'ask', leadReads),
+  bash('lead declared read via xargs', 'echo x | xargs bd show', 'ask', leadReads),
+  bash('lead rm', 'rm -rf src', 'ask', lead),
+  bash('lead git commit', 'git commit -am x', 'ask', lead),
+  bash('lead git checkout', 'git checkout other', 'ask', lead),
+  bash('lead npm install', 'npm install left-pad', 'ask', lead),
+  bash('lead curl', 'curl https://example.com', 'ask', lead),
+  bash('lead git log read', 'git log --oneline -5', 'allow', lead),
   // other tools
   ['web fetch', 'WebFetch', { url: 'https://docs.npmjs.com', prompt: 'x' }, worker, 'ask'],
   ['web search', 'WebSearch', { query: 'node test runner' }, worker, 'ask'],
@@ -343,6 +361,23 @@ const rows: Row[] = [
   bash('lead tree -o', 'tree -o x.txt', 'ask', lead),
   bash('lead xxd in out', 'xxd a b', 'ask', lead),
   ['unknown tool', 'Teleport', {}, worker, 'ask'],
+  // PowerShell (how Codex runs commands on Windows): pipeline filters read nothing, script blocks
+  // are commands, writers write the -Path they name
+  ['ps filters', 'PowerShell', { command: 'Get-ChildItem src -Recurse -File | Select-Object -ExpandProperty FullName | Sort-Object' }, worker, 'allow'],
+  ['ps where/format', 'PowerShell', { command: 'Get-ChildItem | Where-Object { $_.Length -gt 100 } | Format-Table Name' }, worker, 'allow'],
+  ['ps foreach expression', 'PowerShell', { command: 'Get-ChildItem src | ForEach-Object { $_.FullName }' }, worker, 'allow'],
+  ['ps foreach runs a command inside', 'PowerShell', { command: 'Get-ChildItem src | % { Remove-Item src/x.ts }' }, worker, 'allow'],
+  ['ps foreach deletes outside', 'PowerShell', { command: 'ForEach-Object { Remove-Item C:/Windows/system32 -Recurse }' }, worker, 'ask'],
+  ['ps foreach deletes a variable path', 'PowerShell', { command: 'Get-ChildItem src | ForEach-Object { Remove-Item $_ }' }, worker, 'ask'],
+  ['ps foreach -Process system command', 'PowerShell', { command: 'ForEach-Object -Process { reboot }' }, worker, 'ask'],
+  ['ps where call operator', 'PowerShell', { command: 'Get-ChildItem | Where-Object { & $cmd }' }, worker, 'ask'],
+  ['ps get-location', 'PowerShell', { command: 'Get-Location' }, worker, 'allow'],
+  ['ps set-content inside', 'PowerShell', { command: 'Set-Content -Path src/x.ts -Value hi' }, worker, 'allow'],
+  ['ps set-content positional', 'PowerShell', { command: 'Set-Content src/x.ts "hi there"' }, worker, 'allow'],
+  ['ps out-file outside', 'PowerShell', { command: 'Get-Content src/cli.ts | Out-File ../../outside.txt' }, worker, 'ask'],
+  ['ps set-content outside', 'PowerShell', { command: 'Set-Content -Path C:/Windows/x.txt -Value hi' }, worker, 'ask'],
+  ['ps lead filters', 'PowerShell', { command: 'Get-ChildItem src -Recurse | Select-Object FullName' }, lead, 'allow'],
+  ['ps lead set-content', 'PowerShell', { command: 'Set-Content -Path src/x.ts -Value hi' }, lead, 'ask'],
 ];
 
 describe('permission policy', () => {

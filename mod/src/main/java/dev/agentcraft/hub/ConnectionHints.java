@@ -2,7 +2,7 @@ package dev.agentcraft.hub;
 
 /**
  * Recovery hints the HUD shows when the Foreman link is down or cannot authenticate. They depend on how the game was
- * started (a dev run, {@code gradlew runClient} started by tools/mac.mjs, versus a built jar in a normal launcher) and
+ * started (a dev run, {@code gradlew runClient} started by tools/unix.mjs, versus a built jar in a normal launcher) and
  * on what the mod's Foreman launcher is doing (docs/HUB.md "Foreman launcher"): the game starts the Foreman itself, so
  * the pill says so while it starts, and points at the hub's Status tab when it could not. Pure, so it is unit-tested;
  * keep the lines short (they are drawn in a small pill).
@@ -36,7 +36,7 @@ public final class ConnectionHints {
 
 	/** Second line under "Foreman not running" when the launcher is off or idle. */
 	public static String notRunning(boolean devRun) {
-		return devRun ? "start it: node tools/mac.mjs launch" : "Start it in the hub's Status tab";
+		return devRun ? "start it: node tools/unix.mjs launch" : "Start it in the hub's Status tab";
 	}
 
 	/**

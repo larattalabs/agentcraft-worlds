@@ -5,9 +5,9 @@ It never launches the game; start it yourself (one dev client per checkout, from
 
 ```sh
 npm ci --prefix tools                                   # once
-node tools/mac.mjs launch --backend sim --dev           # ~1-3 min cold, mutes + keeps focus
+node tools/unix.mjs launch --backend sim --dev           # ~1-3 min cold, mutes + keeps focus
 node tools/blueprints/verify.mjs <id | path/to/id.nbt | namespace:vanilla/template/id> [options]
-node tools/mac.mjs stop --game --foreman                # when done
+node tools/unix.mjs stop --game --foreman                # when done
 ```
 
 | option | meaning |

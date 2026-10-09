@@ -32,6 +32,8 @@ export interface BusMessage {
 export interface SessionRecord {
   sessionId?: string;
   model?: string;
+  /** the engine whose session this is (absent: claude, from before engines) */
+  engine?: 'claude' | 'codex';
   turns: number;
   /** spend of every session this key had (earlier sessions + the current one) */
   costUsd: number;
@@ -63,6 +65,8 @@ export interface WorktreeMeta {
   prUrl?: string;
   /** a PR fold-in by another worker: the earlier worktree's branch tip (the 3-way merge base of the added commit) */
   prevTip?: string;
+  /** PR intake: the contributor's head this worktree started from (landing requires it to stay on the branch) */
+  contributorSha?: string;
 }
 
 /** A building lead's assignment (lead.assign), keyed by lead id in StateData.leads. */

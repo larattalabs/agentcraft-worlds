@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // End-to-end smoke test: launches (or attaches to) the dev client against the sim backend in a fresh throwaway world
 // on natural terrain, then drives the main flows through the DevBridge with assertions and screenshots. macOS
-// (tools/mac.mjs); with --attach any running dev client on --dev-port.
+// (tools/unix.mjs); with --attach any running dev client on --dev-port.
 //
 //   node tools/smoke.mjs                 # launch (sim, scratch Foreman home, world "Smoke" recreated), run, stop
 //   npm run smoke --prefix tools         # the same
 //   node tools/smoke.mjs --attach        # use the running client (it must be a fresh sim world: no buildings)
-//   node tools/smoke.mjs --keep          # leave the launched client running afterwards (stop: mac.mjs stop --profile smoke)
+//   node tools/smoke.mjs --keep          # leave the launched client running afterwards (stop: unix.mjs stop --profile smoke)
 //
 // Options: --port N (Foreman, 7978) --dev-port N (DevBridge, 7979) --world NAME (Smoke) --seed N (2026) --speed N (3)
 // --home DIR (Foreman home; default a new temp dir) --minutes N (overall deadline, 12).
@@ -121,7 +121,7 @@ function freshWorld(name) {
 }
 
 function macStop() {
-  const r = spawnSync(process.execPath, [path.join(tools, 'mac.mjs'), 'stop', '--profile', PROFILE], { cwd: root, encoding: 'utf8', timeout: 120_000 });
+  const r = spawnSync(process.execPath, [path.join(tools, 'unix.mjs'), 'stop', '--profile', PROFILE], { cwd: root, encoding: 'utf8', timeout: 120_000 });
   log(`stop: ${(r.stdout + r.stderr).trim().split('\n').slice(-3).join(' | ')}`);
 }
 
@@ -141,7 +141,7 @@ async function launch() {
     AGENTCRAFT_WELCOME: '0', // the welcome card would take the first screen
     AGENTCRAFT_PLAYER: 'Sam', // a neutral player name in the shots
   };
-  const args = [path.join(tools, 'mac.mjs'), 'launch', '--backend', 'sim', '--dev', '--world', opt.world, '--preset', 'normal', '--seed', String(opt.seed),
+  const args = [path.join(tools, 'unix.mjs'), 'launch', '--backend', 'sim', '--dev', '--world', opt.world, '--preset', 'normal', '--seed', String(opt.seed),
     '--home', home, '--profile', PROFILE, '--port', String(opt.port), '--dev-port', String(opt['dev-port']), '--reset',
     '--foreman-arg', '--user-name', '--foreman-arg', 'Sam', '--foreman-arg', '--sim-pr', '--foreman-arg', '--pr-watch', '--foreman-arg', 'on',
     '--foreman-arg', '--speed', '--foreman-arg', String(opt.speed)];
@@ -149,7 +149,7 @@ async function launch() {
   launched = true;
   const r = spawnSync(process.execPath, args, { cwd: root, env, encoding: 'utf8', timeout: 900_000 });
   fs.writeFileSync(path.join(outDir, 'launch.log'), `${r.stdout}\n${r.stderr}`);
-  if (r.status !== 0) throw new Error(`mac.mjs launch failed (exit ${r.status}): ${(r.stderr || r.stdout).trim().split('\n').slice(-4).join(' | ')}`);
+  if (r.status !== 0) throw new Error(`unix.mjs launch failed (exit ${r.status}): ${(r.stderr || r.stdout).trim().split('\n').slice(-4).join(' | ')}`);
   log(`launch: ${r.stdout.trim().split('\n').slice(-2).join(' | ')}`);
 }
 
@@ -158,7 +158,7 @@ async function cleanup() {
   if (stopping) return;
   stopping = true;
   if (launched && !opt.keep) macStop();
-  else if (launched) log(`--keep: the client keeps running (stop: node tools/mac.mjs stop --profile ${PROFILE})`);
+  else if (launched) log(`--keep: the client keeps running (stop: node tools/unix.mjs stop --profile ${PROFILE})`);
 }
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {

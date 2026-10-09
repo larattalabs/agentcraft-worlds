@@ -408,7 +408,7 @@ describe('structured text (task blockedReason, agent messages, memory notes) is 
     type ToolServer = { instance: { _registeredTools: Record<string, { handler: (a: unknown, e: unknown) => Promise<unknown> }> } };
     const tool = (o: Options, name: string, args: Record<string, unknown>) => (o.mcpServers!.agentcraft as unknown as ToolServer).instance._registeredTools[name]!.handler(args, {});
     const queryFn = ({ options }: { prompt: string; options: Options }) => {
-      const lead = !(options.tools as string[]).includes('Bash');
+      const lead = !(options.tools as string[]).includes('Edit');
       async function* run(): AsyncGenerator<SDKMessage> {
         const s = sid();
         yield m({ type: 'system', subtype: 'init', session_id: s, model: 'fake' });

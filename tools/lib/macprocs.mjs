@@ -1,4 +1,4 @@
-// Pure helpers for tools/mac.mjs: ps-table parsing, descendant walks, run-file selection.
+// Pure helpers for tools/unix.mjs: ps-table parsing, descendant walks, run-file selection.
 
 /** Parse `ps -ax -o pid,ppid,pgid,command` output into [{pid, ppid, pgid, command}]. */
 export function parsePs(text) {

@@ -17,13 +17,15 @@
   tools\launch.ps1                                     # claude backend (needs ANTHROPIC_API_KEY), ~/.agentcraft, ports 7878/7879
   tools\launch.ps1 -Repo C:\code\life-tracker          # register a repo with the Foreman
   tools\launch.ps1 -UseClaudeLogin                     # personal use: your `claude` CLI login instead of an API key
+  tools\launch.ps1 -Backend codex                      # an all-Codex team on your Codex login (`codex login`)
+  tools\launch.ps1 -ForemanArgs '--worker-engine','codex'   # mixed: Claude lead, Codex workers
   tools\launch.ps1 -Backend sim                        # scripted demo team, no API calls
   tools\launch.ps1 -Showcase late                      # static showcase state (sim)
   tools\launch.ps1 -Dev -Showcase busy -Home C:\Projects\agentcraft\.agentcraft-home -Port 27878 -DevPort 7889
 #>
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [ValidateSet('sim', 'claude')][string]$Backend,
+    [ValidateSet('sim', 'claude', 'codex')][string]$Backend,
     [string[]]$Repo,
     [Alias('Profile')][string]$ForemanProfile,
     # -Showcase [busy|late]: a switch with an optional positional value

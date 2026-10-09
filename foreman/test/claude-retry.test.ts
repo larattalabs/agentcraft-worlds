@@ -40,7 +40,7 @@ async function start(script: Script, args: string[] = []): Promise<{ h: Harness;
   h = makeForeman(home, ['--backend', 'claude', '--repo', repoPath, '--workers', 'kit', ...args]);
   const calls: Call[] = [];
   const queryFn = ({ prompt, options }: { prompt: string; options: Options }) => {
-    const call: Call = { lead: !(options.tools as string[]).includes('Bash'), prompt: String(prompt), ...(options.resume ? { resume: options.resume } : {}) };
+    const call: Call = { lead: !(options.tools as string[]).includes('Edit'), prompt: String(prompt), ...(options.resume ? { resume: options.resume } : {}) };
     calls.push(call);
     const s = options.resume ?? sid();
     return Object.assign(script({ call, options, s, nth: calls.filter((c) => c.lead === call.lead).length }), { close() {}, accountInfo: async () => ({ email: 'x' }) });
