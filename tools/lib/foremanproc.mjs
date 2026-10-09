@@ -1,5 +1,5 @@
 // Finding a running Foreman from a checkout's launcher run file (artifacts/run/mac-foreman-<profile>.json)
-// and the Foreman's own run file (<home>/<profile>/foreman.json). Shared by tools/mac.mjs and
+// and the Foreman's own run file (<home>/<profile>/foreman.json). Shared by tools/unix.mjs and
 // tools/foreman-daemon.mjs so both agree on what "running" means.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';

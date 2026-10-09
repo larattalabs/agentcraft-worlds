@@ -17,7 +17,7 @@ node tools/unix.mjs launch --backend sim --dev --world "Docs World" --preset nor
 node tools/unix.mjs launch --backend codex         # an all-Codex team on your Codex login (`codex login`)
 ```
 
-`tools/mac.mjs` is the same launcher under its old name (a shim that forwards to `unix.mjs`), so
+`tools/unix.mjs` is the same launcher under its old name (a shim that forwards to `unix.mjs`), so
 older commands and scripts keep working.
 
 **Which world the dev client opens.** By default AutoWorld loads (or creates) the flat "AgentCraft HQ"
@@ -128,7 +128,7 @@ checkout (`-Dagentcraft.foreman.dir`, which setup writes; else `launcher.foreman
 or the checkout the jar was built from), and probes the port with `hello` and the client token. A
 current Foreman there (same checkout, same commit) is reused, whoever started it. One the game started
 earlier that runs older code (another commit or checkout) is restarted. One it did not start (Prism's
-daemon, `mac.mjs`, a terminal) is never stopped, even when older: the Status tab says "running (older
+daemon, `unix.mjs`, a terminal) is never stopped, even when older: the Status tab says "running (older
 version)" and who started it. When nothing answers, it finds node 22+ (`launcher.nodePath`, PATH,
 Homebrew, mise/volta/nvm/asdf/fnm, then your login shell), runs `npm ci` in `foreman/` once when
 `node_modules` is missing (log: `<stable>/artifacts/logs/foreman-launcher-npm.log`), and starts the
@@ -140,7 +140,7 @@ Foreman gets your login shell's environment (`$SHELL -lic`, an interactive login
 Foreman reads its own config (`useClaudeLogin` etc.). It records what it started in
 `<home>/<profile>/launcher.json` (pid and start time, so a reused pid is never mistaken for it) and in
 the checkout's `artifacts/run/mac-foreman-<profile>.json`, the run file `foreman-daemon.sh` and
-`mac.mjs stop --foreman` read, so those tools see and can stop it too. The Foreman keeps running after
+`unix.mjs stop --foreman` read, so those tools see and can stop it too. The Foreman keeps running after
 you quit (PR polling continues) unless `launcher.stopOnExit` (or `--stop-on-exit`) is set, and then
 only if the game started it.
 
@@ -288,7 +288,7 @@ npm test --prefix tools
 ### Smoke test (`npm run smoke`, macOS)
 
 `node tools/smoke.mjs` (or `npm run smoke --prefix tools`) is the end-to-end check of the main flows in a real game:
-it launches the dev client with `mac.mjs` against the sim backend (profile `smoke`, Foreman :7978, DevBridge :7979,
+it launches the dev client with `unix.mjs` against the sim backend (profile `smoke`, Foreman :7978, DevBridge :7979,
 a new temp Foreman home, `--sim-pr --pr-watch on`, user "Sam") in a fresh natural-terrain world (`mod/run/saves/Smoke`
 and that world's entries in `mod/run/agentcraft/*.json` are deleted first), drives it through the DevBridge with
 assertions and screenshots, then stops it. About 2-3 minutes once Minecraft is built. Steps, each independent and
@@ -338,7 +338,7 @@ Screenshot QA (scene format, anchor contract, judging): [docs/QA.md](../docs/QA.
 | `record.mjs`, `shots/*.json` | real-time shot player for screen recording (`dev.play`: camera paths, timed Foreman injections, typing); format in `shots/README.md` |
 | `qa.mjs`, `lib/contactsheet.mjs`, `scenes/qa.json` | QA suite, contact sheet (pngjs) |
 | `scenes/phase1.json`, `scenes/qa-selftest.json` | Phase 1 proof scene, runner self-test |
-| `mac.mjs`, `lib/macprocs.mjs`, `lib/foremanproc.mjs`, `lib/logrotate.mjs` | macOS launcher: ps parsing and run files, finding a running Foreman, log rotation |
+| `unix.mjs`, `lib/macprocs.mjs`, `lib/foremanproc.mjs`, `lib/logrotate.mjs` | macOS launcher: ps parsing and run files, finding a running Foreman, log rotation |
 | `hardcore-setup.mjs`, `lib/prismcfg.mjs` | set up a Prism instance to play with AgentCraft from a stable checkout ("Playing in a Hardcore world") |
 | `foreman-daemon.sh`, `foreman-daemon.mjs`, `lib/daemonplan.mjs` | keep one Foreman running for a game launched outside a terminal (Prism's PreLaunchCommand; optional since the mod starts the Foreman itself) |
 | `blueprints/` | blueprints as code: the parametric kit, `build.mjs`, the checker (`verify.mjs`) and the offline renderer (`render.mjs`); see `blueprints/VERIFY.md` |

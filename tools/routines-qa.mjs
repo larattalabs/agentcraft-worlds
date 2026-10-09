@@ -2,7 +2,7 @@
 // Village routines QA (docs/VILLAGE.md V3): night rest in beds and the morning return, asserted through the
 // DevBridge against a running game. Needs a dev world with a placed building that has beds (any bundled
 // blueprint, in the Overworld) and some idle agents routed to it (a Foreman, sim backend is fine), e.g.
-//   node tools/mac.mjs launch --backend sim --dev --world "Village QA" --preset normal
+//   node tools/unix.mjs launch --backend sim --dev --world "Village QA" --preset normal
 //   node tools/devcli.mjs cmd "/agentcraft place workshop <repo>"     (or the hub's Buildings wizard)
 //   node tools/routines-qa.mjs [--port 7879] [--timeout 90] [--no-restore] [--shot]
 //

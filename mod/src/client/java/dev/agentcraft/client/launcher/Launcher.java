@@ -54,7 +54,7 @@ import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Starts the Foreman with the game, so a player needs neither Prism's PreLaunch hook nor tools/mac.mjs (docs/HUB.md
+ * Starts the Foreman with the game, so a player needs neither Prism's PreLaunch hook nor tools/unix.mjs (docs/HUB.md
  * "Foreman launcher"). On client start, on its own worker thread (never the render thread):
  * <ol>
  *   <li>reads the {@code launcher} section of {@code <home>/config.json} ({@link LauncherConfig});</li>
@@ -68,7 +68,7 @@ import org.jspecify.annotations.Nullable;
  *       changed since its last install, and spawns the daemon's command line detached through node, with the login
  *       shell's environment and its output in
  *       {@code <checkout>/artifacts/logs/foreman-launcher-<profile>.log}. It records what it started (pid and start time)
- *       in {@code <home>/<profile>/launcher.json} and in the checkout's launcher run file (the one tools/mac.mjs and
+ *       in {@code <home>/<profile>/launcher.json} and in the checkout's launcher run file (the one tools/unix.mjs and
  *       tools/foreman-daemon.mjs read), so the tools see it too.</li>
  * </ol>
  * The Foreman keeps running after the game exits (PR polling continues) unless {@code launcher.stopOnExit} is set, and
@@ -409,7 +409,7 @@ public final class Launcher {
 		while (System.currentTimeMillis() < deadline) {
 			if (!alive(newPid)) {
 				if (probe() == Probe.FOREMAN) {
-					// another launcher (Prism's daemon, tools/mac.mjs) won the race for the port: use its Foreman
+					// another launcher (Prism's daemon, tools/unix.mjs) won the race for the port: use its Foreman
 					clearRecords(newPid);
 					ours = false;
 					startedThisSession = false;
@@ -594,7 +594,7 @@ public final class Launcher {
 		return home().resolve(PROFILE).resolve("launcher.json");
 	}
 
-	/** The checkout's launcher run file, shared with tools/mac.mjs and tools/foreman-daemon.mjs. */
+	/** The checkout's launcher run file, shared with tools/unix.mjs and tools/foreman-daemon.mjs. */
 	private static Path checkoutRunFile(Path root) {
 		return root.resolve("artifacts").resolve("run").resolve("mac-foreman-" + PROFILE + ".json");
 	}
@@ -693,7 +693,7 @@ public final class Launcher {
 			if (t != null && t.has("pid") && t.get("pid").getAsLong() == r.pid()) {
 				rootOf = rootOf != null ? rootOf : str(t, "root");
 				commit = commit != null ? commit : str(t, "commit");
-				by = by != null ? by : str(t, "by") != null ? str(t, "by") : "tools/mac.mjs";
+				by = by != null ? by : str(t, "by") != null ? str(t, "by") : "tools/unix.mjs";
 				break;
 			}
 		}
@@ -756,7 +756,7 @@ public final class Launcher {
 	private static String who() {
 		String by = runningBy;
 		if (by == null) {
-			return "something else (Prism's daemon, tools/mac.mjs or a terminal)";
+			return "something else (Prism's daemon, tools/unix.mjs or a terminal)";
 		}
 		return switch (by) {
 			case LauncherPlan.BY -> "the game";

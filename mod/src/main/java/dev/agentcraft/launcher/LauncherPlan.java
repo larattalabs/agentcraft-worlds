@@ -294,7 +294,7 @@ public final class LauncherPlan {
 	 * {@code -Dagentcraft.foreman.dir}, what tools/hardcore-setup.mjs puts in the instance's JvmArgs), the config's
 	 * {@code launcher.foremanDir}, a dev run's own checkout ({@code <repo>/mod/run} is the game dir), the
 	 * {@code hardcore.stable} checkout, and the checkout the mod jar was built from. A dev run's checkout comes before
-	 * {@code hardcore.stable} on purpose: a dev client tests the code next to it, and tools/mac.mjs starts its Foreman
+	 * {@code hardcore.stable} on purpose: a dev client tests the code next to it, and tools/unix.mjs starts its Foreman
 	 * from there too.
 	 */
 	public static List<Candidate> sourceCandidates(@Nullable String override, @Nullable String configDir, @Nullable Path devRunCheckout,
@@ -437,7 +437,7 @@ public final class LauncherPlan {
 		 * a live Foreman of that profile from the same checkout. The record is updated to follow it.
 		 */
 		OURS_RESTARTED,
-		/** Not started by this launcher (Prism's daemon, tools/mac.mjs, a terminal), or unknown. */
+		/** Not started by this launcher (Prism's daemon, tools/unix.mjs, a terminal), or unknown. */
 		FOREIGN
 	}
 

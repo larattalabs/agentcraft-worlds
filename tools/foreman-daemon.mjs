@@ -5,12 +5,12 @@
 //   start    already running from this checkout at this commit -> nothing; running older code or from
 //            another checkout -> restart; not running -> start it detached. Then waits for the port
 //            and logs the outcome.
-//   stop     stops it (tools/mac.mjs stop --foreman: verified pids, SIGTERM, then SIGKILL)
+//   stop     stops it (tools/unix.mjs stop --foreman: verified pids, SIGTERM, then SIGKILL)
 //   restart  stop + start
 //   status   prints a JSON line
 //
-// It writes the same launcher run file as tools/mac.mjs (artifacts/run/mac-foreman-<profile>.json),
-// so `node tools/mac.mjs stop --foreman --profile <profile>` stops it too.
+// It writes the same launcher run file as tools/unix.mjs (artifacts/run/mac-foreman-<profile>.json),
+// so `node tools/unix.mjs stop --foreman --profile <profile>` stops it too.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -108,7 +108,7 @@ function lock(profile) {
 }
 
 function stopVia(opt) {
-  const r = spawnSync(process.execPath, [path.join(root, 'tools', 'mac.mjs'), 'stop', '--foreman', '--profile', opt.profile, '--home', opt.home], { cwd: root, stdio: 'inherit' });
+  const r = spawnSync(process.execPath, [path.join(root, 'tools', 'unix.mjs'), 'stop', '--foreman', '--profile', opt.profile, '--home', opt.home], { cwd: root, stdio: 'inherit' });
   return r.status ?? 1;
 }
 

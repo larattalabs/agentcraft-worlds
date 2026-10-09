@@ -184,7 +184,7 @@ export function parseArgs(argv, { config } = {}) {
   out.port = Number(out.port);
   out.devPort = Number(out.devPort);
   for (const p of [out.port, out.devPort]) if (!Number.isInteger(p) || p < 1 || p > 65535) throw new Error(`invalid port: ${p}`);
-  if (DEV_PORTS.has(out.port)) throw new Error(`port ${out.port} is used by dev runs (tools/mac.mjs); pick another, e.g. ${DEFAULTS.port}`);
+  if (DEV_PORTS.has(out.port)) throw new Error(`port ${out.port} is used by dev runs (tools/unix.mjs); pick another, e.g. ${DEFAULTS.port}`);
   if (out.devbridge && (DEV_PORTS.has(out.devPort) || out.devPort === out.port)) throw new Error(`--dev-port ${out.devPort} collides with the Foreman port or dev runs`);
   if (!/^[\w-]+$/.test(out.profile)) throw new Error('profile must contain only letters, digits, _ or -');
   if (/\s/.test(out.home)) throw new Error(`--home cannot contain spaces (it goes into JvmArgs): ${out.home}`);

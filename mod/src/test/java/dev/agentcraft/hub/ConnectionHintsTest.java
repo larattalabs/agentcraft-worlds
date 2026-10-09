@@ -16,7 +16,7 @@ class ConnectionHintsTest {
 
 	@Test
 	void devRunPointsAtTheLauncher() {
-		assertTrue(ConnectionHints.notRunning(true).contains("tools/mac.mjs launch"));
+		assertTrue(ConnectionHints.notRunning(true).contains("tools/unix.mjs launch"));
 		assertTrue(ConnectionHints.authFailed(true, false).contains("restart the Foreman"));
 	}
 

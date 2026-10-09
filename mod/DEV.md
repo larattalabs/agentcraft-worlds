@@ -73,7 +73,7 @@ GRADLE_USER_HOME=C:/Projects/agentcraft/.gradle-home ./gradlew --stop       # st
    are put back into creative.
 
 Delete `mod/run/saves/AgentCraft HQ` to start over with a fresh world. For docs or QA on natural terrain
-(welcome card, walking routes): `node tools/mac.mjs launch --backend sim --dev --world "Docs World" --preset
+(welcome card, walking routes): `node tools/unix.mjs launch --backend sim --dev --world "Docs World" --preset
 normal [--seed N]` (env switches `AGENTCRAFT_AUTOWORLD_NAME/_PRESET/_SEED` below; tools/README.md).
 
 ### Environment switches (env var, or `-Dagentcraft.xxx=` system property)
@@ -86,7 +86,7 @@ normal [--seed N]` (env switches `AGENTCRAFT_AUTOWORLD_NAME/_PRESET/_SEED` below
 | `AGENTCRAFT_MUTE` | 1 | Forces master and music volume to 0 at startup. **Set `0` for real use** (for example in launch.ps1) to keep your own volume |
 | `AGENTCRAFT_FOCUS` | 0 | `0`: the window is shown **without activating it**, so it never steals focus. `1`: normal "come to front" |
 | `AGENTCRAFT_AUTOWORLD` | 1 | `0`: stay on the title screen |
-| `AGENTCRAFT_AUTOWORLD_NAME` | `AgentCraft HQ` | The world (save folder and level name) AutoWorld loads, or creates if missing. Only `AgentCraft HQ` gets the HQ rules/studio (`HqWorld.isHq` is by name), so another name is a plain creative world (welcome card, no studio). `tools/mac.mjs --world NAME` |
+| `AGENTCRAFT_AUTOWORLD_NAME` | `AgentCraft HQ` | The world (save folder and level name) AutoWorld loads, or creates if missing. Only `AgentCraft HQ` gets the HQ rules/studio (`HqWorld.isHq` is by name), so another name is a plain creative world (welcome card, no studio). `tools/unix.mjs --world NAME` |
 | `AGENTCRAFT_AUTOWORLD_PRESET` | `flat` | Terrain of a **new** world: `flat` = the superflat meadow below, `normal` = natural terrain (creative, peaceful, cheats on, no structures). `--preset` |
 | `AGENTCRAFT_AUTOWORLD_SEED` | flat: `"agentcraft-hq".hashCode()`, normal: `2026` | Seed of a new world (a number, or text hashed like the vanilla box). 2026 spawns in a birch meadow on a hill (y~118) with forest, lakes and a cherry grove within ~150 blocks. `--seed N`. Parsed by the pure `dev.agentcraft.world.AutoWorldSpec` (`AutoWorldSpecTest`) |
 | `AGENTCRAFT_PAUSE` | (dev run or DevBridge: 0, else 1) | Whether AgentCraft screens pause a singleplayer game (contract C6). Everyday play pauses like vanilla menus; dev runs and clients with the DevBridge on keep the world running for QA. `dev.ui.pause {on}` changes it at runtime |
@@ -95,11 +95,11 @@ normal [--seed N]` (env switches `AGENTCRAFT_AUTOWORLD_NAME/_PRESET/_SEED` below
 | `AGENTCRAFT_DEV_TEST` | 0 | `1` registers test-only commands (`dev.test.stall`, which blocks the render thread to simulate a hung game; `dev.test.foremanMessage`). Never set it for real use |
 | `AGENTCRAFT_PORT` | 7878 | Foreman WebSocket port the mod connects to (always 127.0.0.1) |
 | `AGENTCRAFT_FOREMAN` | 1 | `0` disables the Foreman link (the HUD says so) |
-| `AGENTCRAFT_LAUNCHER` | config.json `launcher.enabled` (true) | `0`: the mod does not start the Foreman (the Status tab's Start still can). `tools/mac.mjs --no-foreman` sets 0, `--mod-foreman` sets 1. See "Foreman launcher" below |
+| `AGENTCRAFT_LAUNCHER` | config.json `launcher.enabled` (true) | `0`: the mod does not start the Foreman (the Status tab's Start still can). `tools/unix.mjs --no-foreman` sets 0, `--mod-foreman` sets 1. See "Foreman launcher" below |
 | `AGENTCRAFT_FOREMAN_DIR` | (see below) | The checkout the launcher runs the Foreman from (`-Dagentcraft.foreman.dir`, written by `tools/hardcore-setup.mjs`) |
 | `AGENTCRAFT_NODE` | config.json `launcher.nodePath` | A node 22+ binary (or its folder), tried first |
 | `AGENTCRAFT_LAUNCHER_STOP_ON_EXIT` | config.json `launcher.stopOnExit` (false) | `1`: stop the Foreman at game exit, only if the launcher started it |
-| `AGENTCRAFT_BACKEND` | `claude` | The backend of a Foreman the launcher starts (`mac.mjs` passes `--backend`) |
+| `AGENTCRAFT_BACKEND` | `claude` | The backend of a Foreman the launcher starts (`unix.mjs` passes `--backend`) |
 | `AGENTCRAFT_PROFILE` / `AGENTCRAFT_HOME` | the backend's name / `~/.agentcraft` | The Foreman's profile and home: for the client token (run files) and for a Foreman the launcher starts |
 | `AGENTCRAFT_WELCOME` | 1 | `0`: the welcome card never opens by itself on joining a world without buildings (scripted QA worlds); `dev.onboarding {show}` still opens it |
 
@@ -328,7 +328,7 @@ backoff (about 3 s in the Phase 2 test). The model keeps the last known state wh
 Before the first connection the HUD pill follows the Foreman launcher (below) through
 `hub.ConnectionHints` (pure, `ConnectionHintsTest`): "Starting the Foreman…", "The Foreman stopped" /
 "Foreman could not start" / "Foreman needs Node.js" with "see the hub's Status tab", else "Foreman not
-running" with a hint (dev run: `tools/mac.mjs launch`; a jar: "Start it in the hub's Status tab"). The
+running" with a hint (dev run: `tools/unix.mjs launch`; a jar: "Start it in the hub's Status tab"). The
 auth banner falls back on "Restart in the hub's Status tab" for a Foreman the game started, else on the
 dev/daemon split, when the Foreman sends no message of its own. A jar in Prism gets its port, profile
 and checkout as `-Dagentcraft.port` / `-Dagentcraft.profile` / `-Dagentcraft.foreman.dir` JVM args,
@@ -363,12 +363,12 @@ line, PATH composition) and its settings in `LauncherConfig` (`LauncherConfigTes
    appended to `<checkout>/artifacts/logs/foreman-launcher-<profile>.log`, environment = the game's
    without `AGENTCRAFT_*` + the login shell's (`$SHELL -lic`, else `-lc`; PATH composed with node's
    folder first). Records: `launcher.json` and `<checkout>/artifacts/run/mac-foreman-<profile>.json`
-   (the tools' format, `stamp` = `ps -o lstart=`), so `mac.mjs stop --foreman` and the daemon see it.
+   (the tools' format, `stamp` = `ps -o lstart=`), so `unix.mjs stop --foreman` and the daemon see it.
 6. Watch: the pid's exit is a crash (toast, log tail), a hub restart (followed) or, for a reused one,
    "stopped". At `CLIENT_STOPPING` it stops the Foreman only with `stopOnExit` and only if it started it.
 
-Dev check: `node tools/mac.mjs launch --mod-foreman --backend sim --profile lt --port 7890 --dev-port 7891
---home <scratch> --dev` (no Foreman from mac.mjs; the mod starts one), then `dev.launcher.state`.
+Dev check: `node tools/unix.mjs launch --mod-foreman --backend sim --profile lt --port 7890 --dev-port 7891
+--home <scratch> --dev` (no Foreman from unix.mjs; the mod starts one), then `dev.launcher.state`.
 
 **Protocol mirror (generated).** `client.foreman.Protocol` is GENERATED from `foreman/src/protocol.ts` by
 `npm run gen:java-protocol` (`foreman/scripts/gen-java-protocol.ts`); never edit it by hand, and run the
@@ -395,7 +395,7 @@ gives the mod a full (not read-only) connection; an older Foreman never sees the
 (pure, `ClientTokenTest`) runs on **every connect** (a restarted Foreman has a new token): the run file whose
 `port` is the port the mod connects to, looked for in `<home>/<AGENTCRAFT_PROFILE>/foreman.json`, then
 `<home>/foreman.json`, then every `<home>/<dir>/foreman.json` (home = `AGENTCRAFT_HOME`, else `~/.agentcraft`;
-`tools/mac.mjs` passes both); in it the first of the fields `clientTokenFile`, `tokenFile` (the Foreman's),
+`tools/unix.mjs` passes both); in it the first of the fields `clientTokenFile`, `tokenFile` (the Foreman's),
 `clientTokenPath`, `tokenPath`, `clientToken` that names a readable file (relative = to the run file's folder), else `client.token`
 in `<home>/<runfile.profile>/` or next to the run file. No run file / none of these = an older Foreman (no
 token sent). `AGENTCRAFT_CLIENT_TOKEN` overrides all of it (dev). The token is never logged; `dev.state.foreman`
@@ -549,7 +549,7 @@ The contract is `docs/BUILDINGS.md`; the server side lives in `dev.agentcraft.bu
 - Trophies client side (`client.trophy.TrophyFeature`, pure `trophy.TrophyEvents`/`TrophySettings`): the Foreman's
   goal/task updates become awards (keys as in BUILDINGS.md), catch-up on snapshot / building placed / repos changed /
   toggle on, `Trophies.award` on the integrated server. **QA** (dev client, own ports so you do not hit another run:
-  `node tools/mac.mjs launch --backend sim --dev --world "Trophy QA" --profile me --port 7981 --dev-port 7982`):
+  `node tools/unix.mjs launch --backend sim --dev --world "Trophy QA" --profile me --port 7981 --dev-port 7982`):
   `/agentcraft place workshop <repo>` (`dev.foreman` counts show the sim repo), then
   `dev.trophies.award {repo, kind:"pr", title:"Rolling text", pr:612}`: a sign hangs on the trophy wall (`dev.camera`
   from inside + `shot`; `dev.trophies.list` has the cells); 7 awards on a 6-slot wing replace the oldest (the reply's
@@ -775,7 +775,7 @@ relayout snap, a building change, a released lead leaving, the level or the link
   integrated server's `time set`, like `dev.time`), `dev.routines.standup {goalId, force?}` (holds it now; `force`
   ignores the distance and loading, not the toggle), `dev.routines.library {agent}` (as if it wrote a note, no
   cooldown). `dev.state` has a `routines` summary.
-- **QA** (dev world: `node tools/mac.mjs launch --backend sim --dev --world "Village QA" --preset normal`):
+- **QA** (dev world: `node tools/unix.mjs launch --backend sim --dev --world "Village QA" --preset normal`):
   scripted night/morning check: place a building with beds in the Overworld, then `node tools/routines-qa.mjs
   [--timeout 90] [--shot]` (night on, `at:"night"`, polls `dev.routines.state` until an agent has `routine:
   resting`, `lying: bed..`, `plate: resting` on its bed's head; `at:"morning"`, polls until nobody rests or lies and
@@ -908,7 +908,7 @@ The contract is docs/PRWATCH.md "A lead per building"; routing rules in docs/BUI
   `hasPodium`, `podiumOwners`, `leads` with `assignedBuilding`/`routedLayout`/`target`/`walking`/`departing`/
   `pos`, and `sent`: the last 20 `lead.*` messages with `ok`/`error`/`result`), `dev.leads.sync` (send
   `lead.sync` now), `dev.state` -> `leads` (summary), `dev.state` -> `hq.homePodiumOpen` / `podiumOpenIn`.
-- Testing without a Foreman that knows leads (sim backend, `node tools/mac.mjs launch --backend sim --dev`):
+- Testing without a Foreman that knows leads (sim backend, `node tools/unix.mjs launch --backend sim --dev`):
   hold the live stream (`dev.foreman.hold {on:true}`, else the next snapshot clears what you inject), then
   `dev.foreman.inject` an `agent.upsert` with `{id:"ines", name:"Ines", role:"lead", state:"idle",
   station:"meeting", ...}`, a `leads.update {leads:[{leadId:"marlow", repos:[]}, {leadId:"ines",
@@ -1049,7 +1049,7 @@ The contract is docs/HUB.md "Repos and Goals tabs" (+ its multi-repo amendment);
   the mod drops the repo itself (`ForemanState.forgetRepo`: there is no removal broadcast); `goal.digest` ->
   the digest. A user's goal message comes back as a feed item `kind:"message"`, `agentId:"user"`, `to:<lead>`,
   shown as "You → <lead>".
-- Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`; the sim Foreman knows every
+- Testing with the sim backend (`node tools/unix.mjs launch --backend sim --dev`; the sim Foreman knows every
   new type: goal-tagged script, plan id, replies to goal messages, cancel): `dev.goals.submit {text:"Add #tags",
   repoId:"demo", instructions:["keep the API stable"]}` -> `dev.hub.open {tab:"goals", goalId:"<id>",
   view:"thread"}` and shoot; `dev.hub.action {action:"goal_send", text:"Use a set"}` (the "sending…" line, then
@@ -1147,7 +1147,7 @@ restart, `SettingsDev` = DevBridge) and the pure `dev.agentcraft.hub.SettingDef`
   - Secret editors (wave 3 S1/S2) chips: `<form>:env:replace:<NAME>`, `:remove:<NAME>`, `:undo:<NAME>`, `:set`;
     `settings:claude.context.mcpServers:add`, `:edit:<name>`, `:remove:<name>`, `:undo:<name>`, `mcp:type:<stdio|http|sse>`,
     `mcp:env:set`, `mcp:done`, `mcp:cancel`. Staged secret values show as `"(staged)"` in every state.
-- Testing with the sim backend (`node tools/mac.mjs launch --backend sim --dev`, once the Foreman side is merged):
+- Testing with the sim backend (`node tools/unix.mjs launch --backend sim --dev`, once the Foreman side is merged):
   `dev.hub.open {tab:"settings", group:"permissions"}` -> `settings_set {key:"claude.permissions.allow",
   value:["Bash(npm test)"]}` -> `settings_apply` (confirm bar: shoot it) -> `settings_confirm`; `settings_set
   {key:"claude.useClaudeLogin", value:true}` + apply/confirm -> the restart banner -> `foreman_restart` (watch
@@ -1453,7 +1453,7 @@ agent log, `InboxDev` = DevBridge), `client.decisions.AnswerPanel` and the pure 
     podium-scoped decision screen as before; `showAll` = the "All decisions" chip.
   - Screens: `hub_inbox`, `hub_inbox_<decision|reply|blocked|hold|pr|agent>` (the newest item of that kind; agent =
     the first agent's view).
-- Making each kind with the sim (`node tools/mac.mjs launch --backend sim --dev`, then `dev.foreman.hold {on:true}`
+- Making each kind with the sim (`node tools/unix.mjs launch --backend sim --dev`, then `dev.foreman.hold {on:true}`
   so nothing moves under the shot):
   - hold: `dev.foreman.inject {message:{type:"foreman.status", status:{version:"x", backend:"claude", auth:"ok",
     hold:{reason:"usage", until:<now+3600000>, message:"5h window at 100%"}}}}`;

@@ -1,4 +1,4 @@
-// Size-based log rotation for long-lived append logs (tools/mac.mjs, tools/foreman-daemon.mjs).
+// Size-based log rotation for long-lived append logs (tools/unix.mjs, tools/foreman-daemon.mjs).
 //
 // Copy-truncate: the current file is copied to <file>.1 (older copies shift to .2 ... .keep) and then
 // truncated in place. A process that still has the file open with O_APPEND (a Foreman started by an
