@@ -1545,20 +1545,29 @@ const LEAD_WRAPPERS = new Set(['command', 'builtin', 'exec', 'nice', 'nohup', 't
 const LEAD_RUNNERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'cmd', 'powershell', 'pwsh', 'xargs', 'parallel', 'watch', 'script', 'su', 'sudo', 'doas', 'eval', 'source', '.', 'env']);
 
 /**
- * The lead's extra rule on top of isReadOnlyCommand (it works in the user's code, a view of it, and
- * must never run anything it was not shown): a program run by path (`./cat`, `bin/x`), a variable
- * that picks the program or what it loads (PATH, PAGER, NODE_OPTIONS...), and the reader options that
- * run another program or a script file (rg --pre, sed -f, awk -f). Returns why, or undefined.
+ * For a contributor's pull request (PR intake, off by default), on top of isReadOnlyCommand: a "read"
+ * that would still run code nobody was shown - a program by path (`./cat`, `bin/x`), a variable that
+ * picks the program or what it loads (PATH, PAGER, NODE_OPTIONS...), a command substitution, a shell
+ * or runner, the reader options that run another program or a script file (rg --pre, sed -f, awk -f).
+ * Best effort, a text check. Returns why, or undefined.
  */
-export function leadExecRisk(command: string): string | undefined {
-  // a command substitution anywhere (also inside double quotes): what it runs is not shown as a command
-  if (/\$\(|`/.test(command)) return 'runs a command substitution';
+export function unshownCodeRisk(command: string): string | undefined {
+  // a command substitution outside single quotes (also inside double quotes): what it runs is not
+  // shown as a command; '$(x)' in single quotes is literal text
+  if (/\$\(|`/.test(command.replace(/'[^']*'/g, "''"))) return 'runs a command substitution';
   for (const it of shellItems(command, process.platform !== 'win32')) {
     if (it.kind !== 'cmd') continue;
     const w = it.words;
-    // `export PATH=...`, `declare -x PAGER=...` as well as a plain assignment
-    const setsVar = w.map((x) => /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(x)?.[1]).find((n) => n && LEAD_EXEC_VARS.test(n));
-    if (setsVar) return `sets ${setsVar}`;
+    // `export PATH=...`, `declare -x PAGER=...`, `printf -v PATH ...` (an argument like `rg 'PATH=.'` is not one)
+    const head = w[0]?.toLowerCase() ?? '';
+    if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(head)) {
+      const setsVar = w.slice(1).map((x) => /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(x)?.[1]).find((n) => n && LEAD_EXEC_VARS.test(n));
+      if (setsVar) return `sets ${setsVar}`;
+    }
+    if (head === 'printf') {
+      const v = w.indexOf('-v');
+      if (v > 0 && w[v + 1] && LEAD_EXEC_VARS.test(w[v + 1]!)) return `sets ${w[v + 1]}`;
+    }
     let i = 0;
     while (i < w.length) {
       const a = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(w[i]!);
@@ -2151,7 +2160,7 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
   if (toolName === 'Bash' || toolName === 'PowerShell') {
     const command = typeof input.command === 'string' ? input.command : '';
     const v = classifyBash(command, ctx);
-    if (ctx.role !== 'lead' && ctx.untrustedCode && v.action !== 'deny' && (v.action === 'ask' || leadExecRisk(command) || !isReadOnlyCommand(command, ctx))) {
+    if (ctx.role !== 'lead' && ctx.untrustedCode && v.action !== 'deny' && (v.action === 'ask' || unshownCodeRisk(command) || !isReadOnlyCommand(command, ctx))) {
       // a contributor's pull request (PR intake): code the user did not write runs only after asking,
       // once per exact command (tests, builds, scripts, installs)
       const key = `untrusted:${exactKey(command)}`;
@@ -2159,12 +2168,13 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
       return always(key) ?? askVerdict(`runs code from a contributor's pull request (${v.reason})`, key);
     }
     if (ctx.role !== 'lead' || v.action === 'deny') return v;
-    // the lead works in the user's checkout: only inspection commands run without asking, and an
-    // approval covers exactly that command
-    const risk = leadExecRisk(command);
-    if (v.action === 'allow' && !risk && isReadOnlyCommand(command, ctx)) return v;
+    // the lead reads a view of the user's code: a best-effort nudge, not a sandbox. Commands the lexer
+    // sees as reads run; an obvious write asks, and an approval covers exactly that command. (Auto
+    // mode: the classifier judges the lead's calls like any agent's; deny rules and the Foreman's
+    // private files still hold.)
+    if (v.action === 'allow' && isReadOnlyCommand(command, ctx)) return v;
     const key = `lead:${exactKey(command)}`;
-    return always(key) ?? askVerdict(`the lead is read-only; this command may change things${risk ? ` (${risk})` : v.action === 'ask' ? ` (${v.reason})` : ''}`, key);
+    return always(key) ?? askVerdict(`the lead is read-only; this command may change things${v.action === 'ask' ? ` (${v.reason})` : ''}`, key);
   }
 
   if (NETWORK_TOOLS.has(toolName)) {

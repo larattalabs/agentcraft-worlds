@@ -183,9 +183,10 @@ export class ClaudeEngine implements Engine {
         ),
       ],
     });
-    // the lead is read-only in both modes, whatever the allow rules or the auto mode classifier say; a
-    // worker on a contributor's pull request asks before running its code the same way
-    if (role === 'lead' || policy().untrustedCode) {
+    // policy mode: the lead's read-only nudge holds ahead of the user's allow rules (auto mode: the
+    // classifier judges the lead like any agent); a worker on a contributor's pull request (PR intake)
+    // asks before running its code in both modes
+    if ((role === 'lead' && p.mode !== 'auto') || policy().untrustedCode) {
       hooks.push({
         hooks: [
           leadReadOnlyHook(

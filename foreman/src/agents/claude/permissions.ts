@@ -37,7 +37,7 @@ export interface PermissionsConfig {
 export const DEFAULT_PERMISSIONS: PermissionsConfig = { mode: 'policy', allow: [], deny: [], ask: [], webTools: false, protectCheckouts: true };
 
 /** Policy asks that stay asks in auto mode: git internals and redirections, a lead's non-read command, code from a contributor's pull request. */
-const STRUCTURAL = /git internals \(\.git\)|points git at another repository|--git-dir\/--work-tree|edit through a link that leads outside|GIT_DIR|protected file|contributor's pull request|the lead is read-only/i;
+const STRUCTURAL = /git internals \(\.git\)|points git at another repository|--git-dir\/--work-tree|edit through a link that leads outside|GIT_DIR|protected file|contributor's pull request/i;
 
 const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
 const inside = (p: string, root: string) => p === root || p.startsWith(`${root}${path.sep}`) || p.startsWith(`${root}/`);

@@ -20,34 +20,34 @@ const lead: PolicyContext = { role: 'lead', cwd, readDirs: [], leadReadCommands:
 const contributor: PolicyContext = { role: 'worker', cwd, readDirs: [], untrustedCode: true };
 const bash = (command: string, ctx: PolicyContext) => classifyToolUse('Bash', { command }, ctx).action;
 
-describe('the lead runs nothing it was not shown', () => {
+describe("the lead's shell: a best-effort read-only nudge", () => {
   it.each([
-    ['./cat package.json', 'ask'],
-    ['bin/cat package.json', 'ask'],
-    ['PATH=./bin:$PATH cat package.json', 'ask'],
-    ['env PATH=. cat a', 'ask'],
-    ['rg --pre ./evil x package.json', 'ask'],
-    ['sed -f s.sed package.json', 'ask'],
-    ['sed -nf s.sed package.json', 'ask'],
-    ['awk -f p.awk package.json', 'ask'],
+    // obvious writes ask
+    ['rm -rf src', 'ask'],
+    ['git commit -am x', 'ask'],
+    ['echo x > notes.txt', 'ask'],
+    ["sed -i 's/a/b/' package.json", 'ask'],
+    ['npm install left-pad', 'ask'],
     ['bd show x --output=f', 'ask'],
     ['bd show x -oout.json', 'ask'],
-    ["sh -c './cat package.json'", 'ask'],
-    ['env -u LANG ./cat package.json', 'ask'],
-    ['env -u LANG cat package.json', 'ask'],
-    ['git ls-files | xargs ./cat', 'ask'],
-    ['git ls-files | xargs cat', 'ask'],
-    ['awk -fp.awk package.json', 'ask'],
-    ['timeout 5 cat package.json', 'allow'],
-    ['echo "$(./cat package.json)"', 'ask'],
-    ['echo `./cat package.json`', 'ask'],
-    ['export PATH=./bin:$PATH; cat package.json', 'ask'],
+    // reads run, including text that only looks like code
+    ["rg 'PATH=.' src", 'allow'],
+    ["echo 'literal $(./cat package.json)'", 'allow'],
     ['bd show x --json', 'allow'],
     ['cat package.json', 'allow'],
     ['git log --oneline -5', 'allow'],
     ['rg foo src', 'allow'],
+    ['timeout 5 cat package.json', 'allow'],
+    // never: push, and the Foreman's own files
+    ['git push origin main', 'deny'],
   ])('%s -> %s', (command, expected) => {
     expect(bash(command, lead)).toBe(expected);
+  });
+
+  it("the Foreman's own files stay off limits for the lead", () => {
+    const home = tempDir();
+    const ctx: PolicyContext = { ...lead, foreman: { home } };
+    expect(bash(`cat ${path.join(home, 'config.json')}`, ctx)).toBe('deny');
   });
 
   it('refuses writers and runners as declared read commands', () => {
@@ -64,6 +64,22 @@ describe("a contributor's pull request", () => {
       const v = classifyToolUse('Bash', { command: c }, contributor);
       expect(v.action === 'ask' && v.reason.includes("contributor's pull request") && v.ruleKeys.every((k) => k.startsWith('untrusted:')), c).toBe(true);
     }
+    // "reads" that would still run code nobody was shown
+    for (const c of [
+      './cat package.json',
+      'PATH=./bin:$PATH cat package.json',
+      'rg --pre ./evil x package.json',
+      'sed -f s.sed package.json',
+      'awk -fp.awk package.json',
+      "sh -c './cat package.json'",
+      'git ls-files | xargs cat',
+      'echo "$(./cat package.json)"',
+      'export PATH=./bin:$PATH; cat package.json',
+      'printf -v PATH "./bin:%s" "$PATH"; cat package.json',
+    ]) {
+      expect(bash(c, contributor), c).toBe('ask');
+    }
+    for (const c of ["rg 'PATH=.' src", "echo 'literal $(x)'"]) expect(bash(c, contributor), c).toBe('allow');
     for (const c of ['cat package.json', 'git log --oneline', 'git diff main...HEAD']) expect(bash(c, contributor), c).toBe('allow');
     expect(classifyToolUse('Edit', { file_path: path.join(cwd, 'src', 'a.ts') }, contributor).action).toBe('allow');
     const key = classifyToolUse('Bash', { command: 'npm test' }, contributor);
