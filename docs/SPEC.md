@@ -22,7 +22,7 @@ Minecraft 26.3 (Fabric mod "agentcraft", Java 25)          Foreman (Node 22 + Ty
                                                              ├─ Memory (markdown files, shared + per-agent)
                                                              ├─ DecisionQueue (questions + permission prompts)
                                                              ├─ RepoManager (git worktrees, diffs, merges)
-                                                             └─ Notifier (Windows toast when user needed)
+                                                             └─ Notifier (desktop notification when user needed)
 ```
 
 - **The Foreman is the source of truth.** It runs as a standalone process: agents keep working
@@ -102,7 +102,7 @@ served **by the mod client**:
 3. **Readable text**: logs/diffs/plans rendered crisp (vanilla font, proper scaling), scrollable,
    syntax-tinted diffs (+ green / - red), selectable agent, search not required v1.
 4. **Durability**: Foreman state survives restarts; Agent SDK sessions resumed by session id.
-5. **Out-of-game notifications**: Windows toast (and console bell) when a decision is waiting.
+5. **Out-of-game notifications**: desktop notification (and console bell) when a decision is waiting.
 6. **Permissions**: risky tool calls (anything outside the worktree, network, deleting) become
    `permission` decisions in-world. Safe edits/reads inside the worktree auto-allowed.
 7. **Graceful auth failure**: if the Claude backend can't authenticate, the Foreman says so loudly

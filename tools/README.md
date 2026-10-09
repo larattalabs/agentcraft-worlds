@@ -1,19 +1,24 @@
 # tools/
 
-## macOS
+## macOS and Linux
 
-Requires Node 22+, git, and Java 25. Install Java with `brew install openjdk@25`;
-`mac.mjs` uses Homebrew's JDK directly, so no system Java changes are needed.
+Requires Node 22+, git, and Java 25. On macOS install Java with `brew install openjdk@25`; on
+Linux install your distribution's Java 25 JDK (Arch: `pacman -S jdk25-openjdk`) or set
+`JAVA_HOME` to one. `unix.mjs` uses that JDK directly, so no system Java changes are needed.
 
 ```sh
-node tools/mac.mjs launch --backend sim             # free simulated team
-node tools/mac.mjs stop --profile sim
-node tools/mac.mjs launch --repo /path/to/repo --use-claude-login
-node tools/mac.mjs stop                            # save/quit game, stop Foreman
-node tools/mac.mjs stop --dry-run                  # print what would be killed, change nothing
-node tools/mac.mjs launch --restart-foreman        # replace a Foreman running old code
-node tools/mac.mjs launch --backend sim --dev --world "Docs World" --preset normal   # natural terrain
+node tools/unix.mjs launch --backend sim            # free simulated team
+node tools/unix.mjs stop --profile sim
+node tools/unix.mjs launch --repo /path/to/repo --use-claude-login
+node tools/unix.mjs stop                           # save/quit game, stop Foreman
+node tools/unix.mjs stop --dry-run                 # print what would be killed, change nothing
+node tools/unix.mjs launch --restart-foreman       # replace a Foreman running old code
+node tools/unix.mjs launch --backend sim --dev --world "Docs World" --preset normal   # natural terrain
+node tools/unix.mjs launch --backend codex         # an all-Codex team on your Codex login (`codex login`)
 ```
+
+`tools/mac.mjs` is the same launcher under its old name (a shim that forwards to `unix.mjs`), so
+older commands and scripts keep working.
 
 **Which world the dev client opens.** By default AutoWorld loads (or creates) the flat "AgentCraft HQ"
 studio. `--world NAME` opens that save instead (created if missing), `--preset flat|normal` picks the
@@ -35,15 +40,17 @@ one component (`--no-foreman` also turns the mod's Foreman launcher off, so no F
 "Foreman launcher": the way a jar in Prism gets its Foreman); `--no-wait` to return immediately while Minecraft builds. Repeat
 `--foreman-arg VALUE` to pass extra Foreman options. Logs and process records live in
 `artifacts/logs/mac-*.log` and `artifacts/run/mac-*.json`. `stop` only signals processes
-recorded by this launcher. macOS uses Notification Center for agent decisions.
-The screenshot QA command, `node tools/qa.mjs`, also uses this launcher on macOS.
+recorded by this launcher. The run files keep their `mac-` prefix on Linux too: the mod's Foreman
+launcher, `foreman-daemon.mjs` and installed builds read them under that name. Agent decisions show a
+desktop notification (Notification Center on macOS, `notify-send` on Linux). The screenshot QA
+command, `node tools/qa.mjs`, also uses this launcher on macOS and Linux.
 Logs are checked when a process is started. A log over 5 MB is copy-truncated and three
 copies are kept (`.1` .. `.3`). A Foreman still writing to the file is unaffected. A process that
 runs for weeks can grow its log past 5 MB until the next start.
 
 ## Playing in a Hardcore world (Prism Launcher, macOS)
 
-Dev runs (`mac.mjs`) use the dev checkout, profile `claude`/`sim` and ports 7878/7879. The
+Dev runs (`unix.mjs`) use the dev checkout, profile `claude`/`sim` and ports 7878/7879. The
 everyday game is different: a jar in a Prism instance, and **the mod starts the Foreman itself** when the
 game starts (its Foreman launcher, docs/HUB.md "Foreman launcher"), so Prism needs no hook and no
 terminal is involved. That Foreman runs from a **stable checkout** (default: `agentcraft-stable` next to your clone,

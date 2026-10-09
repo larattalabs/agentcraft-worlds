@@ -34,8 +34,11 @@ export interface GitOptions {
 // a directory that never exists; protocol.allow=never + pushInsteadOf block every remote. The Foreman
 // needs no network: everything it does is local.
 const NO_HOOKS_DIR = path.join(os.tmpdir(), 'agentcraft-no-hooks-7f3e9c');
+// The diff parser expects a/ b/ prefixes; the user's diff.mnemonicPrefix, diff.noprefix or
+// diff.srcPrefix/dstPrefix would otherwise turn src/cli.ts into i/src/cli.ts or cli.ts.
 const BASE_ARGS = [
   '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'commit.gpgsign=false',
+  '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.noprefix=false', '-c', 'diff.srcPrefix=a/', '-c', 'diff.dstPrefix=b/',
   '-c', `core.hooksPath=${NO_HOOKS_DIR}`,
   '-c', 'protocol.allow=never',
   '-c', `url.${PUSH_BLOCK_URL}.pushInsteadOf=`,

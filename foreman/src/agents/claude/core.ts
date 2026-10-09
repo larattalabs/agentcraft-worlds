@@ -51,7 +51,7 @@ import { agentGitIdentity } from '../../util/git.js';
 import type { Decision, Goal, Task } from '../../protocol.js';
 import { type ProcEntry } from '../../util/proc.js';
 import { SessionHistory } from '../../history.js';
-import { boardSummary, planText } from './prompts.js';
+import { boardSummary, planText } from '../prompts.js';
 import { PrWatcher, type TriageItem } from '../../prwatch.js';
 import type { RunFn } from '../../prs.js';
 import { withAuthMode } from './auth.js';

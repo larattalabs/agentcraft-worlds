@@ -3,7 +3,7 @@
 // config changes and leads (a lead per building).
 import { type Backend } from '../../foreman.js';
 import type { Goal } from '../../protocol.js';
-import { planPrompt } from './prompts.js';
+import { planPrompt } from '../prompts.js';
 import { DesignTurns } from './jobs/designTurns.js';
 import { type Job, sleep, WAKE_INTERVAL_MS } from './core.js';
 

@@ -17,6 +17,7 @@ import { DiscordNotifier, Notifier, type ExternalKind } from './notifier.js';
 import type {
   Agent,
   AgentState,
+  BackendName,
   ClientMessage,
   Decision,
   Design,
@@ -44,7 +45,7 @@ import { buildDigest } from './digest.js';
 import { applyLive, ConfigError, configGet, configSet, listRepoAgents, pendingRestart, restartBaseline } from './settings.js';
 
 export interface Backend {
-  readonly name: 'sim' | 'claude';
+  readonly name: BackendName;
   /** Called once after the core is ready (and after restart: resume work). */
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -370,7 +371,7 @@ export class Foreman {
   /** Patch an agent and broadcast if anything changed. */
   setAgent(
     id: string,
-    patch: Partial<Pick<Agent, 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title'>> & {
+    patch: Partial<Pick<Agent, 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title' | 'engine' | 'model'>> & {
       taskId?: string | null;
       repoId?: string | null;
       worktree?: string | null;
@@ -378,7 +379,7 @@ export class Foreman {
   ): Agent {
     const a = this.requireAgent(id);
     let changed = false;
-    const set = <K extends 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title'>(k: K, v: Agent[K] | undefined) => {
+    const set = <K extends 'state' | 'station' | 'activity' | 'paused' | 'active' | 'title' | 'engine' | 'model'>(k: K, v: Agent[K] | undefined) => {
       if (v !== undefined && a[k] !== v) {
         a[k] = v;
         changed = true;
@@ -390,6 +391,8 @@ export class Foreman {
     set('paused', patch.paused);
     set('active', patch.active);
     set('title', patch.title);
+    set('engine', patch.engine);
+    set('model', patch.model);
     for (const k of ['taskId', 'repoId', 'worktree'] as const) {
       const v = patch[k];
       if (v === undefined) continue;

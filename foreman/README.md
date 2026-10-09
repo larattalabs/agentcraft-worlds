@@ -33,6 +33,9 @@ npm install
 npm run start -- --backend claude --repo C:\path\to\your\repo
 # personal use only: your local `claude` CLI login instead of an API key
 npm run start -- --backend claude --repo C:\path\to\your\repo --use-claude-login
+# Codex agents on your Codex login (`codex login`), or a mixed team
+npm run start -- --backend codex --repo C:\path\to\your\repo
+npm run start -- --backend claude --worker-engine codex --repo C:\path\to\your\repo
 
 # simulated team on a fresh sandbox repo (no API calls) - for demos and screenshot QA
 npm run start -- --backend sim --reset --speed 2
@@ -73,7 +76,11 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 
 | flag / env | default | |
 | --- | --- | --- |
-| `--backend sim\|claude` / `AGENTCRAFT_BACKEND` | `claude` | |
+| `--backend sim\|claude\|codex` / `AGENTCRAFT_BACKEND` | `claude` | codex: an all-Codex team |
+| `--lead-engine` / `--worker-engine` `claude\|codex` | the backend's | mixed teams, e.g. a Claude lead with Codex workers |
+| `--engines kit=codex,...` / `AGENTCRAFT_ENGINES` | | engine per agent |
+| `--codex-model`, `--codex-lead-model`, `--codex-worker-model`, `--codex-effort` | your Codex config | Codex models and reasoning effort |
+| `--codex-path` / `AGENTCRAFT_CODEX_PATH` | `codex` on PATH, else the Codex app's | the Codex CLI |
 | `--port` / `AGENTCRAFT_PORT` | `7878` | WebSocket port (127.0.0.1 only) |
 | `--home` / `AGENTCRAFT_HOME` | `~/.agentcraft` | state root |
 | `--user-name` / `AGENTCRAFT_USER_NAME` / config `userName` | OS user name | how the agents address you; sent to the mod in `foreman.status` |
@@ -81,7 +88,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--repo <path>[,<path>]` | | register repos at start (sim: a fresh `sandbox/sim-demo`) |
 | `--goal "<text>"` | | submit a goal right away |
 | `--reset` | | wipe this profile first |
-| `--notify` / `--no-notify` / `AGENTCRAFT_NOTIFY` | on for claude, off for sim | Windows or macOS notifications |
+| `--notify` / `--no-notify` / `AGENTCRAFT_NOTIFY` | on for claude, off for sim | Windows, macOS or Linux (`notify-send`) notifications |
 | `--toast-silent` | | toast without sound |
 | `--model`, `--lead-model`, `--worker-model` | lead `opus`, workers `sonnet` | any model id/alias the CLI accepts |
 | `--design-model` / `AGENTCRAFT_DESIGN_MODEL` / `claude.designModel` | the worker model | the building design agent (below) |
@@ -93,6 +100,7 @@ most ~100 ms of state, and interrupted agent turns resume on the next start.
 | `--max-concurrent-turns` / `claude.maxConcurrentTurns` | no cap | agent turns at once, leads and workers together |
 | `--max-turns`, `--max-budget <usd>` | 40 lead / 80 worker, none | per turn caps |
 | `--ci "<cmd>"` | detected (`npm`/`pnpm`/`yarn`/`bun test` by lockfile, `cargo test`, ...) | run after each task (a repo's `repoSettings` `ci` wins) |
+| `--lead-read-commands "<cmd>,..."` / `AGENTCRAFT_LEAD_READ_COMMANDS` / `claude.leadReadCommands` | none | read commands the leads run without asking, by prefix: `"bd show,gh issue view"` lets them read your issue tracker (bare program name plus plain words; writers, interpreters and network tools are refused) |
 | `--no-lead-review` | | merge decisions go to you without a lead review turn |
 | `--pr-watch off\|observe\|on` | `observe` | pull requests of tasks landed as PRs (`land: "pr"`): observe = poll + Marlow's triage, nothing posted or started; on = fold-ins and approved replies too; off = a PR finishes its task (config `claude.prWatch`) |
 | `--pr-poll-seconds` | `180` | how often watched PRs are polled (config `claude.prPollSeconds`) |
@@ -383,6 +391,44 @@ so launch scripts can find it; `<home>/foreman.json` holds the same for the firs
 it exits, another live profile takes its place). A second Foreman on a profile that is already
 running is refused (two would both write its `state.json`).
 
+## Engines: Claude and Codex
+
+The team (`src/agents/team.ts`: task graph, worktrees, scheduling, CI, reviews, merges, steering,
+restarts) runs each agent turn through an engine, chosen per agent:
+
+- **Claude** (`src/agents/claude/engine.ts`): one Claude Agent SDK `query()` per turn; the team tools
+  are an in-process MCP server; every tool call goes through `canUseTool` and the policy.
+- **Codex** (`src/agents/codex/`): one `codex app-server` process per turn, JSON-RPC over stdio. The
+  agent's thread is durable, so its next turn resumes it. Commands run with `approvalPolicy:
+  "untrusted"`, so Codex asks before each one, and the ask goes through the same policy and in-game
+  permission prompts (commands are unwrapped from Codex's `powershell -Command` / `bash -lc` wrapper
+  first). Workers are sandboxed to their worktree, its git dir and the temp dir; the lead is
+  read-only. The team tools are app-server dynamic tools. None of your own Codex setup reaches an
+  agent thread: your MCP servers, plugins, apps, web search, image generation and notify hooks are
+  switched off for it (your Codex app is untouched). Codex's own sub-agent tools cannot be switched
+  off; agents are told not to use them, and every approval from a thread AgentCraft did not start is
+  declined. The git safety environment is passed explicitly (`shell_environment_policy.set`), since
+  Codex drops variables named like secrets (`GIT_CONFIG_KEY_0`).
+
+  On Windows, the app-server uses `<home>/<profile>/codex-localappdata` as its own local app-data
+  directory. This avoids a Codex sandbox setup bug that tries to repair permissions on locked
+  desktop runtime executables. Agent shell commands retain the original `LOCALAPPDATA`; the
+  sandbox, approval policy, login and saved Codex threads are unchanged.
+
+  A worker's sandbox can write exactly what committing and merging on its own branch needs: the
+  shared `objects/`, its own branches' refs and reflogs (`refs/heads/agentcraft/<agent>/`), and its
+  worktree's own git dir (Codex protects the `.git` pointer's target unless it is granted exactly),
+  validated against the registered repository before every turn. Never the shared `.git` as a
+  whole: its `config` and `hooks` would let a worker run code in your own git, outside any sandbox,
+  and its refs would let it move your branches. On Windows,
+  worktrees run with the older grant may retain Codex deny ACLs; recreating the worktree after
+  saving its changes clears those stale permissions. Do not reset permissions on the whole repo.
+  Windows agents are also told to use `npm.cmd` / `npx.cmd`: their PowerShell launchers can fail
+  on sandbox-inaccessible global installs or script execution policy, while the CMD launchers work.
+
+The rest of this section describes the team with either engine ("Read/Grep/Glob" is how a Codex
+agent reads with its shell).
+
 ## How the claude backend works
 
 1. **Plan** (lead, read-only in your checkout): explores with Read/Grep/Glob, writes `Plan: ...` to
@@ -594,7 +640,9 @@ Commands that git runs for us (`git rebase -x/--exec`, `git bisect run`, `git su
 `git filter-branch --*-filter`, `git difftool -x`, `-c alias.x='!cmd'`) are classified exactly like
 the same command typed directly. Anything it cannot verify asks. The lead works in your own
 checkout, so it may only run read-only commands without asking (a redirection like `git log > x`
-or `git diff --output=x` is a write).
+or `git diff --output=x` is a write). Programs the policy does not know, like an issue tracker's
+CLI, ask every time unless listed in `--lead-read-commands`. The list is matched by bare program
+name and applies to the lead only: a worker could put its own `bd` in front of the real one. Entries must be a bare program name plus plain words; writers, interpreters and network tools (`rm`, `git`, `bash`, `node`, `curl`, ...) are refused at startup.
 
 "Always allow for this agent" stores every rule key the call needed, and each key is scoped so it
 never covers more than the prompt said (the prompt shows the scope: `"Always allow for this

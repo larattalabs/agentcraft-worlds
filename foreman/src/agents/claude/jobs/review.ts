@@ -4,7 +4,7 @@ import type { Task } from '../../../protocol.js';
 import { MERGE_OPTIONS } from '../../../protocol.js';
 import type { TestResult } from '../../../repos.js';
 import { renderDiffText } from '../../../diff.js';
-import { reviewPrompt } from '../prompts.js';
+import { reviewPrompt } from '../../prompts.js';
 import { WorkJobs } from './work.js';
 
 export abstract class ReviewJobs extends WorkJobs {

@@ -626,7 +626,7 @@ export class RepoManager {
    * then walks up to an enclosing repository). Checked before the Foreman writes with git in a
    * worktree (commits) or shows its diff for review. `head` is the symbolic ref HEAD points at.
    */
-  async verifyWorktreeGit(r: Repo, w: Worktree): Promise<{ ok: true; head: string } | { ok: false; reason: string }> {
+  async verifyWorktreeGit(r: Repo, w: Worktree): Promise<{ ok: true; head: string; gitDir: string; commonDir: string } | { ok: false; reason: string }> {
     if (!fs.existsSync(w.path)) return { ok: false, reason: `${w.path} does not exist` };
     const res = await git(w.path, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'], { allowFail: true });
     if (res.code !== 0) return { ok: false, reason: `git finds no repository at ${w.path} (its .git link is missing or broken)` };
@@ -645,7 +645,7 @@ export class RepoManager {
     }
     if (!back || !samePath(path.dirname(back), w.path)) return { ok: false, reason: `${w.path}/.git points at the worktree entry of ${back ? path.dirname(back) : 'another directory'}` };
     const head = (await git(w.path, ['symbolic-ref', '-q', 'HEAD'], { allowFail: true })).stdout.trim();
-    return { ok: true, head };
+    return { ok: true, head, gitDir: path.resolve(gitDir), commonDir: path.resolve(commonDir) };
   }
 
   /**

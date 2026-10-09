@@ -82,6 +82,8 @@ export interface PolicyContext {
   foreman?: ForemanPrivate;
   /** path rules of this platform (tests simulate Windows); default: the one we run on */
   platform?: 'win32' | 'posix';
+  /** lead only: command prefixes the user declared read-only, e.g. `bd show` */
+  leadReadCommands?: string[];
 }
 
 export interface ForemanPrivate {
@@ -548,6 +550,35 @@ const READ_CMDS = new Set([
   ':', 'exit', 'return', 'break', 'continue', 'wait', 'shift', 'set', 'shopt', 'umask', 'ulimit', 'read', 'unset', 'jobs', 'history',
 ]);
 const NO_PATH_CMDS = new Set(['echo', 'printf', 'true', 'false', 'sleep', 'date', 'whoami', 'uname', 'hostname', 'id', 'locale', 'seq', 'pwd', 'clear', 'cls', 'command', 'hash', 'which', 'where', 'whereis', 'test', '[', '[[', 'ps', 'tasklist', 'nproc', 'arch', 'getconf', 'uptime', 'free', ':', 'exit', 'return', 'break', 'continue', 'wait', 'shift', 'set', 'shopt', 'umask', 'ulimit', 'read', 'unset', 'jobs', 'history', 'printenv', 'env']);
+// PowerShell pipeline filters/formatters (Codex runs commands through PowerShell on Windows): they
+// shape objects and print, never touch files. Script blocks (`ForEach-Object { ... }`) are split
+// into their own segments and checked as commands.
+const PS_FILTERS = [
+  'select-object', 'select', 'where-object', '?', 'foreach-object', '%', 'foreach', 'sort-object', 'measure-object', 'measure',
+  'format-table', 'ft', 'format-list', 'fl', 'format-wide', 'fw', 'out-string', 'out-host', 'oh', 'out-null', 'group-object', 'group',
+  'get-unique', 'gu', 'get-member', 'gm', 'convertto-json', 'convertfrom-json', 'convertto-csv', 'get-location', 'gl', 'get-command',
+  'gcm', 'get-date', 'write-output', 'write', 'write-host', 'join-path', 'split-path', 'get-help',
+];
+for (const c of PS_FILTERS) {
+  READ_CMDS.add(c);
+  NO_PATH_CMDS.add(c);
+}
+/** PowerShell cmdlets that run a script block: `ForEach-Object { Remove-Item $_ }` runs Remove-Item. */
+const PS_BLOCK_CMDS = new Set(['foreach-object', '%', 'foreach', 'where-object', '?']);
+/**
+ * A script block's body is an expression (`$_.FullName`, `$_.Length -gt 100`) or commands. Braces and
+ * `;`/`|` were split off already; leading parameter names (-Process, -FilterScript) are skipped.
+ */
+function psBlockCommand(rest: string[]): string | undefined {
+  let i = 0;
+  while (i < rest.length && /^-[a-z]+$/i.test(rest[i]!)) i++;
+  const body = rest.slice(i);
+  if (!body.length) return undefined;
+  const expression = /^[$'"0-9(]/.test(body[0]!) && !body.some((w) => /^[a-z][a-z0-9]*-[a-z][a-z0-9]*$/i.test(w) || w === '&' || w === '.' || w === '=');
+  return expression ? undefined : body.join(' ');
+}
+/** PowerShell cmdlets that write the file named by -Path/-LiteralPath/-FilePath (or the first argument). */
+const PS_WRITERS = new Set(['set-content', 'add-content', 'ac', 'out-file']);
 const RECURSIVE_READERS = new Set(['du', 'tree']);
 /** commands that only write their path arguments (inside the worktree is fine) */
 const WRITE_CMDS = new Set(['mkdir', 'md', 'touch', 'tee', 'truncate', 'new-item', 'ni']);
@@ -1171,6 +1202,9 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     return merge(inner, exact(env, `xargs ${cmd}: its arguments come from input and cannot be checked`), ok('', false, { pathsOut: false }));
   }
 
+  // lead only: workers can write files, so their `bd` could be a fake on PATH
+  if (ctx.role === 'lead' && leadReadCommand(cmd, cmdWord, rest, ctx)) return ok(`${cmd}: declared read-only`, true);
+
   // ---- directory changes ----
   if (['cd', 'pushd', 'chdir', 'set-location', 'sl'].includes(cmd)) {
     // cmd.exe style `cd /d <path>` (seen from real agents): the switch is not the target. In Git
@@ -1400,6 +1434,10 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     return merge(j, ok(cmd, !outFile, { pathsOut: !ins.length && !outFile && o.pipeTrusted }));
   }
 
+  if (PS_BLOCK_CMDS.has(cmd)) {
+    const inner = psBlockCommand(rest);
+    if (inner !== undefined) return merge({ ...classifyCommand(inner, sc.vcwd, { ...sc.env, depth: sc.env.depth + 1 }), cwd: undefined, pathsOut: undefined }, ok(cmd, false, { pathsOut: false }));
+  }
   if (READ_CMDS.has(cmd)) {
     if (NO_PATH_CMDS.has(cmd)) {
       // `env`/`command` with a command after them were unwrapped already; what is left only prints
@@ -1418,6 +1456,19 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     const passthrough = ['cat', 'head', 'tail', 'tac'].includes(cmd) && !positional.length && o.pipeTrusted;
     const listing = cmd === 'ls' && !args.some((a) => /^-[a-zA-Z]*[lgnos]/.test(a)) && !j.asks.length;
     return merge(j, ok(cmd, true, { pathsOut: passthrough || listing }));
+  }
+  if (PS_WRITERS.has(cmd)) {
+    let target: string | undefined;
+    const positional: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i]!;
+      if (/^-(path|literalpath|lp|filepath|pspath)$/i.test(a)) target = rest[++i];
+      else if (/^-(value|encoding|inputobject|delimiter|stream|width)$/i.test(a)) i++;
+      else if (!a.startsWith('-')) positional.push(a);
+    }
+    target ??= positional[0];
+    if (!target) return exact(env, `${cmd} without a file to write`);
+    return merge(pathAsks([isPathCandidate(target, true) ? target : `./${target}`], 'w', sc), ok(`${cmd} inside worktree`, false));
   }
   if (WRITE_CMDS.has(cmd)) {
     const { args } = stripCmdSwitches(cmd, rest);
@@ -1468,6 +1519,15 @@ function classifyWords(cmd: string, cmdWord: string, rest: string[], sc: SegCtx,
     return merge(paths, ok(`${cmd} (project tool)`, false));
   }
   return exact(env, `unrecognised command: ${cmd}`);
+}
+
+/** "bd show" matches `bd show x`, not `./bd show x` or `bd showall`. */
+function leadReadCommand(cmd: string, cmdWord: string, rest: string[], ctx: PolicyContext): boolean {
+  if (/[\\/]/.test(cmdWord)) return false;
+  return (ctx.leadReadCommands ?? []).some((entry) => {
+    const [head, ...words] = entry.trim().split(/\s+/);
+    return baseCmd(head!) === cmd && words.every((w, i) => rest[i] === w);
+  });
 }
 
 /** `node_modules/.bin/<tool>` exists between the cwd and the worktree root (npx would not download it). */

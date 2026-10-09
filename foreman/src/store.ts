@@ -32,6 +32,8 @@ export interface BusMessage {
 export interface SessionRecord {
   sessionId?: string;
   model?: string;
+  /** the engine whose session this is (absent: claude, from before engines) */
+  engine?: 'claude' | 'codex';
   turns: number;
   /** spend of every session this key had (earlier sessions + the current one) */
   costUsd: number;

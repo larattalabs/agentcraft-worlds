@@ -11,7 +11,7 @@ import { buildSkillsPlugin, workspaceInstructionDirs } from './context.js';
 import { SessionHistory } from '../../history.js';
 import { connectorHook, foremanGuardHook, guardrailHook } from './permissions.js';
 import { agentFilePath, loadRepoAgents, loadSubagents, readAgentFile } from './subagents.js';
-import { type RepoRole } from './prompts.js';
+import { type RepoRole } from '../prompts.js';
 import { MCP_SERVER, type TurnHandle } from './tools.js';
 import { userName } from '../../user.js';
 import { HoldsLayer } from './holds.js';

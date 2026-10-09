@@ -126,6 +126,8 @@ function subagentArg(input: Record<string, unknown>): string {
 export class StreamMapper {
   private toolNames = new Map<string, string>();
   readonly stats: TurnStats = { isError: false, errors: [] };
+  /** the model the CLI reported at init */
+  model: string | undefined;
 
   constructor(
     private fm: Foreman,
@@ -144,6 +146,7 @@ export class StreamMapper {
         const m = msg as { subtype?: string; session_id?: string; model?: string; tool_name?: string; agent_id?: string; decision_reason_type?: string; decision_reason?: string; message?: string };
         if (m.subtype === 'init' && m.session_id) {
           this.stats.sessionId = m.session_id;
+          if (m.model) this.model = m.model;
           fm.log.debug(`${id}: session ${m.session_id} (${m.model ?? '?'})`);
         } else if (m.subtype === 'permission_denied') {
           // auto mode's classifier (or a rule) refused a call without asking anyone

@@ -54,7 +54,7 @@ Close the game and the agents keep working. Open it again and the studio catches
 | **Survival-safe** | Screens pause in singleplayer, buildings use vanilla materials and iron doors, placement checks for chests, mobs, fluids and slopes. The mod starts the Foreman with the game, no terminal needed. |
 | **Unattended running** | Usage-limit holds and resumes, a usage reserve, per-turn budgets, retries on network failures, a usage banner, optional Discord notifications. |
 | **Per-repo settings** | CI and setup commands, protected files, base branch, environment, landing mode, roles and models per agent, curated context (CLAUDE.md, skills, MCP servers). MCP servers and environment variables are editable in the hub, with secrets write-only and redacted from logs. |
-| **macOS** | A macOS launcher (`tools/mac.mjs`) alongside the Windows one. |
+| **macOS and Linux** | A macOS/Linux launcher (`tools/unix.mjs`; `tools/mac.mjs` still works) alongside the Windows one. |
 
 <br>
 
@@ -377,7 +377,7 @@ AgentCraft is built to point at code you care about.
 
 ## Quick start
 
-**You need:** macOS or Windows 10/11, Java 25, Node 22+, git, and a copy of Minecraft: Java Edition.
+**You need:** macOS, Linux or Windows 10/11, Java 25, Node 22+, git, and a copy of Minecraft: Java Edition.
 
 **For the real agents** you need Claude API access, either of these:
 
@@ -386,17 +386,18 @@ AgentCraft is built to point at code you care about.
   Vertex AI (`CLAUDE_CODE_USE_VERTEX=1`) or Microsoft Foundry (`CLAUDE_CODE_USE_FOUNDRY=1`), with that
   provider's usual credentials.
 
-On macOS, install Java 25 with `brew install openjdk@25` (the launcher selects that JDK without
-changing your system Java), then:
+On macOS, install Java 25 with `brew install openjdk@25`; on Linux, your distribution's Java 25 JDK
+(Arch: `pacman -S jdk25-openjdk`) or point `JAVA_HOME` at one. The launcher selects that JDK without
+changing your system Java. Then:
 
 ```sh
 git clone https://github.com/larattalabs/agentcraft-worlds
 cd agentcraft-worlds
 
-node tools/mac.mjs launch --backend sim             # try it first: a simulated team, no API usage
-node tools/mac.mjs stop --profile sim
-node tools/mac.mjs launch --repo /path/to/your/repo # real agents on your repo
-node tools/mac.mjs stop
+node tools/unix.mjs launch --backend sim            # try it first: a simulated team, no API usage
+node tools/unix.mjs stop --profile sim
+node tools/unix.mjs launch --repo /path/to/your/repo # real agents on your repo
+node tools/unix.mjs stop
 ```
 
 On Windows:
@@ -412,11 +413,28 @@ takes a few minutes. After that, a launch reaches the studio world in under a mi
 itself the first time; in an older world, rebuild it with `/agentcraft hq`. See
 [tools/README.md](tools/README.md) for every option and the logs.
 
-> **Personal use with Claude Code.** If you already use Claude Code, `--use-claude-login` (macOS) or
+> **Personal use with Claude Code.** If you already use Claude Code, `--use-claude-login` (macOS, Linux) or
 > `-UseClaudeLogin` (Windows) runs the agents on your own `claude` CLI login instead of an API key.
 > Anthropic does not allow third party tools to offer claude.ai login to their users, so this is off
 > by default and meant for running AgentCraft yourself. To make it permanent, put
 > `{"claude": {"useClaudeLogin": true}}` in `~/.agentcraft/config.json`.
+
+**Codex.** AgentCraft also runs Codex agents (upstream's Codex backend). With the Codex CLI or the
+Codex desktop app installed and logged in (`codex login`, with ChatGPT or an OpenAI API key):
+
+```sh
+node tools/unix.mjs launch --backend codex --repo /path/to/your/repo     # an all-Codex team
+node tools/unix.mjs launch --repo /path/to/your/repo --foreman-arg --worker-engine --foreman-arg codex   # Claude lead, Codex workers
+```
+
+Codex agents live in the same village and follow the same rules: their own worktrees, every command
+they ask about checked by AgentCraft's policy (and asked in game when it needs you), the lead's review,
+and your **Merge**. They never get your own Codex MCP servers, plugins, apps or web search, nor this
+fork's Claude-only extras (skills, subagents, claude.ai connectors, auto mode). Claude stays the default.
+Pick models with `--codex-model`, and mix engines per agent with `--engines kit=codex,wren=claude`. Every
+agent's nameplate shows the model it runs, like **Opus 5.5** or **GPT-6 Astra**, so a mixed team is easy
+to read at a glance. What the fork's protections cover for Codex agents: docs/FORK.md "Upstream sync
+2026-10".
 
 **Your name.** The agents call you by your OS user name. Change it in the hub's Settings,
 with `AGENTCRAFT_USER_NAME`, or with `{"userName": "Sam"}` in `~/.agentcraft/config.json`.
@@ -555,6 +573,9 @@ working at once cost more: cap them with "Agent turns at once" in the Team tab a
 in Settings, Usage. With your claude.ai login, the usage reserve (by default 85% of the 5-hour window
 and 80% of the 7-day one) stops new agent turns so some of your plan is left for you. The sim
 backend is free.
+
+Codex agents run on your Codex plan's usage (ChatGPT) or your OpenAI API key, whichever `codex login`
+uses. Their monitors show tokens per turn instead of dollars.
 
 <br>
 

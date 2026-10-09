@@ -26,7 +26,7 @@
 - <a id="feedkind"></a>**FeedKind**: `goal`, `plan`, `task`, `message`, `decision`, `merge`, `ci`, `memory`, `system`, `error`, `user`
 - <a id="notifylevel"></a>**NotifyLevel**: `info`, `warn`, `need_user`
 - <a id="worktreestatus"></a>**WorktreeStatus**: `active`, `merged`, `abandoned`
-- <a id="backendname"></a>**BackendName**: `sim`, `claude`
+- <a id="backendname"></a>**BackendName**: `sim`, `claude`, `codex`
 - <a id="authstatus"></a>**AuthStatus**: `ok`, `failed`, `unknown`, `checking` - `failed` must be shown loudly (in-world banner): the claude backend cannot run.
 - <a id="designstatus"></a>**DesignStatus**: `queued`, `designing`, `checking`, `rendering`, `done`, `failed`, `cancelled` - queued -> designing (the design agent works) -> checking (the Foreman re-runs the checker) -> rendering (previews) -> done; or failed / cancelled. done, failed and cancelled are final.
 - <a id="designstyle"></a>**DesignStyle**: `modern`, `cabin`, `townhouse`, `workshop`, `campus`, `custom` - style preset of a generated building (docs/HUB.md); `custom` = described only by the notes
@@ -60,6 +60,8 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `worktree` | string | no | id of the worktree the agent is working in (see Repo.worktrees) |
 | `paused` | boolean | yes |  |
 | `active` | boolean | yes | false = off shift (not on the current team, or stopped by the user); render idle in the lounge |
+| `engine` | `claude` \| `codex` | no | which engine runs this agent (absent: the sim) |
+| `model` | string | no | the model it runs, for display, e.g. "Opus 5.5" or "GPT-6 Astra" (the real model once a turn reported it) |
 
 ### <a id="logentry"></a>LogEntry
 
@@ -83,6 +85,7 @@ Exact option labels: merge decisions use `Merge`, `Request changes`, `Reject`; p
 | `goalId` | string | no |  |
 | `priority` | integer | yes | higher = sooner; default 0 |
 | `branch` | string | no | git branch, e.g. "agentcraft/kit/t2-tag-parser" |
+| `startBranch` | string | no | the worker's branch starts from this branch instead of the base, e.g. a fetched pull request "agentcraft/pr-12" |
 | `worktree` | string | no |  |
 | `ci` | [CiStatus](#cistatus) | yes |  |
 | `blockedReason` | string | no |  |

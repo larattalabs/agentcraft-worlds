@@ -9,7 +9,7 @@ import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
 import { instructionsBlock } from './context.js';
-import { boardSummary, leadRepoContext, leadSystemPrompt, planText, workerSystemPrompt } from './prompts.js';
+import { boardSummary, leadRepoContext, leadSystemPrompt, planText, workerSystemPrompt } from '../prompts.js';
 import { withAuthMode } from './auth.js';
 import { isAuthText } from './failures.js';
 import { limitFromText, StreamMapper, type TurnStats } from './stream.js';

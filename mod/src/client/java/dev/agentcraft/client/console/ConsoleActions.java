@@ -342,7 +342,7 @@ public final class ConsoleActions {
 		ConsoleLog.add(Tone.INFO, tb.toString().strip());
 		String spend = spendLabel(s);
 		if (spend != null) {
-			ConsoleLog.add(Tone.INFO, "Claude spend so far: " + spend + " (estimated, this profile)");
+			ConsoleLog.add(Tone.INFO, "Claude API spend so far: " + spend + " (estimated, this profile)");
 		}
 		String usage = usageLabel(s);
 		if (usage != null) {

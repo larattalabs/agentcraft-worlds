@@ -4,7 +4,7 @@
 import type { Goal, Task } from '../../../protocol.js';
 import { formatInbox } from '../../../bus.js';
 import { truncate } from '../../../util/text.js';
-import { foldInPrompt, workPrompt } from '../prompts.js';
+import { foldInPrompt, workPrompt } from '../../prompts.js';
 import { userName } from '../../../user.js';
 import { PlanJobs } from './plan.js';
 

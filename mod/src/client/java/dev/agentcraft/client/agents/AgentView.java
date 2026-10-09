@@ -60,6 +60,9 @@ public final class AgentView {
 	public int awaitingCount;
 	public String role = "";
 	public @Nullable String title;
+	/** Which engine runs this agent ("claude", "codex"; null: the sim) and its model for display ("Opus 5.5"). */
+	public @Nullable String engine;
+	public @Nullable String model;
 	/** Laid-out nameplates, rebuilt by {@link Nameplate#of} / {@link Nameplate#compactOf} only when their text changes. */
 	Nameplate.@Nullable Data plateCache;
 	Nameplate.@Nullable Data compactCache;
@@ -79,6 +82,8 @@ public final class AgentView {
 		awaitingUser = awaitingDecisionId != null;
 		role = a.role().wire();
 		title = a.title();
+		engine = a.engine();
+		model = a.model();
 		activity = a.activity();
 		active = a.isActive();
 		paused = a.isPaused();

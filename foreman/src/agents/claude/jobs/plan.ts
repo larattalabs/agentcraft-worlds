@@ -2,7 +2,7 @@
 import { ClientError } from '../../../foreman.js';
 import type { Goal } from '../../../protocol.js';
 import { sessionLine } from '../../../history.js';
-import { planPrompt } from '../prompts.js';
+import { planPrompt } from '../../prompts.js';
 import { RecoveryLayer } from '../recovery.js';
 
 export abstract class PlanJobs extends RecoveryLayer {

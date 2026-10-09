@@ -10,7 +10,7 @@ import path from 'node:path';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterAll, describe, expect, it } from 'vitest';
 import { ClaudeBackend } from '../src/agents/claude/index.js';
-import { RESUME_PROMPT } from '../src/agents/claude/prompts.js';
+import { RESUME_PROMPT } from '../src/agents/prompts.js';
 import { demoRepo, makeForeman, rmrf, tempDir, until, type Harness } from './helpers.js';
 
 type ToolServer = { instance: { _registeredTools: Record<string, { handler: (a: unknown, e: unknown) => Promise<{ content: Array<{ text: string }> }> }> } };

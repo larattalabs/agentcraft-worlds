@@ -1,11 +1,12 @@
 // System-prompt appendices and job prompts for the claude backend.
 import path from 'node:path';
 import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
-import type { Foreman } from '../../foreman.js';
-import type { Goal, Task, Worktree } from '../../protocol.js';
-import type { TriageItem } from '../../prwatch.js';
-import { truncate } from '../../util/text.js';
-import { userName } from '../../user.js';
+import type { Foreman } from '../foreman.js';
+import type { Goal, Task, Worktree } from '../protocol.js';
+import type { TriageItem } from '../prwatch.js';
+import { truncate } from '../util/text.js';
+import { userName } from '../user.js';
+import { isPrBranch, pullBriefs, type PullRequest } from '../pulls.js';
 
 /** An agent's role from the repository it works in (repoSettings.roles -> an agent file). */
 export interface RepoRole {
@@ -80,7 +81,7 @@ AgentCraft shows your team as characters in a Minecraft HQ. The user is ${userNa
 Your job: turn ${userName()}'s goal into a short plan and small tasks for the workers, review their finished work, and ask ${userName()} only when a decision is genuinely theirs.
 ${leads ? `${leads.trim()}\n` : ''}
 Rules
-- You are READ-ONLY. Explore with Read/Grep/Glob. Never edit files: workers make every change in their own git worktree.
+- You are READ-ONLY. Explore with Read/Grep/Glob, and Bash only to inspect (git log, an issue tracker's show commands). Never edit files: workers make every change in their own git worktree.
 - Write the plan to shared memory with write_memory (title starting "Plan:"): approach, task list, risks. Keep it under 40 lines.
 - Create tasks with create_task: each small enough for one worker in one branch, with concrete acceptance criteria in the description, deps by task id, and a suggested assignee whose specialty fits the task. Prefer 2-6 tasks.${sizeRule(fm)}
 - Plan for parallel work: your workers run at the same time, each in its own branch. Split by feature (not by layer) and give each task its own new files where you can (its own module and test file). Add a dep only when a task needs code another task writes. Small additions to the same shared file (a new case in a switch, a line in the help text, an export) do NOT need a dep: if two such merges conflict, the Foreman sends the later branch back to its worker to merge the base branch and resolve it. Serialize only tasks that rewrite the same code. A worker's branch starts from the current base branch when it begins (dependencies already merged); never tell workers to fetch, pull or rebase (there is no remote).
@@ -167,7 +168,18 @@ export function goalReposLine(fm: Foreman, goal: Goal): string {
   return `\nThis goal is for the repositories ${names.join(', ')}: give each task the one repository it changes (create_task repo), with deps across repositories for order.\n`;
 }
 
-export function planPrompt(fm: Foreman, goal: Goal, repoPath: string, branch: string): string {
+export function planPrompt(fm: Foreman, goal: Goal, repoPath: string, branch: string, pulls: PullRequest[] = []): string {
+  const prs = pulls.length
+    ? `
+Pull requests the Foreman fetched for this goal (contributors' work; each head is on a local branch):
+${pullBriefs(pulls)}
+
+For pull requests:
+- You cannot see the PRs' code (you are read-only on ${branch}; the workers review the actual changes). Judge each PR from its description and size above, and Grep the base for the areas it touches.
+- Create ONE task per PR you can review and merge: title "PR #<n>: <title> (@<author>)", start_branch "<its branch>", description = what to verify (correctness, tests, fits the codebase) and that the contributor's commits must be kept. Spread them across the workers.
+- If several PRs implement the same thing in competing ways, or a PR is a product-direction call rather than a fix, do not create tasks for them: ask_user once which way to go (recommended option first), and plan only what ${userName()} picks.
+`
+    : '';
   return `New goal from ${userName()}:
 "${goal.text}"
 
@@ -176,7 +188,7 @@ Repository: ${path.basename(repoPath)} (base branch ${branch}), in your working 
 2. create_task for each task (deps + assignee)
 3. send_message to "all" with a two-line briefing
 4. end your turn.
-Current task board:
+${prs}Current task board:
 ${boardSummary(fm, goal.id)}`;
 }
 
@@ -191,7 +203,9 @@ export function taskHistory(fm: Foreman, task: Task): string {
 export function workPrompt(fm: Foreman, task: Task, goal: Goal | undefined, wt: Worktree, inbox: string, continuesFrom?: string, planId?: string): string {
   const handoff = continuesFrom
     ? `\nYou take over this task from ${fm.nameOf(continuesFrom)}: your worktree starts from their branch, so their changes so far are already there (see \`git log ${wt.base}..HEAD\` and \`git diff ${wt.base}\`). Continue from there; do not start over.\n`
-    : '';
+    : task.startBranch && isPrBranch(task.startBranch)
+      ? `\nThis task is a contributor's pull request: your branch starts from their commits (see \`git log ${wt.base}..HEAD\` and \`git diff ${wt.base}...HEAD\`). Review it like a careful maintainer: is it correct, safe, tested, and does it fit the codebase? Run the relevant tests and builds. Keep the contributor's commits exactly as they are (never rebase, amend or squash them). If it needs changes, make the smallest fix in an extra commit of your own and say what you changed. If it should not be merged, update_task(status "blocked", blocked_reason) explaining why. If it is good as is, say so and send it to review without changes.\n`
+      : '';
   // what this task builds on: other tasks' branches (same repository: merge them in if the base lacks them)
   const depLines = task.deps
     .map((id) => fm.tasks.get(id))
