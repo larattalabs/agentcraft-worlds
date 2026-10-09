@@ -28,8 +28,9 @@ import net.minecraft.world.level.block.state.BlockState;
  *
  * <p><b>Restored, not held</b> (unlike leaves, {@link LeafGuard}): a vine has no persistent state, so keeping one in place
  * while the site stands would leave it floating against the building, popped by the next neighbour update (a player, an
- * agent's door) and then lost anyway (the CELL rule would no longer find its {@code after}). Letting vanilla drop it and
- * recording air as its {@code after} gives the undo a stable condition. Server thread.
+ * agent's door) and then lost anyway (the CELL rule would no longer find its {@code after}). Letting it go at placement
+ * (vanilla's shape update, or {@link #settle}) and recording air as its {@code after} gives the undo a stable condition.
+ * Server thread.
  */
 public final class PlantGuard {
 	/** The journal kind of a building's plants ({@link WorldJournal#PLANTS}). */
@@ -106,6 +107,46 @@ public final class PlantGuard {
 			out.add(new Journal.Cell(e.getKey(), layer, e.getValue(), WorldJournal.valueAt(level, BlockPos.of(e.getKey()))));
 		}
 		return out;
+	}
+
+	/**
+	 * After a placement: takes away, quietly and with no drops, every block that needs a support ({@link Support#needs}) in
+	 * {@code box} or at {@code outside} that can no longer stand there (its support gone), until none is left. Vanilla would
+	 * take them too, but some of them later and with drops: a bamboo or sugar cane stalk above a cut one breaks one segment a
+	 * tick (scheduled ticks), dropping items the placement's drop clearing (now and 3 ticks later) no longer sees. Taken now,
+	 * each outside one is recorded with air as its {@code after} ({@link #cells}) and Remove writes it back; the box's are the
+	 * box's (its restore writes them). Returns how many.
+	 */
+	public static int settle(ServerLevel level, Anchors.Bounds box, java.util.Collection<Long> outside, int flags) {
+		List<BlockPos> cand = new ArrayList<>();
+		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+		for (int y = box.minY(); y <= box.maxY(); y++) {
+			for (int z = box.minZ(); z <= box.maxZ(); z++) {
+				for (int x = box.minX(); x <= box.maxX(); x++) {
+					if (Support.needs(level.getBlockState(p.set(x, y, z)))) {
+						cand.add(p.immutable());
+					}
+				}
+			}
+		}
+		for (long pos : outside) {
+			cand.add(BlockPos.of(pos));
+		}
+		int n = 0;
+		for (int round = 0; round < RUN + 16; round++) {
+			int before = n;
+			for (BlockPos c : cand) {
+				BlockState s = level.getBlockState(c);
+				if (Support.needs(s) && !s.canSurvive(level, c)) {
+					level.setBlock(c, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), LeafGuard.quiet(flags));
+					n++;
+				}
+			}
+			if (n == before) {
+				break;
+			}
+		}
+		return n;
 	}
 
 	/**

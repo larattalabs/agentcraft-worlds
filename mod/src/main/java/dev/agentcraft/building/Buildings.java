@@ -806,6 +806,9 @@ public final class Buildings {
 					level.setBlock(half, Blocks.AIR.defaultBlockState(), FLAGS);
 				}
 			}
+			// plants left without their support go now, quietly and without drops (a bamboo stalk above a cut one would break a
+			// segment a tick, dropping items); the outside ones are recorded with air as their after below
+			PlantGuard.settle(level, snapBox, hanging.keySet(), FLAGS);
 			List<Journal.Cell> guards = guardCells(level, cut);
 			if (!guards.isEmpty()) {
 				AgentCraft.LOGGER.info("Placing {}: {} two-block plant half(s) outside box {} kept as guard cells: {}", owner, guards.size(), str(snapBox),
