@@ -8,6 +8,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ClaudeBackend } from '../src/agents/claude/index.js';
 import { inDir } from '../src/agents/codex/engine.js';
+import { AppServer } from '../src/agents/codex/rpc.js';
 import { shellRuleMatches } from '../src/agents/team/rules.js';
 import { loadConfig } from '../src/config.js';
 import { classifyToolUse, type PolicyContext } from '../src/policy.js';
@@ -126,6 +127,40 @@ describe('Codex commands', () => {
     s.push('tail');
     s.end();
     expect(got).toEqual(['abc', 'next', 'tail']);
+    // the limit is for whole lines, whatever the chunks
+    const whole: string[] = [];
+    const t = lineSplitter((l) => whole.push(l), 10);
+    t.push('xxxxxxxxxxx\nok\n');
+    t.push('12345');
+    t.push('678901\nfine');
+    t.end();
+    expect(whole).toEqual(['ok', 'fine']);
+  });
+
+  it("inherited Codex / OpenAI keys never reach the logs: the app-server's stderr is redacted", async () => {
+    const saved = { openai: process.env.OPENAI_API_KEY, codex: process.env.CODEX_API_KEY, gh: process.env.GITHUB_TOKEN };
+    process.env.OPENAI_API_KEY = 'sk-proj-test-AbCdEf0123456789';
+    process.env.CODEX_API_KEY = 'codex-test-key-9876543210';
+    process.env.GITHUB_TOKEN = 'ghp_testtokenZYXWVUT98765';
+    const home = tempDir();
+    const h = makeForeman(home, ['--backend', 'sim']);
+    try {
+      const script = `process.stderr.write('boom ' + process.env.OPENAI_API_KEY + ' and ' + process.env.CODEX_API_KEY + ' ' + process.env.GITHUB_TOKEN + '\\n'); setTimeout(() => process.exit(3), 50);`;
+      const lines: string[] = [];
+      const server = new AppServer(process.execPath, { cwd: home, env: process.env, args: ['-e', script], onStderr: (l) => lines.push(h.fm.redact(l)) });
+      await server.exited;
+      expect(lines.join('\n')).toContain('boom');
+      const shown = [lines.join('\n'), h.fm.redact(server.stderr().join(' | '))].join('\n');
+      for (const secret of [process.env.OPENAI_API_KEY!, process.env.CODEX_API_KEY!, process.env.GITHUB_TOKEN!]) expect(shown).not.toContain(secret);
+      expect(shown).toContain('[redacted]');
+    } finally {
+      await h.fm.close();
+      rmrf(home);
+      for (const [k, v] of [['OPENAI_API_KEY', saved.openai], ['CODEX_API_KEY', saved.codex], ['GITHUB_TOKEN', saved.gh]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 });
 

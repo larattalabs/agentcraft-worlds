@@ -8,7 +8,7 @@ import { LEAD_ID, loadCast, type CastMember } from './cast.js';
 import type { Config } from './config.js';
 import { FOREMAN_VERSION } from './config.js';
 import { consoleLogger, redactingLogger, type Ctx, type Logger } from './context.js';
-import { configSecrets, INHERITED_SECRET_VARS, Redactor } from './redact.js';
+import { configSecrets, inheritedSecrets, Redactor } from './redact.js';
 import { DecisionError, DecisionQueue, type CreateDecisionInput } from './decisions.js';
 import { DesignBook, describeRequest, isFinalDesign, outDirProblem, type Installed } from './designs.js';
 import { HOME_LEAD, LeadBook, worldOf } from './leads.js';
@@ -200,8 +200,9 @@ export class Foreman {
     // Windows: the Foreman's own git calls point hooks under its home (util/git.ts)
     setNoHooksHome(opts.config.home);
     this.redactor.add(configSecrets(opts.config));
-    // the Claude credentials the Foreman inherited (an API key, an OAuth token): never printed
-    this.redactor.add(INHERITED_SECRET_VARS.map((k) => process.env[k]));
+    // the credentials the Foreman inherited (Claude's and Codex's keys and tokens, any credential-like
+    // variable): never printed
+    this.redactor.add(inheritedSecrets(process.env));
     this.log = redactingLogger(opts.logger ?? consoleLogger('foreman', { debug: opts.config.debug, quiet: opts.config.quiet }), (s) => this.redact(s));
     this.store = new Store(opts.config.dataDir, { log: this.log });
     const now = opts.now ?? Date.now;
