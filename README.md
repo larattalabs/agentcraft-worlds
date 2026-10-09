@@ -10,7 +10,7 @@
 [![Minecraft 26.3](https://img.shields.io/badge/Minecraft-26.3-8fa98b)](https://www.minecraft.net)
 [![Fabric](https://img.shields.io/badge/mod%20loader-Fabric-d97757)](https://fabricmc.net)
 [![Claude Agent SDK](https://img.shields.io/badge/agents-Claude%20Agent%20SDK-2fa3a0)](https://code.claude.com/docs/en/agent-sdk/overview)
-[![Tests](https://img.shields.io/badge/tests-903%20passing-3b2a20)](foreman/test)
+[![Tests](https://img.shields.io/badge/tests-898%20passing-3b2a20)](foreman/test)
 
 <img src="docs/img/fork/hero.jpg" alt="An AgentCraft village: a studio, a campus and two workshops on a hilltop" width="100%">
 
@@ -419,7 +419,7 @@ itself the first time; in an older world, rebuild it with `/agentcraft hq`. See
 > by default and meant for running AgentCraft yourself. To make it permanent, put
 > `{"claude": {"useClaudeLogin": true}}` in `~/.agentcraft/config.json`.
 
-**Codex.** AgentCraft also runs Codex agents (upstream's Codex backend). With the Codex CLI or the
+**Codex (experimental).** AgentCraft also runs Codex agents (upstream's Codex backend). With the Codex CLI or the
 Codex desktop app installed and logged in (`codex login`, with ChatGPT or an OpenAI API key):
 
 ```sh
@@ -427,9 +427,9 @@ node tools/unix.mjs launch --backend codex --repo /path/to/your/repo     # an al
 node tools/unix.mjs launch --repo /path/to/your/repo --foreman-arg --worker-engine --foreman-arg codex   # Claude lead, Codex workers
 ```
 
-Codex agents live in the same village and follow the same rules: their own worktrees, every command
-they ask about checked by AgentCraft's policy (and asked in game when it needs you), the lead's review,
-and your **Merge**. They never get your own Codex MCP servers, plugins, apps or web search, nor this
+Codex agents live in the same village: their own worktrees, Codex's OS sandbox (inside it they work
+without asking; anything that would leave it is checked by AgentCraft's policy and asked in game when it
+needs you), the lead's review, and your **Merge**. They never get your own Codex MCP servers, plugins, apps or web search, nor this
 fork's Claude-only extras (skills, subagents, claude.ai connectors, auto mode). Claude stays the default.
 Pick models with `--codex-model`, and mix engines per agent with `--engines kit=codex,wren=claude`. Every
 agent's nameplate shows the model it runs, like **Opus 5.5** or **GPT-6 Astra**, so a mixed team is easy
@@ -595,7 +595,7 @@ uses. Their monitors show tokens per turn instead of dollars.
 ## Development
 
 ```sh
-cd foreman && npm test                     # 903 tests
+cd foreman && npm test                     # 898 tests
 cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows)
 npm test --prefix tools                    # launcher, blueprint and QA tool tests
 node tools/qa.mjs --home .agentcraft-home  # capture the 10 shot QA gallery

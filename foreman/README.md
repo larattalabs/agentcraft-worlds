@@ -398,9 +398,10 @@ restarts) runs each agent turn through an engine, chosen per agent:
 
 - **Claude** (`src/agents/claude/engine.ts`): one Claude Agent SDK `query()` per turn; the team tools
   are an in-process MCP server; every tool call goes through `canUseTool` and the policy.
-- **Codex** (`src/agents/codex/`): one `codex app-server` process per turn, JSON-RPC over stdio. The
-  agent's thread is durable, so its next turn resumes it. Commands run with `approvalPolicy:
-  "untrusted"`, so Codex asks before each one it does not treat as a safe read (see the fork table below), and the ask goes through the same policy and in-game
+- **Codex** (`src/agents/codex/`, experimental): one `codex app-server` process per turn, JSON-RPC over
+  stdio. The agent's thread is durable, so its next turn resumes it. The fork runs Codex threads with
+  `approvalPolicy: "on-request"` in its OS sandbox (upstream: `"untrusted"`): inside the sandbox Codex works
+  without asking, and whatever would leave it (other paths, the network) asks; the ask goes through the same policy and in-game
   permission prompts (commands are unwrapped from Codex's `powershell -Command` / `bash -lc` wrapper
   first). Workers are sandboxed to their worktree, its git dir and the temp dir; the lead is
   read-only. The team tools are app-server dynamic tools. None of your own Codex setup reaches an
@@ -432,7 +433,7 @@ team. Claude stays the default; Codex is opt-in. What the fork's protections mea
 
 | protection | Codex agents |
 |---|---|
-| AgentCraft policy, protected files, Foreman-private guard, your deny/ask rules | every approval Codex asks for goes through the same gate, judged in the directory the command runs in. Commands Codex runs **without asking** (under `"untrusted"` it treats some reads such as `cat`, `ls`, `rg` as safe) and patches inside its sandbox never reach the gate: reads outside the worktree are not asked about, your rules and protected files do not see them, and a command that touches the Foreman's home, token or port is only caught as it starts and interrupts the turn (best effort) |
+| AgentCraft policy, protected files, Foreman-private guard, your deny/ask rules | every approval Codex asks for goes through the same gate, judged in the directory the command runs in. What Codex does inside its sandbox (commands, patches) does not ask: the OS sandbox holds it, and each command is still checked as it starts, so one that touches the Foreman's home, token or port, or that one of your deny rules matches (best effort, also inside `sh -c`), interrupts the turn after the fact |
 | `claude.permissions` deny / ask rules | applied to Codex shell commands by the team (`team/rules.ts`: `Bash`, `Bash(prefix:*)`, exact, `*`); allow rules and rules for other tools are not |
 | auto mode, skills, subagents, `claude.context.mcpServers`, connectors, session usage windows | Claude only (a Codex thread gets none of your MCP servers, plugins or apps; holds still apply) |
 | git safety env, commit identity, no push | yes (passed explicitly; the sandbox has no network) |
@@ -442,8 +443,10 @@ team. Claude stays the default; Codex is opt-in. What the fork's protections mea
 | usage limits | a Codex usage limit holds the whole team until it resets (backoff) |
 | building designs | Claude only: a team without a Claude agent refuses design requests |
 
-**Pull request intake.** A goal that mentions PRs (`#12`, `PR 12`, `pull/12`) on a repository whose
-`origin` is on GitHub makes the Foreman fetch each open one (`gh pr view`, then `git fetch` with hooks
+**Pull request intake** (off by default: `claude.prIntake`, `--pr-intake`, hub Settings). Turn it on only
+for outside contributors, with isolation (a container or VM with no credentials): their code runs on this
+machine with your account. When it is on, a goal that mentions PRs (`#12`, `PR 12`, `pull/12`) on a
+repository whose `origin` is on GitHub makes the Foreman fetch each open one (`gh pr view`, then `git fetch` with hooks
 off) into `agentcraft/pr-<n>` and brief the lead, which creates one task per PR with `start_branch`.
 `start_branch` must be one of the PRs fetched for that goal; the worker's worktree starts from the
 commit fetched then. Because that is code you did not write, such a worktree gets no `repoSettings`
@@ -455,6 +458,8 @@ automatically. Landing keeps the contributor's commits on every path, never squa
 they were rewritten: a local merge, your branch, or (`land: "pr"`) a pull request of ours, which PR
 watching then follows like any other. A Codex worker's sandbox can write the repository's shared
 `objects/` (upstream's design for committing); treat Codex workers as trusted with the object store.
+Intake force-updates `agentcraft/pr-<n>` and then reads it: a second fetch of the same PR in between can
+change the commit tasks start from (nothing compares it with the one listed).
 
 The rest of this section describes the team with either engine ("Read/Grep/Glob" is how a Codex
 agent reads with its shell).
@@ -668,9 +673,11 @@ path matters (except `$(pwd)`, `$(git rev-parse --show-toplevel)` and lists of w
 from a list of worktree paths (`find`, `git ls-files`, `grep -l`), anything else it runs asks.
 Commands that git runs for us (`git rebase -x/--exec`, `git bisect run`, `git submodule foreach`,
 `git filter-branch --*-filter`, `git difftool -x`, `-c alias.x='!cmd'`) are classified exactly like
-the same command typed directly. Anything it cannot verify asks. The lead works in your own
-checkout, so it may only run read-only commands without asking (a redirection like `git log > x`
-or `git diff --output=x` is a write). Programs the policy does not know, like an issue tracker's
+the same command typed directly. Anything it cannot verify asks. The lead reads a view of your
+code, so in policy mode it runs only what the policy sees as reads without asking (a redirection like
+`git log > x` or `git diff --output=x` is a write): a best-effort nudge, not a sandbox. In auto mode
+Claude's classifier judges the lead's commands like any agent's; denies (push) and the Foreman's own
+files hold in both modes. Programs the policy does not know, like an issue tracker's
 CLI, ask every time unless listed in `--lead-read-commands`. The list is matched by bare program
 name and applies to the lead only: a worker could put its own `bd` in front of the real one. Entries must be a bare program name plus plain words; writers, interpreters and network tools (`rm`, `git`, `bash`, `node`, `curl`, ...) are refused at startup.
 

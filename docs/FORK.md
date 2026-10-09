@@ -101,7 +101,7 @@ shared `agents/tools.ts`, `agents/prompts.ts`, `agents/engine.ts`). The fork's w
 edits to `agents/team.ts` are ported into these layers by hand** (as with the README); the seam files
 (`engine.ts`, `claude/engine.ts`, `codex/*`, `tools.ts`, `prompts.ts`, `teams.ts`) stay close to
 upstream's so their merges stay cheap. The fork's fixes inside `codex/*` (approval cwd, rename
-destinations, undescribed patches, stdin, the started-command guard, redaction) are pinned by
+destinations, undescribed patches, stdin, the started-command check, deny rules, redaction) are pinned by
 `foreman/test/codex-fork.test.ts` and `sync-2026-10-security.test.ts`: check they still pass on every sync. `agents/claude/index.ts` is the all-Claude team with the same
 constructor and test options as before.
 
@@ -128,40 +128,36 @@ Where each fork Foreman feature lives now:
 **Per upstream change, what was taken and how:**
 
 - `09a7253` engine/team split: taken as the structure above.
-- `4496626`, `573a740`, `0f04d91`, `71ff809` Codex backend and mixed teams: taken; `--backend codex`,
-  `--lead-engine`, `--worker-engine`, `--engines`, `--codex-*`, `codex` / `engines` in config.json. Claude
-  stays the default; no fork config changes. Wired through the fork's gate. What applies to Codex agents
-  (also in foreman/README "Engines"): every approval Codex asks for goes through the AgentCraft policy,
-  protected paths and the Foreman-private guard; the user's `claude.permissions` deny/ask rules apply to
-  Codex shell commands (`team/rules.ts`; allow rules do not); Claude credentials are removed from their
-  environment; writable roots exactly as upstream (own worktree git dir, own branch refs, objects, temp).
-  **Not covered for Codex:** commands Codex runs without asking (its "untrusted" policy treats some reads
-  as safe) bypass the gate: reads outside the worktree are not asked about, and one that touches the
-  Foreman's home/token/port is only caught when it starts and interrupts the turn (best effort, the
-  output may already exist); auto mode, skills, subagents, the user's MCP servers and claude.ai
-  connectors, no-attribution settings (a Codex agent writes its own commit messages). Codex 0.159's
-  app-server schema offers no restricted-read sandbox (checked with `codex app-server
-  generate-json-schema`), so this cannot be closed from the Foreman today.
+- `4496626`, `573a740`, `0f04d91`, `71ff809` Codex backend and mixed teams: taken, **experimental**;
+  `--backend codex`, `--lead-engine`, `--worker-engine`, `--engines`, `--codex-*`, `codex` / `engines` in
+  config.json. Claude stays the default; no fork config changes. Fork default for Codex threads
+  (decision 2026-10-09): approval policy `on-request` in the OS sandbox (workers: workspace-write on their
+  worktree, own git state and temp; the lead: read-only; no network). Inside the sandbox Codex works
+  without asking; whatever would leave it asks, through the same team gate as Claude agents (policy,
+  protected paths, Foreman-private guard, the user's deny/ask rules, then the user in game). Commands it
+  runs without asking are checked as they start: the Foreman's private files and the user's deny rules
+  interrupt the turn (after the fact). Claude credentials are removed from Codex agents' environment.
+  Not for Codex: auto mode, skills, subagents, the user's MCP servers and claude.ai connectors,
+  no-attribution settings (a Codex agent writes its own commit messages).
 - `8fe3ad2` model badges: taken (`Agent.engine/.model`, `agents/models.ts`, the mod's model chip in
   `Nameplate`, reconciled with the fork's plate layout; Protocol.java regenerated). The chip shows a
   Claude agent's profile model until a turn reports the real one.
-- `894e616` PR intake: taken, integrated with `land: "pr"` and the fork's safety: an intake task keeps
-  the contributor's commits on every landing path (local merge, the user's branch, a PR of ours that PR
-  watching then follows; never squashed, `repos.ts keepsContributorCommits`); `start_branch` must be a
-  PR fetched for that goal and repository, and is exclusive with `base`; the worktree starts from the
-  commit fetched at intake (pinned) and landing refuses if the contributor's commits were rewritten.
-  Contributor code is untrusted: its worktree gets no setup command, no copied files and no
-  credential-like repository env; the worker's environment drops credential-like variables its engine
-  does not need; only verified reads run without asking (tests, builds, installs, commits ask once per
-  exact command, also in auto mode); CI does not run automatically. Contributor titles and bodies reach
-  the lead's prompt labelled as data. The origin must be GitHub by host.
-- `d4ad706` / `91f36d7` / `6b6b529` lead read-only Bash + `--lead-read-commands`: taken onto the fork's
-  lexer (`policy.ts` `leadReadCommand`, `isReadOnlyCommand`, plus `leadExecRisk`: no program by path, no
-  PATH/PAGER/NODE_OPTIONS-like variables, no rg --pre / sed -f / awk -f); leads only (building leads too),
-  validated at load (`readCommands`, a longer list of refused writers and runners); a declaration never
-  covers output/exec flags. New `leadReadOnlyHook` (PreToolUse, both permission modes) forces an in-world
-  ask for any lead command the lexer cannot verify as a read, ahead of auto mode's classifier and the
-  user's allow rules.
+- `894e616` PR intake: taken, **off by default** (`claude.prIntake`, `--pr-intake`, hub Settings; decision
+  2026-10-09). Turn it on only for outside contributors, and only with isolation (a container or VM with no
+  credentials): contributor code runs on this machine with the user's account. When it is on: an intake
+  task keeps the contributor's commits on every landing path (local merge, the user's branch, a PR of ours
+  that PR watching then follows; never squashed); `start_branch` must be a PR fetched for that goal and
+  repository (exclusive with `base`); the worktree starts from the commit recorded at intake and landing
+  refuses if those commits were rewritten or the record is missing; the worktree gets no setup command, no
+  copied files and no credential-like env; commands that are not plain reads ask once per exact command;
+  CI does not run automatically; contributor text is labelled as data in the lead's prompt; the origin
+  must be GitHub by host.
+- `d4ad706` / `91f36d7` / `6b6b529` lead read-only Bash + `--lead-read-commands`: taken; the lead has Bash
+  (decision 2026-10-09: on, best effort). Policy mode: what the fork's lexer sees as a read runs, an obvious
+  write asks (approval per exact command), ahead of the user's allow rules. Auto mode: the classifier judges
+  the lead like any agent. In both, the policy's denies (push) and the Foreman-private guard hold. Declared
+  read commands: leads only, validated at load (writers and runners refused), never covering
+  output/exec flags.
 - `b341140` / `507a2ff` diff prefixes pinned to a/ b/: taken (`util/git.ts`); `parseTestOutput` stays the
   fork's (PR #12).
 - `15af7e2` Linux: taken. `tools/mac.mjs` is now `tools/unix.mjs` (the fork's launcher plus upstream's
@@ -177,36 +173,44 @@ Where each fork Foreman feature lives now:
 - Tests: upstream's new tests pass (`codex-backend` compares real paths on macOS, `/private/var`; the
   PowerShell writer row asks for a Windows drive path off Windows). Fork tests adapted only where
   structure moved: imports (`agents/prompts.js`), the layer list, the lead identified by its missing
-  Edit tool (it has Bash now), the lead's extra guard hook counted.
+  Edit tool (it has Bash now), the lead's policy-mode hook counted; upstream's codex tests expect
+`on-request`; the PR-intake test turns intake on.
 
-**Security review** (GPT-6.1 Sol via `codex exec`, read-only): a review, then two fix-verification
-passes; the third round of fixes was not reviewed again (the second-opinion rule stops after two rounds).
-Addressed, as text checks (best effort, like the rest of the policy): a lead's shell running programs by
-path, PATH/PAGER-like variables (also via `export`), command substitutions, shells, xargs, env and
-wrappers with options, rg --pre, sed/awk script files, output/exec flags after a declared read command;
-Codex commands judged in the directory they run in; patch rename destinations, grant roots and
-undescribed patches; stdin only while an approved command runs; stderr kept as whole lines (an endless
-line is dropped, never cut); the Foreman's hooks path (`/dev/null` on POSIX, an absolute never-created
-path under the Foreman home on Windows; it was an agent-writable temp directory); deny/ask rules for
-Codex through quotes, wrappers (`env -S`, option values) and substitutions, failing closed on commands
-too odd to parse; PR provenance (membership, pinned SHA, rewrite check, a contributor worktree without
-its pin refuses to land); contributor code (asks before running, exact-command keys, forced in auto
-mode and ahead of allow rules, no automatic CI, credential-like env dropped except the engine's own
-sign-in and the active cloud provider's).
+**What is enforced, and what is trusted.** Enforced by the Foreman (code that holds whatever the agent
+writes):
+- git safety for every agent and the Foreman's own git: no push and no transports for agents, no signing,
+  the agent's own identity; the Foreman's own git calls run no repository hooks (`core.hooksPath` is
+  `/dev/null` on POSIX, an absolute never-created path under the Foreman home on Windows); merges only
+  after the user's approval;
+- the Foreman-private guard (its home, client token and port) for Claude agents in both modes, and as an
+  after-start interrupt for commands Codex runs without asking;
+- the Codex OS sandbox (workspace-write on the worker's worktree, read-only for the lead, no network);
+- redaction of every secret the Foreman knows (configured env and MCP values, inherited Claude, Codex /
+  OpenAI and other credential-like variables) from logs, the feed and errors, on whole lines;
+- PR intake is off.
 
-Accepted and documented, not changed: a Codex worker's sandbox can write the shared `objects/`
-directory (upstream's design; it could corrupt or delete objects of the repository); agents' own git
-hooks still run (an agent can run code in its worktree anyway); contributor code the user approves runs
-with the user's privileges (no OS sandbox for Claude agents); commands Codex runs without asking and
-patches inside its sandbox never reach the gate, so the contributor and rule guarantees hold only for
-what Codex asks about; a declared lead read command is trusted for its own positional arguments;
-intake force-updates `agentcraft/pr-<n>` (a branch of that name the user made by hand would be
-overwritten; tasks are not affected, they start from the pinned commit); contributor worktrees from
-before this change (no pin) refuse to land and need a fresh task.
+Best effort, text checks over a command line (they catch the common forms, not every one): the user's deny
+rules for Codex commands (quotes, wrappers, `sh -c`, substitutions), the lead's read-only nudge in policy
+mode, the policy's own judgement of commands, and the contributor-code asks when intake is on.
+
+Trusted: agents following their instructions, and in auto mode Claude's classifier deciding what the
+policy would have asked about; a Codex worker with the shared `objects/` of its repository (upstream's
+design: it could corrupt or delete objects); agents' own git hooks (an agent can run code in its worktree
+anyway); a declared lead read command, for its own arguments; contributor code the user approves (it runs
+with the user's privileges; there is no OS sandbox for Claude agents).
+
+Known race: intake fetches each PR into `agentcraft/pr-<n>` (force-updating it) and then reads that ref to
+record the commit tasks start from. A second fetch of the same PR in between (another goal, a hand-run
+fetch) can make the recorded commit differ from the one the intake listed; nothing checks the two agree.
+A branch of that name made by hand is overwritten.
+
+Review history: GPT-6.1 Sol via `codex exec` (read-only) reviewed the first version and verified three rounds
+of fixes; each round still found text-check bypasses. Rather than keep hunting them, the decision of
+2026-10-09 relaxed the lead's shell and Codex to the model above and turned intake off.
 
 **Left out / for Noah:** a Codex usage limit holds the whole team (holds are team-wide; per-engine holds
 would be a design change); PR intake does not watch the contributor's own PR on GitHub (only ours, with
-`land: "pr"`); the gaps above for commands Codex runs without asking.
+`land: "pr"`).
 
 ## Branches
 
