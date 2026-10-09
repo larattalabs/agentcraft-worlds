@@ -148,6 +148,7 @@ describe('durable acks: a hard kill right after the ack or announcement loses no
     expect(h2.fm.goal(goalId)!.status).toBe('cancelled');
     expect(h2.fm.tasks.get('t1')!.status).toBe('cancelled');
     expect(workerCalls(calls2)).toEqual([]);
+    expect(backendState(h2).inflight.kit).toBeUndefined();
     await h2.fm.close();
   });
 
@@ -161,6 +162,7 @@ describe('durable acks: a hard kill right after the ack or announcement loses no
     await settle();
     expect(h2.fm.tasks.get('t1')!.status).toBe('cancelled');
     expect(workerCalls(calls2)).toEqual([]);
+    expect(backendState(h2).inflight.kit).toBeUndefined();
     await h2.fm.close();
   });
 
@@ -174,6 +176,7 @@ describe('durable acks: a hard kill right after the ack or announcement loses no
     await settle();
     expect(backendState(h2).stopped).toContain('kit');
     expect(workerCalls(calls2)).toEqual([]);
+    expect(backendState(h2).inflight.kit).toBeUndefined();
     await h2.fm.close();
   });
 
@@ -186,6 +189,7 @@ describe('durable acks: a hard kill right after the ack or announcement loses no
     const h2 = await boot(home, repo, 'finish', calls2);
     await settle();
     expect(h2.fm.agent('kit')!.paused).toBe(true);
+    // (its interrupted turn stays inflight: the resume continues it)
     expect(workerCalls(calls2)).toEqual([]);
     await h2.fm.close();
   });
@@ -222,6 +226,7 @@ describe('durable acks: a hard kill right after the ack or announcement loses no
     expect(h2.fm.decisions.get(md.id)!.status).not.toBe('open');
     expect(h2.fm.tasks.get('t1')!.status).toBe('done');
     expect(workerCalls(calls2)).toEqual([]);
+    expect(backendState(h2).inflight.kit).toBeUndefined();
     await h2.fm.close();
   });
 });
