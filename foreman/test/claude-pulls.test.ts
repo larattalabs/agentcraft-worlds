@@ -41,7 +41,8 @@ let repoPath: string;
 beforeAll(async () => {
   home = tempDir();
   repoPath = await demoRepo();
-  h = makeForeman(home, ['--backend', 'claude', '--workers', 'kit', '--repo', repoPath]);
+  // (the fork: intake is off by default, claude.prIntake)
+  h = makeForeman(home, ['--backend', 'claude', '--workers', 'kit', '--repo', repoPath, '--pr-intake']);
   await h.fm.start(new ClaudeBackend(h.fm, h.cfg.claude, { queryFn: fakeQuery() as never, skipAuthCheck: true, pullFetcher: fetcher }));
 });
 

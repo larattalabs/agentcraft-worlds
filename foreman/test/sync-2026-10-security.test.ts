@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ClaudeBackend } from '../src/agents/claude/index.js';
 import { inDir } from '../src/agents/codex/engine.js';
 import { shellRuleMatches } from '../src/agents/team/rules.js';
 import { loadConfig } from '../src/config.js';
@@ -129,6 +130,35 @@ describe('Codex commands', () => {
 });
 
 describe('PR intake', () => {
+  it('is off by default: a goal mentioning #19 calls neither gh nor git', async () => {
+    const home = tempDir();
+    expect(loadConfig([], { AGENTCRAFT_HOME: home }).claude.prIntake).toBe(false);
+    expect(loadConfig(['--pr-intake'], { AGENTCRAFT_HOME: home }).claude.prIntake).toBe(true);
+    const h = makeForeman(home, ['--backend', 'claude']);
+    const calls: string[] = [];
+    const backend = new ClaudeBackend(h.fm, h.cfg.claude, {
+      skipAuthCheck: true,
+      queryFn: (() => {
+        throw new Error('no turns here');
+      }) as never,
+      pullFetcher: {
+        origin: async () => {
+          calls.push('origin');
+          return 'https://github.com/o/r.git';
+        },
+        fetch: async () => {
+          calls.push('fetch');
+          return { pulls: [], errors: [] };
+        },
+      },
+    });
+    const goal = { id: 'g1', text: 'Review PR #19', repoId: 'x', status: 'planning' } as never;
+    expect(await (backend as unknown as { intakePulls(g: unknown, l: string, p: string): Promise<unknown[]> }).intakePulls(goal, 'marlow', '/x')).toEqual([]);
+    expect(calls).toEqual([]);
+    await h.fm.close();
+    rmrf(home);
+  });
+
   it('talks to GitHub only (the host, not the path)', async () => {
     const origin = (url: string) => githubOrigin('/x', async () => ({ code: 0, stdout: `${url}\n`, stderr: '', timedOut: false }) as never);
     expect(await origin('https://github.com/o/r.git')).toBeTruthy();

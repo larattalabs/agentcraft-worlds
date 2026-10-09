@@ -61,6 +61,8 @@ export abstract class PlanJobs extends RecoveryLayer {
    * worktrees get no setup command, copied files or credential-like repository env (repos.ts).
    */
   protected async intakePulls(goal: Goal, lead: string, repoPath: string): Promise<PullRequest[]> {
+    // off by default (claude.prIntake): no gh, no fetch, whatever the goal says
+    if (!this.cfg.prIntake) return [];
     const refs = prRefs(goal.text);
     if (!refs.length || !(await this.pullFetcher.origin(repoPath).catch(() => undefined))) return [];
     const n = refs.length;

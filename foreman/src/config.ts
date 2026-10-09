@@ -113,6 +113,12 @@ export interface ClaudeConfig {
   leadWorldTtlDays: number;
   /** command prefixes the leads run without asking, e.g. `bd show` (policy: lead only, read-only) */
   leadReadCommands: string[];
+  /**
+   * pull request intake (upstream 894e616): a goal that mentions "#12" on a GitHub repository fetches
+   * those PRs (gh, git fetch) for the lead. Off by default: contributor code runs on this machine
+   * with your account; use it only for outside contributors, with isolation (a container, no credentials).
+   */
+  prIntake: boolean;
 }
 
 export const DEFAULT_LEAD_SESSION = { maxDays: 7, maxTurns: 40 };
@@ -506,7 +512,7 @@ export const KNOWN_FLAGS = new Set([
   'toast-silent', 'debug', 'quiet', 'allow-browser-origins', 'repo-poll-ms', 'merge-style', 'sign-merges', 'commit-identity',
   'lead-model', 'worker-model', 'design-model', 'effort', 'lead-effort', 'max-turns', 'max-turns-lead', 'max-turns-worker',
   'max-concurrent', 'throttle-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
-  'ambient', 'pr-watch', 'pr-poll-seconds', 'leads', 'max-concurrent-turns', 'client-token', 'sim-pr',
+  'ambient', 'pr-watch', 'pr-poll-seconds', 'pr-intake', 'leads', 'max-concurrent-turns', 'client-token', 'sim-pr',
   'lead-read-commands', 'lead-engine', 'worker-engine', 'engines', 'codex-path', 'codex-model', 'codex-lead-model',
   'codex-worker-model', 'codex-effort', 'codex-lead-effort',
 ]);
@@ -705,6 +711,7 @@ export function configFrom(argv: string[], env: NodeJS.ProcessEnv, fileOverride?
       subagents: subagentsConfig(fileClaude.subagents),
       prWatch: prWatchMode(flags['pr-watch'] ?? env.AGENTCRAFT_PR_WATCH ?? fileClaude.prWatch),
       prPollSeconds: Math.max(15, num(flags['pr-poll-seconds'] ?? fileClaude.prPollSeconds, 180)),
+      prIntake: bool(flags['pr-intake'] ?? env.AGENTCRAFT_PR_INTAKE ?? fileClaude.prIntake, false),
       usageReserve: usageReserve(fileClaude.usageReserve),
       leadSession: ((v: unknown) => {
         const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
@@ -818,6 +825,8 @@ usage: npm run start -- [options]
                            nothing and starts no follow-up; on also sends fixes back to the worker
                            and posts replies after your approval; off = a PR finishes its task
   --pr-poll-seconds <n>    how often watched PRs are polled (default 180)
+  --pr-intake              fetch the GitHub pull requests a goal mentions ("#12") for the lead (off by
+                           default; contributor code then runs here: only with isolation)
 
  codex engine (--backend codex, or mixed teams)
   auth: your Codex login (\`codex login\`: ChatGPT or an OpenAI API key)
