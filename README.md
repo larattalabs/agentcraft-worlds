@@ -283,7 +283,7 @@ Otherwise <kbd>H</kbd> reopens the tab you used last.
 
 ## Meet the team
 
-<img src="docs/img/readme/cast.jpg" alt="The six original AgentCraft agents" width="100%">
+<img src="docs/img/readme/cast.jpg" alt="The cast: four leads and five workers" width="100%">
 
 Hand-pixelled characters, each with their own silhouette and colour. **Marlow** leads the home
 building and anything not tied to one; **Ines, Bram and Cass** each lead a building of their own.
@@ -329,20 +329,21 @@ reviewed and approved in game, about 45 minutes and a few percent of a Claude pl
 fork's other additions run in the test suite and the scripted sim backend, which is also where the fork's
 screenshots come from.
 
-The screenshots below come from upstream's real run with Claude agents on a sample repo, driven entirely
-through the game: a goal typed into the console, questions and permission prompts answered in game,
-merges reviewed in the diff screen, including a merge conflict sent back to the worker and resolved.
-The game was restarted mid run and the Foreman was taken offline and brought back. Six features
-landed in the repo with its tests passing.
+Upstream proved the same loop with real Claude agents on a sample repo, driven entirely through the
+game: a goal typed into the console, questions and permission prompts answered in game, merges reviewed
+in the diff screen, including a merge conflict sent back to the worker and resolved. The game was
+restarted mid run and the Foreman was taken offline and brought back. Six features landed in the repo
+with its tests passing. The screenshots below retake those moments in the fork's dev client with the sim
+backend.
 
 <table>
 <tr>
-<td width="33%"><img src="docs/img/readme/real-decision.jpg" alt="A real question from the lead agent"></td>
-<td width="33%"><img src="docs/img/readme/real-monitor.jpg" alt="A real agent's monitor streaming its work"></td>
-<td width="33%"><img src="docs/img/readme/real-reconnected.jpg" alt="The team resuming after the Foreman reconnected"></td>
+<td width="33%"><img src="docs/img/readme/decision.jpg" alt="A question from the lead agent at the podium"></td>
+<td width="33%"><img src="docs/img/readme/monitor.jpg" alt="A worker's monitor streaming its work"></td>
+<td width="33%"><img src="docs/img/readme/reconnected.jpg" alt="The team resuming after the Foreman reconnected"></td>
 </tr>
 <tr>
-<td>Marlow asks which default export format to use.</td>
+<td>Marlow asks whether <code>notes tags</code> should count completed notes.</td>
 <td>A worker's monitor streaming its live log.</td>
 <td>Back online after a Foreman restart, the team resumes.</td>
 </tr>
