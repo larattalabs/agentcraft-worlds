@@ -10,7 +10,7 @@
 [![Minecraft 26.3](https://img.shields.io/badge/Minecraft-26.3-8fa98b)](https://www.minecraft.net)
 [![Fabric](https://img.shields.io/badge/mod%20loader-Fabric-d97757)](https://fabricmc.net)
 [![Claude Agent SDK](https://img.shields.io/badge/agents-Claude%20Agent%20SDK-2fa3a0)](https://code.claude.com/docs/en/agent-sdk/overview)
-[![Tests](https://img.shields.io/badge/tests-807%20passing-3b2a20)](foreman/test)
+[![Tests](https://img.shields.io/badge/tests-903%20passing-3b2a20)](foreman/test)
 
 <img src="docs/img/fork/hero.jpg" alt="An AgentCraft village: a studio, a campus and two workshops on a hilltop" width="100%">
 
@@ -595,7 +595,7 @@ uses. Their monitors show tokens per turn instead of dollars.
 ## Development
 
 ```sh
-cd foreman && npm test                     # 807 tests
+cd foreman && npm test                     # 903 tests
 cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows)
 npm test --prefix tools                    # launcher, blueprint and QA tool tests
 node tools/qa.mjs --home .agentcraft-home  # capture the 10 shot QA gallery
