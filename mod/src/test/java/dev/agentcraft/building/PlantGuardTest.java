@@ -148,6 +148,28 @@ class PlantGuardTest {
 			new HashSet<>(sel));
 	}
 
+	@Test
+	void settleTakesAStalkWithoutItsSupportWholeInAnyOrder() {
+		// a bamboo stalk from y 70 up to 75 whose bottom (y 69, in the box) the placement took; another one stands on ground
+		Map<Long, String> world = new java.util.HashMap<>();
+		for (int y = 70; y <= 75; y++) {
+			world.put(Journal.pos(-1, y, 4), "bamboo");
+			world.put(Journal.pos(-2, y - 5, 4), "bamboo");
+		}
+		world.put(Journal.pos(-2, 64, 4), "dirt");
+		java.util.function.LongPredicate falls = pos -> "bamboo".equals(world.get(pos))
+			&& world.get(Journal.pos(Journal.x(pos), Journal.y(pos) - 1, Journal.z(pos))) == null;
+		List<Long> top = new java.util.ArrayList<>(world.keySet());
+		top.sort((a, b) -> Integer.compare(Journal.y(b), Journal.y(a))); // highest first: one block falls per round
+		int n = PlantGuard.settle(top, falls, world::remove);
+		assertEquals(6, n);
+		for (int y = 70; y <= 75; y++) {
+			assertFalse(world.containsKey(Journal.pos(-1, y, 4)), "y " + y);
+			assertEquals("bamboo", world.get(Journal.pos(-2, y - 5, 4)), "the supported stalk stays");
+		}
+		assertEquals(0, PlantGuard.settle(top, falls, world::remove), "nothing left to take");
+	}
+
 	// ------------------------------------------------------------------ outside the box: the journal entry
 
 	static final long IN = Journal.pos(0, 70, 4); // a log in the box's west column

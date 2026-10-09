@@ -118,27 +118,37 @@ public final class PlantGuard {
 	 * box's (its restore writes them). Returns how many.
 	 */
 	public static int settle(ServerLevel level, Anchors.Bounds box, java.util.Collection<Long> outside, int flags) {
-		List<BlockPos> cand = new ArrayList<>();
+		List<Long> cand = new ArrayList<>();
 		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
 		for (int y = box.minY(); y <= box.maxY(); y++) {
 			for (int z = box.minZ(); z <= box.maxZ(); z++) {
 				for (int x = box.minX(); x <= box.maxX(); x++) {
 					if (Support.needs(level.getBlockState(p.set(x, y, z)))) {
-						cand.add(p.immutable());
+						cand.add(p.asLong());
 					}
 				}
 			}
 		}
-		for (long pos : outside) {
-			cand.add(BlockPos.of(pos));
-		}
+		cand.addAll(outside);
+		BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+		return settle(cand, pos -> {
+			BlockState s = level.getBlockState(p.set(BlockPos.getX(pos), BlockPos.getY(pos), BlockPos.getZ(pos)));
+			return Support.needs(s) && !s.canSurvive(level, p);
+		}, pos -> level.setBlock(BlockPos.of(pos), air, LeafGuard.quiet(flags)));
+	}
+
+	/**
+	 * {@link #settle}'s rule (Pure): takes ({@code take}) every candidate that {@code falls} (needs a support it no longer
+	 * has), in rounds until a round takes none, so a stalk or a vine curtain goes whole whatever order the candidates come
+	 * in (each block only falls once the one holding it is gone). At most {@link #RUN} + 16 rounds. Returns how many.
+	 */
+	public static int settle(List<Long> cand, LongPredicate falls, java.util.function.LongConsumer take) {
 		int n = 0;
 		for (int round = 0; round < RUN + 16; round++) {
 			int before = n;
-			for (BlockPos c : cand) {
-				BlockState s = level.getBlockState(c);
-				if (Support.needs(s) && !s.canSurvive(level, c)) {
-					level.setBlock(c, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), LeafGuard.quiet(flags));
+			for (long c : cand) {
+				if (falls.test(c)) {
+					take.accept(c);
 					n++;
 				}
 			}
