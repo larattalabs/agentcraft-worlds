@@ -245,6 +245,37 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   faces where the terrain allowed, none occurs naturally in 80 trial placements): cells differing main -> branch: meadow 2 -> 0
   (1 plant), sunflower plains 14 -> 0 (7 plants), flower forest (wooded, leaf ring) 0 -> 0, dark forest (wooded, leaf ring)
   0 -> 0; controls 0-16 cells (grass spreading onto the planted dirt, kelp and sugar cane growth).
+- **2026-10-09, branch `fix/vines-on-remove`** (roadmap 14): Remove is exact for vines and the other plants that need a
+  support. Two causes: (1) the box restore (a structure template) writes full blocks first, then the rest lowest first with
+  shape updates, so a vine hanging from the vine above, the lower half of a tall plant or a cocoa pod was written before its
+  support and popped at the next write beside it; every box restore now writes those blocks (`journal.Support.late`: vines,
+  cocoa, multiface, hanging roots, cave/weeping vines, dripstone, spore blossoms, hanging moss, two-block plants, mushrooms)
+  as air in the template and then quietly after it; the cut plants' guard cells now follow the box for the same reason.
+  (2) Plants outside the box hanging on (or standing on) cells in it were lost at placement: placement records every block
+  that needs a support (`Support.needs`) within 2 of the snapshot box plus its vertical runs as a journal entry of its own
+  (kind `plants`, CELL, owned by the building, undone with the site after the box, quietly; before = the plant, after =
+  what the placement left), and takes the ones left unsupported at once, quietly and without drops (`PlantGuard.settle`: a
+  bamboo stalk above a cut one used to break a segment a tick and drop items the drop clearing missed, so main's Remove was
+  refused for "dropped item stacks" on jungle sites). *Decision*: outside vines are **restored on Remove, not held** like
+  leaves: a vine has no persistent state, so a held vine would float against the building, the next neighbour update would
+  pop it and the CELL rule would then skip it; with air as its `after` the undo has a stable condition and a block the
+  player put there is left. Undo order, save/reload, crash safety, Forget and Move come from the journal (`SITE_KINDS`
+  replaces the hard-coded kind lists). QA (seed 42, workshop, spread_vines false, 60 s control soak, place / 60 s at random
+  tick speed 300 / remove / 15 s, diff over the snapshot box + 7, same pristine world copy for both builds, main built from
+  `git archive`; the branch runs also killed the animals in the region first, after a horse walked into one box: no
+  diff on main came from animals): cells differing main -> branch, region diffed: jungle 1473,54,1393..1515,83,1444: 191 -> 0;
+  jungle with cocoa and bamboo 1493,63,1463..1535,94,1514: 222 -> 0; jungle edge with cocoa 1548,61,1423..1590,99,1482:
+  118 -> 0; dark forest 1283,58,1193..1325,89,1244: 22 -> 0; dark forest with mushrooms 1251,54,1138..1293,84,1189: 123 -> 3
+  (all three brown mushrooms appearing 4-6 blocks outside the box: random-tick mushroom spread, a creation the restore cannot
+  make; main's control soak there showed 7 of the same); plains with tall grass 313,70,-377..355,104,-325: 4 -> 0. Placement
+  and Remove left no item entity (main: 1-4 bamboo stacks per jungle site, which refused Remove until forced). On the branch
+  also: a Move jungle to jungle (both sites 0), a Move whose journal commit fails (`dev.buildings.failNextRename`: the new
+  site taken down again, 0, then the old site removed, 0), a tall grass and a sunflower planted across the plains box's top
+  face (2 guard cells, 0), and at random tick speed 0, compared by hash of box + 7 (the capture does not survive a restart):
+  a save/reload with two sites standing, a game killed after Remove (world start: RELEASE) and one killed right after Remove
+  (RECOVER: the building stands again; removed again): unchanged. Not covered: plants further than 2 from the box dragged
+  along by a popped neighbour (other than a vertical run), and no "plant again" for standing sites after a neighbour's
+  Remove (unlike the leaf ring).
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
@@ -301,11 +332,11 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
     atomic order under a per-tick budget, holds scheduled ticks until done, and measured identical
     results to the atomic write with a 34 ms max tick at 4 ms/tick. The journal entry would have to
     commit before the first slice, and undo would have to wait for an unfinished job.
-14. **Vines and plants on Remove (known gap)** — box+7 checks on jungle sites (fix/leaf-ring) leave
-    80–220 cells different after place + remove, the same on main and with the leaf ring: vines in
-    the box are not brought back by the restore, vines outside it that hang on blocks inside are lost
-    at placement, plus a few mushrooms. Not a leaf issue. Likely fix: hold vines like LeafGuard's held
-    leaves and restore the box with a quiet second pass.
+14. ✅ **Vines and plants on Remove** (`fix/vines-on-remove`, 2026-10-09) — box+7 checks on jungle sites
+    left 80–220 cells different after place + remove: vines in the box were not brought back by the
+    restore, vines outside it that hang on blocks inside were lost at placement. Fixed with a quiet late
+    pass in every box restore and a `plants` journal entry for the plants around a site (restored on
+    Remove, not held); see the status entry and docs/BUILDINGS.md "Vines and hanging plants".
 
 ### Hardcore 26.3 instance
 

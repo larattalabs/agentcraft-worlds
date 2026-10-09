@@ -347,14 +347,65 @@ ported from Architect c9af228, `CutPlantsTest`) Remove brings it back:
   placement changed becomes a **guard cell** of the site's held-leaves entry (kind `leaves`, CELL): `before` the plant's
   half, `after` what the placement left (air). So it is undone with the site's group, released by Forget, settled by crash
   safety and layered like the held leaves (a later site over it hands it down). The log names them ("kept as guard cells").
-- **Written first**: `WorldJournal.apply` writes guard cells before the box, quietly (`UPDATE_KNOWN_SHAPE`), lowest first,
-  then the box, then the other cells (`WorldJournal.phases`). The box then writes the inside half next to its other half
-  and the plant stays whole. A half the player changed since is left (the CELL rule). A placement rolled back before its
-  commit (a failure, a Move whose journal commit failed) puts them back before the box too.
+- **Written with the box's plants**: `WorldJournal.apply` writes the box, whose late pass writes the inside half quietly
+  ("Vines and hanging plants"), then the guard cells, quietly (`UPDATE_KNOWN_SHAPE`), lowest first, then the other cells
+  (`WorldJournal.phases`). Neither half sees the other missing, so the plant stays whole. A half the player changed since is
+  left (the CELL rule). A placement rolled back before its commit (a failure, a Move whose journal commit failed) puts them
+  back right after the box too. (Until 2026-10-09 the guard cells went first and the box wrote the inside half next to
+  them; with the late pass the box's air placeholder at the inside half would pop a half written first.)
 - Doors cut by the box are still refused at placement (a player's door), not guarded.
 - Rare in practice: the box reaches one row below the lowest written cell, so only a plant on terrain at exactly the box's
   top row, or in a dip of a column the foundation does not fill, is cut (80 trial placements over meadow, sunflower plains
   and flower forest found none; the QA planted them on purpose).
+
+### Vines and hanging plants
+
+On jungle and dark forest sites a box + 7 check after place, a 60 s soak and Remove left 22-222 cells different (seed 42,
+2026-10-09, main): vines inside the box did not come back, vines outside it on logs inside it were lost at placement, and
+cocoa, bamboo above a cut stalk and tall grass went the same way. Not a leaf issue. Two causes, both fixed since 2026-10-09
+(`journal.Support`, `building.PlantGuard`, `PlantGuardTest`):
+- **The box restore's order.** A structure template writes the full blocks first, then the other blocks lowest first, each
+  write updating the shapes of its neighbours. A vine hanging from the vine above it is written before that vine, and the
+  next write beside it (often the air placeholder of the cell next door) pops it; so does the lower half of a tall plant
+  before its upper half, and a mushroom checks the light at every neighbour update while the building's lamps are still in
+  the light engine. **Late pass**: every box restore (`WorldJournal.apply`'s BOX writes and `restoreTemplate`, a rolled
+  back placement) writes the blocks of `Support.late` as air in the template (a placeholder: left out, the building's block
+  would stay there through the template's shape updates) and then, after the whole template, writes them lowest first with
+  `UPDATE_KNOWN_SHAPE`: vines, cocoa, glow lichen and the other multiface blocks, hanging roots, cave and weeping vines,
+  pointed dripstone, spore blossoms, pale hanging moss, both halves of two-block plants, mushrooms. Blocks standing on the
+  block below (grass, flowers, saplings, snow layers, carpets, bamboo, sugar cane) stay in the template: the order already
+  writes their support first, and a quiet write would keep a stale neighbour (a grass block next to an air placeholder for
+  the snow layer on it would keep `snowy=false`). Blocks with a block entity always stay in the template. Hand-downs are
+  unchanged: the late pass writes only the cells the undo writes.
+- **Plants outside the box.** A vine on the outer face of a log inside the box (and the vines hanging below it), a cocoa
+  pod on such a log, a bamboo or sugar cane stalk above a cut stalk lose their support at placement; mushrooms beside the
+  box can pop at Remove (the restore's writes update them and the light is still the building's). The box restore cannot
+  bring them back: they are outside it. **Recorded**: placement reads, before anything changes, every block that needs a
+  support (`Support.needs`: the late blocks plus plants, saplings, bamboo, sugar cane, cactus, kelp and twisting vines,
+  snow layers, carpets, dripleaf, coral, chorus, amethyst buds) within 2 of the snapshot box but outside it, and the
+  vertical runs of such blocks above and below those (at most 48: a vine curtain, a bamboo stalk). Each is a cell of a
+  journal entry of its own: kind `plants`, policy CELL, owned by the building, `before` the plant, `after` what the placement
+  left (air when it popped, the same plant when it did not: an unchanged plant is recorded too, so a restore that pops it
+  writes it again). Left out, as for the leaf ring: cells of other active entries, standing sites' boxes, the cut plants'
+  guard cells, unloaded chunks.
+- **Taken at once, no drops**: right after the template, `PlantGuard.settle` takes away, quietly and without drops, every such
+  block in the snapshot box or among the recorded cells that can no longer stand where it is, until none is left. Vanilla
+  would take them too, but some later and with drops: a bamboo or sugar cane stalk above a cut one breaks one segment per
+  tick (scheduled ticks), and its items outlived the placement's drop clearing (now and 3 ticks later), so on main a
+  jungle site's Remove was refused for "dropped item stacks". The outside ones are recorded with air as their `after`.
+- **Remove / Move** undo it with the site's entry, trophies, holds and ring (one group): after the box, each plant cell that
+  still holds its `after` gets its `before`, quietly (`UPDATE_KNOWN_SHAPE`, as the leaf cells). A block the player put
+  there, or a plant the player broke, is left (the CELL rule). A placement rolled back before its commit puts them back
+  after the box where the cell is air or still holds what the placement left (`PlantGuard.putBack`).
+- **Restored, not held** (*decision*, unlike leaves): a vine has no persistent state. Kept in place while the site stands
+  it would float against the building, the next neighbour update (a player, a door) would pop it, and then the CELL rule
+  would no longer find its `after` and the vine would be lost anyway. Letting it go at placement (vanilla's shape update, or
+  `settle`; no drops stay) and recording air as its `after` gives the undo a stable condition.
+- **Any order, save/reload, crash safety, Forget**: the journal's, as for the leaf ring (`Buildings.SITE_KINDS`: undone,
+  released by Forget and taken back by crash safety's record back with the site's other entries). A later site whose box
+  takes in a plant cell hands it down in either order (`PlantGuardTest`).
+- Not covered: plants further than 2 from the box that a popped neighbour drags along (other than a vertical run), and the
+  plants around a standing site next to a removed one (no "plant again" after a Remove, unlike the leaf ring).
 
 ### Leaf ring
 
@@ -407,7 +458,7 @@ cells) or `dev.region.hash`; capture box + 7 before placing, place, soak, remove
 Removing a building (or moving it away) restores its site at once, but the restored chunks only reach the disk
 with some later save, and a save does not promise it: an autosave or a pause save (singleplayer saves every time
 the game pauses: the Esc menu, any AgentCraft screen) skips chunks saved in the last few seconds and does not
-wait for the writes. So the site's journal entry is kept undone (with its trophies', held leaves' and leaf ring's entries, one group), and the site
+wait for the writes. So the site's journal entry is kept undone (with its trophies', held leaves', leaf ring's and plants' entries, one group), and the site
 recorded under `pending` in `agentcraft-buildings.json` (`snapshot` names the entry, `j<n>`; an imported pending site
 keeps its old file name, which the journal's `legacy` map resolves), until the **next world start**, which settles each
 pending site on evidence (`Reconcile.decide`, unit-tested), never on a count of saves:
@@ -573,7 +624,8 @@ verdict's notes; `dev.build.state.conflicts.site {water, lava, drops, maxDrop, o
 
 Every AgentCraft world change is an entry of one per-world journal, `<world>/agentcraft-journal/` (package
 `dev.agentcraft.journal`, wave 3): buildings and fixtures (their whole site: template box, foundation and entrance
-approach), roads, trophy signs, the leaves a site holds ("Held leaves") and the leaves around it ("Leaf ring"), anything later. An entry is `{id: "j<n>", kind, owner, dimension, policy, createdAt,
+approach), roads, trophy signs, the leaves a site holds ("Held leaves"), the leaves around it ("Leaf ring") and the plants
+around it ("Vines and hanging plants"), anything later. An entry is `{id: "j<n>", kind, owner, dimension, policy, createdAt,
 status, cells: [{pos, layer, before, after}], meta}`: `owner` is the record it belongs to (`b3`, `r2`; a trophy's is its
 building), `before`/`after` a block state with its block entity data, `meta` the owner's record when it was made (crash
 repair rebuilds a lost record from it).
@@ -585,8 +637,9 @@ entries (`Journal.planUndo`, pure, `JournalTest`) takes them out of the stacks t
   Remove still puts back exactly what was in the box, the player's later changes inside it included ("Safe remove"); a
   **CELL** entry (roads, trophies) writes it only where the world still holds its `after` (the contract's rule; cells the
   player changed since are left as they are). The box is written through vanilla's `StructureTemplate` exactly as the old
-  snapshot restore (same flags, shape updates, block entity loading); cells with `setBlock`, lowest first, with the
-  feature's flags. *Decision*: the contract's "restore only if the cell still holds `after`" is kept for CELL entries; for
+  snapshot restore (same flags, shape updates, block entity loading), except that the blocks that need a support from
+  above or beside (vines, cocoa, mushrooms, two-block plants...) are written after it, quietly ("Vines and hanging
+  plants"); cells with `setBlock`, lowest first, with the feature's flags. *Decision*: the contract's "restore only if the cell still holds `after`" is kept for CELL entries; for
   a building's box it would have changed Safe remove (a broken wall left a hole instead of the terrain), so BOX entries
   keep the documented behaviour;
 - a cell **under a newer one** changes nothing in the world: **ownership passes down**, the newer cell's `before` becomes

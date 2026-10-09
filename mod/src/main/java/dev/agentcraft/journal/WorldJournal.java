@@ -60,7 +60,7 @@ public final class WorldJournal {
 	 * The kind of a building's held leaves ({@code building.LeafGuard}): leaves outside a site made persistent while it
 	 * stands. {@link #apply} writes their cells without shape updates, so neighbouring leaves keep their {@code distance}.
 	 * The same entry holds the site's <b>guard</b> cells ({@link #phases}): the outside halves of two-block plants its box
-	 * cut, which the placement lost; {@link #apply} writes them back (quietly) before the box.
+	 * cut, which the placement lost; {@link #apply} writes them back (quietly) after the box, with the box's inside halves.
 	 */
 	public static final String LEAVES = "leaves";
 	/**
@@ -68,6 +68,13 @@ public final class WorldJournal {
 	 * so Remove can give them back the {@code distance} they had. {@link #apply} writes their cells without shape updates.
 	 */
 	public static final String LEAF_RING = "leafring";
+	/**
+	 * The kind of a building's plants ({@code building.PlantGuard}): the blocks that need a support ({@link Support#needs})
+	 * just outside a site (vines on its logs, cocoa, mushrooms, bamboo above it...) as they were before it and as the
+	 * placement left them, so Remove can write back the ones the placement (or the restore) popped. {@link #apply} writes
+	 * their cells after the box, without shape updates.
+	 */
+	public static final String PLANTS = "plants";
 
 	private static volatile @Nullable JournalStore store;
 	private static volatile @Nullable String unavailable;
@@ -250,15 +257,58 @@ public final class WorldJournal {
 	 * leaf ticks it schedules dropped ({@link LeafTicks}).
 	 */
 	public static void restoreTemplate(ServerLevel level, Anchors.Bounds box, CompoundTag tpl, int flags) {
-		StructureTemplate t = new StructureTemplate();
-		t.load(level.registryAccess().lookupOrThrow(Registries.BLOCK), tpl);
-		BlockPos min = new BlockPos(box.minX(), box.minY(), box.minZ());
-		LeafTicks.quietly(() -> t.placeInWorld(level, min, min, settings(), level.getRandom(), flags));
+		Map<Long, Value> values = JournalNbt.values(tpl, box.minX(), box.minY(), box.minZ());
+		LeafTicks.quietly(() -> writeBox(level, new int[] {box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()}, values, flags));
 	}
 
-	/** Whether {@code kind}'s cells are written without shape updates (held leaves, leaf rings). */
+	/**
+	 * Writes {@code values} (positions in {@code box} -> value; positions left out are not written) in two passes: every
+	 * block but the {@link Support#late} ones through a structure template (the buildings' restore exactly: shape updates,
+	 * block entities), the hanging ones as air there; then the hanging ones, lowest first, without shape updates
+	 * ({@link #splitHanging}). So a vine hanging from the vine above it, or a cocoa on a log, is written once its support
+	 * is back and nothing pops it off.
+	 */
+	private static void writeBox(ServerLevel level, int[] box, Map<Long, Value> values, int flags) {
+		Hung h = splitHanging(values, v -> Support.late(state(level, v)));
+		CompoundTag tpl = JournalNbt.toTemplate(h.box(), box[0], box[1], box[2], box[3] - box[0] + 1, box[4] - box[1] + 1, box[5] - box[2] + 1, 0);
+		StructureTemplate t = new StructureTemplate();
+		t.load(level.registryAccess().lookupOrThrow(Registries.BLOCK), tpl);
+		BlockPos min = new BlockPos(box[0], box[1], box[2]);
+		t.placeInWorld(level, min, min, settings(), level.getRandom(), flags);
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		for (var e : h.late().entrySet()) {
+			m.set(Journal.x(e.getKey()), Journal.y(e.getKey()), Journal.z(e.getKey()));
+			level.setBlock(m, state(level, e.getValue()), flags | Block.UPDATE_KNOWN_SHAPE);
+		}
+	}
+
+	/**
+	 * A box's values split for {@link #writeBox}: {@code box} every value, the hanging ones replaced by air (a placeholder:
+	 * left out, the building's block would stay there through the template's shape updates), and {@code late} the hanging
+	 * ones, lowest first.
+	 */
+	public record Hung(Map<Long, Value> box, Map<Long, Value> late) {
+	}
+
+	/** Splits a box's values by {@code hanging} ({@link Hung}). Pure. */
+	public static Hung splitHanging(Map<Long, Value> values, java.util.function.Predicate<Value> hanging) {
+		Map<Long, Value> box = new LinkedHashMap<>(values);
+		List<Map.Entry<Long, Value>> late = new ArrayList<>();
+		for (var e : values.entrySet()) {
+			if (e.getValue().nbt() == null && hanging.test(e.getValue())) {
+				box.put(e.getKey(), Journal.AIR);
+				late.add(e);
+			}
+		}
+		late.sort(Comparator.comparingInt(e -> Journal.y(e.getKey())));
+		Map<Long, Value> l = new LinkedHashMap<>();
+		late.forEach(e -> l.put(e.getKey(), e.getValue()));
+		return new Hung(box, l);
+	}
+
+	/** Whether {@code kind}'s cells are written without shape updates (held leaves, leaf rings, hanging plants). */
 	public static boolean quietKind(@Nullable String kind) {
-		return LEAVES.equals(kind) || LEAF_RING.equals(kind);
+		return LEAVES.equals(kind) || LEAF_RING.equals(kind) || PLANTS.equals(kind);
 	}
 
 	private static StructurePlaceSettings settings() {
@@ -343,10 +393,11 @@ public final class WorldJournal {
 	}
 
 	/**
-	 * Writes an undo's blocks ({@link #phases}): the cut plants' outside halves (guard cells, quietly), then a BOX writer's
-	 * blocks through a structure template over its entry's box ({@code boxFlags}, the buildings' restore exactly), then the
-	 * CELL writers' cell by cell, lowest first ({@code cellFlags}; {@link #LEAVES} and {@link #LEAF_RING} cells without shape
-	 * updates), their block entity data loaded after. The leaf ticks all this schedules are dropped ({@link LeafTicks}):
+	 * Writes an undo's blocks ({@link #phases}): a BOX writer's blocks through a structure template over its entry's box
+	 * ({@code boxFlags}, the buildings' restore exactly) with its {@link Support#late} blocks written after the rest of the
+	 * box, quietly ({@link #writeBox}), then the cut plants' outside halves (guard cells, quietly), then the CELL writers'
+	 * cell by cell, lowest first ({@code cellFlags}; {@link #LEAVES}, {@link #LEAF_RING} and {@link #PLANTS} cells without
+	 * shape updates), their block entity data loaded after. The leaf ticks all this schedules are dropped ({@link LeafTicks}):
 	 * leaves keep the distances the undo wrote. Server thread.
 	 */
 	public static void apply(ServerLevel level, Journal.UndoPlan plan, int boxFlags, int cellFlags) {
@@ -354,8 +405,8 @@ public final class WorldJournal {
 	}
 
 	/**
-	 * An undo's writes in the order {@link #apply} makes them: {@code guards} (lowest first), the {@code boxes} (writer ->
-	 * its positions and values), then {@code cells} (lowest first).
+	 * An undo's writes: the {@code boxes} (writer -> its positions and values), then {@code guards} (lowest first), then
+	 * {@code cells} (lowest first), in that order ({@link #apply}).
 	 */
 	public record Phases(List<Journal.Write> guards, Map<String, Map<Long, Value>> boxes, List<Journal.Write> cells) {
 	}
@@ -363,8 +414,9 @@ public final class WorldJournal {
 	/**
 	 * Splits an undo's writes into {@link Phases}. A <b>guard</b> cell is a {@link #LEAVES} entry's cell that is not a leaf
 	 * ({@code leaf}): the outside half of a two-block plant the site's box cut (docs/BUILDINGS.md "Cut plants"). It goes
-	 * back before the box, so the box writes the inside half next to it and the plant stays whole (written after, the inside
-	 * half would already have dropped for want of its other half). Pure.
+	 * back quietly right after the box, whose late pass ({@link #writeBox}) writes the inside half quietly too, so neither
+	 * half sees the other missing and the plant stays whole. (Until the late pass, guards went back before the box; the
+	 * box's air placeholder at the inside half would now pop a half written first.) Pure.
 	 */
 	public static Phases phases(Journal.UndoPlan plan, java.util.function.Predicate<Value> leaf) {
 		Map<String, Map<Long, Value>> boxes = new LinkedHashMap<>();
@@ -387,16 +439,15 @@ public final class WorldJournal {
 
 	private static void write(ServerLevel level, Journal.UndoPlan plan, int boxFlags, int cellFlags) {
 		Phases ph = phases(plan, v -> state(level, v).getBlock() instanceof net.minecraft.world.level.block.LeavesBlock);
-		writeCells(level, ph.guards(), cellFlags | Block.UPDATE_KNOWN_SHAPE);
 		for (var b : ph.boxes().entrySet()) {
 			Entry e = plan.updated().get(b.getKey());
 			int[] box = e == null ? null : e.box();
 			if (box == null) {
 				continue;
 			}
-			CompoundTag tpl = JournalNbt.toTemplate(b.getValue(), box[0], box[1], box[2], box[3] - box[0] + 1, box[4] - box[1] + 1, box[5] - box[2] + 1, 0);
-			restoreTemplate(level, new Anchors.Bounds(box[0], box[1], box[2], box[3], box[4], box[5]), tpl, boxFlags);
+			writeBox(level, box, b.getValue(), boxFlags);
 		}
+		writeCells(level, ph.guards(), cellFlags | Block.UPDATE_KNOWN_SHAPE);
 		for (Journal.Write w : ph.cells()) {
 			Entry by = plan.updated().get(w.by());
 			int flags = by != null && quietKind(by.kind()) ? cellFlags | Block.UPDATE_KNOWN_SHAPE : cellFlags;
