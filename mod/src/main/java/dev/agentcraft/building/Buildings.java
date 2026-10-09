@@ -403,13 +403,14 @@ public final class Buildings {
 	 * A template put into the world (not recorded yet): {@code entry} its journal entry (drafted, with every cell's after;
 	 * not committed), {@code leaves} the leaves outside it the placement holds ({@link LeafGuard}; not committed, null when
 	 * none), {@code ring} the leaves around it as they were ({@link LeafGuard#ring}; not committed, null when none; it
-	 * changed nothing, so it needs no draft), {@code before} the site as captured before (to put back when the change is
-	 * rolled back).
+	 * changed nothing, so it needs no draft), {@code plants} the hanging plants around it as they were and as the placement
+	 * left them ({@link PlantGuard}; not committed, null when none), {@code before} the site as captured before (to put back
+	 * when the change is rolled back).
 	 */
 	private record Built(int turns, Anchors.Bounds box, Anchors.Bounds snapshotBox, Anchors.Bounds bounds, Map<String, Anchor> anchors,
 		Building.Pin pin, @Nullable String note, Journal.Entry entry, Journal.@Nullable Entry leaves, Journal.@Nullable Entry ring,
-		CompoundTag before) {
-		/** The entries a commit records: the site's (with {@code record} as its meta), its held leaves' and its leaf ring's. */
+		Journal.@Nullable Entry plants, CompoundTag before) {
+		/** The entries a commit records: the site's (with {@code record} as its meta), its held leaves', leaf ring's and plants'. */
 		Map<String, Journal.Entry> entries(Building record) {
 			Map<String, Journal.Entry> m = new LinkedHashMap<>();
 			m.put(entry.id(), entry.withMeta(record.toJson()));
@@ -419,18 +420,30 @@ public final class Buildings {
 			if (ring != null) {
 				m.put(ring.id(), ring);
 			}
+			if (plants != null) {
+				m.put(plants.id(), plants);
+			}
 			return m;
 		}
 	}
+
+	/**
+	 * The kinds of the entries undone, released and settled with a building's site (its group): trophies, held leaves (and
+	 * cut plants' guard cells), the leaf ring, the hanging plants.
+	 */
+	static final String[] SITE_KINDS = {"trophy", LeafGuard.KIND, LeafGuard.RING_KIND, PlantGuard.KIND};
 
 	/** Takes a built but uncommitted site down again (the old snapshot restore, its held leaves let go) and drops its draft. */
 	private static void unbuild(ServerLevel level, Built built) {
 		try {
 			Drops drops = Drops.before(level, built.snapshotBox());
-			putBackCut(level, built);
 			WorldJournal.restoreTemplate(level, built.snapshotBox(), built.before(), FLAGS);
+			putBackCut(level, built);
 			if (built.leaves() != null) {
 				LeafGuard.release(level, built.leaves().cells(), FLAGS);
+			}
+			if (built.plants() != null) {
+				PlantGuard.putBack(level, built.plants().cells(), FLAGS);
 			}
 			drops.clearNew(level);
 		} catch (RuntimeException e) {
@@ -744,11 +757,14 @@ public final class Buildings {
 		}
 		List<BlockPos> plants = straddlingPositions(level, snapBox, false);
 		// the outside halves of the plants the box cuts, as they are: the placement takes them (the inside half goes), so they
-		// become guard cells of the held-leaves entry and Remove writes them back before the box (docs/BUILDINGS.md "Cut plants")
+		// become guard cells of the held-leaves entry and Remove writes them back right after the box (docs/BUILDINGS.md "Cut plants")
 		Map<Long, Journal.Value> cut = new LinkedHashMap<>();
 		for (BlockPos half : plants) {
 			cut.put(half.asLong(), WorldJournal.valueAt(level, half));
 		}
+		// the hanging plants around the box as they are (vines on its logs, cocoa, mushrooms beside it): Remove writes back the
+		// ones the placement or the restore popped (docs/BUILDINGS.md "Vines and hanging plants")
+		Map<Long, Journal.Value> hanging = plantsAround(level, snapBox, here, cut.keySet());
 		Drops drops = Drops.before(level, snapBox);
 		// leaves outside the box that hang on logs inside it: kept from decaying while the site stands (read before the box
 		// changes; their own journal entry, committed with the site's)
@@ -798,6 +814,7 @@ public final class Buildings {
 				both.addAll(guards);
 				held = both;
 			}
+			List<Journal.Cell> hung = hanging.isEmpty() ? List.of() : PlantGuard.cells(level, hanging, newLayer());
 			drops.clearNew(level);
 			List<String> notes = new ArrayList<>();
 			String bedNote = BedSafety.note(beds.heads().size(), here);
@@ -840,13 +857,14 @@ public final class Buildings {
 				BedSafety.withoutBeds(BlueprintTransform.worldAnchors(bp, turns, box.minX(), box.minY(), box.minZ(), repos), beds.heads()),
 				BedSafety.strip(pinFor(bp, grid, turns, box), beds.cells(), beds.heads(), box), notes.isEmpty() ? null : String.join("; ", notes),
 				WorldJournal.withAfter(draft, snapBox, after), cellEntry(LeafGuard.KIND, owner, here, held),
-				cellEntry(LeafGuard.RING_KIND, owner, here, ring), before);
+				cellEntry(LeafGuard.RING_KIND, owner, here, ring), cellEntry(PlantGuard.KIND, owner, here, hung), before);
 		} catch (RuntimeException e) {
 			// never leave a half-built, unrecorded box behind: put the site back as it was captured
 			AgentCraft.LOGGER.error("Placing {} at {} failed; restoring box {}", bp.id(), origin.toShortString(), str(snapBox), e);
-			putBackCut(level, cut);
 			WorldJournal.restoreTemplate(level, snapBox, before, FLAGS);
+			putBackCut(level, cut);
 			LeafGuard.release(level, held, FLAGS);
+			PlantGuard.putBack(level, hanging.entrySet().stream().map(c -> new Journal.Cell(c.getKey(), 0, c.getValue(), null)).toList(), FLAGS);
 			WorldJournal.discardDraft(draft.id());
 			throw new BuildingException("Placing " + bp.id() + " failed (" + e.getMessage() + "); the area was restored");
 		}
@@ -858,7 +876,7 @@ public final class Buildings {
 	 * The guard cells of a placement (docs/BUILDINGS.md "Cut plants"): each outside half of a two-block plant the box cut
 	 * ({@code cut}: position -> the block before) that the placement changed (vanilla drops it with its inside half, or the
 	 * placement takes it), as a cell {@code before} = the plant's half, {@code after} = what is there now. They join the
-	 * held-leaves entry, so Remove and Move undo them with the site and {@code WorldJournal.apply} writes them first.
+	 * held-leaves entry, so Remove and Move undo them with the site and {@code WorldJournal.apply} writes them right after the box.
 	 */
 	private static List<Journal.Cell> guardCells(ServerLevel level, Map<Long, Journal.Value> cut) {
 		if (cut.isEmpty()) {
@@ -880,7 +898,7 @@ public final class Buildings {
 		return out;
 	}
 
-	/** A placement taken down before its commit: the cut plants' outside halves back (quietly, before the box), where gone. */
+	/** A placement taken down before its commit: the cut plants' outside halves back (quietly, after the box), where gone. */
 	private static void putBackCut(ServerLevel level, Map<Long, Journal.Value> cut) {
 		for (var c : cut.entrySet()) {
 			BlockPos p = BlockPos.of(c.getKey());
@@ -903,6 +921,40 @@ public final class Buildings {
 			}
 		}
 		putBackCut(level, cut);
+	}
+
+	/** A new journal layer (a placement's changes after its box). */
+	private static long newLayer() {
+		try {
+			return WorldJournal.newLayer();
+		} catch (IOException e) {
+			throw new IllegalStateException("no world journal: " + e.getMessage(), e);
+		}
+	}
+
+	// ------------------------------------------------------------------ hanging plants (PlantGuard)
+
+	/**
+	 * {@link PlantGuard#read} around {@code box}. Left out, as for the leaf ring: the cells of every active journal entry
+	 * near it (they are theirs), the standing sites' boxes, and {@code guards} (the cut plants' outside halves: guard cells
+	 * of their own). Before the box changes; changes nothing.
+	 */
+	private static Map<Long, Journal.Value> plantsAround(ServerLevel level, Anchors.Bounds box, String dimension, Set<Long> guards) {
+		int r = PlantGuard.REACH + PlantGuard.RUN;
+		Set<Long> owned = new HashSet<>(guards);
+		List<Anchors.Bounds> standing = standingBoxes(dimension);
+		try {
+			for (Journal.Entry e : WorldJournal.activeTouching(dimension, new int[] {box.minX() - PlantGuard.REACH, box.minY() - r,
+				box.minZ() - PlantGuard.REACH, box.maxX() + PlantGuard.REACH, box.maxY() + r, box.maxZ() + PlantGuard.REACH})) {
+				for (Journal.Cell c : e.cells()) {
+					owned.add(c.pos());
+				}
+			}
+		} catch (IOException e) {
+			throw new IllegalStateException("no world journal: " + e.getMessage(), e);
+		}
+		return PlantGuard.read(level, box, pos -> owned.contains(pos)
+			|| standing.stream().anyMatch(b -> b.contains(BlockPos.getX(pos), BlockPos.getY(pos), BlockPos.getZ(pos))));
 	}
 
 	// ------------------------------------------------------------------ held leaves (LeafGuard)
@@ -1270,7 +1322,7 @@ public final class Buildings {
 	private static Journal.UndoPlan planSite(ServerLevel level, Building b, String entry) throws IOException {
 		List<String> ids = new ArrayList<>();
 		ids.add(entry);
-		for (String kind : new String[] {"trophy", LeafGuard.KIND, LeafGuard.RING_KIND}) {
+		for (String kind : SITE_KINDS) {
 			for (JournalStore.Meta m : WorldJournal.find(kind, b.id(), Journal.Status.ACTIVE)) {
 				ids.add(m.id());
 			}
@@ -1417,10 +1469,7 @@ public final class Buildings {
 		for (JournalStore.Meta m : WorldJournal.find("building", id, Journal.Status.ACTIVE)) {
 			release.add(m.id());
 		}
-		for (JournalStore.Meta m : WorldJournal.find("trophy", id, Journal.Status.ACTIVE)) {
-			release.add(m.id());
-		}
-		for (String kind : new String[] {LeafGuard.KIND, LeafGuard.RING_KIND}) {
+		for (String kind : SITE_KINDS) {
 			for (JournalStore.Meta m : WorldJournal.find(kind, id, Journal.Status.ACTIVE)) {
 				release.add(m.id());
 			}
@@ -1613,10 +1662,13 @@ public final class Buildings {
 				AgentCraft.LOGGER.error("Moving {}: could not take the journal commit back; check {} by hand", id, JournalStore.DIR, e2);
 			}
 			try {
-				putBackCut(level, built);
 				WorldJournal.restoreTemplate(level, built.snapshotBox(), built.before(), FLAGS);
+				putBackCut(level, built);
 				if (built.leaves() != null) {
 					LeafGuard.release(level, built.leaves().cells(), FLAGS);
+				}
+				if (built.plants() != null) {
+					PlantGuard.putBack(level, built.plants().cells(), FLAGS);
 				}
 			} catch (RuntimeException e3) {
 				AgentCraft.LOGGER.error("Moving: could not take the new site {} down again", str(built.snapshotBox()), e3);
@@ -1902,7 +1954,8 @@ public final class Buildings {
 						try {
 							Map<String, Journal.Entry> up = new LinkedHashMap<>(reactivation(entry));
 							long now = System.currentTimeMillis();
-							for (String kind : new String[] {"building", "trophy", LeafGuard.KIND, LeafGuard.RING_KIND}) {
+							for (String kind : java.util.stream.Stream.concat(java.util.stream.Stream.of("building"), java.util.Arrays.stream(SITE_KINDS))
+								.toList()) {
 								for (JournalStore.Meta m : WorldJournal.find(kind, gone.id(), Journal.Status.ACTIVE)) {
 									if (!up.containsKey(m.id())) {
 										Journal.Entry e = WorldJournal.load(m.id());

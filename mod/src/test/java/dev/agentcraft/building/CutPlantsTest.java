@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Two-block plants cut by a site's box (docs/BUILDINGS.md "Cut plants"): the placement loses the outside half (vanilla drops
  * it with its inside half), so it is a guard cell of the site's held-leaves entry ({@code before} the half, {@code after} what
- * the placement left), undone with the site and written <b>before</b> the box ({@link WorldJournal#phases}), so the box
- * writes the inside half next to it and the plant is whole again.
+ * the placement left), undone with the site and written quietly right after the box ({@link WorldJournal#phases}), whose
+ * late pass writes the inside half quietly too, so the plant is whole again.
  */
 class CutPlantsTest {
 	static final Value LOWER = Value.of("minecraft:tall_grass", "half", "lower");
@@ -60,7 +60,7 @@ class CutPlantsTest {
 	}
 
 	@Test
-	void removeWritesTheOutsideHalvesFirstThenTheBox() {
+	void removeWritesTheBoxThenTheOutsideHalves() {
 		LeafGuardTest.Sim s = placed();
 		Journal.UndoPlan p = s.remove("a");
 		assertEquals(UPPER, s.world.get(OUT_TOP));
@@ -69,7 +69,7 @@ class CutPlantsTest {
 		assertEquals(SUN_UPPER, s.world.get(IN_BOTTOM));
 		assertEquals(LeafGuardTest.leaf(2, false), s.world.get(LEAF));
 		WorldJournal.Phases ph = WorldJournal.phases(p, CutPlantsTest::leaf);
-		assertEquals(List.of(OUT_BOTTOM, OUT_TOP), ph.guards().stream().map(Journal.Write::pos).toList(), "the halves first, lowest first");
+		assertEquals(List.of(OUT_BOTTOM, OUT_TOP), ph.guards().stream().map(Journal.Write::pos).toList(), "the halves right after the box, lowest first");
 		assertEquals(Map.of(IN_TOP, LOWER, IN_BOTTOM, SUN_UPPER), ph.boxes().get("a-box"));
 		assertEquals(List.of(LEAF), ph.cells().stream().map(Journal.Write::pos).toList(), "the held leaf after the box, as before");
 	}
