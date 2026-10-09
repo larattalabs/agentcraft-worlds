@@ -283,7 +283,21 @@ export class Foreman {
     return () => this.listeners.delete(l);
   }
 
+  /** Broadcasts that may go out ahead of the disk (rebuildable or cosmetic); every other one is saved first. */
+  private static readonly CHATTY = new Set<Outbound['type']>(['agent.log', 'agent.say', 'agent.upsert', 'feed.add', 'foreman.status']);
+
+  /** store.commit() before an ack or announcement (store.ts, the durability rule); a failed write is logged, the next commit retries it. */
+  commit(): void {
+    try {
+      this.store.commit();
+    } catch (e) {
+      this.log.error(`[store] could not save state: ${(e as Error).message}`);
+    }
+  }
+
   private emit(m: Outbound): void {
+    // durable before announced: a hard kill right after this message must not undo what it says
+    if (!Foreman.CHATTY.has(m.type)) this.commit();
     if (m.type === 'task.upsert' && m.task.goalId) this.scheduleGoalUpdate(m.task.goalId);
     if (m.type === 'task.upsert') {
       const before = this.taskStatusSeen.get(m.task.id);
@@ -1012,6 +1026,7 @@ export class Foreman {
    * blocks and never throws; off unless configured.
    */
   notifyExternal(kind: ExternalNotifyKind, text: string): void {
+    this.commit();
     try {
       this.discord.send(kind, this.redact(text));
     } catch (e) {
@@ -1233,8 +1248,12 @@ export class Foreman {
     };
     try {
       const result = await this.dispatch(msg, reply);
+      // durable before acked (store.ts): the throw below acks a failed save as an error
+      this.store.commit();
       ack(true, result ? { result } : {});
     } catch (e) {
+      // a message that failed half-way may still have changed state
+      this.commit();
       const known = e instanceof ClientError || e instanceof ConfigError || e instanceof TaskError || e instanceof RepoError || e instanceof DecisionError || e instanceof MemoryError;
       // a JSON.parse message can quote the text it failed on (a file with secrets): never forwarded
       // and whatever a message still carries of a known secret (a spawn error quoting a value) is cut

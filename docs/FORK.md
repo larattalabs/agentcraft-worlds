@@ -403,6 +403,22 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   (RECOVER: the building stands again; removed again): unchanged. Not covered: plants further than 2 from the box dragged
   along by a popped neighbour (other than a vertical run), and no "plant again" for standing sites after a neighbour's
   Remove (unlike the leaf ring).
+- **2026-10-09, branch `fix/foreman-durable-acks`:** the Foreman's state is on disk before it is acked or announced
+  (the Architect rule for final states and command acks). state.json was written 100 ms after the last change, so a hard
+  kill right after an ack could bring back a finished turn as a paid RESUME_PROMPT turn, resume a cancelled goal's or
+  task's worker, run a stopped or paused agent again, or reopen an answered question or merge. `Store.commit()` (flush
+  if dirty) now runs before every ack (`Foreman.handle`, failed acks too), before every broadcast except the chatty kinds
+  (`agent.log`, `agent.say`, `agent.upsert`, `feed.add`, `foreman.status` keep the debounce) and every Discord
+  notification, and right after a turn's inflight entry is cleared; recovery drops an inflight turn whose task (or, for
+  plan/review/triage, its goal) was cancelled, since the abort is saved before the turn unwinds. Rule in the store.ts
+  header. Durable against a process kill; against power loss only as far as a plain `fsync` goes (macOS: no
+  `F_FULLFSYNC`, the directory is not fsynced after the rename). Flush cost (fsync dominates): 45 KB state.json from a
+  smoke run 4.2 ms median, 5.9 ms p95; 1.2 MB at the store limits (300 feed, 500 messages, 150 tasks and decisions)
+  6.0 ms median, 7-14 ms p95. A compound intent pays it per announcing emit (goal.cancel: goal + each task + each
+  decision). `test/durable-acks.test.ts` (7 hard-kill cases: turn end, goal.cancel, task cancel, agent stop, pause,
+  question answer, merge approve) fails 7/7 on main and passes here; `npm run check` 905 passed; smoke (sim, :7909/:7910)
+  19/19 on the second run (the first failed one check, "the goal thread has the triage", a race between the triage
+  decision and its thread line that are broadcast in the same tick; it passed on the rerun).
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 

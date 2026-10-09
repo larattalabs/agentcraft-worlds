@@ -17,6 +17,15 @@ export abstract class RecoveryLayer extends OutcomesLayer {
       // a lead released while the Foreman was down (or dropped from claude.leads): its goals are
       // marlow's now, the reconciliation below hands them over
       const offDuty = this.fm.isLead(agentId) && (!this.fm.leads.onDuty(agentId) || (!!inf.goalId && this.fm.leadOf(this.fm.goal(inf.goalId)) !== agentId));
+      // the user cancelled its task or goal and that was saved, but the aborted turn had not unwound
+      // (its inflight entry clears at the end of the turn): nothing to resume (goal.cancel stops a
+      // lead's plan / review / triage turns; goal messages still run on a cancelled goal)
+      const cancelled = !inf.goalReply && ((!!inf.taskId && this.fm.tasks.get(inf.taskId)?.status === 'cancelled') || (!!inf.goalId && this.fm.goal(inf.goalId)?.status === 'cancelled' && (inf.kind === 'plan' || inf.kind === 'review' || inf.kind === 'triage')));
+      if (cancelled) {
+        this.fm.log.info(`recover: ${agentId}'s ${inf.kind} turn${inf.taskId ? ` on ${inf.taskId}` : ''} was cancelled; not resumed`);
+        delete st.inflight[agentId];
+        continue;
+      }
       if (this.isStopped(agentId) || !this.fm.agent(agentId) || offDuty) {
         // an interrupted answer to goal messages: offered again (to whoever leads the goal now)
         if (inf.goalReply) this.requeueGoalMessage(agentId, inf, true);
