@@ -260,16 +260,22 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   leaves: a vine has no persistent state, so a held vine would float against the building, the next neighbour update would
   pop it and the CELL rule would then skip it; with air as its `after` the undo has a stable condition and a block the
   player put there is left. Undo order, save/reload, crash safety, Forget and Move come from the journal (`SITE_KINDS`
-  replaces the hard-coded kind lists). QA (seed 42, workshop, box + 7, spread_vines false, 60 s control soak, place / 60 s at
-  random tick speed 300 / remove / 15 s, same pristine world copy, main built from `git archive`): cells differing main ->
-  branch: jungle 1480,61,1400..1508,76,1437: 191 -> 0; jungle 1500,70,1470..1528,87,1507 (cocoa, bamboo): 222 -> 0; jungle
-  edge 1555,68,1430..1583,92,1475 (cocoa): 118 -> 0; dark forest 1290,65,1200..1318,82,1237: 22 -> 0; dark forest with
-  mushrooms 1258,61,1145..1286,77,1182: 123 -> 3 (all three brown mushrooms appearing 4-6 blocks outside the box: random-tick
-  mushroom spread, which main's control soak there showed 7 times); plains 320,77,-370..348,97,-332 (tall grass): 4 -> 0. No
-  item entity left by placement or Remove (main: 1-4 stacks of bamboo per jungle site). A Move (jungle to jungle, both
-  sites 0), a save/reload with two sites standing, and a game killed right after Remove (world start: record back, removed
-  again): hash of box + 7 unchanged. Not covered: plants further than 2 from the box dragged along by a popped neighbour
-  (other than a vertical run), and no "plant again" for standing sites after a neighbour's Remove (unlike the leaf ring).
+  replaces the hard-coded kind lists). QA (seed 42, workshop, spread_vines false, 60 s control soak, place / 60 s at random
+  tick speed 300 / remove / 15 s, diff over the snapshot box + 7, same pristine world copy for both builds, main built from
+  `git archive`; the branch runs also killed the animals in the region first, after a horse walked into one box: no
+  diff on main came from animals): cells differing main -> branch, region diffed: jungle 1473,54,1393..1515,83,1444: 191 -> 0;
+  jungle with cocoa and bamboo 1493,63,1463..1535,94,1514: 222 -> 0; jungle edge with cocoa 1548,61,1423..1590,99,1482:
+  118 -> 0; dark forest 1283,58,1193..1325,89,1244: 22 -> 0; dark forest with mushrooms 1251,54,1138..1293,84,1189: 123 -> 3
+  (all three brown mushrooms appearing 4-6 blocks outside the box: random-tick mushroom spread, a creation the restore cannot
+  make; main's control soak there showed 7 of the same); plains with tall grass 313,70,-377..355,104,-325: 4 -> 0. Placement
+  and Remove left no item entity (main: 1-4 bamboo stacks per jungle site, which refused Remove until forced). On the branch
+  also: a Move jungle to jungle (both sites 0), a Move whose journal commit fails (`dev.buildings.failNextRename`: the new
+  site taken down again, 0, then the old site removed, 0), a tall grass and a sunflower planted across the plains box's top
+  face (2 guard cells, 0), and at random tick speed 0, compared by hash of box + 7 (the capture does not survive a restart):
+  a save/reload with two sites standing, a game killed after Remove (world start: RELEASE) and one killed right after Remove
+  (RECOVER: the building stands again; removed again): unchanged. Not covered: plants further than 2 from the box dragged
+  along by a popped neighbour (other than a vertical run), and no "plant again" for standing sites after a neighbour's
+  Remove (unlike the leaf ring).
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 
