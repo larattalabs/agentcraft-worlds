@@ -106,6 +106,13 @@ describe('Codex commands', () => {
     expect(deploy(`echo "it's $(npm run deploy)"`)).toBe(true);
     expect(deploy(`echo 'not $(npm run deploy)'`)).toBe(false);
     expect(deploy(`${'$('.repeat(64)}npm run deploy${')'.repeat(64)}`)).toBe(true);
+    // shell command strings
+    expect(deploy("sh -c 'npm run deploy'")).toBe(true);
+    expect(deploy('bash -lc "npm run deploy --prod"')).toBe(true);
+    expect(deploy("env sh -c 'npm run deploy'")).toBe(true);
+    expect(deploy("env -u LANG /bin/sh -c 'cd x && npm run deploy'")).toBe(true);
+    expect(deploy(`echo "$(sh -c 'npm run deploy')"`)).toBe(true);
+    expect(deploy("sh -c 'npm run build'")).toBe(false);
   });
 
   it('stderr lines are whole; an endless one is dropped, never cut', () => {

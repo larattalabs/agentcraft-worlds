@@ -31,9 +31,13 @@ beforeAll(async () => {
         steps: [
           { tool: 'create_task', args: { title: 'Peek', description: 'look around', assignee: 'kit' } },
           { tool: 'create_task', args: { title: 'Publish', description: 'publish it', assignee: 'kit', deps: ['t1'] } },
+          { tool: 'create_task', args: { title: 'Ship', description: 'ship it', assignee: 'kit', deps: ['t2'] } },
+          { tool: 'create_task', args: { title: 'Ship quietly', description: 'ship it again', assignee: 'kit', deps: ['t3'] } },
           { say: 'Planned.' },
         ],
       },
+      { role: 'worker', match: 'Your task: t3', steps: [{ cmd: 'npm publish --tag next' }, { wait: 4000 }, { say: 'shipped' }] },
+      { role: 'worker', match: 'Your task: t4', steps: [{ silentCmd: 'sh -c "npm publish --tag next"' }, { wait: 4000 }, { say: 'shipped' }] },
       { role: 'worker', match: 'Your task: t1', steps: [{ silentCmd: `cat ${path.join(home, 'config.json')}`, output: '{"secret": true}' }, { wait: 4000 }, { say: 'read it' }] },
       {
         role: 'worker',
@@ -42,7 +46,6 @@ beforeAll(async () => {
           { moveTo: path.join(home, 'config.json') },
           { grantOnly: home },
           { stdinAfter: 'git status' },
-          { cmd: 'npm publish --tag next' },
           // last: its start already interrupts the turn (the Foreman-private guard)
           { cmdIn: { cmd: 'cat config.json', cwd: home } },
           { say: 'tried' },
@@ -95,8 +98,6 @@ describe('the fork protections on Codex turns', () => {
     h.fm.tasks.update('t2', { deps: [] });
     h.fm.backend?.onTaskAction?.(h.fm.tasks.get('t2')!, 'prioritize');
     await until(() => readLog(logFile).some((l) => l.cmdIn), 50_000);
-    const line = readLog(logFile).find((l) => l.cmd === 'npm publish --tag next')!;
-    expect(line.decision).toBe('decline');
     const log = readLog(logFile);
     // judged where it runs: `cat config.json` in the Foreman home is the Foreman's config
     expect(log.find((l) => l.cmdIn)?.decision).toBe('decline');
@@ -107,7 +108,29 @@ describe('the fork protections on Codex turns', () => {
     // input only while the approved command runs
     expect(log.find((l) => l.stdinAfter)?.decisions).toEqual(['accept', 'accept', 'decline']);
     expect(h.fm.decisions.open().some((d) => d.kind === 'permission')).toBe(false);
+    // t3: a command that asks and that a deny rule matches is declined (and interrupts the turn as it starts)
+    h.fm.tasks.update('t3', { deps: [] });
+    h.fm.backend?.onTaskAction?.(h.fm.tasks.get('t3')!, 'prioritize');
+    await until(() => readLog(logFile).some((l) => l.cmd === 'npm publish --tag next'), 60_000);
+    expect(readLog(logFile).find((l) => l.cmd === 'npm publish --tag next')!.decision).toBe('decline');
+    expect(h.fm.decisions.open().some((d) => d.kind === 'permission')).toBe(false);
     h.fm.flushLogs();
     expect(JSON.stringify(h.events.filter((e) => e.type === 'agent.log'))).toContain('denied by your permission rule Bash(npm publish:*)');
-  });
+  }, 150_000);
+
+  it('interrupts a command Codex ran without asking when a deny rule matches it (also inside sh -c)', async () => {
+    // t1-t3 are done with (each retry would wait 10 minutes): off the board, so kit takes t4
+    for (const id of ['t1', 't2', 't3']) {
+      h.fm.tasks.setStatus(id, 'cancelled', { force: true });
+      h.fm.backend?.onTaskAction?.(h.fm.tasks.get(id)!, 'cancel');
+    }
+    h.fm.tasks.update('t4', { deps: [] });
+    h.fm.backend?.onTaskAction?.(h.fm.tasks.get('t4')!, 'prioritize');
+    const texts = () => {
+      h.fm.flushLogs();
+      return JSON.stringify(h.events.filter((e) => e.type === 'agent.log'));
+    };
+    await until(() => texts().includes('blocked (ran without asking)') && /sh -c [^,]*npm publish --tag next[^,]*denied by your permission rule Bash\(npm publish:\*\)/.test(texts()), 60_000);
+    await until(() => readLog(logFile).some((l) => l.silentCmd?.startsWith('sh -c')), 10_000);
+  }, 120_000);
 });

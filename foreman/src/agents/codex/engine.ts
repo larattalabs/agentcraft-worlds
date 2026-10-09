@@ -2,8 +2,10 @@
 // agent's thread is durable (its id is the session id), so a later turn resumes it in a new process.
 //
 // What the agent may do is decided the same way as for Claude agents:
-// - approvalPolicy "untrusted": Codex asks before every command it does not consider trivially safe;
-//   each ask goes through AgentCraft's policy (policy.ts) and, if needed, an in-game prompt
+// - the fork's default: approvalPolicy "on-request" in the OS sandbox. Inside the sandbox Codex works
+//   without asking; a command that would leave it (write elsewhere, use the network) asks, and that
+//   ask goes through AgentCraft's policy (policy.ts) and, if needed, an in-game prompt
+//   (upstream: "untrusted", which also asks before every command Codex does not count as a safe read)
 // - sandbox: workers write only their worktree (+ its git dir, for commits), the lead nothing; no
 //   network inside the sandbox (a command that needs it asks again, through the same policy)
 // - the team tools (send_message, ask_user, update_task...) are dynamic tools answered here
@@ -14,9 +16,10 @@
 //
 // Fork notes (docs/FORK.md "Upstream sync 2026-10"): every approval goes through the team's
 // permission gate (the AgentCraft policy, the Foreman-private guard, protected files, the user's
-// deny / ask rules, then the user in game). Under "untrusted" Codex runs commands it considers safe
-// reads (cat, ls, rg...) WITHOUT asking: those never reach the gate. Each one is still checked when
-// it starts, and one that touches the Foreman's own files, token or port interrupts the turn at once - after the fact, so best effort. Output, stderr and errors are redacted (whole
+// deny / ask rules, then the user in game). Commands inside the sandbox run WITHOUT asking and never
+// reach the gate; the OS sandbox is what holds them. Each is still checked when it starts (spec.check:
+// the Foreman's own files, token or port, and the user's deny rules), and one that fails interrupts
+// the turn at once - after the fact, so best effort. Output, stderr and errors are redacted (whole
 // lines, before they are cut). A usage limit holds the team like Claude's.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -218,15 +221,16 @@ export class CodexEngine implements Engine {
       // only our own thread reaches the world (Codex could start helper threads of its own)
       if (params?.threadId && threadId && params.threadId !== threadId) return;
       if (abort.signal.aborted) return;
-      // a command Codex may run without asking (it counts it as a safe read): checked as it starts
-      // (Codex announces a command before it asks about it); one that touches the Foreman's own files,
-      // token or port interrupts the turn
-      if (method === 'item/started' && params?.item?.type === 'commandExecution' && !approved.has(String(params.item.id)) && spec.policy) {
+      // a command Codex runs without asking (inside its sandbox): checked as it starts (Codex announces
+      // a command before it asks about it); one that touches the Foreman's own files, token or port,
+      // or that a deny rule of the user's matches, interrupts the turn
+      if (method === 'item/started' && params?.item?.type === 'commandExecution' && !approved.has(String(params.item.id)) && (spec.check || spec.policy)) {
         const sc = shellCommand(String(params.item.command ?? ''));
-        const v = foremanPrivateVerdict(sc.tool, { command: inDir(sc.command, params.item.cwd, cwd) }, spec.policy());
-        if (v?.action === 'deny') {
-          this.fm.agentLog(agentId, 'error', `blocked (ran without asking): ${sc.tool}: ${truncate(sc.command, 160)} (${v.reason}); turn interrupted`);
-          mapper.stats.errors.push(`interrupted: ${v.reason}`);
+        const input = { command: inDir(sc.command, params.item.cwd, cwd) };
+        const reason = spec.check ? spec.check(sc.tool, input) : foremanPrivateVerdict(sc.tool, input, spec.policy!())?.reason;
+        if (reason) {
+          this.fm.agentLog(agentId, 'error', `blocked (ran without asking): ${sc.tool}: ${truncate(sc.command, 160)} (${reason}); turn interrupted`);
+          mapper.stats.errors.push(`interrupted: ${reason}`);
           if (threadId && turnId) server.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => undefined);
         }
       }
@@ -255,7 +259,7 @@ export class CodexEngine implements Engine {
       const dynamicTools = spec.tools.map((t) => ({ type: 'function', name: t.name, description: t.description, inputSchema: z.toJSONSchema(z.object(t.shape)) }));
       const thread = {
         cwd,
-        approvalPolicy: 'untrusted',
+        approvalPolicy: 'on-request',
         sandbox: role === 'lead' ? 'read-only' : 'workspace-write',
         config: this.threadConfig(userConfig, spec, serverEnv),
         developerInstructions: spec.instructions + notes(role, spec.tools),

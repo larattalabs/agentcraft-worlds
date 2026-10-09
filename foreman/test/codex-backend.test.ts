@@ -152,7 +152,7 @@ describe('codex engine (fake app-server)', () => {
     const worker = starts.find((l) => !l.params.dynamicTools.some((t: { name: string }) => t.name === 'create_task'))!.params;
     expect(lead.sandbox).toBe('read-only');
     expect(worker.sandbox).toBe('workspace-write');
-    expect(worker.approvalPolicy).toBe('untrusted');
+    expect(worker.approvalPolicy).toBe('on-request'); // the fork's default: work inside the sandbox without asking
     expect(worker.cwd).toContain(path.join('worktrees', 'demo-app'));
     expect(worker.config.mcp_servers.posthog.enabled).toBe(false);
     expect(worker.config.plugins['computer-use@openai-bundled'].enabled).toBe(false);
@@ -198,7 +198,7 @@ describe('codex engine (fake app-server)', () => {
       expect(set.LOCALAPPDATA).toBe(process.env.LOCALAPPDATA);
       const pairs = Object.fromEntries(Array.from({ length: Number(set.GIT_CONFIG_COUNT) }, (_, i) => [set[`GIT_CONFIG_KEY_${i}`], set[`GIT_CONFIG_VALUE_${i}`]]));
       expect(pairs['protocol.allow']).toBe('never');
-      expect(entry.params.approvalPolicy).toBe('untrusted');
+      expect(entry.params.approvalPolicy).toBe('on-request');
       expect(['read-only', 'workspace-write']).toContain(entry.params.sandbox);
     }
     expect(log.some((l) => l.method === 'thread/resume')).toBe(true);

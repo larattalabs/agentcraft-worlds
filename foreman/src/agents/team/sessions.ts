@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { foremanPrivatePath } from '../../policy.js';
+import { foremanPrivatePath, foremanPrivateVerdict } from '../../policy.js';
+import { matchingShellRule } from './rules.js';
 import { formatInbox } from '../../bus.js';
 import { descendantsOf, killSnapshot, killTree, orphansOf, processTable, type ProcEntry } from '../../util/proc.js';
 import { truncate } from '../../util/text.js';
@@ -207,6 +208,12 @@ export abstract class SessionsLayer extends TurnSetupLayer {
           ...(picked ? { model: picked.model, effort: picked.effort } : {}),
           repoId,
           policy: () => this.policyContext(agentId, role, cwd, repoId, engine),
+          check: (tool, input) => {
+            const priv = foremanPrivateVerdict(tool, input, this.policyContext(agentId, role, cwd, repoId, engine));
+            if (priv?.action === 'deny') return priv.reason;
+            const rule = matchingShellRule(this.cfg.permissions.deny, tool, input);
+            return rule ? `denied by your permission rule ${rule}` : undefined;
+          },
           onRateLimit: (r) => this.onRateLimit(r),
           onUsageSource: (q) => this.refreshUsage(q),
           // a stopped turn's whole process tree is ended before its worktree is handed on

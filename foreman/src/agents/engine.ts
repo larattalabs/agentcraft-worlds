@@ -94,6 +94,11 @@ export interface TurnSpec {
   repoId?: string;
   /** fork: what the policy knows about this agent right now (the permission gate's context; the Claude engine's guards use it) */
   policy?(): PolicyContext;
+  /**
+   * fork: for a command the engine runs without asking (Codex inside its sandbox), why it must not run
+   * (the Foreman's private files, a deny rule of the user's), or undefined. Checked as it starts.
+   */
+  check?(toolName: string, input: Record<string, unknown>): string | undefined;
   /** fork: a usage report while the turn runs (holds, throttling) */
   onRateLimit?(r: RateLimitReport): void;
   /** fork: the engine's live session, to read the plan's usage windows from (Claude) */

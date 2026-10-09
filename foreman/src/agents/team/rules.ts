@@ -10,13 +10,14 @@
 // A command is split into its simple commands (`a && b | c`, `;`, newlines, subshells and `$( )`)
 // by the shared shell lexer, quotes removed (`to"fu" apply` is `tofu apply`); leading VAR=value
 // assignments and wrappers (env, command, nohup, time, timeout, nice, exec, xargs...) are skipped,
-// so `X=1 env tofu apply` and `ls; tofu apply` match. `allow` rules are not applied to Codex agents
+// so `X=1 env tofu apply` and `ls; tofu apply` match; `sh -c` / `bash -lc` strings are read as commands. `allow` rules are not applied to Codex agents
 // (they would skip AgentCraft's policy); rules for other tools (Edit(...), Read(...), WebFetch(...))
 // do not apply to them either. Best effort, like every text check: a script that runs the command,
 // or a command Codex runs without asking, is not seen.
 import { shellItems } from '../../shell.js';
 
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
 const WRAPPERS = new Set(['env', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'timeout', 'stdbuf', 'xargs', 'sudo', 'doas']);
 
 /** Wrapper options that take the next word as their value (`env -u NAME`, `timeout -s TERM`). */
@@ -97,6 +98,16 @@ function commandTexts(command: string, depth = 0): string[] {
       } else break;
     }
     if (i < w.length) out.push(w.slice(i).join(' '));
+    // `sh -c 'cmd'`, `bash -lc "cmd"`, `/bin/sh -c ...`: the command string is a command line of its own
+    if (i < w.length && SHELLS.has(w[i]!.split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, '')) && depth < 4) {
+      for (let k = i + 1; k < w.length; k++) {
+        if (/^-[A-Za-z]*c[A-Za-z]*$/.test(w[k]!) && w[k + 1] !== undefined) {
+          out.push(...commandTexts(w[k + 1]!, depth + 1));
+          break;
+        }
+        if (!w[k]!.startsWith('-')) break;
+      }
+    }
   }
   if (depth < 4) for (const body of substitutions(command)) out.push(...commandTexts(body, depth + 1));
   return out;
