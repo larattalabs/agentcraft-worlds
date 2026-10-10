@@ -1,10 +1,10 @@
 package dev.agentcraft.client.agents;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
-import dev.agentcraft.client.ui.WorldUi;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.WorldUi;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -237,7 +237,7 @@ public final class Nameplate {
 	}
 
 	/** Text lift towards the camera as a fraction of the plate's camera distance (PlateLayout.NUDGE_PER_RANK is 0.0015). */
-	static final float TEXT_LIFT = dev.agentcraft.ui.TextDepth.FRACTION;
+	static final float TEXT_LIFT = dev.larattalabs.labui.ui.TextDepth.FRACTION;
 
 	/** {@link #TEXT_LIFT} of the plate's camera distance, in plate pixels (plate space +z faces the camera). */
 	static float textLift(AgentRenderState s, CameraRenderState camera) {

@@ -13,7 +13,6 @@ import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.diff.ReviewKit;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.DecisionKind;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
@@ -21,14 +20,16 @@ import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.GoalStatus;
 import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.Task;
-import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.permissions.PermissionBody;
 import dev.agentcraft.client.taskwall.TaskScreen;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.hub.GoalLogic;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -1019,7 +1020,7 @@ final class GoalsTab implements HubPane {
 			g.text(font(), TextUtil.ellipsize(font(), goal.id() + "  " + UiBits.oneLine(goal.text()), rx + rw - pw - 4 - tx), tx, ry, ink, false);
 			String pr = prSummary(goal);
 			String repos = String.join(", ", goal.allRepos());
-			String second = (repos.isEmpty() ? "" : repos + " · ") + UiBits.agentName(goal.lead()) + " · " + Math.round(goal.progress() * 100) + "%"
+			String second = (repos.isEmpty() ? "" : repos + " · ") + AgentBits.agentName(goal.lead()) + " · " + Math.round(goal.progress() * 100) + "%"
 				+ (pr.isEmpty() ? "" : " · " + pr);
 			ReviewKit.face(g, font(), goal.lead(), rx, ry + 9, 8);
 			g.text(font(), TextUtil.ellipsize(font(), second, rw - 11), rx + 11, ry + 10, muted, false);
@@ -1044,7 +1045,7 @@ final class GoalsTab implements HubPane {
 		ReviewKit.face(g, font(), goal.lead(), px, y - 1, 8);
 		px += 11;
 		String pr = prSummary(goal);
-		String facts = UiBits.agentName(goal.lead()) + " · " + String.join(", ", goal.allRepos()) + (goal.branch() != null ? " · on " + goal.branch() : "")
+		String facts = AgentBits.agentName(goal.lead()) + " · " + String.join(", ", goal.allRepos()) + (goal.branch() != null ? " · on " + goal.branch() : "")
 			+ (pr.isEmpty() ? "" : " · " + pr);
 		g.text(font(), TextUtil.ellipsize(font(), facts, x + w - px), px, y, muted, false);
 		y += 13;
@@ -1108,12 +1109,12 @@ final class GoalsTab implements HubPane {
 			Decision d = e.decision();
 			if (e.feed() != null) {
 				FeedItem f = e.feed();
-				boolean user = f.kind() == Protocol.FeedKind.USER || UiBits.isUser(f.agentId());
-				String who = user ? "You" : f.agentId() != null ? UiBits.agentName(f.agentId()) : f.kind().wire();
-				String to = user && f.to() != null && !UiBits.isUser(f.to()) ? " → " + UiBits.agentName(f.to()) : !user && UiBits.isUser(f.to()) ? " → you" : "";
+				boolean user = f.kind() == Protocol.FeedKind.USER || AgentBits.isUser(f.agentId());
+				String who = user ? "You" : f.agentId() != null ? AgentBits.agentName(f.agentId()) : f.kind().wire();
+				String to = user && f.to() != null && !AgentBits.isUser(f.to()) ? " → " + AgentBits.agentName(f.to()) : !user && AgentBits.isUser(f.to()) ? " → you" : "";
 				lines.add(who + to + "  ·  " + UiBits.clock(f.ts()) + (f.kind() != Protocol.FeedKind.MESSAGE && f.kind() != Protocol.FeedKind.USER ? "  ·  "
 					+ f.kind().wire() : ""));
-				colors.add(user ? UiStyle.CLAY_DARK : UiBits.nameOnLight(f.agentId()));
+				colors.add(user ? UiStyle.CLAY_DARK : AgentBits.nameOnLight(f.agentId()));
 				for (String l : TextUtil.wrapPlain(font(), f.text(), w - 8)) {
 					lines.add(l);
 					colors.add(f.kind() == Protocol.FeedKind.ERROR ? UiBits.errorText() : ink);
@@ -1133,8 +1134,8 @@ final class GoalsTab implements HubPane {
 					case PERMISSION -> "asks permission";
 					default -> "asks";
 				};
-				lines.add(UiBits.agentName(d.agentId()) + " " + kind + "  ·  " + d.id() + "  ·  " + UiBits.clock(d.createdAt()));
-				colors.add(UiBits.nameOnLight(d.agentId()));
+				lines.add(AgentBits.agentName(d.agentId()) + " " + kind + "  ·  " + d.id() + "  ·  " + UiBits.clock(d.createdAt()));
+				colors.add(AgentBits.nameOnLight(d.agentId()));
 				for (String l : TextUtil.wrapPlain(font(), d.question(), w - 8)) {
 					lines.add(l);
 					colors.add(ink);
@@ -1370,7 +1371,7 @@ final class GoalsTab implements HubPane {
 		int bx = x + w - hub.bw(edit);
 		hub.button(g, "plan_edit", edit, bx, buttonsY, hub.bw(edit), false, !Foreman.connected(), false, mx, my, this::editPlan);
 		if (m != null) {
-			String meta = "Plan note " + m.id() + (m.author() != null ? " · by " + UiBits.agentName(m.author()) : "") + " · " + UiBits.ago(m.updated());
+			String meta = "Plan note " + m.id() + (m.author() != null ? " · by " + AgentBits.agentName(m.author()) : "") + " · " + UiBits.ago(m.updated());
 			g.text(font(), TextUtil.ellipsize(font(), meta, bx - 8 - x), x, buttonsY + 6, muted, false);
 		}
 	}
@@ -1456,7 +1457,7 @@ final class GoalsTab implements HubPane {
 				};
 				UiBits.dotPill(g, font(), fam, pill, rx + rw - pw + 2, ry - 1, t.status() == Protocol.TaskStatus.DONE ? UiBits.okText() : muted);
 				g.text(font(), TextUtil.ellipsize(font(), t.id() + "  " + t.title(), rw - pw - 4), rx, ry, ink, false);
-				String who = t.assignee() == null ? "unassigned" : UiBits.agentName(t.assignee());
+				String who = t.assignee() == null ? "unassigned" : AgentBits.agentName(t.assignee());
 				String pr = t.pr() == null ? "" : " · PR #" + t.pr().id() + " " + t.pr().status() + (t.pr().checks() != null && !t.pr().checks().equals("none")
 					? ", checks " + t.pr().checks() : "");
 				String second = who + (t.repoId() != null ? " · " + t.repoId() : "") + pr + (t.blockedReason() != null ? " · " + UiBits.oneLine(t.blockedReason())

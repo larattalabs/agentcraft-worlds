@@ -25,6 +25,17 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
   (`tools/blueprints/lib`) or the art pipeline (`assets-src/gen`) become `agentcraft_worlds:<x>`; regenerate
   the bundled structures with `node tools/blueprints/build.mjs --all` rather than merging `.nbt` files. Check
   with `git grep -n "agentcraft:"` (only the intentional leftovers listed under "Mod id" may remain).
+- The shared UI now lives in **lab-ui** (`dev.larattalabs:lab_ui`, `~/Developer/LarattaLabs/lab-ui`, since 2026-10-10;
+  mod/DEV.md "lab-ui"): `ui/{TextDepth,LeaderGaps,Guard}`, `client/ui/{WorldUi,GuardedHud,Kit,Panels,UiStyle,TextUtil}`,
+  `client/hud/UiBits`, `client/monitor/{DisplayDraw,ScreenStyle}` and `client/agents/SpeechBubble`, plus the kit sprites
+  (`lab_ui:kit/<name>`), `gui/kit.json`, `gui/ui-style.json` and `palette.json` as the game reads them. Upstream changes
+  to those files (upstream still has them under `client/ui/`, `client/hud/`, `client/monitor/`, `client/agents/`) are
+  ported to lab-ui, not merged back into the fork: a merge that brings one back deletes it again and the change goes to
+  lab-ui as a new version (bump `lab_ui_version`). The same for art: `assets-src` still generates the kit sprites,
+  `kit.json`, `ui-style.json` and `palette.json` (cast colours included), but `assets-src/sync.py` no longer copies the
+  sprites into the mod (`LAB_UI_OWNED`), and the mod's own copies of the three JSON files are not read at runtime any
+  more. A change there must be ported to lab-ui's `assets/lab_ui/` to be seen in game. lab-ui is shared with Architect
+  and Steward: notify them of API changes (lab-ui's AGENTS.md).
 
 ## Decisions
 
@@ -419,6 +430,13 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   question answer, merge approve) fails 7/7 on main and passes here; `npm run check` 905 passed; smoke (sim, :7909/:7910)
   19/19 on the second run (the first failed one check, "the goal thread has the triage", a race between the triage
   decision and its thread line that are broadcast in the same tick; it passed on the rerun).
+- **2026-10-10, branch `feat/lab-ui`:** AgentCraft uses the shared library lab-ui 0.1.0 (`dev.larattalabs:lab_ui`,
+  jar-in-jar) and its own copies are gone: 13 classes (Guard, TextDepth, LeaderGaps, WorldUi, GuardedHud, Kit, Panels,
+  UiStyle, TextUtil, UiBits, DisplayDraw, ScreenStyle, SpeechBubble), their three tests (now in lab-ui) and the 114 kit
+  sprite files (byte-identical in lab-ui). The agent-shaped helpers lab-ui dropped (agent name colours and names, the
+  user, portraits, `ScreenStyle.name`, the speech bubbles' addressees) are in `client.hud.AgentBits`; Guard kinds carry
+  the mod id. Gradle resolves lab-ui from `~/.m2` first, then GitHub Packages (needs a `read:packages` token; see
+  mod/DEV.md "lab-ui").
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 

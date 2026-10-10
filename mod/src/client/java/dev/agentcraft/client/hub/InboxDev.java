@@ -5,7 +5,7 @@ import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.FrameScheduler;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Protocol.Decision;
-import dev.agentcraft.client.hud.UiBits;
+import dev.larattalabs.labui.client.hud.UiBits;
 import dev.agentcraft.hub.InboxModel;
 import dev.agentcraft.hub.InboxModel.Filter;
 import dev.agentcraft.hub.InboxModel.Item;

@@ -15,18 +15,19 @@ import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.FeedKind;
 import dev.agentcraft.client.foreman.Protocol.Repo;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.hud.Keys;
-import dev.agentcraft.client.hud.UiBits;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.ui.UiRules;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import dev.agentcraft.ui.UiRules;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -762,7 +763,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			}
 			int tx = textX0 + 2;
 			if (r.faceAgent() != null) {
-				UiBits.face(g, r.faceAgent(), tx, ly, 1);
+				AgentBits.face(g, r.faceAgent(), tx, ly, 1);
 			}
 			tx += 11;
 			int tx0 = tx;
@@ -858,7 +859,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 				ring = UiStyle.withAlpha(ring, (int) (110 + 145 * dev.agentcraft.client.ui.StatusMap.pulse(System.nanoTime())));
 			}
 			g.fill(cx - 1, y - 1, cx + 17, y + 17, ring);
-			UiBits.face(g, a.id(), cx, y, 2);
+			AgentBits.face(g, a.id(), cx, y, 2);
 			if (off) {
 				g.fill(cx, y, cx + 16, y + 16, UiStyle.withAlpha(UiStyle.CREAM, 150));
 			}
@@ -959,7 +960,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			}
 			int cx = x + p.left();
 			if (c.agentId() != null) {
-				UiBits.face(g, c.agentId(), cx, ry, 1);
+				AgentBits.face(g, c.agentId(), cx, ry, 1);
 				if (c.dot() != null) {
 					Panels.sprite(g, Kit.dot(c.dot(), false), cx + 5, ry + 4, 7, 7);
 				}
@@ -967,7 +968,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 				g.text(font, "/", cx + 2, ry + 1, UiStyle.BRASS, false);
 			}
 			cx += 15;
-			int nameColor = c.agentId() != null ? UiBits.nameOnLight(c.agentId()) : UiBits.ink();
+			int nameColor = c.agentId() != null ? AgentBits.nameOnLight(c.agentId()) : UiBits.ink();
 			String label = c.label().startsWith("/") ? c.label().substring(1) : c.label();
 			g.text(font, label, cx, ry + 1, nameColor, false);
 			if (c.detail() != null) {
@@ -1028,9 +1029,9 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			}
 			if (agent != null) {
 				stripe = identity(agent, s);
-				String name = UiBits.agentName(agent);
+				String name = AgentBits.agentName(agent);
 				if (body.startsWith(name)) {
-					lead.add(new Run(name, UiBits.nameOnLight(agent)));
+					lead.add(new Run(name, AgentBits.nameOnLight(agent)));
 					body = body.substring(name.length());
 				}
 			}
@@ -1040,8 +1041,8 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 			}
 		} else {
 			FeedKind kind = l.kind() == null ? FeedKind.UNKNOWN : l.kind();
-			String user = UiBits.userName();
-			if (agent != null && UiBits.isUser(agent) && !body.startsWith(user)) {
+			String user = AgentBits.userName();
+			if (agent != null && AgentBits.isUser(agent) && !body.startsWith(user)) {
 				// the Foreman's echo of your own actions ("Kit: pause") reads as "You paused Kit"
 				java.util.regex.Matcher am = AGENT_ACTION.matcher(body);
 				if (am.matches()) {
@@ -1052,21 +1053,21 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 				agent = null;
 				stripe = UiStyle.CLAY;
 			}
-			String name = agent != null ? (UiBits.isUser(agent) ? user : UiBits.agentName(agent)) : null;
+			String name = agent != null ? (AgentBits.isUser(agent) ? user : AgentBits.agentName(agent)) : null;
 			if (agent != null) {
 				stripe = identity(agent, s);
 			}
 			if (!lead.isEmpty()) {
 				bodyColor = ink;
 			} else if (kind == FeedKind.MESSAGE && name != null) {
-				lead.add(new Run(name, UiBits.nameOnLight(agent)));
+				lead.add(new Run(name, AgentBits.nameOnLight(agent)));
 				if (l.to() != null && !l.to().equals("all")) {
 					lead.add(new Run(" → ", muted));
-					lead.add(new Run(UiBits.isUser(l.to()) ? "you" : UiBits.agentName(l.to()), UiBits.nameOnLight(l.to())));
+					lead.add(new Run(AgentBits.isUser(l.to()) ? "you" : AgentBits.agentName(l.to()), AgentBits.nameOnLight(l.to())));
 				}
 				lead.add(new Run("  ", ink));
 			} else if (name != null && body.startsWith(name)) {
-				lead.add(new Run(name, UiBits.nameOnLight(agent)));
+				lead.add(new Run(name, AgentBits.nameOnLight(agent)));
 				body = body.substring(name.length());
 				bodyColor = muted;
 			} else if (name != null && body.startsWith(user)) {
@@ -1100,9 +1101,9 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 						bodyColor = body.startsWith("Goal complete") ? UiBits.okText() : ink;
 					} else if (lead.isEmpty()) {
 						lead.add(new Run("You", UiStyle.CLAY_DARK));
-						if (kind == FeedKind.USER && l.to() != null && !UiBits.isUser(l.to())) {
+						if (kind == FeedKind.USER && l.to() != null && !AgentBits.isUser(l.to())) {
 							lead.add(new Run(" \u2192 ", muted));
-							lead.add(new Run(l.to().equals("all") ? "everyone" : UiBits.agentName(l.to()), UiBits.nameOnLight(l.to())));
+							lead.add(new Run(l.to().equals("all") ? "everyone" : AgentBits.agentName(l.to()), AgentBits.nameOnLight(l.to())));
 						}
 						lead.add(new Run("  ", ink));
 						bodyColor = ink;
@@ -1127,7 +1128,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 		}
 		List<Run> r0 = new ArrayList<>(lead);
 		r0.add(new Run(first.get(0), header ? ink : bodyColor));
-		String faceAgent = agent != null && (UiBits.hasPortrait(agent)) ? agent : null;
+		String faceAgent = agent != null && (AgentBits.hasPortrait(agent)) ? agent : null;
 		boolean opens = !l.local() && l.kind() == FeedKind.DECISION && l.text().contains("needs you");
 		out.add(new Row(time, faceAgent, stripe, r0, header, false, opens, false));
 		if (first.size() > 1) {
@@ -1162,7 +1163,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 	 */
 	private void columns(List<Row> out, Line l, String body, int stripe, @Nullable String agent, int textW) {
 		String[] c = body.split("\t");
-		String face = agent != null && UiBits.hasPortrait(agent) ? agent : null;
+		String face = agent != null && AgentBits.hasPortrait(agent) ? agent : null;
 		List<Run> runs = new ArrayList<>();
 		if (l.tone() == Tone.FILE) {
 			String path = TextUtil.ellipsize(font, c[0], Math.max(40, textW - 70));
@@ -1210,7 +1211,7 @@ public class ConsoleScreen extends Screen implements dev.agentcraft.client.ui.Ha
 	}
 
 	private static int identity(String agentId, @Nullable ForemanState s) {
-		if (UiBits.isUser(agentId)) {
+		if (AgentBits.isUser(agentId)) {
 			return UiStyle.CLAY;
 		}
 		Agent a = s == null ? null : s.agent(agentId);

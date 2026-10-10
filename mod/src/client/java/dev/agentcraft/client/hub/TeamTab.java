@@ -13,18 +13,19 @@ import dev.agentcraft.building.LeadRouting;
 import dev.agentcraft.client.agents.AgentsFeature;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.Task;
-import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.leads.Leads;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
 import dev.agentcraft.ui.UiRules;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -265,7 +266,7 @@ final class TeamTab implements HubPane {
 				facts.add("goal " + t.goalId());
 			}
 			if (!isLead(id)) {
-				facts.add("lead " + UiBits.agentName(Leads.view().leadForRepo(t.repoId())));
+				facts.add("lead " + AgentBits.agentName(Leads.view().leadForRepo(t.repoId())));
 			}
 		} else if (a.repoId() != null) {
 			facts.add("repo " + a.repoId());
@@ -323,7 +324,7 @@ final class TeamTab implements HubPane {
 			}
 			List<String> released = new ArrayList<>();
 			if (ack.result() != null && ack.result().isJsonObject() && ack.result().getAsJsonObject().has("released")) {
-				ack.result().getAsJsonObject().getAsJsonArray("released").forEach(e -> released.add(UiBits.agentName(e.getAsString())));
+				ack.result().getAsJsonObject().getAsJsonArray("released").forEach(e -> released.add(AgentBits.agentName(e.getAsString())));
 			}
 			releaseError = false;
 			releaseNote = released.isEmpty() ? world + " held no leads any more" : "Released " + String.join(", ", released) + " from " + world;
@@ -347,7 +348,7 @@ final class TeamTab implements HubPane {
 			String rel = "Release";
 			int rw = hub.bw(rel);
 			List<String> names = new ArrayList<>();
-			o.leads().forEach(l -> names.add(UiBits.agentName(l)));
+			o.leads().forEach(l -> names.add(AgentBits.agentName(l)));
 			String line = o.world() + ": " + String.join(", ", names) + (o.lastSync() > 0 ? " · synced " + UiBits.ago(o.lastSync()) : "");
 			g.text(hub.font(), TextUtil.ellipsize(hub.font(), line, w - rw - 6), x, y + 6, UiBits.ink(), false);
 			// with no singleplayer world loaded every world reads as "other": no Release then (it could free this world's own leads)
@@ -524,13 +525,13 @@ final class TeamTab implements HubPane {
 				}
 				boolean lead = leads.contains(id);
 				boolean active = lead ? inUse.contains(id) : on.contains(id);
-				UiBits.face(g, id, rx, ry + 1, 2);
+				AgentBits.face(g, id, rx, ry + 1, 2);
 				Agent a = Foreman.state() == null ? null : Foreman.state().agent(id);
 				if (a != null) {
 					Panels.dot(g, a.state().family(), rx + rw - 7, ry + 1, false);
 				}
 				int tx = rx + 20;
-				String name = UiBits.agentName(id) + (lead && active ? "  #" + (inUse.indexOf(id) + 1) : "");
+				String name = AgentBits.agentName(id) + (lead && active ? "  #" + (inUse.indexOf(id) + 1) : "");
 				g.text(hub.font(), TextUtil.ellipsize(hub.font(), name, rw - 30), tx, ry, active ? UiBits.ink() : muted, false);
 				String second;
 				if (lead) {
@@ -584,7 +585,7 @@ final class TeamTab implements HubPane {
 		} else {
 			String id = selected;
 			boolean lead = isLead(id);
-			UiBits.framedPortrait(g, id, x, y, 1);
+			AgentBits.framedPortrait(g, id, x, y, 1);
 			int tx = x + 24;
 			String title = title(id);
 			// the agent's card (state, task, decisions, log, message / pause / stop); Esc comes back here
@@ -594,7 +595,7 @@ final class TeamTab implements HubPane {
 			if (known) {
 				hub.button(g, "team_card:" + id, card, x + w - cw, y, cw, false, false, false, mx, my, () -> AgentsFeature.openCard(id, hub));
 			}
-			g.text(hub.font(), TextUtil.ellipsize(hub.font(), UiBits.agentName(id) + "  ·  " + (lead ? "lead" : "worker") + (title.isEmpty() ? "" : " · "
+			g.text(hub.font(), TextUtil.ellipsize(hub.font(), AgentBits.agentName(id) + "  ·  " + (lead ? "lead" : "worker") + (title.isEmpty() ? "" : " · "
 				+ title), w - 24 - cw - 4), tx, y + 1, ink, false);
 			List<String> live = liveLines(id);
 			int ly = y + 11;
@@ -729,7 +730,7 @@ final class TeamTab implements HubPane {
 			JsonObject j = new JsonObject();
 			boolean lead = isLead(id);
 			j.addProperty("id", id);
-			j.addProperty("name", UiBits.agentName(id));
+			j.addProperty("name", AgentBits.agentName(id));
 			j.addProperty("role", lead ? "lead" : "worker");
 			j.addProperty("inUse", lead ? inUse.contains(id) : on.contains(id));
 			j.addProperty("order", lead && inUse.contains(id) ? inUse.indexOf(id) + 1 : null);
@@ -739,7 +740,7 @@ final class TeamTab implements HubPane {
 			JsonArray live = new JsonArray();
 			liveLines(id).forEach(live::add);
 			j.add("live", live);
-			j.addProperty("portrait", UiBits.hasPortrait(id));
+			j.addProperty("portrait", AgentBits.hasPortrait(id));
 			roster.add(j);
 		}
 		o.add("roster", roster);

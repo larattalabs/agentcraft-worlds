@@ -1,10 +1,10 @@
 package dev.agentcraft.client.monitor;
 
-import dev.agentcraft.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.entity.ModBlockEntities;
 import dev.agentcraft.block.entity.MonitorBlockEntity;
+import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
 import dev.agentcraft.client.foreman.Foreman;
@@ -14,10 +14,11 @@ import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
-import dev.agentcraft.building.Buildings;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
+import dev.larattalabs.labui.client.monitor.ScreenStyle;
+import dev.larattalabs.labui.ui.Guard;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -105,7 +106,7 @@ public final class MonitorFeature {
 			}
 		});
 		// forget screens whose panel has not been drawn for a while (broken, unloaded, re-shaped)
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("monitor.sweep", () -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.monitor.sweep", () -> {
 			if (mc.level == null || (mc.level.getGameTime() % 200) != 0) {
 				return;
 			}

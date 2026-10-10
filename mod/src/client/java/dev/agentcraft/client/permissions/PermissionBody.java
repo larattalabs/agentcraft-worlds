@@ -1,12 +1,13 @@
 package dev.agentcraft.client.permissions;
 
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Decision;
-import dev.agentcraft.client.hud.UiBits;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.gui.Font;
@@ -50,7 +51,7 @@ public final class PermissionBody {
 		if (reason.size() > 3) {
 			reason = new ArrayList<>(reason.subList(0, 3));
 		}
-		String name = UiBits.agentName(d.agentId());
+		String name = AgentBits.agentName(d.agentId());
 		String coversText = info.covers() != null && !info.covers().isEmpty() ? info.covers()
 			: name + " can run exactly this again without asking";
 		List<FormattedCharSequence> covers = TextUtil.wrap(font, coversText, w - 16);

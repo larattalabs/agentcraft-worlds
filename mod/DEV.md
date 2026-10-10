@@ -52,6 +52,30 @@ GRADLE_USER_HOME=C:/Projects/agentcraft/.gradle-home ./gradlew --stop       # st
 ```
 (PowerShell: `$env:GRADLE_USER_HOME='C:\Projects\agentcraft\.gradle-home'; .\gradlew.bat runClient`.)
 
+### lab-ui (the shared UI library)
+
+The screen kit (`Kit`, `Panels`, `UiStyle`, `TextUtil`, `UiBits`), the world-space UI (`WorldUi`, `SpeechBubble`,
+`DisplayDraw`, `ScreenStyle`, `TextDepth`, `LeaderGaps`) and the crash guard (`Guard`, `GuardedHud`) live in
+[lab-ui](https://github.com/larattalabs/lab-ui) (`dev.larattalabs:lab_ui`, mod id `lab_ui`, packages
+`dev.larattalabs.labui.*`), shared with Architect and Steward and bundled jar-in-jar (`include`). The version is
+`lab_ui_version` in `mod/gradle.properties`; `fabric.mod.json` depends on `>=0.1.0 <0.2.0`. AgentCraft keeps the
+agent-shaped parts: `client.hud.AgentBits` (agent names and colours, the user, portraits, the speech bubbles'
+addressees), `PlateStack`, `Nameplate`/`PlateLayout`, `HudLayout`/toasts, `StatusMap`, `HudSounds`, `DisplayText`,
+`UiRules`. Guard kinds start with the mod id (`agentcraft_worlds.hud.goal`): Fabric loads one lab-ui for every mod.
+
+Gradle looks for the jar in two places, in this order (`mod/build.gradle`), and both serve only `lab_ui`:
+1. **`~/.m2` (Maven local).** Fill it once from a lab-ui checkout at the matching tag, no token needed:
+   `git clone https://github.com/larattalabs/lab-ui && cd lab-ui && git checkout v0.1.0 && ./gradlew publishToMavenLocal`
+   (Java 25). This is also how you build against an unreleased lab-ui; publish it under a new version, not over 0.1.0.
+2. **GitHub Packages** (`https://maven.pkg.github.com/larattalabs/lab-ui`). It needs a token even for public packages:
+   a classic PAT with `read:packages` (`gh auth token` only works if your gh login has that scope:
+   `gh auth refresh -s read:packages`) as `gpr.user` / `gpr.key` in `$GRADLE_USER_HOME/gradle.properties`, or in the
+   environment as `GITHUB_ACTOR` / `GITHUB_TOKEN`. Never commit a token. The launchers set `GRADLE_USER_HOME` to the
+   checkout's `.gradle-home`, so `~/.gradle/gradle.properties` is not read there; and don't export `GITHUB_TOKEN` into
+   a launcher's environment, because the game (and the Foreman and agents it starts) inherits it.
+
+After the first fetch the jar is in the Gradle cache (or `~/.m2`), so `--offline` builds work.
+
 `runClient` starts with **no clicks**:
 1. `prepareRunDir` copies `run-template/options.txt` to `mod/run/options.txt`, but only if that file
    does not exist yet. The template sets: master and music volume 0, `pauseOnLostFocus:false`,
@@ -193,7 +217,7 @@ treated the same, other binary frames get an `ok:false` reply).
 | `dev.agents.card` | `agent`, `press?` = `message`/`pause`/`stop`/`review`, `answer?` = `opt:<option>`/`send`/`diff`/`cancel`, `text?` | Opens the agent card for that agent (like an empty-hand sneak + right-click), or presses a button on its open card (Stop needs two presses: `stopArmed`); `answer` drives the card's AnswerPanel for the decision it waits on (Merge / Reject need two calls; no arm delay through the DevBridge); returns `stopArmed`, `status`, `review` (the decision), `panel` (AnswerPanel state), `screen` (after `review`: the decision's screen) |
 | `dev.player.sneak` | `on` (bool) | Holds (or releases) the sneak key mapping, like a held Shift; returns `sneaking`, `mainHandEmpty` (agents are targetable, `dev.agents.look` `pickable`, only both) |
 | `dev.ui.pause` | `on?` (bool; omit = the environment's default) | Forces AgentCraft screens to pause (or not) in singleplayer for this session; returns the `ui` state |
-| `dev.guard.inject` | `kind` (`agents.tick`, `agents.plates`, `hq.tick`, `wizard.tick`, `wizard.ghost`, `hub.tick`, `console.tick`, `decisions.tick`, `hud.toasts`, ...) | The next run of that guarded client handler throws: it must be logged once, counted in `dev.state` `ui.guards`, and the game keeps running |
+| `dev.guard.inject` | `kind`: the mod id, then the handler (`agentcraft_worlds.agents.tick`, `agentcraft_worlds.agents.plates`, `agentcraft_worlds.hq.tick`, `agentcraft_worlds.wizard.tick`, `agentcraft_worlds.wizard.ghost`, `agentcraft_worlds.hub.tick`, `agentcraft_worlds.console.tick`, `agentcraft_worlds.decisions.tick`, `agentcraft_worlds.hud.toasts`, ...) | The next run of that guarded client handler throws: it must be logged once, counted in `dev.state` `ui.guards`, and the game keeps running |
 | `dev.library.lectern` | `x`, `y`, `z` | Whether a right-click on the lectern there opens the library (`opensLibrary`, the `building` holding it) or is left to vanilla |
 | `dev.team.card` | `agent` | The hub Team tab's Card button: the agent card with the hub as its parent (Esc returns to the hub) |
 | `dev.team.release` | `world` | The Team tab's Release for a world holding leads (`lead.releaseWorld {world}`; the hub must be open); returns the note |
@@ -305,7 +329,7 @@ common (src/main)                          client (src/client)
   AgentCraft          registries + init      AgentCraftClient -> ClientFeatures (one init() per feature)
   block/              16 blocks, BEs, items  foreman/   link (java.net.http WS), Protocol records, ForemanState, Foreman facade
   entity/             agent entity type      agents/    AgentManager, AgentMotion, GridPathfinder, AgentRenderer, Nameplate, hooks
-  layout/             Anchors + names        hud/       ConnectionBanner        ui/  UiStyle, Kit, Panels, WorldUi, TextUtil
+  layout/             Anchors + names        hud/       ConnectionBanner        ui/  StatusMap, UiDev (kit: lab-ui)
   hq/                 /agentcraft hq builder world/     StationRenderer base, ServerTasks, StationInteractions, dev helpers
   command/            /agentcraft root       monitor/ taskwall/ decisions/ console/ diff/ library/ permissions/ hq/  (Phase 3)
 ```
@@ -1168,7 +1192,7 @@ in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTe
   at the end. `needsYou` = the Inbox's Needs you (the hold counts one), the inbox tab badge and the away toast. The whole goal bar is skipped while the HUD is hidden (F1, `dev.hud
   {hidden}`).
 - **Goal bar with several open goals**: urgent pinned, else 8 s turns, "+N more" (`HudRules.pickGoal`).
-- **`HudWatch`** (client tick, guarded as `hud.watch`): hub on screen (also under screens opened from it) ->
+- **`HudWatch`** (client tick, guarded as `agentcraft_worlds.hud.watch`): hub on screen (also under screens opened from it) ->
   `hubSeenAt` + `lastTab`; console on screen -> `repliesSeen`; the away check (join + every 2 min after 10 min away,
   `goal.digest` via `HubGoals.requestAway`, toast "Since you were away: …" with the hub key); the welcome card.
 - **Files**: `<gameDir>/agentcraft/hub-hud.json` (per world: `lastTab`, `hubSeenAt`, `lastAwayToastAt`, `repliesSeen`,
@@ -1198,7 +1222,7 @@ in `dev.agentcraft.hud` (`AlertLine`, `HudPrefs`, `HudRules`, tests `AlertLineTe
     updatedAt:<ms>}}}`.
 
 ### HUD overlay styles
-The in-game overlay (`client.hud.HudOverlay`, element id `hud/goal`, guard `hud.goal`) draws in the style chosen in
+The in-game overlay (`client.hud.HudOverlay`, element id `hud/goal`, guard `agentcraft_worlds.hud.goal`) draws in the style chosen in
 hub Settings > General > HUD (`hub.HudSettingsView`). Client-side settings, no Foreman config:
 `<gameDir>/agentcraft/hud.json` (pure `hud.HudSettings`: `style` off|pill|pill_plus|panel, `position`
 top_right|top_left|bottom_left|bottom_right|right_middle, `size` s|m|l, `peek`, `autoHide`, `hideInCombat`, `toasts`
@@ -1469,7 +1493,7 @@ agent log, `InboxDev` = DevBridge), `client.decisions.AnswerPanel` and the pure 
 ## Interaction rules (fix wave 1, stream ui)
 
 docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraft.ui.UiRules` (unit-tested,
-`UiRulesTest`); the crash guard in `dev.agentcraft.ui.Guard` (`GuardTest`).
+`UiRulesTest`); the crash guard is lab-ui's `dev.larattalabs.labui.ui.Guard` (tested there).
 
 - **Pause (C6)**: every AgentCraft screen's `isPauseScreen()` is `ScreenPause.pauses()`: true for a jar in a
   normal launcher (singleplayer pauses like a vanilla menu), false in dev runs and with the DevBridge on
@@ -1502,7 +1526,9 @@ docs/FIXWAVE.md, docs/AUDIT-2026-10-03.md. The pure rules live in `dev.agentcraf
 - **Free text (C1)**: `Decision.textAllowed` (absent = true; always true without options) hides the text
   box in the decision screen and the goal thread's "Answer with text"; `/answer` refuses text for them.
 - **Crash guards**: client tick, level-render (nameplates, ghost/plot, card outline) and HUD handlers run
-  through `Guard.run(kind, ...)`: a failure is logged once per kind, counted, and the game keeps running.
+  through lab-ui's `Guard.run(kind, ...)`: a failure is logged once per kind ("lab_ui: the <kind> handler failed"),
+  counted, and the game keeps running. Guard state is shared by every mod that bundles lab-ui, so AgentCraft's kinds
+  start with the mod id (`agentcraft_worlds.hud.goal`).
 - **Teleport (C7)**: `HubActions.teleportAllowed` (commands allowed, or creative/spectator), checked by the
   hub button and on the server.
 - **Keys**: the building wizard key is unbound by default (B clashed with Xaero); the hub's Place new

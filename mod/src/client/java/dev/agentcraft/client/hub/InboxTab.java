@@ -12,24 +12,25 @@ import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.decisions.DiffLink;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
 import dev.agentcraft.client.foreman.Protocol.Task;
-import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.taskwall.TaskScreen;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.hub.DetailLayout;
-import dev.agentcraft.hub.InboxModel;
 import dev.agentcraft.hub.InboxModel.Filter;
 import dev.agentcraft.hub.InboxModel.FilterType;
 import dev.agentcraft.hub.InboxModel.Group;
 import dev.agentcraft.hub.InboxModel.Item;
 import dev.agentcraft.hub.InboxModel.Kind;
 import dev.agentcraft.hub.InboxModel.Row;
+import dev.agentcraft.hub.InboxModel;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -309,7 +310,7 @@ final class InboxTab implements HubPane {
 		} else if (agent != null) {
 			f = Foreman.message(agent, text).handle((ack, err) -> {
 				boolean ok = err == null && ack.ok();
-				setNote(ok ? UiBits.CHECK + " Sent to " + UiBits.agentName(agent) : err != null ? "Not sent: " + err.getMessage() : Foreman.refusal("Message",
+				setNote(ok ? UiBits.CHECK + " Sent to " + AgentBits.agentName(agent) : err != null ? "Not sent: " + err.getMessage() : Foreman.refusal("Message",
 					ack), !ok);
 				return afterSend(ok, text);
 			});
@@ -603,7 +604,7 @@ final class InboxTab implements HubPane {
 	private String rowSub(Item it) {
 		List<String> parts = new ArrayList<>();
 		if (it.agentId() != null) {
-			parts.add(UiBits.agentName(it.agentId()));
+			parts.add(AgentBits.agentName(it.agentId()));
 		}
 		parts.add(kindLabel(it));
 		if (it.kind() == Kind.HOLD) {
@@ -757,7 +758,7 @@ final class InboxTab implements HubPane {
 		if (cx + chipW(bLabel) <= x + room) {
 			cx += chip(g, "filter:building", bLabel, cx, y, f.type() == FilterType.BUILDING, mx, my, this::cycleBuilding) + 3;
 		}
-		String aLabel = f.type() == FilterType.AGENT ? (compact ? "" : "Agent ") + UiBits.agentName(f.arg()) + " ▾" : "Agent ▾";
+		String aLabel = f.type() == FilterType.AGENT ? (compact ? "" : "Agent ") + AgentBits.agentName(f.arg()) + " ▾" : "Agent ▾";
 		if (cx + chipW(aLabel) <= x + room) {
 			chip(g, "filter:agent", aLabel, cx, y, f.type() == FilterType.AGENT, mx, my, this::cycleAgent);
 		}
@@ -848,7 +849,7 @@ final class InboxTab implements HubPane {
 			}
 			Item it = r.item();
 			if (it.kind() == Kind.AGENT) {
-				UiBits.face(g, it.agentId(), rx, ry, 1);
+				AgentBits.face(g, it.agentId(), rx, ry, 1);
 			} else {
 				Panels.dot(g, family(it), rx, ry + 1, false);
 			}
@@ -886,9 +887,9 @@ final class InboxTab implements HubPane {
 			+ it.goalId() : "") : it.goalId() != null ? "goal " + it.goalId() : "", w - pw - ww - 12), x + pw + 6, y + 1, muted, false);
 		y += 14;
 		if (it.agentId() != null && it.kind() != Kind.AGENT) {
-			UiBits.face(g, it.agentId(), x, y, 1);
-			String who = UiBits.agentName(it.agentId()) + (it.buildingId() != null ? "  ·  " + it.buildingId() : "");
-			g.text(font(), TextUtil.ellipsize(font(), who, w - 12), x + 11, y, UiBits.nameOnLight(it.agentId()), false);
+			AgentBits.face(g, it.agentId(), x, y, 1);
+			String who = AgentBits.agentName(it.agentId()) + (it.buildingId() != null ? "  ·  " + it.buildingId() : "");
+			g.text(font(), TextUtil.ellipsize(font(), who, w - 12), x + 11, y, AgentBits.nameOnLight(it.agentId()), false);
 			y += 12;
 		}
 		needed += 26;
@@ -1149,8 +1150,8 @@ final class InboxTab implements HubPane {
 		String send = "Send";
 		int sw = hub.bw(send);
 		int fw = w - sw - 4;
-		reply.placeholder(it.kind() == Kind.AGENT ? "Message " + UiBits.agentName(it.agentId()) + "… (Ctrl+Enter sends)" : it.goalId() != null
-			? "Reply in goal " + it.goalId() + "'s thread… (Ctrl+Enter)" : "Reply to " + UiBits.agentName(it.agentId()) + "… (Ctrl+Enter)");
+		reply.placeholder(it.kind() == Kind.AGENT ? "Message " + AgentBits.agentName(it.agentId()) + "… (Ctrl+Enter sends)" : it.goalId() != null
+			? "Reply in goal " + it.goalId() + "'s thread… (Ctrl+Enter)" : "Reply to " + AgentBits.agentName(it.agentId()) + "… (Ctrl+Enter)");
 		int fh = reply.draw(g, font(), x, y, fw, lines, focus == reply);
 		button(g, "inbox_reply_send", send, x + w - sw, y + Math.max(0, fh - 20), sw, true, sending || !Foreman.connected(), mx, my, () -> sendReply(it));
 	}
@@ -1243,7 +1244,7 @@ final class InboxTab implements HubPane {
 			blank(b);
 			wrapInto(b, "Why: " + (it.detail().isBlank() ? "no reason given" : it.detail()), tw, UiBits.errorText());
 			if (t != null) {
-				drawFacts(b, new String[][] {{"Assignee", t.assignee() == null ? "nobody" : UiBits.agentName(t.assignee())}, {"Repo", t.repoId()},
+				drawFacts(b, new String[][] {{"Assignee", t.assignee() == null ? "nobody" : AgentBits.agentName(t.assignee())}, {"Repo", t.repoId()},
 					{"Branch", t.branch()}, {"Updated", UiBits.ago(t.updatedAt())}}, tw);
 			}
 			blank(b);
@@ -1327,9 +1328,9 @@ final class InboxTab implements HubPane {
 		boolean actLine = a != null && bottom - y - 24 - 12 - pinned - 4 >= minLog;
 		needed += 24 + minLog + pinned + 4;
 		// summary
-		UiBits.framedPortrait(g, agentId, x, y, 1);
+		AgentBits.framedPortrait(g, agentId, x, y, 1);
 		int tx = x + 26;
-		g.text(font(), TextUtil.ellipsize(font(), UiBits.agentName(agentId), w - 26), tx, y + 1, UiBits.nameOnLight(agentId), false);
+		g.text(font(), TextUtil.ellipsize(font(), AgentBits.agentName(agentId), w - 26), tx, y + 1, AgentBits.nameOnLight(agentId), false);
 		String sub = a == null ? "not on the team" : (a.title() != null ? a.title() + " · " : "") + (a.role() == Protocol.AgentRole.LEAD ? "lead" : "worker")
 			+ (!a.isActive() ? " · off shift" : a.isPaused() ? " · paused" : "");
 		if (a != null) {

@@ -31,7 +31,7 @@ import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.TaskStatus;
 import dev.agentcraft.client.hud.HudSounds;
-import dev.agentcraft.client.hud.UiBits;
+import dev.larattalabs.labui.client.hud.UiBits;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;

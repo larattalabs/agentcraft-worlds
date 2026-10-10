@@ -12,6 +12,24 @@ base {
 
 repositories {
 	mavenCentral()
+	// lab-ui (dev.larattalabs:lab_ui), the shared client UI library; see mod/DEV.md "lab-ui". Gradle takes the first
+	// repository that has it, and these two only ever serve lab_ui:
+	// 1. ~/.m2, filled by `./gradlew publishToMavenLocal` in a lab-ui checkout at the matching tag. No token needed.
+	mavenLocal {
+		content { includeModule "dev.larattalabs", "lab_ui" }
+	}
+	// 2. GitHub Packages, which needs a token with read:packages even for public packages: gpr.user / gpr.key in
+	//    $GRADLE_USER_HOME/gradle.properties, or GITHUB_ACTOR / GITHUB_TOKEN. Never commit a token. Once fetched it is in
+	//    the Gradle cache, so --offline works.
+	maven {
+		name = "LabUi"
+		url = uri("https://maven.pkg.github.com/larattalabs/lab-ui")
+		credentials {
+			username = providers.gradleProperty("gpr.user").orElse(providers.environmentVariable("GITHUB_ACTOR")).getOrElse("")
+			password = providers.gradleProperty("gpr.key").orElse(providers.environmentVariable("GITHUB_TOKEN")).getOrElse("")
+		}
+		content { includeModule "dev.larattalabs", "lab_ui" }
+	}
 }
 
 loom {
@@ -45,6 +63,11 @@ dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// lab-ui: the screen kit, world-space UI and crash guard shared with Architect and Steward (mod id lab_ui).
+	// Minecraft 26.x's non-remapping Loom has no mod* configurations: plain implementation, plus include for jar-in-jar.
+	implementation "dev.larattalabs:lab_ui:${project.lab_ui_version}"
+	include "dev.larattalabs:lab_ui:${project.lab_ui_version}"
 
 	// DevBridge WebSocket server. slf4j-api is already provided by Minecraft, so only the
 	// websocket jar itself is nested (jar-in-jar).

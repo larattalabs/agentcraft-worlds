@@ -800,7 +800,7 @@ public final class AgentManager {
 		}
 		long ago = System.currentTimeMillis() - say.ts();
 		if (ago >= 0 && ago < 8000) {
-			e.life().bubble.showLate(say, e.life().age(), (int) (ago / 50));
+			e.life().bubble.showLate(say.text(), say.to(), say.ts(), e.life().age(), (int) (ago / 50));
 		}
 	}
 

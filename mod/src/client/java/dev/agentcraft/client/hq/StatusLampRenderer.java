@@ -11,10 +11,10 @@ import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.TaskStatus;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
-import dev.agentcraft.client.ui.WorldUi;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.WorldUi;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
 import dev.agentcraft.building.Buildings;
@@ -467,7 +467,7 @@ public class StatusLampRenderer extends StationRenderer<StatusLampBlockEntity, S
 		if (!s.line2b.isEmpty()) {
 			// "2 need you": clay, breathing with every other waiting surface
 			float k = dev.agentcraft.client.ui.StatusMap.pulse(System.nanoTime());
-			int clay = dev.agentcraft.client.monitor.DisplayDraw.mix(UiStyle.CLAY_DARK, UiStyle.CLAY, k);
+			int clay = dev.larattalabs.labui.client.monitor.DisplayDraw.mix(UiStyle.CLAY_DARK, UiStyle.CLAY, k);
 			WorldUi.submitText(poseStack, collector, s.line2b, tx + font.width(s.line2a), ry2 + 10, UiStyle.withAlpha(clay, dim), light);
 		}
 		poseStack.popPose();

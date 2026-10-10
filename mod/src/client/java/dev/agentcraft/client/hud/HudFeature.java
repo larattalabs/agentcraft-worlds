@@ -9,7 +9,7 @@ import dev.agentcraft.client.foreman.Protocol.Notify;
 import dev.agentcraft.client.foreman.Protocol.NotifyLevel;
 import dev.agentcraft.hud.HudPeek;
 import dev.agentcraft.hud.HudSettings;
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import java.util.List;
 import java.util.Locale;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -37,13 +37,13 @@ public final class HudFeature {
 
 	public static void init() {
 		Keys.ensureRegistered();
-		HudElementRegistry.addLast(AgentCraft.id("hud/connection"), dev.agentcraft.client.ui.GuardedHud.of("hud.connection", new ConnectionBanner()));
+		HudElementRegistry.addLast(AgentCraft.id("hud/connection"), dev.larattalabs.labui.client.ui.GuardedHud.of("agentcraft_worlds.hud.connection", new ConnectionBanner()));
 		// the overlay (style from hub Settings > General > HUD); keeps the old element id and guard kind
-		HudElementRegistry.addLast(AgentCraft.id("hud/goal"), dev.agentcraft.client.ui.GuardedHud.of("hud.goal", new HudOverlay()));
-		HudElementRegistry.addLast(AgentCraft.id("hud/toasts"), dev.agentcraft.client.ui.GuardedHud.of("hud.toasts", new Toasts()));
+		HudElementRegistry.addLast(AgentCraft.id("hud/goal"), dev.larattalabs.labui.client.ui.GuardedHud.of("agentcraft_worlds.hud.goal", new HudOverlay()));
+		HudElementRegistry.addLast(AgentCraft.id("hud/toasts"), dev.larattalabs.labui.client.ui.GuardedHud.of("agentcraft_worlds.hud.toasts", new Toasts()));
 		Toasts.init();
 		HudPeeks.init();
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hud.overlay", () -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.hud.overlay", () -> {
 			HudCombat.tick(mc);
 			while (Keys.hudStyle != null && Keys.hudStyle.consumeClick()) {
 				cycleStyle(mc);

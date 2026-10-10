@@ -4,10 +4,11 @@ import dev.agentcraft.AgentCraft;
 import dev.agentcraft.Cast;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.Protocol;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.client.hud.AgentBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.HashMap;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
@@ -204,7 +205,7 @@ public final class ReviewKit {
 
 	/** Agent name colour on paper (ink for unknown ids / "user"). */
 	public static int agentInk(@Nullable String id) {
-		return id == null || id.isEmpty() || "user".equals(id) ? ink() : UiStyle.agentOnLight(id);
+		return id == null || id.isEmpty() || "user".equals(id) ? ink() : AgentBits.agentOnLight(id);
 	}
 
 	/** Identity colour (scarf/badge) of an agent; idle grey when unknown. */

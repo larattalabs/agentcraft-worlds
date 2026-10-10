@@ -1,6 +1,6 @@
 package dev.agentcraft.client.console;
 
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.ModBlocks;
@@ -38,7 +38,7 @@ public final class ConsoleFeature {
 		Keys.ensureRegistered();
 		DevBridge.registerScreen("console", mc -> ConsoleScreen.forDev(null));
 		dev.agentcraft.client.world.StationInteractions.onUse(ModBlocks.CONSOLE_TERMINAL, (player, pos, state, be) -> openAtTerminal(pos));
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("console.tick", () -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.console.tick", () -> {
 			if (mc.player == null) {
 				return;
 			}

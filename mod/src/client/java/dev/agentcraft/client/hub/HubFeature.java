@@ -1,6 +1,6 @@
 package dev.agentcraft.client.hub;
 
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -79,7 +79,7 @@ public final class HubFeature {
 			};
 		}, Inbox::revision); // "All read" or a viewed reply changes the badge and line at once, not up to 1.5 s later
 		Keys.ensureRegistered();
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hub.tick", () -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.hub.tick", () -> {
 			while (Keys.hub.consumeClick()) {
 				if (mc.player != null && mc.gui.screen() == null && !BuildPlacement.active() && !dev.agentcraft.client.building.PlotMarker.active()) {
 					// the last tab of this world; after an away toast the Inbox (else Goals) (docs/WAVE2.md W6)

@@ -2,7 +2,7 @@ package dev.agentcraft.client.agents;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderType;

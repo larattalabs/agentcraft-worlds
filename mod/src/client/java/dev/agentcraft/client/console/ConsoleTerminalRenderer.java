@@ -10,15 +10,16 @@ import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.hud.Keys;
-import dev.agentcraft.client.hud.UiBits;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
-import dev.agentcraft.client.ui.WorldUi;
-import dev.agentcraft.ui.TextDepth;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.WorldUi;
+import dev.larattalabs.labui.ui.TextDepth;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Minecraft;
@@ -153,15 +154,15 @@ public class ConsoleTerminalRenderer extends StationRenderer<ConsoleTerminalBloc
 			if (agent == null) {
 				name = "Foreman";
 				nameColor = UiStyle.color("monitor.muted", 0xFF655E55);
-			} else if (UiBits.isUser(agent)) {
+			} else if (AgentBits.isUser(agent)) {
 				name = "You";
 				nameColor = UiStyle.CLAY_DARK;
 			} else {
-				name = UiBits.agentName(agent);
-				nameColor = UiBits.nameOnLight(agent);
+				name = AgentBits.agentName(agent);
+				nameColor = AgentBits.nameOnLight(agent);
 			}
 			// "Kit: tests fail" / "<user> answered" -> the name line already says who
-			for (String who : new String[] {name, UiBits.userName()}) {
+			for (String who : new String[] {name, AgentBits.userName()}) {
 				if (text.startsWith(who + ": ")) {
 					text = text.substring(who.length() + 2);
 				} else if (text.startsWith(who + " ")) {
@@ -195,7 +196,7 @@ public class ConsoleTerminalRenderer extends StationRenderer<ConsoleTerminalBloc
 		if (agentId == null) {
 			return 0;
 		}
-		if (UiBits.isUser(agentId)) {
+		if (AgentBits.isUser(agentId)) {
 			return UiStyle.CLAY;
 		}
 		Agent a = st.agent(agentId);

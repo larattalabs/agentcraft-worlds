@@ -497,7 +497,7 @@ public final class Routines {
 				if (e == null || p == null || p.kind() != Kind.STANDUP || c.text().isBlank()) {
 					continue;
 				}
-				e.life().bubble.show(new Protocol.AgentSay(c.agentId(), c.text(), c.to(), System.currentTimeMillis()), e.life().age());
+				e.life().bubble.show(c.text(), c.to(), System.currentTimeMillis(), e.life().age());
 				ClientAgentEntity to = c.to() == null ? null : entities.get(c.to());
 				if (to != null && to != e) {
 					to.life().listen(c.agentId(), 60);

@@ -6,19 +6,20 @@ import dev.agentcraft.client.decisions.DecisionQueue;
 import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.Task;
-import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.leads.Leads;
 import dev.agentcraft.hub.HubSeen;
-import dev.agentcraft.hub.InboxModel;
 import dev.agentcraft.hub.InboxModel.Counts;
 import dev.agentcraft.hub.InboxModel.Filter;
 import dev.agentcraft.hub.InboxModel.Item;
 import dev.agentcraft.hub.InboxModel.Kind;
 import dev.agentcraft.hub.InboxModel.Row;
+import dev.agentcraft.hub.InboxModel;
+import dev.larattalabs.labui.client.hud.UiBits;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -247,7 +248,7 @@ public final class Inbox {
 		ForemanState s = Foreman.state();
 		Protocol.Agent a = s == null ? null : s.agent(agentId);
 		String building = Leads.view().buildingOf(agentId);
-		return new Item("agent:" + agentId, Kind.AGENT, 0, agentId, null, building, UiBits.agentName(agentId) + ": card and full log",
+		return new Item("agent:" + agentId, Kind.AGENT, 0, agentId, null, building, AgentBits.agentName(agentId) + ": card and full log",
 			a == null ? "not on the team" : a.activity(), null, false, null, null, null);
 	}
 

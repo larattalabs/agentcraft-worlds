@@ -7,7 +7,6 @@ import dev.agentcraft.building.Building;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Ack;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.Digest;
@@ -15,6 +14,8 @@ import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.Task;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.hub.GoalLogic;
 import dev.agentcraft.hub.HubSeen;
 import java.io.IOException;
@@ -457,7 +458,7 @@ public final class HubGoals {
 		PENDING.computeIfAbsent(goalId, k -> new ArrayList<>()).add(p);
 		return note(Foreman.goalMessage(goalId, t), "Message", "Sent to the lead").thenApply(n -> {
 			if (n.ok() && n.result() != null && n.result().has("leadId")) {
-				n = Note.ok("Sent to " + dev.agentcraft.client.hud.UiBits.agentName(n.result().get("leadId").getAsString()), n.result());
+				n = Note.ok("Sent to " + AgentBits.agentName(n.result().get("leadId").getAsString()), n.result());
 			}
 			List<Pending> list = PENDING.getOrDefault(goalId, new ArrayList<>());
 			int i = list.indexOf(p);

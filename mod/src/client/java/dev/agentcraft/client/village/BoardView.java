@@ -1,9 +1,9 @@
 package dev.agentcraft.client.village;
 
 import dev.agentcraft.AgentCraft;
-import dev.agentcraft.client.monitor.DisplayDraw;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.monitor.DisplayDraw;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import dev.agentcraft.village.VillageBoard;
 import java.util.ArrayList;
 import java.util.HashMap;

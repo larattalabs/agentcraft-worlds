@@ -3,17 +3,18 @@ package dev.agentcraft.client.taskwall;
 import dev.agentcraft.AgentCraft;
 import dev.agentcraft.building.Routing;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.leads.Leads;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.CiStatus;
 import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.TaskStatus;
-import dev.agentcraft.client.monitor.DisplayDraw;
-import dev.agentcraft.client.ui.Kit;
+import dev.agentcraft.client.hud.AgentBits;
+import dev.agentcraft.client.leads.Leads;
 import dev.agentcraft.client.ui.StatusMap;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.monitor.DisplayDraw;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -956,7 +957,7 @@ final class TaskBoard {
 		if (assignee != null) {
 			nameText = a != null ? a.name() : assignee;
 			o.face = portrait(assignee);
-			o.nameColor = UiStyle.agentOnLight(assignee);
+			o.nameColor = AgentBits.agentOnLight(assignee);
 			if (!done && a != null && a.isActive() && t.id().equals(a.taskId())) {
 				o.dot = a.state().family();
 			}

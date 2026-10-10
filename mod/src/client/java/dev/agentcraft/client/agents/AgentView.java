@@ -2,7 +2,7 @@ package dev.agentcraft.client.agents;
 
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.AgentState;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.layout.Anchors;
 import org.jspecify.annotations.Nullable;
 
@@ -75,7 +75,7 @@ public final class AgentView {
 	void update(Agent a, boolean staleLink, @Nullable String awaitingDecisionId, int awaitingDecisions) {
 		name = a.name();
 		color = 0xFF000000 | dev.agentcraft.Cast.parseColor(a.color(), 0x9C9488);
-		nameColor = UiStyle.agentOnDark(a.id());
+		nameColor = AgentBits.agentOnDark(a.id());
 		state = a.state();
 		awaitingDecision = awaitingDecisionId;
 		awaitingCount = awaitingDecisionId == null ? 0 : Math.max(1, awaitingDecisions);

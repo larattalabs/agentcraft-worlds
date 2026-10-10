@@ -389,7 +389,18 @@ AgentCraft is built to point at code you care about.
 
 On macOS, install Java 25 with `brew install openjdk@25`; on Linux, your distribution's Java 25 JDK
 (Arch: `pacman -S jdk25-openjdk`) or point `JAVA_HOME` at one. The launcher selects that JDK without
-changing your system Java. Then:
+changing your system Java.
+
+The mod's shared UI library, [lab-ui](https://github.com/larattalabs/lab-ui), is fetched at build time. GitHub
+Packages wants a token for that even though it is public, so the simplest way is to build it into your local Maven
+repository once (no token needed):
+
+```sh
+git clone https://github.com/larattalabs/lab-ui
+(cd lab-ui && git checkout v0.1.0 && ./gradlew publishToMavenLocal)
+```
+
+With a `read:packages` token instead, see [mod/DEV.md, "lab-ui"](mod/DEV.md#lab-ui-the-shared-ui-library). Then:
 
 ```sh
 git clone https://github.com/larattalabs/agentcraft-worlds
@@ -597,7 +608,7 @@ uses. Their monitors show tokens per turn instead of dollars.
 
 ```sh
 cd foreman && npm test                     # 898 tests
-cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows)
+cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows; needs lab-ui, see Quick start)
 npm test --prefix tools                    # launcher, blueprint and QA tool tests
 node tools/qa.mjs --home .agentcraft-home  # capture the 10 shot QA gallery
 ```

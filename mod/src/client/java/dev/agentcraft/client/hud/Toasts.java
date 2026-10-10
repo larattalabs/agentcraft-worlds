@@ -8,12 +8,13 @@ import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.Notify;
 import dev.agentcraft.client.foreman.Protocol.NotifyLevel;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.hud.HudLayout;
 import dev.agentcraft.hud.ToastStack;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -172,9 +173,9 @@ public final class Toasts implements HudElement {
 			}
 		}
 		String title = switch (n.level()) {
-			case NEED_USER -> (agentId != null ? UiBits.agentName(agentId) : "Your team") + " needs you";
-			case WARN -> agentId != null ? UiBits.agentName(agentId) : "Heads up";
-			default -> agentId != null ? UiBits.agentName(agentId) : "Foreman";
+			case NEED_USER -> (agentId != null ? AgentBits.agentName(agentId) : "Your team") + " needs you";
+			case WARN -> agentId != null ? AgentBits.agentName(agentId) : "Heads up";
+			default -> agentId != null ? AgentBits.agentName(agentId) : "Foreman";
 		};
 		long life = switch (n.level()) {
 			case NEED_USER -> 9000;
@@ -351,17 +352,17 @@ public final class Toasts implements HudElement {
 		}
 		int px = x + p.left();
 		int py = y + p.top() - 1;
-		if (t.agentId != null && UiBits.hasPortrait(t.agentId)) {
-			UiBits.framedPortrait(g, t.agentId, px, py, 1);
+		if (t.agentId != null && AgentBits.hasPortrait(t.agentId)) {
+			AgentBits.framedPortrait(g, t.agentId, px, py, 1);
 		} else {
 			String icon = t.body.startsWith("Merged") ? "merge" : t.body.startsWith("Goal") ? "decision" : need ? "decision" : "message";
 			Panels.sprite(g, Kit.icon(icon), px + 4, py + 4, 12, 12, tint);
 		}
 		int tx = x + textX;
-		int nameColor = t.agentId != null ? UiBits.nameOnLight(t.agentId) : UiBits.ink();
+		int nameColor = t.agentId != null ? AgentBits.nameOnLight(t.agentId) : UiBits.ink();
 		String title = TextUtil.ellipsize(font, t.title, textW);
-		if (t.agentId != null && title.startsWith(UiBits.agentName(t.agentId))) {
-			String nm = UiBits.agentName(t.agentId);
+		if (t.agentId != null && title.startsWith(AgentBits.agentName(t.agentId))) {
+			String nm = AgentBits.agentName(t.agentId);
 			g.text(font, nm, tx, py + 1, UiStyle.withAlpha(nameColor, a), false);
 			g.text(font, title.substring(nm.length()), tx + font.width(nm), py + 1, UiStyle.withAlpha(need ? UiStyle.CLAY_DARK : UiBits.muted(), a), false);
 		} else {

@@ -11,17 +11,18 @@ import dev.agentcraft.client.console.TextKeys;
 import dev.agentcraft.client.diff.ReviewKit;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.CiStatus;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.RepoSettingsView;
 import dev.agentcraft.client.foreman.Protocol.Task;
-import dev.agentcraft.client.hud.UiBits;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.leads.Leads;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -441,7 +442,7 @@ final class ReposTab implements HubPane {
 	static String leadLabel(String repoId) {
 		String lead = leadOf(repoId);
 		HubGoals.Wing w = HubGoals.wingOf(repoId);
-		String name = UiBits.agentName(lead);
+		String name = AgentBits.agentName(lead);
 		if (LeadRouting.MARLOW.equals(lead)) {
 			return name + (w == null ? " (no building)" : w.building().home() ? " (home)" : " (no lead of its own yet)");
 		}
@@ -551,7 +552,7 @@ final class ReposTab implements HubPane {
 				String head = r.id() + "  " + r.branch() + (r.head() != null ? "@" + r.head() : "") + (r.dirty() ? " *" : "");
 				g.text(font(), TextUtil.ellipsize(font(), head, rw - 12), rx, ry, UiBits.ink(), false);
 				int prs = openPrs(r.id());
-				String second = buildingOf(r.id()) + " · " + UiBits.agentName(leadOf(r.id())) + " · " + UiBits.plural(r.worktrees().size(), "worktree",
+				String second = buildingOf(r.id()) + " · " + AgentBits.agentName(leadOf(r.id())) + " · " + UiBits.plural(r.worktrees().size(), "worktree",
 					"worktrees") + (prs > 0 ? " · " + UiBits.plural(prs, "PR", "PRs") + " open" : "");
 				g.text(font(), TextUtil.ellipsize(font(), second, rw), rx, ry + 10, muted, false);
 				return r.id();
@@ -614,7 +615,7 @@ final class ReposTab implements HubPane {
 			rows.add(new String[] {"Protected", st.protect().isEmpty() ? "none" : String.join(", ", st.protect())});
 			if (!st.roles().isEmpty()) {
 				List<String> rl = new ArrayList<>();
-				st.roles().forEach((a, role) -> rl.add(UiBits.agentName(a) + ": " + role));
+				st.roles().forEach((a, role) -> rl.add(AgentBits.agentName(a) + ": " + role));
 				rows.add(new String[] {"Roles", String.join("; ", rl)});
 			}
 			if (st.subagents() != null) {

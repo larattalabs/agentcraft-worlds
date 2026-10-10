@@ -3,12 +3,13 @@ package dev.agentcraft.client.monitor;
 import dev.agentcraft.Cast;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol.Agent;
-import dev.agentcraft.client.hud.UiBits;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.client.hud.AgentBits;
+import dev.larattalabs.labui.client.monitor.DisplayDraw;
+import dev.larattalabs.labui.client.monitor.ScreenStyle;
+import dev.larattalabs.labui.client.ui.TextUtil;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -194,7 +195,7 @@ final class MonitorScreen {
 			case LIVE, OFF_SHIFT, NO_AGENT -> {
 				Agent a = s == null ? null : s.agent(agentId);
 				String n = a != null ? a.name() : agentId.isEmpty() ? "Monitor" : agentId;
-				nameColor = st.name(agentId);
+				nameColor = AgentBits.onScreen(st, agentId);
 				dotFamily = a == null ? "idle" : mode == Mode.OFF_SHIFT ? "idle" : a.state().family();
 				String task = a != null && a.taskId() != null && mode == Mode.LIVE ? a.taskId() : "";
 				int pillW = task.isEmpty() ? 0 : font.width(task) + 6;
@@ -262,7 +263,7 @@ final class MonitorScreen {
 					name = LogRows.seq(TextUtil.ellipsize(font, "Team activity", w - 10));
 				} else if (!agentId.isEmpty()) {
 					Cast.Member cm = Cast.get(agentId);
-					nameColor = st.name(agentId);
+					nameColor = AgentBits.onScreen(st, agentId);
 					name = LogRows.seq(TextUtil.ellipsize(font, cm != null ? cm.name() : agentId, w - 10));
 				}
 				headerBottom = name != null ? y + 10 : by0 + padTop;
@@ -360,7 +361,7 @@ final class MonitorScreen {
 		if (id != null && !id.equals("user")) {
 			Agent a = s.agent(id);
 			who = a != null ? a.name() : id;
-			whoColor = st.name(id);
+			whoColor = AgentBits.onScreen(st, id);
 		} else if ("user".equals(id) || f.kind() == dev.agentcraft.client.foreman.Protocol.FeedKind.USER) {
 			who = "You";
 			whoColor = st.text();
@@ -380,8 +381,8 @@ final class MonitorScreen {
 			if (text.startsWith(":")) {
 				text = text.substring(1).stripLeading();
 			}
-		} else if (who.equals("You") && text.startsWith(UiBits.userName() + " ")) {
-			text = text.substring(UiBits.userName().length() + 1);
+		} else if (who.equals("You") && text.startsWith(AgentBits.userName() + " ")) {
+			text = text.substring(AgentBits.userName().length() + 1);
 		}
 		int whoW = lead.isEmpty() ? 0 : font.width(lead + " ");
 		int indent = 8;
@@ -408,7 +409,7 @@ final class MonitorScreen {
 	/** Screen gradient + scanlines (one dark texel row in two, like the block texture) + header band + rule. */
 	private void background() {
 		ScreenStyle st = style;
-		int light = dev.agentcraft.client.ui.WorldUi.uiLight();
+		int light = dev.larattalabs.labui.client.ui.WorldUi.uiLight();
 		bg.clear();
 		float z0 = 0;
 		float zBand = 3 * DisplayDraw.Z_STEP;

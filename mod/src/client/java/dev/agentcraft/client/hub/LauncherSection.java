@@ -1,9 +1,9 @@
 package dev.agentcraft.client.hub;
 
-import dev.agentcraft.client.hud.UiBits;
+import dev.larattalabs.labui.client.hud.UiBits;
 import dev.agentcraft.client.launcher.Launcher;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
 import dev.agentcraft.launcher.LauncherPlan;
 import java.nio.file.Path;
 import java.util.List;

@@ -1,8 +1,9 @@
 package dev.agentcraft.client.monitor;
 
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.TextUtil;
+import dev.larattalabs.labui.client.monitor.ScreenStyle;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.TextUtil;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;

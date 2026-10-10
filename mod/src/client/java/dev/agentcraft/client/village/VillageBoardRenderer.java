@@ -2,14 +2,14 @@ package dev.agentcraft.client.village;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.agentcraft.block.entity.VillageBoardBlockEntity;
-import dev.agentcraft.client.monitor.DisplayDraw;
+import dev.larattalabs.labui.client.monitor.DisplayDraw;
 import dev.agentcraft.client.taskwall.TaskBoardRenderer;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.WorldUi;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.WorldUi;
 import dev.agentcraft.client.world.StationRenderState;
 import dev.agentcraft.client.world.StationRenderer;
-import dev.agentcraft.ui.Guard;
-import dev.agentcraft.ui.TextDepth;
+import dev.larattalabs.labui.ui.Guard;
+import dev.larattalabs.labui.ui.TextDepth;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -53,7 +53,7 @@ public class VillageBoardRenderer extends StationRenderer<VillageBoardBlockEntit
 		if (!s.panelOrigin) {
 			return;
 		}
-		Guard.run("village.board.extract", () -> {
+		Guard.run("agentcraft_worlds.village.board.extract", () -> {
 			BoardView v = VillageBoardFeature.view(be.getBlockPos(), s.panelWidth, s.panelHeight);
 			s.view = v;
 			s.light = light(be, s.facing, s.panelWidth, s.panelHeight);
@@ -83,7 +83,7 @@ public class VillageBoardRenderer extends StationRenderer<VillageBoardBlockEntit
 		if (!s.panelOrigin || v == null || v.ppb == 0) {
 			return;
 		}
-		Guard.run("village.board.submit", () -> draw(s, v, ps, c));
+		Guard.run("agentcraft_worlds.village.board.submit", () -> draw(s, v, ps, c));
 	}
 
 	private static void draw(State s, BoardView v, PoseStack ps, SubmitNodeCollector c) {

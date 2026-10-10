@@ -3,7 +3,7 @@ package dev.agentcraft.client.ui;
 import com.google.gson.JsonObject;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.dev.Fields;
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 
@@ -41,7 +41,7 @@ public final class UiDev {
 				});
 			});
 		DevBridge.register("dev.guard.inject", 5_000,
-			"{kind} - the next run of that guarded client handler throws (agents.tick, agents.plates, hq.tick, wizard.tick, ...); see dev.state ui.guards",
+			"{kind} - the next run of that guarded client handler throws (agentcraft_worlds.agents.tick, agentcraft_worlds.hq.tick, ...: the mod id, then the handler); see dev.state ui.guards",
 			(req, mc) -> {
 				String kind = Fields.of(req).nonBlank("kind");
 				return DevBridge.onClient(mc, () -> {

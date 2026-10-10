@@ -1,7 +1,7 @@
 package dev.agentcraft.client.agents;
 
-import dev.agentcraft.client.ui.WorldUi;
-import dev.agentcraft.ui.LeaderGaps;
+import dev.larattalabs.labui.client.ui.WorldUi;
+import dev.larattalabs.labui.ui.LeaderGaps;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;

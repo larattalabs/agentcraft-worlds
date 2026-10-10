@@ -3,11 +3,11 @@ package dev.agentcraft.client.hud;
 import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.FeedItem;
 import dev.agentcraft.client.foreman.Protocol.FeedKind;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.TaskStatus;
+import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.hub.HubGoals;
 import org.jspecify.annotations.Nullable;
 
@@ -54,6 +54,6 @@ public record ForemanAlertCounts(int decisions, int blocked, int replies, Protoc
 
 	/** An agent's message to the user. */
 	public static boolean isReply(FeedItem f) {
-		return f.kind() == FeedKind.MESSAGE && f.agentId() != null && !f.agentId().isBlank() && !UiBits.isUser(f.agentId()) && UiBits.isUser(f.to());
+		return f.kind() == FeedKind.MESSAGE && f.agentId() != null && !f.agentId().isBlank() && !AgentBits.isUser(f.agentId()) && AgentBits.isUser(f.to());
 	}
 }
