@@ -34,7 +34,8 @@ Fork of [blendi-remade/agentcraft](https://github.com/blendi-remade/agentcraft),
   lab-ui as a new version (bump `lab_ui_version`). The same for art: `assets-src` still generates the kit sprites,
   `kit.json`, `ui-style.json` and `palette.json` (cast colours included), but `assets-src/sync.py` no longer copies the
   sprites into the mod (`LAB_UI_OWNED`), and the mod's own copies of the three JSON files are not read at runtime any
-  more. A change there must be ported to lab-ui's `assets/lab_ui/` to be seen in game. lab-ui is shared with Architect
+  more. They stay in the mod on purpose (sync keeps them in step with `assets-src`), but editing them changes
+  nothing in game. A change there must be ported to lab-ui's `assets/lab_ui/` to be seen in game. lab-ui is shared with Architect
   and Steward: notify them of API changes (lab-ui's AGENTS.md).
 
 ## Decisions
@@ -435,10 +436,12 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   UiStyle, TextUtil, UiBits, DisplayDraw, ScreenStyle, SpeechBubble), their three tests (now in lab-ui) and the 114 kit
   sprite files (byte-identical in lab-ui). The agent-shaped helpers lab-ui dropped (agent name colours and names, the
   user, portraits, `ScreenStyle.name`, the speech bubbles' addressees) are in `client.hud.AgentBits`; Guard kinds carry
-  the mod id. Gradle builds lab-ui from a checkout when it finds one (composite build: `lab_ui.dir` / `LAB_UI_DIR`,
-  `../../LarattaLabs/lab-ui` from `mod/`, `../../lab-ui`, `~/Developer/LarattaLabs/lab-ui`), else fetches it from GitHub
+  the mod id. Gradle builds lab-ui from a checkout only when it is clean and exactly at the tag `v<lab_ui_version>`
+  (`../../LarattaLabs/lab-ui` from `mod/`, `../../lab-ui`, `~/Developer/LarattaLabs/lab-ui`; `lab_ui.dir` / `LAB_UI_DIR`
+  forces one for lab-ui development, with a loud "unreleased" warning), else fetches the published jar from GitHub
   Packages with a token (`GITHUB_TOKEN=$(gh auth token)` works); with neither it stops and says what to do (mod/DEV.md
-  "lab-ui").
+  "lab-ui"). `tools/hardcore-setup.mjs` gives its stable build gh's token (that gradle child only, `--no-daemon`, never
+  logged), so Hardcore updates bundle the published release.
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 

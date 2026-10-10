@@ -234,9 +234,27 @@ export const realDeps = {
     const r = spawnSync(process.execPath, [path.join(stable, 'tools', 'foreman-daemon.mjs'), 'stop', '--profile', profile, '--home', home], { cwd: stable, stdio: 'inherit', timeout: 60_000 });
     if (r.status !== 0) throw new Error(`could not stop the Foreman for profile ${profile} (exit ${r.status}); stop it with ${path.join(stable, 'tools', 'foreman-daemon.sh')} stop and re-run`);
   },
+  /** `gh auth token`, or null (no gh, not logged in). Kept in memory only: never logged or written. */
+  ghToken() {
+    const r = spawnSync('gh', ['auth', 'token'], { encoding: 'utf8', timeout: 15_000 });
+    const t = r.status === 0 ? r.stdout.trim() : '';
+    return t || null;
+  },
   now: () => new Date(),
   log: (line) => console.log(line),
 };
+
+/**
+ * Credentials for the stable mod build's lab-ui fetch (GitHub Packages; mod/DEV.md "lab-ui"), for that one gradle child
+ * process only: never the Foreman's environment, a file or the log. A GITHUB_TOKEN already set wins; else gh's token.
+ * -> { env: extra env vars for the gradle child, note: the line to print (no secret in it) }
+ */
+export function labUiCredentials(env, ghToken) {
+  if (env.GITHUB_TOKEN) return { env: {}, note: 'lab-ui: GitHub Packages, credentials from GITHUB_TOKEN' };
+  const t = ghToken();
+  if (t) return { env: { GITHUB_TOKEN: t }, note: 'lab-ui: GitHub Packages, credentials from gh' };
+  return { env: {}, note: 'lab-ui: no token (gh missing or logged out): only a clean lab-ui checkout at the release tag or the Gradle cache can supply it' };
+}
 
 /** The files the instance's PreLaunchCommand needs in the stable checkout. */
 export const DAEMON_FILES = ['tools/foreman-daemon.sh', 'tools/foreman-daemon.mjs'];
@@ -476,9 +494,14 @@ export async function setup(opt, deps = realDeps) {
     say(`  using ${jar}`);
   } else {
     plan(`build the mod in ${path.join(opt.stable, 'mod')} (gradlew build, Java 25)`);
+    // lab-ui: a clean checkout at the release tag if mod/settings.gradle finds one, else the published jar from GitHub
+    // Packages. The token goes to this gradle child only, with --no-daemon so no daemon outlives the build holding it.
+    const cred = labUiCredentials(process.env, () => deps.ghToken());
+    say(`  ${cred.note}`);
     if (apply) {
       const javaHome = process.env.JAVA_HOME && /25/.test(process.env.JAVA_HOME) ? process.env.JAVA_HOME : DEFAULTS.java;
-      deps.exec('/bin/bash', ['gradlew', 'build', '--console=plain', '-q'], { cwd: path.join(opt.stable, 'mod'), env: { ...process.env, JAVA_HOME: javaHome } });
+      const args = ['gradlew', 'build', '--console=plain', '-q', ...(cred.env.GITHUB_TOKEN ? ['--no-daemon'] : [])];
+      deps.exec('/bin/bash', args, { cwd: path.join(opt.stable, 'mod'), env: { ...process.env, JAVA_HOME: javaHome, ...cred.env } });
       jar = builtJar(opt.stable);
       if (!jar) throw new Error(`the build produced no agentcraft-*.jar in ${path.join(opt.stable, 'mod', 'build', 'libs')}`);
     }

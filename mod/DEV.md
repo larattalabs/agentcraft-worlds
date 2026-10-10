@@ -64,13 +64,15 @@ addressees), `PlateStack`, `Nameplate`/`PlateLayout`, `HudLayout`/toasts, `Statu
 `UiRules`. Guard kinds start with the mod id (`agentcraft_worlds.hud.goal`): Fabric loads one lab-ui for every mod.
 
 Where Gradle gets lab-ui (`mod/settings.gradle`, `mod/build.gradle`):
-1. **A lab-ui checkout**, built as part of this build (a composite `includeBuild`; Gradle swaps the Maven dependency
-   for it). First found: the gradle property `lab_ui.dir` or the env `LAB_UI_DIR` (an explicit path must be a lab-ui
-   checkout), else `../../LarattaLabs/lab-ui` from `mod/` (Noah's layout: the main checkout and agentcraft-stable),
-   `../../lab-ui` (lab-ui cloned next to this repo), `~/Developer/LarattaLabs/lab-ui` (worktrees sit deeper). Its
-   `mod_version` must equal `lab_ui_version`, else it is skipped with a warning. It builds whatever that checkout has
-   checked out (the version is checked, not the commit), so keep it on the release tag or on lab-ui's main.
-   `-Plab_ui.dir=none` turns this off. No token needed.
+1. **A lab-ui checkout at the release**, built as part of this build (a composite `includeBuild`; Gradle swaps the
+   Maven dependency for it), only when it is clean (no uncommitted changes to tracked files) and its HEAD is exactly the
+   tag `v<lab_ui_version>` (read with `git`; no git = not tagged). Looked for at `../../LarattaLabs/lab-ui` from `mod/`
+   (Noah's layout: the main checkout and agentcraft-stable), `../../lab-ui` (lab-ui cloned next to this repo) and
+   `~/Developer/LarattaLabs/lab-ui` (worktrees sit deeper). A checkout in any other state is skipped with a one-line
+   note ("lab-ui: not using the checkout …: HEAD is not at v0.1.0") and Gradle falls through to GitHub Packages. No
+   token needed. **lab-ui development:** `-Plab_ui.dir=<path>` or `LAB_UI_DIR=<path>` forces that checkout whatever its
+   state, with a loud warning that the nested lab_ui is unreleased (don't ship that jar); `-Plab_ui.dir=none` turns
+   checkouts off.
 2. **GitHub Packages** (`https://maven.pkg.github.com/larattalabs/lab-ui`), which wants a token even for public
    packages: `gpr.user` / `gpr.key` in `$GRADLE_USER_HOME/gradle.properties`, or `GITHUB_ACTOR` / `GITHUB_TOKEN` in the
    environment, e.g. `GITHUB_TOKEN=$(gh auth token) ./gradlew build` (gh's default `repo` scope was enough here on
