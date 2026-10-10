@@ -72,7 +72,7 @@ Noah plays a survival Hardcore world in the Prism instance `MC-Hardcore-26.3`. I
 - Update it only when Noah says, with Prism closed (check `pgrep -f "Prism Launcher.app"`):
   `node tools/hardcore-setup.mjs --no-prelaunch` (dry run), then `--apply`. It backs up the saves, `instance.cfg` and
   `mods/` first.
-- After an update, launch to the title screen only. Check `latest.log`: 100 mods, LWJGL 3.4.3, no "Incompatible", no
+- After an update, launch to the title screen only. Check `latest.log`: 101 mods (100 before lab-ui was bundled), LWJGL 3.4.3, no "Incompatible", no
   AgentCraft errors, Foreman linked. Then close the game by its PID, quit Prism, and stop the Foreman
   (`~/Developer/agentcraft-stable/tools/foreman-daemon.sh stop`).
 - Don't change Noah's real `~/.agentcraft/config.json` unless asked; back it up first if you do.
