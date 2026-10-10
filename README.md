@@ -391,17 +391,18 @@ On macOS, install Java 25 with `brew install openjdk@25`; on Linux, your distrib
 (Arch: `pacman -S jdk25-openjdk`) or point `JAVA_HOME` at one. The launcher selects that JDK without
 changing your system Java.
 
-The mod's shared UI library, [lab-ui](https://github.com/larattalabs/lab-ui), comes from GitHub Packages, which wants
-a token even though it is public: run the first build with `GITHUB_TOKEN=$(gh auth token)` exported (or see
-[mod/DEV.md, "lab-ui"](mod/DEV.md#lab-ui-the-shared-ui-library)). Without a token, clone lab-ui next to this repo and
-the build compiles it from there:
+The mod's shared UI library, [lab-ui](https://github.com/larattalabs/lab-ui), is built from a lab-ui checkout next to
+this repo when there is one (no token needed):
 
 ```sh
 git clone https://github.com/larattalabs/lab-ui
 (cd lab-ui && git checkout v0.1.0)
 ```
 
-Then:
+Or fetch it once from GitHub Packages, which wants a token even though it is public. Do it as a one-off build into the
+launcher's Gradle cache rather than exporting the token, which the game and the agents would inherit (after
+`git clone` and `cd` below): `(cd mod && GRADLE_USER_HOME=../.gradle-home GITHUB_TOKEN=$(gh auth token) ./gradlew build)`.
+More in [mod/DEV.md, "lab-ui"](mod/DEV.md#lab-ui-the-shared-ui-library). Then:
 
 ```sh
 git clone https://github.com/larattalabs/agentcraft-worlds

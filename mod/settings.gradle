@@ -61,7 +61,9 @@ if (labUiDir != null) {
 		throw new GradleException("""lab-ui ${labUiVersion} (dev.larattalabs:lab_ui) not found. Do one of these, then build again:
   - clone lab-ui next to this repo:  git clone https://github.com/larattalabs/lab-ui ${sibling} && git -C ${sibling} checkout v${labUiVersion}
     (or point lab_ui.dir / LAB_UI_DIR at a checkout)
-  - or fetch it from GitHub Packages:  export GITHUB_TOKEN=\$(gh auth token)
+  - or fetch it once from GitHub Packages (it stays in the Gradle cache; don't export the token into a launcher's
+    environment, the game, Foreman and agents would inherit it):
+      cd ${modDir.canonicalPath} && GRADLE_USER_HOME=${userHome.canonicalPath} GITHUB_TOKEN=\$(gh auth token) ./gradlew build
     (on 401/403 give the token read:packages: gh auth refresh -s read:packages)
 See mod/DEV.md "lab-ui".""")
 	}
