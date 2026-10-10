@@ -214,7 +214,7 @@ final class HubDev {
 					JsonObject o = new JsonObject();
 					o.addProperty("action", action);
 					// only a sent answer is ok (the arm delay, a first Reject or a missing text are not)
-					o.addProperty("ok", msg != null && msg.startsWith(dev.agentcraft.client.hud.UiBits.CHECK));
+					o.addProperty("ok", msg != null && msg.startsWith(dev.larattalabs.labui.client.hud.UiBits.CHECK));
 					o.addProperty("message", msg);
 					return o;
 				});

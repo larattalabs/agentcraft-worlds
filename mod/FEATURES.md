@@ -317,7 +317,7 @@ plate on screen once settled:
 - Text on a camera-facing plate needs a real lift towards the camera: the font's polygon offset does not
   separate it from a coplanar plate, and at close range whole glyphs lost the depth test ("Marlow" read
   "M r o"). `Nameplate` lifts its text by `TEXT_LIFT` (0.0003) x the camera distance, well under the per-rank
-  nudge. Wave 3 applies the same rule to every world UI text (pure `ui.TextDepth`, `TextDepthTest`): billboards and
+  nudge. Wave 3 applies the same rule to every world UI text (pure `TextDepth`, now in lab-ui with its test): billboards and
   cards call `WorldUi.liftText(poseStack)` after their background (the lift is computed from the pose: its translation
   is the camera-relative origin, its z column the local z, whichever way faces the camera), face displays stretch their
   layer steps with `TextDepth.faceDepthScale` so the smallest text-over-background gap is at least that fraction,
@@ -333,7 +333,7 @@ rank, rect, ...}`); `settle:true` snaps walkers to their targets and plates to t
 before a shot. `dev.state.agents.plateOverlaps` counts overlapping plates in the last frame (0 when
 settled).
 
-### Agent life (Phase 3, `client.agents`: `AgentLife`, `AgentModel`, `AgentParticles`, `SpeechBubble`, `PlateStack`, `Seats`, `AgentCardScreen`)
+### Agent life (Phase 3, `client.agents`: `AgentLife`, `AgentModel`, `AgentParticles`, `SpeechBubble` (lab-ui), `PlateStack`, `Seats`, `AgentCardScreen`)
 
 Every `ClientAgentEntity` has an `AgentLife` (`entity.life()`), simulated per client tick
 (deterministic per agent, seeded by its id) and interpolated per frame; nothing allocates per frame
@@ -390,8 +390,8 @@ except the submit nodes themselves.
   plate that cannot find a free spot on screen overlaps cleanly by rank instead of flying off screen,
   a slide never runs through a plate placed before it (it jumps), and leader lines pass behind other
   plates and bubbles and the podium's reserved bubble (gaps cut where they cross: `AgentRenderState.leaderGaps`, computed
-  by the pure `ui.LeaderGaps`: sorted, merged, and more crossings than the four slots merge into one longer gap, so a
-  line never runs across a plate; `LeaderGapsTest` checks that property on random crowds).
+  by the pure `LeaderGaps` (lab-ui): sorted, merged, and more crossings than the four slots merge into one longer gap, so a
+  line never runs across a plate; lab-ui's `LeaderGapsTest` checks that property on random crowds).
 - **Agent card** (`AgentCardScreen`, empty-hand sneak + right-click an agent, or the Team tab / a task / the console roster): name/title/role, state, activity, task,
   **the decision it owns with a way to act on it**, decisions it filed that wait on you through
   another agent ("Filed d3 for you: merge of t4 (Wren's work)"), the last log lines, Message /
@@ -670,7 +670,7 @@ hidden.
   (builds a bay far from any HQ, around x=1000 z=1000, with the HQ's sizes: a 7x4 east-facing wall
   and three 3x2 monitors, framed like the HQ cameras; its setup clears that box), `node tools/shoot.mjs <scene> --port <dev> --foreman <port>`.
 
-Drawing helpers shared by both (`client.monitor.DisplayDraw`): opaque flat rects/gradients in one
+Drawing helpers shared by both (lab-ui's `DisplayDraw`): opaque flat rects/gradients in one
 custom-geometry node per screen (a 4x4 white `DynamicTexture` on a no-blend copy of the world text
 pipeline), z-aware nine-slice with the kit card's translucent shadow row trimmed, opaque portrait
 quads, cached dot sprite ids. Measured in the live sim at speed 4 with the test room (9 monitor

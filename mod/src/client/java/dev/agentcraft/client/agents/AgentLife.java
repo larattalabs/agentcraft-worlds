@@ -2,8 +2,10 @@ package dev.agentcraft.client.agents;
 
 import dev.agentcraft.client.foreman.Protocol.AgentSay;
 import dev.agentcraft.client.foreman.Protocol.AgentState;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
+import dev.larattalabs.labui.client.world.SpeechBubble;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
@@ -89,7 +91,7 @@ public final class AgentLife {
 	private int nextGreet;
 	private boolean playerWasNear;
 	// conversation
-	final SpeechBubble bubble = new SpeechBubble();
+	final SpeechBubble bubble = new SpeechBubble(AgentBits.ADDRESSEES);
 	private @Nullable String listenTo;
 	private int listenUntil;
 	// state reactions
@@ -196,7 +198,7 @@ public final class AgentLife {
 	// ---------------------------------------------------------------- events (client thread)
 
 	void onSay(AgentSay say, int tick) {
-		bubble.show(say, age);
+		bubble.show(say.text(), say.to(), say.ts(), age);
 	}
 
 	/** Another agent talks to this one: look at them while they talk. */
@@ -227,7 +229,7 @@ public final class AgentLife {
 					particles.sparkle(e, EYE + 0.15 + sitOffset(), this);
 				}
 			}
-			case "say" -> bubble.show(new dev.agentcraft.client.foreman.Protocol.AgentSay(e.agentId(), text, to, System.currentTimeMillis()), age);
+			case "say" -> bubble.show(text, to, System.currentTimeMillis(), age);
 			default -> {
 				return false;
 			}

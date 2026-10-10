@@ -10,3 +10,98 @@ pluginManagement {
 }
 
 rootProject.name = 'agentcraft'
+
+// lab-ui (dev.larattalabs:lab_ui), the shared client UI library (mod/DEV.md "lab-ui"). Where Gradle gets it:
+// 1. A lab-ui checkout, built as part of this build (composite includeBuild; Gradle swaps the Maven dependency for it),
+//    only when it is the release: clean (no uncommitted changes) and HEAD exactly at the tag v<lab_ui_version>. Looked
+//    for at ../../LarattaLabs/lab-ui from mod/ (the main checkout and agentcraft-stable), ../../lab-ui (lab-ui cloned next
+//    to this repo) and ~/Developer/LarattaLabs/lab-ui (worktrees sit deeper); any other state is skipped with a note.
+//    lab-ui development: -Plab_ui.dir=<path> or LAB_UI_DIR=<path> forces that checkout whatever its state (a loud warning
+//    says the nested lab_ui is then unreleased); -Plab_ui.dir=none turns checkouts off.
+// 2. GitHub Packages (repository "LabUi" in build.gradle): needs a token (gh auth token works; a PAT needs read:packages), as
+//    gpr.user / gpr.key in $GRADLE_USER_HOME/gradle.properties or GITHUB_ACTOR / GITHUB_TOKEN in the environment. Never
+//    commit a token. Once fetched it is in the Gradle cache, so --offline works without the token.
+def labUiVersion = providers.gradleProperty("lab_ui_version").get()
+def labUiTag = "v" + labUiVersion
+def labUiExplicit = providers.gradleProperty("lab_ui.dir").orElse(providers.environmentVariable("LAB_UI_DIR")).getOrNull()
+def modDir = settingsDir
+
+// git output for a checkout, or null when git is missing or fails (then the checkout counts as not tagged).
+def gitOut = { File dir, List<String> args ->
+	try {
+		def r = providers.exec {
+			commandLine(["git", "-C", dir.absolutePath] + args)
+			ignoreExitValue = true
+		}
+		return r.result.get().exitValue == 0 ? r.standardOutput.asText.get() : null
+	} catch (Exception ignored) {
+		return null
+	}
+}
+// null when dir is a clean checkout at labUiTag, else why not.
+def notReleased = { File dir ->
+	def tags = gitOut(dir, ["tag", "--points-at", "HEAD"])
+	if (tags == null) {
+		return "git can't read it"
+	}
+	if (!tags.readLines()*.trim().contains(labUiTag)) {
+		return "HEAD is not at ${labUiTag}"
+	}
+	def status = gitOut(dir, ["status", "--porcelain", "--untracked-files=no"])
+	if (status == null || !status.trim().isEmpty()) {
+		return "it has uncommitted changes"
+	}
+	return null
+}
+def isLabUi = { File c -> new File(c, "gradle.properties").isFile() && new File(c, "settings.gradle").isFile() }
+
+File labUiDir = null
+if (labUiExplicit != null && labUiExplicit != "none") {
+	def c = new File(labUiExplicit)
+	if (!isLabUi(c)) {
+		throw new GradleException("lab-ui: ${c.canonicalPath} (lab_ui.dir / LAB_UI_DIR) is not a lab-ui checkout.")
+	}
+	labUiDir = c.canonicalFile
+	def why = notReleased(labUiDir)
+	if (why != null) {
+		logger.warn("lab-ui: UNRELEASED lab_ui from ${labUiDir} (${why}), forced by lab_ui.dir / LAB_UI_DIR. The jar nested in " +
+			"this build is not lab-ui ${labUiVersion} as published: don't ship it.")
+	} else {
+		logger.lifecycle("lab-ui: ${labUiTag} from ${labUiDir} (lab_ui.dir / LAB_UI_DIR)")
+	}
+} else if (labUiExplicit == null) {
+	for (File c : [
+		new File(modDir, "../../LarattaLabs/lab-ui"),
+		new File(modDir, "../../lab-ui"),
+		new File(System.getProperty("user.home"), "Developer/LarattaLabs/lab-ui"),
+	]) {
+		if (!isLabUi(c)) {
+			continue
+		}
+		def why = notReleased(c.canonicalFile)
+		if (why == null) {
+			labUiDir = c.canonicalFile
+			logger.lifecycle("lab-ui: ${labUiTag} from the checkout ${labUiDir}")
+			break
+		}
+		logger.lifecycle("lab-ui: not using the checkout ${c.canonicalPath}: ${why}")
+	}
+}
+
+if (labUiDir != null) {
+	includeBuild(labUiDir)
+} else {
+	def hasToken = providers.gradleProperty("gpr.key").orElse(providers.environmentVariable("GITHUB_TOKEN")).getOrNull()
+	def userHome = gradle.gradleUserHomeDir
+	def cached = new File(userHome, "caches/modules-2/files-2.1/dev.larattalabs/lab_ui/${labUiVersion}").isDirectory()
+	if (!hasToken && !cached) {
+		def sibling = new File(modDir, "../../lab-ui").canonicalPath
+		throw new GradleException("""lab-ui ${labUiVersion} (dev.larattalabs:lab_ui) not found. Do one of these, then build again:
+  - clone lab-ui next to this repo at the release:  git clone --branch ${labUiTag} https://github.com/larattalabs/lab-ui ${sibling}
+  - or fetch it once from GitHub Packages (it stays in the Gradle cache; don't export the token into a launcher's
+    environment, the game, Foreman and agents would inherit it):
+      cd ${modDir.canonicalPath} && GRADLE_USER_HOME=${userHome.canonicalPath} GITHUB_TOKEN=\$(gh auth token) ./gradlew build
+    (on 401/403 give the token read:packages: gh auth refresh -s read:packages)
+See mod/DEV.md "lab-ui".""")
+	}
+}

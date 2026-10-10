@@ -1,8 +1,9 @@
 package dev.agentcraft.client.agents;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import dev.agentcraft.client.ui.UiStyle;
-import dev.agentcraft.client.ui.WorldUi;
+import dev.larattalabs.labui.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.WorldUi;
+import dev.larattalabs.labui.client.world.SpeechBubble;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.util.Mth;

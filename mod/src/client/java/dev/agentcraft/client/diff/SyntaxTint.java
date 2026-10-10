@@ -1,6 +1,6 @@
 package dev.agentcraft.client.diff;
 
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Locale;

@@ -1,7 +1,7 @@
 package dev.agentcraft.client.hub;
 
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.gui.GuiGraphicsExtractor;

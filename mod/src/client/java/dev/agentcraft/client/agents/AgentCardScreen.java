@@ -7,18 +7,19 @@ import dev.agentcraft.client.decisions.DecisionsFeature;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Agent;
 import dev.agentcraft.client.foreman.Protocol.AgentState;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.DecisionKind;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
 import dev.agentcraft.client.foreman.Protocol.Task;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.ui.UiRules;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -465,7 +466,7 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 			g.blit(RenderPipelines.GUI_TEXTURED, portrait, ix, y, 0, 0, 20, 20, 20, 20);
 			textX = ix + 26;
 		}
-		Panels.text(g, font, ag.name(), textX, y + 1, UiStyle.agentOnLight(agentId));
+		Panels.text(g, font, ag.name(), textX, y + 1, AgentBits.agentOnLight(agentId));
 		String role = ag.role() == Protocol.AgentRole.LEAD ? "lead" : "worker";
 		String sub = (ag.title() != null ? ag.title() + " · " : "") + role;
 		Panels.text(g, font, TextUtil.ellipsize(font, sub, iw - (textX - ix)), textX, y + 12, muted);
@@ -564,7 +565,7 @@ public final class AgentCardScreen extends Screen implements dev.agentcraft.clie
 		if (f != null) {
 			Panels.sprite(g, Kit.TEXT_FIELD_FOCUSED, ix, y, iw, 18);
 			String tag = mode == Mode.FEEDBACK ? "changes" : "@" + ag.name();
-			int tagColor = mode == Mode.FEEDBACK ? UiStyle.color("paper.link") : UiStyle.agentOnLight(agentId);
+			int tagColor = mode == Mode.FEEDBACK ? UiStyle.color("paper.link") : AgentBits.agentOnLight(agentId);
 			int pw = Panels.pill(g, font, tag, ix + 3, y + 3, tagColor);
 			int fx = ix + 3 + pw + 4;
 			f.setX(fx);

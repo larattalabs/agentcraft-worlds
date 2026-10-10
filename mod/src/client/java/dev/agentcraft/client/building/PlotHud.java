@@ -1,11 +1,11 @@
 package dev.agentcraft.client.building;
 
 import dev.agentcraft.building.DesignSpec;
-import dev.agentcraft.client.hud.UiBits;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;

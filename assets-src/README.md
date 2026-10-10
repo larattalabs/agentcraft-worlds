@@ -158,13 +158,18 @@ the quads end up. Non-cube shapes still need `noOcclusion()`. Suggested luminanc
 
 ## GUI kit
 
-Sprites live in the vanilla GUI sprite atlas: `assets/agentcraft_worlds/textures/gui/sprites/kit/<name>.png`. Draw them
+The kit ships in **lab-ui** (dev.larattalabs:lab_ui), not in the mod: `sync.py` does not copy these sprites into
+`mod/` (`LAB_UI_OWNED`), and the game reads `kit.json`, `ui-style.json` and `palette.json` from lab-ui's `assets/lab_ui/`.
+A change made here must be ported to lab-ui to be seen in game (docs/FORK.md "Divergence rules"). Below, the
+generated files as `out/` has them (namespace `agentcraft_worlds`); in game the ids are `lab_ui:kit/<name>`.
+
+Sprites live in the vanilla GUI sprite atlas: `assets/<namespace>/textures/gui/sprites/kit/<name>.png`. Draw them
 with the Minecraft 26.3 (Mojang-named) API:
 
 ```java
 // graphics: net.minecraft.client.gui.GuiGraphicsExtractor
 graphics.blitSprite(RenderPipelines.GUI_TEXTURED,
-        Identifier.fromNamespaceAndPath("agentcraft_worlds", "kit/panel_paper"), x, y, w, h);
+        Identifier.fromNamespaceAndPath("lab_ui", "kit/panel_paper"), x, y, w, h);   // or Kit.PANEL_PAPER
 ```
 
 36 of the 78 sprites are stretchable and ship a `.png.mcmeta` with `gui.scaling` nine_slice insets, so

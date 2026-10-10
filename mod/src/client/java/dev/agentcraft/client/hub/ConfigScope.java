@@ -8,9 +8,10 @@ import com.google.gson.JsonPrimitive;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanJson;
 import dev.agentcraft.client.foreman.ForemanState;
+import dev.agentcraft.client.foreman.Protocol.Ack;
 import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.ProtocolSupport;
-import dev.agentcraft.client.foreman.Protocol.Ack;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
 import dev.agentcraft.hub.Staged;
@@ -135,7 +136,7 @@ final class ConfigScope {
 			String agent = key.substring(6);
 			Protocol.Repo r = Foreman.state() == null ? null : Foreman.state().repo(repoId);
 			String cur = r != null && r.settings() != null ? r.settings().roles().get(agent) : null;
-			return new SettingDef(key, "Role of " + dev.agentcraft.client.hud.UiBits.agentName(agent), "One of the repo's .claude/agents files: the "
+			return new SettingDef(key, "Role of " + AgentBits.agentName(agent), "One of the repo's .claude/agents files: the "
 				+ "agent's role, prompt and model in this repo.", "agents", SettingDef.STRING, List.of(), null, null, new JsonPrimitive(cur == null ? ""
 					: cur), new JsonPrimitive(""), cur == null ? "default" : "file", true, null);
 		}
@@ -412,7 +413,7 @@ final class ConfigScope {
 		}
 		confirm = null;
 		busy = true;
-		setNote("Applying " + dev.agentcraft.client.hud.UiBits.plural(staged.size(), "change", "changes") + "…", false);
+		setNote("Applying " + dev.larattalabs.labui.client.hud.UiBits.plural(staged.size(), "change", "changes") + "…", false);
 		JsonArray changes = staged.changes();
 		List<String> keys = new ArrayList<>(staged.edits().keySet());
 		CompletableFuture<HubGoals.Note> out = new CompletableFuture<>();
@@ -444,7 +445,7 @@ final class ConfigScope {
 				if (!r.restartRequired().isEmpty() && Foreman.state() != null) {
 					Foreman.state().addRestartRequired(r.restartRequired());
 				}
-				StringBuilder b = new StringBuilder("Applied " + dev.agentcraft.client.hud.UiBits.plural(keys.size(), "change", "changes"));
+				StringBuilder b = new StringBuilder("Applied " + dev.larattalabs.labui.client.hud.UiBits.plural(keys.size(), "change", "changes"));
 				if (!r.restartRequired().isEmpty()) {
 					b.append(" · ").append(r.restartRequired().size()).append(" after a restart");
 				}

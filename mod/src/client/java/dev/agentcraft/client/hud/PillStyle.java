@@ -1,12 +1,13 @@
 package dev.agentcraft.client.hud;
 
 import dev.agentcraft.client.foreman.Protocol.GoalStatus;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
 import dev.agentcraft.hud.AlertLine;
 import dev.agentcraft.hud.HudPeek;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -413,7 +414,7 @@ final class PillStyle {
 		int cx = x;
 		for (int i = 0; i < m.working.size(); i++) {
 			String id = m.working.get(i);
-			String name = UiBits.agentName(id);
+			String name = AgentBits.agentName(id);
 			int left = m.working.size() - i;
 			String rest = "+" + left;
 			int need = (i > 0 ? sepW : 0) + font.width(name) + dotsW;
@@ -427,7 +428,7 @@ final class PillStyle {
 				g.text(font, SEP, cx, y, muted, false);
 				cx += sepW;
 			}
-			g.text(font, name, cx, y, UiStyle.withAlpha(UiBits.nameOnDark(id), alpha), false);
+			g.text(font, name, cx, y, UiStyle.withAlpha(AgentBits.nameOnDark(id), alpha), false);
 			cx += font.width(name);
 		}
 		// working: a soft cycling ellipsis

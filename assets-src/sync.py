@@ -5,7 +5,9 @@
     python assets-src/sync.py --check    # exit 1 if the mod is out of date (CI / pre-build)
     python assets-src/sync.py --dest DIR # sync into another assets dir (tests)
 
-Only files under out/assets are touched. Files the mod track owns (e.g. assets/agentcraft_worlds/icon.png)
+Only files under out/assets are touched. Paths lab-ui owns (LAB_UI_OWNED: the GUI kit sprites, which ship in the
+lab_ui library jar as lab_ui:kit/<name>) are not synced into the mod; a change to them is ported to lab-ui by hand
+(docs/FORK.md "Divergence rules"). Files the mod track owns (e.g. assets/agentcraft_worlds/icon.png)
 are never deleted: the script records what it synced in <dest>/agentcraft_worlds/.art-sync.json and only
 prunes files it synced before.
 
@@ -34,6 +36,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "out" / "assets"
 DST_DEFAULT = HERE.parent / "mod" / "src" / "main" / "resources" / "assets"
+# Generated here, shipped by lab-ui (dev.larattalabs:lab_ui, assets/lab_ui/...): never copied into the mod.
+LAB_UI_OWNED = ("agentcraft_worlds/textures/gui/sprites/kit/",)
 
 
 def digest_bytes(b: bytes) -> str:
@@ -105,7 +109,7 @@ def main() -> int:
     ledger = json.loads(LEDGER.read_text(encoding="utf-8")) if LEDGER.exists() else {}
     previous = set(ledger.get("files", []))
     prev_keys = {k: set(v) for k, v in ledger.get("lang_keys", {}).items()}
-    files = sorted(p for p in SRC.rglob("*") if p.is_file())
+    files = sorted(p for p in SRC.rglob("*") if p.is_file() and not p.relative_to(SRC).as_posix().startswith(LAB_UI_OWNED))
     rel = [p.relative_to(SRC).as_posix() for p in files]
 
     writes, same, notes, lang_keys = [], 0, [], {}

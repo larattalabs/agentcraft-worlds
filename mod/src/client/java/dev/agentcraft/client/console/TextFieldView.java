@@ -1,9 +1,9 @@
 package dev.agentcraft.client.console;
 
-import dev.agentcraft.client.hud.UiBits;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -88,7 +88,7 @@ public final class TextFieldView {
 		int ink = UiBits.ink();
 		if (m.isEmpty() && st.placeholder() != null) {
 			// cut to the field (a long placeholder in a narrow field ran past its border at 426x240)
-			g.text(font, dev.agentcraft.client.ui.TextUtil.ellipsize(font, st.placeholder(), Math.max(0, x + w - p.right() - tx)), tx, ty,
+			g.text(font, dev.larattalabs.labui.client.ui.TextUtil.ellipsize(font, st.placeholder(), Math.max(0, x + w - p.right() - tx)), tx, ty,
 				UiStyle.color("ink_ui.ghost_on_paper", 0xFFBCAD95), false);
 		}
 		int caretX = tx;

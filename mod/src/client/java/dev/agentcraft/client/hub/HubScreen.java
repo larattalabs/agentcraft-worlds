@@ -14,11 +14,11 @@ import dev.agentcraft.client.foreman.Protocol.Design;
 import dev.agentcraft.client.foreman.Protocol.ForemanStatus;
 import dev.agentcraft.client.foreman.Protocol.UsageWindow;
 import dev.agentcraft.client.hud.Keys;
-import dev.agentcraft.client.hud.UiBits;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -473,7 +473,7 @@ public final class HubScreen extends Screen {
 		int by = y;
 		int bh = footerY - 4 - y;
 		// a failing tab is logged once and counted (dev.state ui.guards "hub.draw"), never a crash of the game
-		boolean drawn = dev.agentcraft.ui.Guard.call("hub.draw", () -> {
+		boolean drawn = dev.larattalabs.labui.ui.Guard.call("agentcraft_worlds.hub.draw", () -> {
 			switch (tab) {
 				case BUILDINGS -> buildingsTab.draw(g, cx, by, cw, bh, mouseX, mouseY);
 				case STATUS -> status.draw(g, cx, by, cw, bh, mouseX, mouseY);

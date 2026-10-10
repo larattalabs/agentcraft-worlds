@@ -39,6 +39,13 @@ Parts:
 All of these must pass before a branch is offered for merge.
 - **Mod:** `cd mod && JAVA_HOME=/opt/homebrew/opt/openjdk@25 bash gradlew build --console=plain -q`
   (JUnit tests included). In a worktree, reuse the main checkout's cache: `GRADLE_USER_HOME=<main checkout>/.gradle-home`.
+  The mod bundles **lab-ui** (`dev.larattalabs:lab_ui`, the shared UI library; source in `~/Developer/LarattaLabs/lab-ui`).
+  Gradle builds it from a lab-ui checkout only when that is clean and exactly at the tag `v<lab_ui_version>` (else it
+  notes why and skips it; `-Plab_ui.dir=` / `LAB_UI_DIR` forces one for lab-ui development, loudly marked unreleased),
+  otherwise from GitHub Packages with a token (`GITHUB_TOKEN=$(gh auth token)` for a one-off build; `hardcore-setup.mjs`
+  does this itself for the stable build). Never commit a token or export
+  `GITHUB_TOKEN` into a launcher's environment (the game, Foreman and agents inherit it). Changes to the kit, `Guard`, `UiStyle`, `UiBits`, `SpeechBubble` etc. go to lab-ui as a
+  new version, not into this repo (docs/FORK.md "Divergence rules", mod/DEV.md "lab-ui").
 - **Foreman:** `cd foreman && npm ci && npm run check` (tsc, vitest, protocol doc and Java mirror checks). After changing
   `src/protocol.ts`: `npm run gen:java-protocol` and `npm run gen:protocol-doc`.
   `test/claude-goal-restart.test.ts` and `codex-fork` "interrupts a turn" are known timing flakes under load: rerun them
@@ -66,7 +73,7 @@ Noah plays a survival Hardcore world in the Prism instance `MC-Hardcore-26.3`. I
 - Update it only when Noah says, with Prism closed (check `pgrep -f "Prism Launcher.app"`):
   `node tools/hardcore-setup.mjs --no-prelaunch` (dry run), then `--apply`. It backs up the saves, `instance.cfg` and
   `mods/` first.
-- After an update, launch to the title screen only. Check `latest.log`: 100 mods, LWJGL 3.4.3, no "Incompatible", no
+- After an update, launch to the title screen only. Check `latest.log`: 101 mods (100 before lab-ui was bundled), LWJGL 3.4.3, no "Incompatible", no
   AgentCraft errors, Foreman linked. Then close the game by its PID, quit Prism, and stop the Foreman
   (`~/Developer/agentcraft-stable/tools/foreman-daemon.sh stop`).
 - Don't change Noah's real `~/.agentcraft/config.json` unless asked; back it up first if you do.

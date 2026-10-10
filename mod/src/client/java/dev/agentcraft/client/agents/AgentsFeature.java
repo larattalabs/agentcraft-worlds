@@ -11,7 +11,7 @@ import dev.agentcraft.client.foreman.Protocol;
 import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
 import dev.agentcraft.entity.ModEntities;
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import dev.agentcraft.ui.UiRules;
 import java.util.List;
 import java.util.Map;
@@ -92,21 +92,21 @@ public final class AgentsFeature {
 			AgentRenderer.provide(ctx);
 			return new NoopRenderer<>(ctx);
 		});
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agents.tick", () -> AgentManager.get().tick(mc)));
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.agents.tick", () -> AgentManager.get().tick(mc)));
 		OutdoorRoutes.registerDev();
 		Routines.registerDev();
 		// nameplate declutter: every agent's render state is extracted, nothing is submitted yet
-		LevelExtractionEvents.END_EXTRACTION.register(ctx -> Guard.run("agents.plates", () -> PlateLayout.layout(ctx.levelState())));
+		LevelExtractionEvents.END_EXTRACTION.register(ctx -> Guard.run("agentcraft_worlds.agents.plates", () -> PlateLayout.layout(ctx.levelState())));
 		Foreman.addListener(new ForemanListener() {
 			@Override
 			public void onSnapshot(ForemanState state) {
 				AgentManager.get().onSnapshot();
-				Guard.run("routines.snapshot", () -> Routines.get().onSnapshot(state));
+				Guard.run("agentcraft_worlds.routines.snapshot", () -> Routines.get().onSnapshot(state));
 			}
 
 			@Override
 			public void onMemory(Protocol.@Nullable MemoryEntry previous, Protocol.MemoryEntry entry) {
-				Guard.run("routines.memory", () -> Routines.get().onMemory(previous, entry, Foreman.state()));
+				Guard.run("agentcraft_worlds.routines.memory", () -> Routines.get().onMemory(previous, entry, Foreman.state()));
 			}
 
 			@Override

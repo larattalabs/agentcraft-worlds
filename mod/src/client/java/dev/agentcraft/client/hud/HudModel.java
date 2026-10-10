@@ -16,6 +16,7 @@ import dev.agentcraft.client.foreman.Protocol.UsageWindow;
 import dev.agentcraft.hud.AlertLine;
 import dev.agentcraft.hud.HudPeek;
 import dev.agentcraft.hud.HudRules;
+import dev.larattalabs.labui.client.hud.UiBits;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;

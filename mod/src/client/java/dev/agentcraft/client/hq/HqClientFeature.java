@@ -1,6 +1,6 @@
 package dev.agentcraft.client.hq;
 
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.agentcraft.block.DecisionPodiumBlock;
@@ -12,7 +12,7 @@ import dev.agentcraft.block.entity.StatusLampBlockEntity;
 import dev.agentcraft.client.dev.DevBridge;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import dev.agentcraft.building.Buildings;
 import dev.agentcraft.building.Routing;
 import dev.agentcraft.layout.Anchors;
@@ -54,7 +54,7 @@ public final class HqClientFeature {
 
 	public static void init() {
 		BlockEntityRenderers.register(ModBlockEntities.STATUS_LAMP, ctx -> new StatusLampRenderer());
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hq.tick", () -> {
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.hq.tick", () -> {
 			HqWorldDriver.tick(mc);
 			ambience(mc);
 		}));

@@ -9,14 +9,15 @@ import dev.agentcraft.client.foreman.Protocol.AgentRole;
 import dev.agentcraft.client.foreman.Protocol.CiStatus;
 import dev.agentcraft.client.foreman.Protocol.LogEntry;
 import dev.agentcraft.client.foreman.Protocol.LogKind;
-import dev.agentcraft.client.monitor.LogRows;
-import dev.agentcraft.client.monitor.MonitorFeature;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.TaskStatus;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.client.hud.AgentBits;
+import dev.agentcraft.client.monitor.LogRows;
+import dev.agentcraft.client.monitor.MonitorFeature;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -285,7 +286,7 @@ public class TaskScreen extends Screen implements dev.agentcraft.client.ui.HasPa
 			Identifier framed = AgentCraft.id("textures/gui/portrait/" + t.assignee() + "_framed.png");
 			g.blit(RenderPipelines.GUI_TEXTURED, framed, x, y, 0, 0, 20, 20, 20, 20);
 			String n = a != null ? a.name() : t.assignee();
-			Panels.text(g, font, n, x + 25, y + 1, UiStyle.agentOnLight(t.assignee()));
+			Panels.text(g, font, n, x + 25, y + 1, AgentBits.agentOnLight(t.assignee()));
 			String role = a != null && a.title() != null ? a.title() : a != null ? a.role().wire() : "";
 			Panels.text(g, font, role, x + 25 + font.width(n) + 6, y + 1, muted);
 			if (a != null) {
@@ -487,7 +488,7 @@ public class TaskScreen extends Screen implements dev.agentcraft.client.ui.HasPa
 		if (agent != null) {
 			Panels.sprite(g, Kit.button(false, enabled ? hover ? "hover" : "normal" : "disabled"), x, y, w, h);
 			g.blit(RenderPipelines.GUI_TEXTURED, AgentCraft.id("textures/gui/portrait/" + agent + ".png"), x + 5, y + 5, 0, 0, 8, 8, 8, 8);
-			Panels.text(g, font, label, x + 17, y + 5, UiStyle.agentOnLight(agent));
+			Panels.text(g, font, label, x + 17, y + 5, AgentBits.agentOnLight(agent));
 			return;
 		}
 		if (primary && enabled) {

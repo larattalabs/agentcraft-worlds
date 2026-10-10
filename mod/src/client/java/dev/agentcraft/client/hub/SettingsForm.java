@@ -11,14 +11,15 @@ import dev.agentcraft.client.console.TextKeys;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.ProtocolSupport;
-import dev.agentcraft.client.hud.UiBits;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.hub.SecretSettings;
 import dev.agentcraft.hub.SettingDef;
 import dev.agentcraft.hub.SettingsLogic;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -340,7 +341,7 @@ final class SettingsForm {
 				int n = 0;
 				for (String a : all) {
 					boolean on = sel.contains(a);
-					String lab = (on && orderMatters(d) ? sel.indexOf(a) + 1 + "·" : "") + UiBits.agentName(a);
+					String lab = (on && orderMatters(d) ? sel.indexOf(a) + 1 + "·" : "") + AgentBits.agentName(a);
 					int cw = chipW(lab);
 					if (cx > x && cx + cw > x + w) {
 						cx = x;

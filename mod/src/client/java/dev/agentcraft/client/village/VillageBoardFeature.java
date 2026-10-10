@@ -27,7 +27,7 @@ import dev.agentcraft.client.world.StationInteractions;
 import dev.agentcraft.client.world.StationRenderer;
 import dev.agentcraft.hub.InboxModel;
 import dev.agentcraft.trophy.TrophyEvents;
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import dev.agentcraft.village.VillageBoard;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -92,8 +92,8 @@ public final class VillageBoardFeature {
 
 	public static void init() {
 		BlockEntityRenderers.register(ModBlockEntities.VILLAGE_BOARD, ctx -> new VillageBoardRenderer());
-		StationInteractions.onUse(ModBlocks.VILLAGE_BOARD, (player, pos, state, be) -> Guard.run("village.board.use", VillageBoardFeature::use));
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("village.board.tick", () -> tick(mc)));
+		StationInteractions.onUse(ModBlocks.VILLAGE_BOARD, (player, pos, state, be) -> Guard.run("agentcraft_worlds.village.board.use", VillageBoardFeature::use));
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.village.board.tick", () -> tick(mc)));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(() -> {
 			VIEWS.clear();
 			hung = List.of();

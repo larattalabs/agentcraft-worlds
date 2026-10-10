@@ -389,7 +389,20 @@ AgentCraft is built to point at code you care about.
 
 On macOS, install Java 25 with `brew install openjdk@25`; on Linux, your distribution's Java 25 JDK
 (Arch: `pacman -S jdk25-openjdk`) or point `JAVA_HOME` at one. The launcher selects that JDK without
-changing your system Java. Then:
+changing your system Java.
+
+The mod's shared UI library, [lab-ui](https://github.com/larattalabs/lab-ui), is built from a lab-ui checkout next to
+this repo when there is one (no token needed):
+
+```sh
+git clone https://github.com/larattalabs/lab-ui
+(cd lab-ui && git checkout v0.1.0)
+```
+
+Or fetch it once from GitHub Packages, which wants a token even though it is public. Do it as a one-off build into the
+launcher's Gradle cache rather than exporting the token, which the game and the agents would inherit (after
+`git clone` and `cd` below): `(cd mod && GRADLE_USER_HOME=../.gradle-home GITHUB_TOKEN=$(gh auth token) ./gradlew build)`.
+More in [mod/DEV.md, "lab-ui"](mod/DEV.md#lab-ui-the-shared-ui-library). Then:
 
 ```sh
 git clone https://github.com/larattalabs/agentcraft-worlds
@@ -597,7 +610,7 @@ uses. Their monitors show tokens per turn instead of dollars.
 
 ```sh
 cd foreman && npm test                     # 898 tests
-cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows)
+cd mod && ./gradlew build                  # the mod (gradlew.bat on Windows; needs lab-ui, see Quick start)
 npm test --prefix tools                    # launcher, blueprint and QA tool tests
 node tools/qa.mjs --home .agentcraft-home  # capture the 10 shot QA gallery
 ```

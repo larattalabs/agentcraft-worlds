@@ -4,7 +4,6 @@ import com.mojang.blaze3d.platform.InputConstants;
 import dev.agentcraft.client.console.TextKeys;
 import dev.agentcraft.client.foreman.Foreman;
 import dev.agentcraft.client.foreman.ForemanState;
-import dev.agentcraft.client.foreman.Protocol;
 import dev.agentcraft.client.foreman.Protocol.Ack;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.DecisionKind;
@@ -13,14 +12,16 @@ import dev.agentcraft.client.foreman.Protocol.NotifyLevel;
 import dev.agentcraft.client.foreman.Protocol.Repo;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.Worktree;
+import dev.agentcraft.client.foreman.Protocol;
+import dev.agentcraft.client.hud.AgentBits;
 import dev.agentcraft.client.hud.Keys;
 import dev.agentcraft.client.hud.Toasts;
-import dev.agentcraft.client.hud.UiBits;
 import dev.agentcraft.client.permissions.PermissionBody;
-import dev.agentcraft.client.ui.Kit;
-import dev.agentcraft.client.ui.Panels;
-import dev.agentcraft.client.ui.TextUtil;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.hud.UiBits;
+import dev.larattalabs.labui.client.ui.Kit;
+import dev.larattalabs.labui.client.ui.Panels;
+import dev.larattalabs.labui.client.ui.TextUtil;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -745,21 +746,21 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		y += 18;
 
 		// agent row: who asks, and for a merge whose work it is
-		UiBits.framedPortrait(g, d.agentId(), x, y, 1);
-		String name = UiBits.agentName(d.agentId());
+		AgentBits.framedPortrait(g, d.agentId(), x, y, 1);
+		String name = AgentBits.agentName(d.agentId());
 		Worktree wt = d.kind() == DecisionKind.MERGE ? worktreeOf(d) : null;
 		int ax = x + 26;
-		g.text(font, name, ax, y + 1, UiBits.nameOnLight(d.agentId()), false);
+		g.text(font, name, ax, y + 1, AgentBits.nameOnLight(d.agentId()), false);
 		ax += font.width(name);
 		int room = cw - (ax - x);
 		if (d.kind() == DecisionKind.MERGE && wt != null && !wt.agentId().equals(d.agentId())) {
-			String worker = UiBits.agentName(wt.agentId());
+			String worker = AgentBits.agentName(wt.agentId());
 			String pre = " asks you to merge ";
 			String post = "'s work";
 			if (font.width(pre + worker + post) <= room) {
 				g.text(font, pre, ax, y + 1, UiBits.ink(), false);
 				ax += font.width(pre);
-				g.text(font, worker, ax, y + 1, UiBits.nameOnLight(wt.agentId()), false);
+				g.text(font, worker, ax, y + 1, AgentBits.nameOnLight(wt.agentId()), false);
 				ax += font.width(worker);
 				g.text(font, post, ax, y + 1, UiBits.ink(), false);
 			} else {
@@ -919,7 +920,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 		} else if (queue.size() > 1 && preview == null) {
 			Decision next = queue.get(((qi < 0 ? -1 : qi) + 1) % queue.size());
 			if (!next.id().equals(d.id())) {
-				st = "next: " + UiBits.agentName(next.agentId()) + " · " + DecisionQueue.kindLabel(next.kind());
+				st = "next: " + AgentBits.agentName(next.agentId()) + " · " + DecisionQueue.kindLabel(next.kind());
 			}
 		}
 		int stW = st == null ? 0 : Math.min(font.width(st), w - 50);
@@ -1035,7 +1036,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 			}
 			int rx = x + 6;
 			if (r.face() != null) {
-				UiBits.face(g, r.face(), rx, ly, 1);
+				AgentBits.face(g, r.face(), rx, ly, 1);
 				rx += 11;
 			}
 			for (Run run : r.runs()) {
@@ -1073,8 +1074,8 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 				}
 				// whose work + the stats, the worker's face first
 				List<Run> stat = new ArrayList<>();
-				String worker = UiBits.agentName(wt.agentId());
-				stat.add(new Run(worker, UiBits.nameOnLight(wt.agentId())));
+				String worker = AgentBits.agentName(wt.agentId());
+				stat.add(new Run(worker, AgentBits.nameOnLight(wt.agentId())));
 				stat.add(new Run("  ·  " + UiBits.plural(wt.files(), "file", "files") + "  ", ink));
 				stat.add(new Run("+" + wt.additions(), addFg));
 				stat.add(new Run(" −" + wt.deletions(), delFg));
@@ -1085,7 +1086,7 @@ public class DecisionScreen extends Screen implements dev.agentcraft.client.ui.H
 				} else if (ctxl.contains("tests: fail")) {
 					stat.add(new Run("  ·  tests fail", UiBits.errorText()));
 				}
-				rows.add(new Row(stat, 0, List.of(), UiBits.hasPortrait(wt.agentId()) ? wt.agentId() : null));
+				rows.add(new Row(stat, 0, List.of(), AgentBits.hasPortrait(wt.agentId()) ? wt.agentId() : null));
 			}
 			List<DiffLink.SummaryLine> files = diffs.get(d.id());
 			if (files != null && !files.isEmpty()) {

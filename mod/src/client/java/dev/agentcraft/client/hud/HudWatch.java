@@ -14,7 +14,7 @@ import dev.agentcraft.client.hub.HubTab;
 import dev.agentcraft.client.ui.HasParent;
 import dev.agentcraft.hud.HudPrefs;
 import dev.agentcraft.hud.HudRules;
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import java.util.concurrent.CompletableFuture;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -64,7 +64,7 @@ public final class HudWatch {
 			welcomeShown = false;
 			checking = false;
 		}));
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("hud.watch", () -> tick(mc)));
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.hud.watch", () -> tick(mc)));
 	}
 
 	static void joined() {

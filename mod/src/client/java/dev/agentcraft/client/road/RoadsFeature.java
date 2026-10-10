@@ -20,7 +20,7 @@ import dev.agentcraft.client.world.ServerTasks;
 import dev.agentcraft.layout.Anchor;
 import dev.agentcraft.layout.AnchorNames;
 import dev.agentcraft.layout.Anchors;
-import dev.agentcraft.ui.Guard;
+import dev.larattalabs.labui.ui.Guard;
 import dev.agentcraft.walk.OutdoorPlanner;
 import dev.agentcraft.walk.WalkRules;
 import java.util.ArrayList;
@@ -100,18 +100,18 @@ public final class RoadsFeature {
 	}
 
 	public static void init() {
-		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("roads.tick", () -> tick(mc)));
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> Guard.run("agentcraft_worlds.roads.tick", () -> tick(mc)));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(() -> {
 			preview = null;
 			routes.clear();
 			offers.clear();
 			lastBoxes.clear();
 		}));
-		LevelRenderEvents.COLLECT_SUBMITS.register(ctx -> Guard.run("roads.ghost", () -> RoadGhost.submit(ctx)));
-		HudElementRegistry.addLast(AgentCraft.id("hud/road_preview"), dev.agentcraft.client.ui.GuardedHud.of("hud.road_preview", new RoadHud()));
+		LevelRenderEvents.COLLECT_SUBMITS.register(ctx -> Guard.run("agentcraft_worlds.roads.ghost", () -> RoadGhost.submit(ctx)));
+		HudElementRegistry.addLast(AgentCraft.id("hud/road_preview"), dev.larattalabs.labui.client.ui.GuardedHud.of("agentcraft_worlds.hud.road_preview", new RoadHud()));
 		// listeners run on the thread that changed the buildings (the server's): hop to the client thread
-		Buildings.addListener(list -> Minecraft.getInstance().execute(() -> Guard.run("roads.buildings", () -> buildingsChanged(list))));
-		Roads.addListener(list -> Minecraft.getInstance().execute(() -> Guard.run("roads.changed", RoadsFeature::roadsChanged)));
+		Buildings.addListener(list -> Minecraft.getInstance().execute(() -> Guard.run("agentcraft_worlds.roads.buildings", () -> buildingsChanged(list))));
+		Roads.addListener(list -> Minecraft.getInstance().execute(() -> Guard.run("agentcraft_worlds.roads.changed", RoadsFeature::roadsChanged)));
 		registerDev();
 	}
 
@@ -446,7 +446,7 @@ public final class RoadsFeature {
 	 * while previewing with no screen open; releases and every other key pass (the player can walk around the ghost).
 	 */
 	public static boolean onKey(int action, KeyEvent e) {
-		return Guard.call("roads.key", () -> {
+		return Guard.call("agentcraft_worlds.roads.key", () -> {
 			if (action == InputConstants.RELEASE || preview == null || Minecraft.getInstance().gui.screen() != null) {
 				return false;
 			}

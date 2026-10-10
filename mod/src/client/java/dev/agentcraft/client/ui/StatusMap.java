@@ -4,6 +4,7 @@ import dev.agentcraft.client.foreman.ForemanState;
 import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.client.foreman.Protocol.TaskStatus;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import org.jspecify.annotations.Nullable;
 
 /**

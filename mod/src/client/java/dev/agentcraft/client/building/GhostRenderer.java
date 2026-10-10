@@ -3,7 +3,7 @@ package dev.agentcraft.client.building;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.agentcraft.building.GhostModel;
-import dev.agentcraft.client.ui.UiStyle;
+import dev.larattalabs.labui.client.ui.UiStyle;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.world.phys.Vec3;

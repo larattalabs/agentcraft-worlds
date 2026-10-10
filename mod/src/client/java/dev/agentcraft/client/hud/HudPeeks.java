@@ -7,6 +7,7 @@ import dev.agentcraft.client.foreman.Protocol.Decision;
 import dev.agentcraft.client.foreman.Protocol.Goal;
 import dev.agentcraft.client.foreman.Protocol.Task;
 import dev.agentcraft.hud.HudPeek;
+import dev.larattalabs.labui.client.hud.UiBits;
 import org.jspecify.annotations.Nullable;
 
 /**

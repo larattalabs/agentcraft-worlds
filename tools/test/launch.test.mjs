@@ -15,6 +15,7 @@ import { decideStart, devCheckoutConflict, expandHome, lockIsStale, LOCK_STALE_M
 import { parseArgs as parseDaemonArgs } from '../foreman-daemon.mjs';
 import {
   setup, parseArgs as parseSetupArgs, chooseSource, resolveRemoteRef, realDeps, DAEMON_FILES, LAUNCHER_FILES, parseStatusLine, gameProcesses, cwdProcesses,
+  labUiCredentials,
 } from '../hardcore-setup.mjs';
 import { spawnSync } from 'node:child_process';
 
@@ -248,6 +249,59 @@ function setupArgs(w, extra = []) {
   return parseSetupArgs(['--instance', w.instance, '--stable', w.stable, '--home', w.home, '--jar', w.jar,
     '--backup-script', w.backupScript, '--backup-dir', w.backupDir, '--skip-checkout', '--skip-deps', ...extra]);
 }
+
+test('labUiCredentials: an existing GITHUB_TOKEN wins, else gh, never the token in the note', () => {
+  let asked = 0;
+  const gh = () => { asked++; return 'gho_secret'; };
+  const own = labUiCredentials({ GITHUB_TOKEN: 'mine' }, gh);
+  assert.deepEqual(own.env, {});
+  assert.equal(asked, 0);
+  assert.match(own.note, /credentials from GITHUB_TOKEN/);
+  const fromGh = labUiCredentials({}, gh);
+  assert.deepEqual(fromGh.env, { GITHUB_TOKEN: 'gho_secret' });
+  assert.equal(fromGh.note, 'lab-ui: GitHub Packages, credentials from gh');
+  const none = labUiCredentials({}, () => null);
+  assert.deepEqual(none.env, {});
+  assert.match(none.note, /no token/);
+  for (const r of [own, fromGh, none]) assert.doesNotMatch(r.note, /secret|mine/);
+});
+
+test('setup builds the stable mod with gh credentials for the gradle child only, never logged', async () => {
+  const w = fakeWorld();
+  const saved = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  try {
+    const args = parseSetupArgs(['--instance', w.instance, '--stable', w.stable, '--home', w.home, '--backup-script', w.backupScript,
+      '--backup-dir', w.backupDir, '--skip-checkout', '--skip-deps']);
+    const dry = { ...deps(), ghToken: () => 'gho_secret' };
+    await setup(args, dry);
+    const text = dry.lines.join('\n');
+    assert.match(text, /lab-ui: GitHub Packages, credentials from gh/);
+    assert.doesNotMatch(text, /gho_secret/);
+    // --apply: the token reaches the gradle child's env and nothing else
+    const d = { ...deps(), ghToken: () => 'gho_secret' };
+    const envs = [];
+    d.exec = (cmd, a, opts) => {
+      envs.push([cmd, a, opts?.env]);
+      if (a[0] === 'gradlew') {
+        const libs = path.join(w.stable, 'mod', 'build', 'libs');
+        fs.mkdirSync(libs, { recursive: true });
+        fs.writeFileSync(path.join(libs, 'agentcraft-0.1.0.jar'), 'built');
+      }
+    };
+    await setup(parseSetupArgs(['--instance', w.instance, '--stable', w.stable, '--home', w.home, '--backup-script',
+      w.backupScript, '--backup-dir', w.backupDir, '--skip-checkout', '--skip-deps', '--apply', '--no-prelaunch']), d);
+    const gradle = envs.find(([, a]) => a[0] === 'gradlew');
+    assert.ok(gradle, 'gradle ran');
+    assert.equal(gradle[2].GITHUB_TOKEN, 'gho_secret');
+    assert.ok(gradle[1].includes('--no-daemon'));
+    for (const [, a, env] of envs) if (a[0] !== 'gradlew') assert.notEqual(env?.GITHUB_TOKEN, 'gho_secret');
+    assert.equal(process.env.GITHUB_TOKEN, undefined);
+    assert.doesNotMatch(d.lines.join('\n'), /gho_secret/);
+  } finally {
+    if (saved !== undefined) process.env.GITHUB_TOKEN = saved;
+  }
+});
 
 test('setup dry run changes nothing and lists every change', async () => {
   const w = fakeWorld();
