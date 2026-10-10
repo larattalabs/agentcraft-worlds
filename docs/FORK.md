@@ -435,8 +435,10 @@ Items refer to the roadmap below. Each phase ends at a gate; don't start the nex
   UiStyle, TextUtil, UiBits, DisplayDraw, ScreenStyle, SpeechBubble), their three tests (now in lab-ui) and the 114 kit
   sprite files (byte-identical in lab-ui). The agent-shaped helpers lab-ui dropped (agent name colours and names, the
   user, portraits, `ScreenStyle.name`, the speech bubbles' addressees) are in `client.hud.AgentBits`; Guard kinds carry
-  the mod id. Gradle resolves lab-ui from `~/.m2` first, then GitHub Packages (needs a `read:packages` token; see
-  mod/DEV.md "lab-ui").
+  the mod id. Gradle builds lab-ui from a checkout when it finds one (composite build: `lab_ui.dir` / `LAB_UI_DIR`,
+  `../../LarattaLabs/lab-ui` from `mod/`, `../../lab-ui`, `~/Developer/LarattaLabs/lab-ui`), else fetches it from GitHub
+  Packages with a token (`GITHUB_TOKEN=$(gh auth token)` works); with neither it stops and says what to do (mod/DEV.md
+  "lab-ui").
 - Dropped: Iris compatibility (roadmap 11), hand-wired anchors/bind commands (roadmap 9's manual
   part), survival recipes (roadmap 10; free buildings accepted).
 

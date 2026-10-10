@@ -63,18 +63,24 @@ agent-shaped parts: `client.hud.AgentBits` (agent names and colours, the user, p
 addressees), `PlateStack`, `Nameplate`/`PlateLayout`, `HudLayout`/toasts, `StatusMap`, `HudSounds`, `DisplayText`,
 `UiRules`. Guard kinds start with the mod id (`agentcraft_worlds.hud.goal`): Fabric loads one lab-ui for every mod.
 
-Gradle looks for the jar in two places, in this order (`mod/build.gradle`), and both serve only `lab_ui`:
-1. **`~/.m2` (Maven local).** Fill it once from a lab-ui checkout at the matching tag, no token needed:
-   `git clone https://github.com/larattalabs/lab-ui && cd lab-ui && git checkout v0.1.0 && ./gradlew publishToMavenLocal`
-   (Java 25). This is also how you build against an unreleased lab-ui; publish it under a new version, not over 0.1.0.
-2. **GitHub Packages** (`https://maven.pkg.github.com/larattalabs/lab-ui`). It needs a token even for public packages:
-   a classic PAT with `read:packages` (`gh auth token` only works if your gh login has that scope:
-   `gh auth refresh -s read:packages`) as `gpr.user` / `gpr.key` in `$GRADLE_USER_HOME/gradle.properties`, or in the
-   environment as `GITHUB_ACTOR` / `GITHUB_TOKEN`. Never commit a token. The launchers set `GRADLE_USER_HOME` to the
-   checkout's `.gradle-home`, so `~/.gradle/gradle.properties` is not read there; and don't export `GITHUB_TOKEN` into
-   a launcher's environment, because the game (and the Foreman and agents it starts) inherits it.
+Where Gradle gets lab-ui (`mod/settings.gradle`, `mod/build.gradle`):
+1. **A lab-ui checkout**, built as part of this build (a composite `includeBuild`; Gradle swaps the Maven dependency
+   for it). First found: the gradle property `lab_ui.dir` or the env `LAB_UI_DIR` (an explicit path must be a lab-ui
+   checkout), else `../../LarattaLabs/lab-ui` from `mod/` (Noah's layout: the main checkout and agentcraft-stable),
+   `../../lab-ui` (lab-ui cloned next to this repo), `~/Developer/LarattaLabs/lab-ui` (worktrees sit deeper). Its
+   `mod_version` must equal `lab_ui_version`, else it is skipped with a warning. It builds whatever that checkout has
+   checked out (the version is checked, not the commit), so keep it on the release tag or on lab-ui's main.
+   `-Plab_ui.dir=none` turns this off. No token needed.
+2. **GitHub Packages** (`https://maven.pkg.github.com/larattalabs/lab-ui`), which wants a token even for public
+   packages: `gpr.user` / `gpr.key` in `$GRADLE_USER_HOME/gradle.properties`, or `GITHUB_ACTOR` / `GITHUB_TOKEN` in the
+   environment, e.g. `GITHUB_TOKEN=$(gh auth token) ./gradlew build` (gh's default `repo` scope was enough here on
+   2026-10-10; a PAT needs `read:packages`). CI: `permissions: packages: read` and the workflow's `GITHUB_TOKEN`. Never
+   commit a token. The launchers set `GRADLE_USER_HOME` to the checkout's `.gradle-home`, so `~/.gradle/gradle.properties`
+   is not read there; and don't export `GITHUB_TOKEN` into a launcher's environment, because the game (and the Foreman
+   and agents it starts) inherits it: use the sibling checkout or a one-off `GITHUB_TOKEN=... ./gradlew build` instead.
 
-After the first fetch the jar is in the Gradle cache (or `~/.m2`), so `--offline` builds work.
+With neither (no checkout, no token, nothing cached) the build stops at once and says what to do. After the first fetch
+the jar is in the Gradle cache, so `--offline` builds work without the token.
 
 `runClient` starts with **no clicks**:
 1. `prepareRunDir` copies `run-template/options.txt` to `mod/run/options.txt`, but only if that file

@@ -391,16 +391,17 @@ On macOS, install Java 25 with `brew install openjdk@25`; on Linux, your distrib
 (Arch: `pacman -S jdk25-openjdk`) or point `JAVA_HOME` at one. The launcher selects that JDK without
 changing your system Java.
 
-The mod's shared UI library, [lab-ui](https://github.com/larattalabs/lab-ui), is fetched at build time. GitHub
-Packages wants a token for that even though it is public, so the simplest way is to build it into your local Maven
-repository once (no token needed):
+The mod's shared UI library, [lab-ui](https://github.com/larattalabs/lab-ui), comes from GitHub Packages, which wants
+a token even though it is public: run the first build with `GITHUB_TOKEN=$(gh auth token)` exported (or see
+[mod/DEV.md, "lab-ui"](mod/DEV.md#lab-ui-the-shared-ui-library)). Without a token, clone lab-ui next to this repo and
+the build compiles it from there:
 
 ```sh
 git clone https://github.com/larattalabs/lab-ui
-(cd lab-ui && git checkout v0.1.0 && ./gradlew publishToMavenLocal)
+(cd lab-ui && git checkout v0.1.0)
 ```
 
-With a `read:packages` token instead, see [mod/DEV.md, "lab-ui"](mod/DEV.md#lab-ui-the-shared-ui-library). Then:
+Then:
 
 ```sh
 git clone https://github.com/larattalabs/agentcraft-worlds

@@ -12,15 +12,10 @@ base {
 
 repositories {
 	mavenCentral()
-	// lab-ui (dev.larattalabs:lab_ui), the shared client UI library; see mod/DEV.md "lab-ui". Gradle takes the first
-	// repository that has it, and these two only ever serve lab_ui:
-	// 1. ~/.m2, filled by `./gradlew publishToMavenLocal` in a lab-ui checkout at the matching tag. No token needed.
-	mavenLocal {
-		content { includeModule "dev.larattalabs", "lab_ui" }
-	}
-	// 2. GitHub Packages, which needs a token with read:packages even for public packages: gpr.user / gpr.key in
-	//    $GRADLE_USER_HOME/gradle.properties, or GITHUB_ACTOR / GITHUB_TOKEN. Never commit a token. Once fetched it is in
-	//    the Gradle cache, so --offline works.
+	// lab-ui (dev.larattalabs:lab_ui), the shared client UI library: a lab-ui checkout found by settings.gradle wins
+	// (composite build), else GitHub Packages. It needs a token with read:packages even for public packages: gpr.user /
+	// gpr.key in $GRADLE_USER_HOME/gradle.properties, or GITHUB_ACTOR / GITHUB_TOKEN. Never commit a token. Once fetched
+	// it is in the Gradle cache, so --offline works. See mod/DEV.md "lab-ui".
 	maven {
 		name = "LabUi"
 		url = uri("https://maven.pkg.github.com/larattalabs/lab-ui")
@@ -56,6 +51,15 @@ loom {
 		server {
 			runDir "run/server"
 		}
+	}
+}
+
+// With a lab-ui checkout in the build (settings.gradle), compile and run against its jar: the project's default classes-dir
+// variant has only its main source set, while lab-ui's client classes (Kit, UiStyle, ...) are in the jar. A published
+// lab_ui is a jar anyway.
+configurations.matching { it.name ==~ /(?i).*(compile|runtime)Classpath/ }.configureEach {
+	attributes {
+		attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
 	}
 }
 

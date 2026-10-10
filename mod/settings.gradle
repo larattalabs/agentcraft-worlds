@@ -10,3 +10,59 @@ pluginManagement {
 }
 
 rootProject.name = 'agentcraft'
+
+// lab-ui (dev.larattalabs:lab_ui), the shared client UI library (mod/DEV.md "lab-ui"). Where Gradle gets it:
+// 1. A lab-ui checkout, built as part of this build (composite includeBuild; Gradle swaps the Maven dependency for it).
+//    First found: the gradle property lab_ui.dir or the env LAB_UI_DIR (an explicit path must exist), else
+//    ../../LarattaLabs/lab-ui from mod/ (the main checkout and agentcraft-stable), ../../lab-ui (lab-ui cloned next to
+//    this repo), ~/Developer/LarattaLabs/lab-ui (worktrees sit deeper). The checkout's mod_version must equal
+//    lab_ui_version (mod/gradle.properties), else it is skipped with a warning. -Plab_ui.dir=none turns this off.
+// 2. GitHub Packages (repository "LabUi" in build.gradle): needs a token (gh auth token works; a PAT needs read:packages), as gpr.user / gpr.key in
+//    $GRADLE_USER_HOME/gradle.properties or GITHUB_ACTOR / GITHUB_TOKEN in the environment. Never commit a token.
+//    Once fetched it is in the Gradle cache, so --offline works without the token.
+def labUiVersion = providers.gradleProperty("lab_ui_version").get()
+def labUiExplicit = providers.gradleProperty("lab_ui.dir").orElse(providers.environmentVariable("LAB_UI_DIR")).getOrNull()
+def modDir = settingsDir
+def labUiCandidates = labUiExplicit != null ? [new File(labUiExplicit)] : [
+	new File(modDir, "../../LarattaLabs/lab-ui"),
+	new File(modDir, "../../lab-ui"),
+	new File(System.getProperty("user.home"), "Developer/LarattaLabs/lab-ui"),
+]
+File labUiDir = null
+if (labUiExplicit != "none") {
+	for (File c : labUiCandidates) {
+		def props = new File(c, "gradle.properties")
+		if (!props.isFile() || !new File(c, "settings.gradle").isFile()) {
+			if (labUiExplicit != null) {
+				throw new GradleException("lab-ui: ${c.canonicalPath} (lab_ui.dir / LAB_UI_DIR) is not a lab-ui checkout.")
+			}
+			continue
+		}
+		def p = new Properties()
+		props.withInputStream { p.load(it) }
+		if (p.getProperty("mod_version") == labUiVersion) {
+			labUiDir = c.canonicalFile
+			break
+		}
+		logger.warn("lab-ui: skipping ${c.canonicalPath}: it is at ${p.getProperty('mod_version')}, this build needs ${labUiVersion} " +
+			"(check out v${labUiVersion} there, or set lab_ui.dir / LAB_UI_DIR).")
+	}
+}
+
+if (labUiDir != null) {
+	logger.info("lab-ui: building ${labUiVersion} from ${labUiDir}")
+	includeBuild(labUiDir)
+} else {
+	def hasToken = providers.gradleProperty("gpr.key").orElse(providers.environmentVariable("GITHUB_TOKEN")).getOrNull()
+	def userHome = gradle.gradleUserHomeDir
+	def cached = new File(userHome, "caches/modules-2/files-2.1/dev.larattalabs/lab_ui/${labUiVersion}").isDirectory()
+	if (!hasToken && !cached) {
+		def sibling = new File(modDir, "../../lab-ui").canonicalPath
+		throw new GradleException("""lab-ui ${labUiVersion} (dev.larattalabs:lab_ui) not found. Do one of these, then build again:
+  - clone lab-ui next to this repo:  git clone https://github.com/larattalabs/lab-ui ${sibling} && git -C ${sibling} checkout v${labUiVersion}
+    (or point lab_ui.dir / LAB_UI_DIR at a checkout)
+  - or fetch it from GitHub Packages:  export GITHUB_TOKEN=\$(gh auth token)
+    (on 401/403 give the token read:packages: gh auth refresh -s read:packages)
+See mod/DEV.md "lab-ui".""")
+	}
+}
