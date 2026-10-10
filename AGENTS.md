@@ -39,6 +39,12 @@ Parts:
 All of these must pass before a branch is offered for merge.
 - **Mod:** `cd mod && JAVA_HOME=/opt/homebrew/opt/openjdk@25 bash gradlew build --console=plain -q`
   (JUnit tests included). In a worktree, reuse the main checkout's cache: `GRADLE_USER_HOME=<main checkout>/.gradle-home`.
+  The mod bundles **lab-ui** (`dev.larattalabs:lab_ui`, the shared UI library; source in `~/Developer/LarattaLabs/lab-ui`).
+  Gradle takes it from `~/.m2` first (on this Mac it is there: `publishToMavenLocal` of lab-ui at tag `v<lab_ui_version>`),
+  then GitHub Packages, which needs a `read:packages` token as `gpr.user`/`gpr.key` in `$GRADLE_USER_HOME/gradle.properties`
+  (Noah's gh token lacks that scope). Never commit a token or export `GITHUB_TOKEN` into a launcher's environment (the game,
+  Foreman and agents inherit it). Changes to the kit, `Guard`, `UiStyle`, `UiBits`, `SpeechBubble` etc. go to lab-ui as a
+  new version, not into this repo (docs/FORK.md "Divergence rules", mod/DEV.md "lab-ui").
 - **Foreman:** `cd foreman && npm ci && npm run check` (tsc, vitest, protocol doc and Java mirror checks). After changing
   `src/protocol.ts`: `npm run gen:java-protocol` and `npm run gen:protocol-doc`.
   `test/claude-goal-restart.test.ts` and `codex-fork` "interrupts a turn" are known timing flakes under load: rerun them
