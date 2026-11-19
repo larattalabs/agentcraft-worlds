@@ -31,7 +31,7 @@
 		"minecraft": "~26.3",
 		"java": ">=25",
 		"fabric-api": "*",
-		"lab_ui": ">=0.1.0 <0.2.0"
+		"lab_ui": ">=0.6.0 <0.7.0"
 	},
 	"contact": {
 		"homepage": "https://github.com/larattalabs/agentcraft-worlds",
